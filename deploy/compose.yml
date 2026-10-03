@@ -1,0 +1,94 @@
+# Retinue pilot stack for Dokploy (compose path: ./deploy/compose.yml).
+# Host paths under /srv/retinue are prepared by deploy/setup.sh. Secrets come from the
+# Dokploy "Environment" tab, never from this file.
+name: retinue
+
+services:
+  tuwunel:
+    image: jevolk/tuwunel:latest    # pin a digest after first deploy
+    restart: unless-stopped
+    stop_grace_period: 30m
+    volumes:
+      - tuwunel-db:/var/lib/tuwunel
+      - /srv/retinue/tuwunel/appservices:/etc/tuwunel/appservices:ro
+    environment:
+      TUWUNEL_SERVER_NAME: ${MATRIX_SERVER_NAME}
+      TUWUNEL_DATABASE_PATH: /var/lib/tuwunel
+      TUWUNEL_ADDRESS: 0.0.0.0
+      TUWUNEL_PORT: 6167
+      TUWUNEL_MAX_REQUEST_SIZE: 20000000
+      TUWUNEL_ALLOW_FEDERATION: "false"
+      TUWUNEL_ALLOW_REGISTRATION: ${MATRIX_ALLOW_REGISTRATION:-false}
+      TUWUNEL_REGISTRATION_TOKEN: ${MATRIX_REGISTRATION_TOKEN}
+      TUWUNEL_APPSERVICE_DIR: /etc/tuwunel/appservices
+      TUWUNEL_SHOW_APPSERVICE_USERS_IN_USER_DIRECTORY: "true"
+      TUWUNEL_WELL_KNOWN: |
+        {
+        client=https://${MATRIX_SERVER_NAME}
+        }
+    ulimits:
+      nofile: { soft: 1048567, hard: 1048567 }
+    networks: [matrix, dokploy-network]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.retinue-matrix.rule=Host(`${MATRIX_SERVER_NAME}`)
+      - traefik.http.routers.retinue-matrix.entrypoints=websecure
+      - traefik.http.routers.retinue-matrix.tls.certresolver=letsencrypt
+      - traefik.http.routers.retinue-matrix.middlewares=vpn-only@file
+      - traefik.http.routers.retinue-matrix-http.rule=Host(`${MATRIX_SERVER_NAME}`)
+      - traefik.http.routers.retinue-matrix-http.entrypoints=web
+      - traefik.http.routers.retinue-matrix-http.middlewares=retinue-https@file
+      - traefik.http.services.retinue-matrix.loadbalancer.server.port=6167
+
+  router:
+    build: { context: .., dockerfile: Dockerfile }
+    image: retinue:local
+    restart: unless-stopped
+    command: ["retinue-router", "--config", "/config/router.yaml"]
+    volumes:
+      - /srv/retinue/router.yaml:/config/router.yaml:ro
+      - router-data:/data
+    environment:
+      RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN}
+      RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN}
+    networks: [matrix, agents]
+    depends_on: [tuwunel]
+
+  agent-study:
+    image: retinue:local
+    restart: unless-stopped
+    command: ["retinue-agent", "--config", "/agent/agent.yaml"]
+    volumes:
+      - /srv/retinue/agents/study/agent.yaml:/agent/agent.yaml:ro
+      - /srv/retinue/agents/study/workspace:/workspace
+      - study-data:/data
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+    networks: [agents]
+    depends_on: [router]
+
+  agent-travel:
+    image: retinue:local
+    restart: unless-stopped
+    command: ["retinue-agent", "--config", "/agent/agent.yaml"]
+    volumes:
+      - /srv/retinue/agents/travel/agent.yaml:/agent/agent.yaml:ro
+      - /srv/retinue/agents/travel/workspace:/workspace
+      - travel-data:/data
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+    networks: [agents]
+    depends_on: [router]
+
+volumes:
+  tuwunel-db:
+  router-data:
+  study-data:
+  travel-data:
+
+networks:
+  matrix:       # homeserver <-> router only
+  agents:       # router <-> agents only; agents never see the homeserver
+  dokploy-network:
+    external: true

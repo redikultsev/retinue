@@ -1,0 +1,7 @@
+.git
+.venv
+tests
+agents
+deploy
+docs
+**/__pycache__

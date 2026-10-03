@@ -1,0 +1,11 @@
+# Split DNS for VPN clients: private hostnames resolve to the WireGuard address,
+# everything else is forwarded upstream. Listens only on 10.8.0.1.
+name: split-dns
+services:
+  dnsmasq:
+    image: dockurr/dnsmasq:latest   # pin a digest after first deploy
+    restart: unless-stopped
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    volumes:
+      - ./dnsmasq.conf:/etc/dnsmasq.conf:ro

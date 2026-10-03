@@ -1,0 +1,6 @@
+__pycache__/
+.venv/
+*.sqlite
+*.mx-state.json
+.env
+deploy/*.local.*

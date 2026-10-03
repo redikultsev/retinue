@@ -1,0 +1,10 @@
+# Copied by setup.sh to /etc/dokploy/traefik/dynamic/retinue.yml
+http:
+  middlewares:
+    vpn-only:
+      ipAllowList:
+        sourceRange: ["10.8.0.0/24"]
+    retinue-https:
+      redirectScheme:
+        scheme: https
+        permanent: true

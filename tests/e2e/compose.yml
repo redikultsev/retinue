@@ -1,0 +1,27 @@
+# Local end-to-end smoke test: real Tuwunel + router + echo agent, no Claude, no Traefik.
+name: retinue-e2e
+services:
+  tuwunel:
+    image: jevolk/tuwunel:latest
+    environment:
+      TUWUNEL_SERVER_NAME: test.local
+      TUWUNEL_DATABASE_PATH: /var/lib/tuwunel
+      TUWUNEL_ADDRESS: 0.0.0.0
+      TUWUNEL_PORT: 6167
+      TUWUNEL_ALLOW_FEDERATION: "false"
+      TUWUNEL_ALLOW_REGISTRATION: "true"
+      TUWUNEL_REGISTRATION_TOKEN: e2e-token
+      TUWUNEL_APPSERVICE_DIR: /etc/tuwunel/appservices
+    volumes:
+      - ./appservices:/etc/tuwunel/appservices:ro
+    ports: ["127.0.0.1:16167:6167"]
+  router:
+    image: retinue:local
+    command: ["retinue-router", "--config", "/config/router.yaml"]
+    volumes: ["./router.yaml:/config/router.yaml:ro"]
+    environment: { RETINUE_AS_TOKEN: e2e-as, RETINUE_HS_TOKEN: e2e-hs }
+    depends_on: [tuwunel]
+  agent-echo:
+    image: retinue:local
+    command: ["retinue-agent", "--config", "/agent/agent.yaml"]
+    volumes: ["./agent.yaml:/agent/agent.yaml:ro"]

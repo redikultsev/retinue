@@ -1,0 +1,9 @@
+id: echo
+name: Эхо
+description: smoke test agent
+trust_class: web
+skills: [{id: echo, name: Echo, description: echoes}]
+engine: {type: echo}
+workspace: /tmp
+state_db: /tmp/agent.sqlite
+public_url: http://agent-echo:9000

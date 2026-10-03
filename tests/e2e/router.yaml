@@ -1,0 +1,8 @@
+homeserver: http://tuwunel:6167
+server_name: test.local
+owner: "@owner:test.local"
+state_db: /tmp/router.sqlite
+agents:
+  - id: echo
+    name: Эхо
+    url: http://agent-echo:9000

@@ -52,6 +52,7 @@ services:
     environment:
       RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN}
       RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}   # only with a `telegram:` section in router.yaml
     networks: [matrix, agents]
     depends_on: [tuwunel]
 

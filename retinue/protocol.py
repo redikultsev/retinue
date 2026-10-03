@@ -40,6 +40,16 @@ class Store:
                 room_id TEXT NOT NULL,
                 context_id TEXT NOT NULL            -- legacy: conversations moved to `conversations`
             );
+            CREATE TABLE IF NOT EXISTS places (     -- where an agent lives in a channel: Telegram topic id, ...
+                channel TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                place_id TEXT NOT NULL,
+                PRIMARY KEY (channel, agent_id)
+            );
+            CREATE TABLE IF NOT EXISTS kv (         -- small adapter state, e.g. the Telegram update offset
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS conversations (  -- one current conversation per agent, for every channel
                 agent_id TEXT PRIMARY KEY,
                 context_id TEXT NOT NULL            -- A2A context id
@@ -85,4 +95,26 @@ class Store:
 
     def save_room(self, agent_id: str, room_id: str) -> None:
         self.db.execute("INSERT OR REPLACE INTO rooms VALUES (?, ?, '')", (agent_id, room_id))
+        self.db.commit()
+
+    def place(self, channel: str, agent_id: str) -> str | None:
+        row = self.db.execute("SELECT place_id FROM places WHERE channel = ? AND agent_id = ?",
+                              (channel, agent_id)).fetchone()
+        return row[0] if row else None
+
+    def agent_by_place(self, channel: str, place_id: str) -> str | None:
+        row = self.db.execute("SELECT agent_id FROM places WHERE channel = ? AND place_id = ?",
+                              (channel, place_id)).fetchone()
+        return row[0] if row else None
+
+    def save_place(self, channel: str, agent_id: str, place_id: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO places VALUES (?, ?, ?)", (channel, agent_id, place_id))
+        self.db.commit()
+
+    def get(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set(self, key: str, value: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO kv VALUES (?, ?)", (key, value))
         self.db.commit()

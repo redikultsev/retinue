@@ -45,6 +45,20 @@ Then set `MATRIX_ALLOW_REGISTRATION=false` in Dokploy and redeploy.
 Element X → *Other homeserver* → `matrix.example.com` → sign in. Accept the invitations: one room
 per agent plus *Протокол* (the protocol log). Write in an agent's room.
 
+## 7. Telegram (optional)
+
+Talk to the same agents from Telegram: one bot, the private chat split into topics, one per agent. The
+conversation is shared with Matrix, and Matrix keeps the full record.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`). In its Mini App → *Threads Settings*
+   turn on **Threaded Mode** (topics in the private chat).
+2. Put the token into the stack environment as `TELEGRAM_BOT_TOKEN` and add to `router.yaml`:
+   ```yaml
+   telegram:
+     owner_id: 123456789   # your Telegram user id; the bot answers nobody else
+   ```
+3. Redeploy and send `/start` to the bot. The router creates a topic per agent.
+
 ## Smoke test without a model
 
 ```bash

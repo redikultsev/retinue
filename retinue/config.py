@@ -25,6 +25,12 @@ class RouterAgent:
 
 
 @dataclass
+class TelegramConfig:
+    owner_id: int                       # the only Telegram user the bot listens to
+    bot_token: str = ""                 # from TELEGRAM_BOT_TOKEN
+
+
+@dataclass
 class RouterConfig:
     homeserver: str
     server_name: str
@@ -38,12 +44,17 @@ class RouterConfig:
     state_db: str = "/data/router.sqlite"
     as_token: str = ""
     hs_token: str = ""
+    telegram: TelegramConfig | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
         raw = yaml.safe_load(Path(path).read_text())
         agents = [RouterAgent(**a) for a in raw.pop("agents")]
-        cfg = cls(agents=agents, **raw)
+        telegram = TelegramConfig(**raw.pop("telegram")) if raw.get("telegram") else None
+        raw.pop("telegram", None)
+        cfg = cls(agents=agents, telegram=telegram, **raw)
+        if cfg.telegram:
+            cfg.telegram.bot_token = _env("TELEGRAM_BOT_TOKEN")
         cfg.as_token = _env("RETINUE_AS_TOKEN")
         cfg.hs_token = _env("RETINUE_HS_TOKEN")
         return cfg

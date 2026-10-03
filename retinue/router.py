@@ -1,7 +1,7 @@
 """Router entry point: the core plus the channels the owner talks through.
 
 The core (`core.py`) keeps one conversation per agent and talks to agents over A2A. Each channel adapter
-(`channels/`) turns a messenger into core calls. Today: Matrix.
+(`channels/`) turns a messenger into core calls: Matrix always, Telegram when configured.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import asyncio
 import logging
 
 from .channels.matrix import MatrixChannel
+from .channels.telegram import TelegramChannel
 from .config import RouterConfig
 from .core import Core
 from .protocol import Store
@@ -28,7 +29,10 @@ def main() -> None:
     asyncio.set_event_loop(loop)
     store = Store(cfg.state_db)
     core = Core(cfg.agents, store, cfg.owner)
-    loop.run_until_complete(core.start([MatrixChannel(cfg, store, loop)]))
+    channels = [MatrixChannel(cfg, store, loop)]
+    if cfg.telegram:
+        channels.append(TelegramChannel(cfg.telegram, cfg.agents, store))
+    loop.run_until_complete(core.start(channels))
     loop.run_forever()
 
 

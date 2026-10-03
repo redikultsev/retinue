@@ -82,11 +82,15 @@ class Core:
         self.channels: list[Channel] = []
 
     async def start(self, channels: list[Channel]) -> None:
-        self.channels = channels
         for agent_id in self.agents:
             self.store.conversation(agent_id)
         for channel in channels:
-            await channel.start(self)
+            try:
+                await channel.start(self)
+            except Exception:  # e.g. Telegram unreachable: the other channels keep working
+                log.exception("channel %s failed to start", channel.name)
+                continue
+            self.channels.append(channel)
         log.info("router ready: %d agents, channels: %s", len(self.agents), ", ".join(c.name for c in channels))
 
     async def handle(self, origin: Channel, agent_id: str, text: str) -> None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 
 
@@ -34,34 +35,54 @@ class Store:
                 BEGIN SELECT RAISE(ABORT, 'protocol is append-only'); END;
             CREATE TRIGGER IF NOT EXISTS protocol_append_only_d BEFORE DELETE ON protocol
                 BEGIN SELECT RAISE(ABORT, 'protocol is append-only'); END;
-            CREATE TABLE IF NOT EXISTS rooms (
+            CREATE TABLE IF NOT EXISTS rooms (      -- Matrix adapter: agent room per agent
                 agent_id TEXT PRIMARY KEY,          -- '_protocol' for the protocol room
                 room_id TEXT NOT NULL,
-                context_id TEXT NOT NULL
+                context_id TEXT NOT NULL            -- legacy: conversations moved to `conversations`
+            );
+            CREATE TABLE IF NOT EXISTS conversations (  -- one current conversation per agent, for every channel
+                agent_id TEXT PRIMARY KEY,
+                context_id TEXT NOT NULL            -- A2A context id
             );
             """
         )
+        if "channel" not in {row[1] for row in self.db.execute("PRAGMA table_info(protocol)")}:
+            self.db.execute("ALTER TABLE protocol ADD COLUMN channel TEXT")
+        # Rooms used to own the conversation; keep those conversations when upgrading.
+        self.db.execute("INSERT OR IGNORE INTO conversations SELECT agent_id, context_id FROM rooms"
+                        " WHERE agent_id != '_protocol' AND context_id != ''")
         self.db.commit()
 
     def log(self, *, conversation_id: str, source: str, target: str, status: str, input_chars: int,
             output_chars: int, num_turns: int | None = None, cost_usd: float | None = None,
-            duration_ms: int | None = None) -> None:
+            duration_ms: int | None = None, channel: str | None = None) -> None:
         self.db.execute(
             "INSERT INTO protocol (ts, conversation_id, source, target, status, input_chars, output_chars,"
-            " num_turns, cost_usd, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " num_turns, cost_usd, duration_ms, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (time.time(), conversation_id, source, target, status, input_chars, output_chars,
-             num_turns, cost_usd, duration_ms),
+             num_turns, cost_usd, duration_ms, channel),
         )
         self.db.commit()
 
-    def room(self, agent_id: str) -> tuple[str, str] | None:
-        row = self.db.execute("SELECT room_id, context_id FROM rooms WHERE agent_id = ?", (agent_id,)).fetchone()
-        return (row[0], row[1]) if row else None
+    def conversation(self, agent_id: str) -> str:
+        """The agent's current conversation id, created on first use."""
+        row = self.db.execute("SELECT context_id FROM conversations WHERE agent_id = ?", (agent_id,)).fetchone()
+        return row[0] if row else self.new_conversation(agent_id)
 
-    def agent_by_room(self, room_id: str) -> tuple[str, str] | None:
-        row = self.db.execute("SELECT agent_id, context_id FROM rooms WHERE room_id = ?", (room_id,)).fetchone()
-        return (row[0], row[1]) if row else None
+    def new_conversation(self, agent_id: str) -> str:
+        context_id = f"conv-{uuid.uuid4()}"
+        self.db.execute("INSERT OR REPLACE INTO conversations VALUES (?, ?)", (agent_id, context_id))
+        self.db.commit()
+        return context_id
 
-    def save_room(self, agent_id: str, room_id: str, context_id: str) -> None:
-        self.db.execute("INSERT OR REPLACE INTO rooms VALUES (?, ?, ?)", (agent_id, room_id, context_id))
+    def room(self, agent_id: str) -> str | None:
+        row = self.db.execute("SELECT room_id FROM rooms WHERE agent_id = ?", (agent_id,)).fetchone()
+        return row[0] if row else None
+
+    def agent_by_room(self, room_id: str) -> str | None:
+        row = self.db.execute("SELECT agent_id FROM rooms WHERE room_id = ?", (room_id,)).fetchone()
+        return row[0] if row else None
+
+    def save_room(self, agent_id: str, room_id: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO rooms VALUES (?, ?, '')", (agent_id, room_id))
         self.db.commit()

@@ -12,7 +12,7 @@ from starlette.applications import Starlette
 from retinue.agent_host import EngineExecutor, Outbox, SessionMap, build_card
 from retinue.config import AgentConfig, EngineConfig, Skill
 from retinue.engine import EngineResult
-from retinue.router import ask_agent
+from retinue.core import ask_agent
 
 
 class FakeEngine:

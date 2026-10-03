@@ -6,6 +6,7 @@ set -euo pipefail
 
 SERVER_NAME=${1:?matrix server name, e.g. matrix.example.com}
 OWNER=${2:?owner localpart, e.g. alice}
+PRIVATE_SUFFIX=${3:-in.${SERVER_NAME#*.}}   # e.g. in.example.com for matrix.example.com
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ROOT=/srv/retinue
 AGENT_UID=10001
@@ -68,8 +69,8 @@ install -m 644 "$REPO/deploy/traefik-retinue.yml" /etc/dokploy/traefik/dynamic/r
 
 install -d -m 755 /opt/split-dns
 install -m 644 "$REPO/deploy/split-dns/compose.yml" /opt/split-dns/compose.yml
-sed "s/\${MATRIX_SERVER_NAME}/$SERVER_NAME/" "$REPO/deploy/split-dns/dnsmasq.conf.template" > /opt/split-dns/dnsmasq.conf
-docker compose -f /opt/split-dns/compose.yml up -d
+sed -e "s/\${MATRIX_SERVER_NAME}/$SERVER_NAME/" -e "s/\${PRIVATE_SUFFIX}/$PRIVATE_SUFFIX/" "$REPO/deploy/split-dns/dnsmasq.conf.template" > /opt/split-dns/dnsmasq.conf
+docker compose -f /opt/split-dns/compose.yml up -d --force-recreate
 
 cat <<OUT
 

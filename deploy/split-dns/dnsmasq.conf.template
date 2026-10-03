@@ -7,3 +7,5 @@ server=1.1.1.1
 cache-size=1000
 # private hostnames served through the VPN
 address=/${MATRIX_SERVER_NAME}/10.8.0.1
+# every private service lives under one suffix: no DNS edits per new service
+address=/${PRIVATE_SUFFIX}/10.8.0.1

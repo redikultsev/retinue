@@ -14,12 +14,12 @@ token() { openssl rand -hex 32; }
 install -d -m 755 "$ROOT" "$ROOT/tuwunel/appservices"
 SECRETS="$ROOT/secrets.env"
 if [[ ! -f $SECRETS ]]; then
-  umask 077
-  cat > "$SECRETS" <<ENV
+  (umask 077; cat > "$SECRETS" <<ENV
 RETINUE_AS_TOKEN=$(token)
 RETINUE_HS_TOKEN=$(token)
 MATRIX_REGISTRATION_TOKEN=$(token)
 ENV
+  )
 fi
 # shellcheck disable=SC1090
 source "$SECRETS"
@@ -37,7 +37,7 @@ namespaces:
     - exclusive: true
       regex: '^@agent_[a-z0-9_]+:$ESCAPED\$'
 YAML
-chmod 640 "$ROOT/tuwunel/appservices/retinue.yaml"
+chmod 644 "$ROOT/tuwunel/appservices/retinue.yaml"   # read by the homeserver container
 
 cat > "$ROOT/router.yaml" <<YAML
 homeserver: http://tuwunel:6167
@@ -53,6 +53,7 @@ agents:
     url: http://agent-travel:9000
     topic: Билеты и отели — поиск и ссылки, без покупок
 YAML
+chmod 644 "$ROOT/router.yaml"
 
 for agent in study travel; do
   install -d -m 755 "$ROOT/agents/$agent"

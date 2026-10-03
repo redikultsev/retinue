@@ -6,12 +6,17 @@ Another engine (Codex, an open-weight model) plugs in by implementing `Engine`.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+from claude_agent_sdk._errors import ResultError
 
 from .config import EngineConfig
+
+log = logging.getLogger("retinue.engine")
+SESSION_LOST = "_Прошлый разговор не сохранился, начинаю заново._\n\n"
 
 
 @dataclass
@@ -40,6 +45,18 @@ class ClaudeEngine:
         self.workspace = workspace
 
     async def run(self, prompt: str, session_id: str | None) -> EngineResult:
+        try:
+            return await self._run(prompt, session_id)
+        except ResultError as exc:
+            # The session transcript is gone (e.g. lost config dir): start over instead of failing every turn.
+            if not session_id or "No conversation found" not in str(exc):
+                raise
+            log.warning("session %s not found, starting a new one", session_id)
+            result = await self._run(prompt, None)
+            result.text = SESSION_LOST + result.text
+            return result
+
+    async def _run(self, prompt: str, session_id: str | None) -> EngineResult:
         # session_id comes only from our own state DB, never from a message (CVE-2026-96620).
         options = ClaudeAgentOptions(
             cwd=self.workspace,

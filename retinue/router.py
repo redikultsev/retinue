@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 
 import httpx
 from a2a.client import ClientConfig, create_client
@@ -20,7 +21,7 @@ from a2a.helpers import get_message_text, get_stream_response_text, new_text_mes
 from a2a.types import Role, SendMessageRequest
 from mautrix.appservice import AppService
 from mautrix.appservice.state_store import FileASStateStore
-from mautrix.types import EventType, MessageEvent, MessageType, RoomID, UserID
+from mautrix.types import EventType, FileInfo, MessageEvent, MessageType, RoomID, UserID
 
 from .config import RouterAgent, RouterConfig
 from .protocol import Store
@@ -34,9 +35,16 @@ AGENT_TIMEOUT = httpx.Timeout(900, connect=10)
 TYPING_REFRESH_S = 25
 
 
-async def ask_agent(url: str, text: str, context_id: str) -> tuple[str, str]:
-    """Send one owner message to an agent over A2A; return (status, answer text)."""
-    status, parts = "error", []
+@dataclass
+class AgentFile:
+    name: str
+    media_type: str
+    data: bytes
+
+
+async def ask_agent(url: str, text: str, context_id: str) -> tuple[str, str, list[AgentFile]]:
+    """Send one owner message to an agent over A2A; return (status, answer text, attached files)."""
+    status, parts, files = "error", [], []
     http = httpx.AsyncClient(timeout=AGENT_TIMEOUT)
     client = await create_client(agent=url, client_config=ClientConfig(streaming=False, httpx_client=http))
     try:
@@ -48,12 +56,14 @@ async def ask_agent(url: str, text: str, context_id: str) -> tuple[str, str]:
                 status = {3: "done", 4: "failed", 7: "rejected"}.get(int(task.status.state), status)
                 if not chunk and task.status.HasField("message"):
                     chunk = get_message_text(task.status.message)
+                files = [AgentFile(p.filename or "file", p.media_type or "application/octet-stream", p.raw)
+                         for a in task.artifacts for p in a.parts if p.raw]
             if chunk:
                 parts.append(chunk)
     finally:
         await client.close()
         await http.aclose()
-    return status, parts[-1] if parts else ""
+    return status, parts[-1] if parts else "", files
 
 
 class Router:
@@ -151,10 +161,10 @@ class Router:
                       done_text: str = "") -> None:
         intent = self.az.intent.user(UserID(self.cfg.agent_mxid(agent.id)))
         text = text[:MAX_INPUT_CHARS]
-        status, answer = "error", ""
+        status, answer, files = "error", "", []
         typing = asyncio.create_task(self.keep_typing(intent, room_id))
         try:
-            status, answer = await ask_agent(agent.url, text, context_id)
+            status, answer, files = await ask_agent(agent.url, text, context_id)
         except Exception as exc:  # the owner sees the failure instead of silence
             log.exception("agent %s failed", agent.id)
             answer = f"Агент недоступен: {type(exc).__name__}"
@@ -166,9 +176,14 @@ class Router:
         body, html = render(answer)
         # m.text, not m.notice: clients grey out notices, and the router never reacts to agents anyway.
         await intent.send_text(room_id, text=body, html=html, msgtype=MessageType.TEXT)
+        for f in files:
+            mxc = await intent.upload_media(f.data, mime_type=f.media_type, filename=f.name, size=len(f.data))
+            await intent.send_file(room_id, mxc, info=FileInfo(mimetype=f.media_type, size=len(f.data)),
+                                   file_name=f.name)
         self.store.log(conversation_id=context_id, source=self.cfg.owner, target=agent.id, status=status,
                        input_chars=len(text), output_chars=len(answer))
-        await self.post_protocol(f"{self.cfg.owner} → {agent.name}: {status}, {len(text)} → {len(answer)} знаков")
+        await self.post_protocol(f"{self.cfg.owner} → {agent.name}: {status}, {len(text)} → {len(answer)} знаков"
+                                 + (f", файлов: {len(files)}" if files else ""))
 
     @staticmethod
     async def keep_typing(intent, room_id: RoomID) -> None:

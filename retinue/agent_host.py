@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import mimetypes
 import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
 import uvicorn
-from a2a.helpers import get_message_text, new_task_from_user_message, new_text_message, new_text_part
+from a2a.helpers import get_message_text, new_raw_part, new_task_from_user_message, new_text_message, new_text_part
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -23,6 +24,35 @@ from .config import AgentConfig
 from .engine import Engine, make_engine
 
 log = logging.getLogger("retinue.agent")
+
+OUTBOX = "out"  # files the agent writes here during a turn go to the owner as attachments
+MAX_FILES = 10
+MAX_FILE_BYTES = 15 * 1024 * 1024
+
+
+class Outbox:
+    """Finds files created or changed in <workspace>/out during one engine turn."""
+
+    def __init__(self, workspace: str) -> None:
+        self.root = Path(workspace) / OUTBOX
+
+    def snapshot(self) -> dict[Path, tuple[int, int]]:
+        if not self.root.is_dir():
+            return {}
+        return {f: (f.stat().st_mtime_ns, f.stat().st_size) for f in self.root.rglob("*")
+                if f.is_file() and not f.is_symlink()}
+
+    def changed(self, before: dict[Path, tuple[int, int]]) -> tuple[list[Path], list[str]]:
+        """Return (files to send, names skipped for size or count)."""
+        after = self.snapshot()
+        fresh = sorted(f for f, sig in after.items() if before.get(f) != sig)
+        send, skipped = [], []
+        for f in fresh:
+            if len(send) < MAX_FILES and after[f][1] <= MAX_FILE_BYTES:
+                send.append(f)
+            else:
+                skipped.append(f.name)
+        return send, skipped
 
 
 class SessionMap:
@@ -47,9 +77,10 @@ class SessionMap:
 
 
 class EngineExecutor(AgentExecutor):
-    def __init__(self, engine: Engine, sessions: SessionMap) -> None:
+    def __init__(self, engine: Engine, sessions: SessionMap, outbox: Outbox | None = None) -> None:
         self.engine = engine
         self.sessions = sessions
+        self.outbox = outbox
         self.locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -65,14 +96,23 @@ class EngineExecutor(AgentExecutor):
         await updater.update_status(TaskState.TASK_STATE_WORKING)
         # One turn at a time per conversation: the engine session is not concurrent-safe.
         async with self.locks[task.context_id]:
+            before = self.outbox.snapshot() if self.outbox else {}
             result = await self.engine.run(prompt, self.sessions.get(task.context_id))
             if result.session_id:
                 self.sessions.set(task.context_id, result.session_id)
+            files, skipped = self.outbox.changed(before) if self.outbox else ([], [])
         metadata = {"num_turns": result.num_turns, "cost_usd": result.cost_usd, "duration_ms": result.duration_ms}
         if result.is_error:
             await updater.update_status(TaskState.TASK_STATE_FAILED, message=new_text_message(result.text), metadata=metadata)
             return
-        await updater.add_artifact(parts=[new_text_part(text=result.text, media_type="text/markdown")], name="answer")
+        text = result.text
+        if skipped:
+            text += f"\n\nНе отправлены (больше {MAX_FILES} файлов или {MAX_FILE_BYTES // 2**20} МБ): {', '.join(skipped)}"
+        await updater.add_artifact(parts=[new_text_part(text=text, media_type="text/markdown")], name="answer")
+        for f in files:
+            media_type = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+            await updater.add_artifact(parts=[new_raw_part(f.read_bytes(), media_type=media_type, filename=f.name)],
+                                       name=f.name)
         await updater.update_status(TaskState.TASK_STATE_COMPLETED, metadata=metadata)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -103,7 +143,8 @@ def main() -> None:
     cfg = AgentConfig.load(args.config)
     card = build_card(cfg)
     handler = DefaultRequestHandler(
-        agent_executor=EngineExecutor(make_engine(cfg.engine, cfg.workspace), SessionMap(cfg.state_db)),
+        agent_executor=EngineExecutor(make_engine(cfg.engine, cfg.workspace), SessionMap(cfg.state_db),
+                                      Outbox(cfg.workspace)),
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )

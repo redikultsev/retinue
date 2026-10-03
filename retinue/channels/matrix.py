@@ -11,7 +11,8 @@ import logging
 
 from mautrix.appservice import AppService
 from mautrix.appservice.state_store import FileASStateStore
-from mautrix.types import EventType, FileInfo, MessageEvent, MessageType, RoomID, UserID
+from mautrix.types import (EventID, EventType, FileInfo, Format, MessageEvent, MessageType, RoomID,
+                           TextMessageEventContent, UserID)
 
 from ..config import RouterAgent, RouterConfig
 from ..core import AgentFile, Core
@@ -33,6 +34,7 @@ class MatrixChannel:
         self.cfg = cfg
         self.store = store
         self.core: Core | None = None
+        self.threads: dict[str, EventID] = {}  # bus tree -> thread root in the agent's room
         self.az = AppService(
             server=cfg.homeserver,
             domain=cfg.server_name,
@@ -133,3 +135,18 @@ class MatrixChannel:
     async def protocol(self, line: str) -> None:
         if room_id := self._room(PROTOCOL):
             await self.az.intent.send_text(room_id, text=line, msgtype=MessageType.NOTICE)
+
+    async def trace(self, agent_id: str, tree_id: str, text: str) -> None:
+        """Agents talking to each other: a thread in the room where the owner's message arrived."""
+        room_id = self._room(agent_id)
+        if room_id is None:
+            return
+        intent = self.intent(agent_id)
+        if tree_id not in self.threads:
+            root = TextMessageEventContent(msgtype=MessageType.NOTICE, body="🔀 Переписка агентов")
+            self.threads[tree_id] = await intent.send_message(room_id, root)
+        body, html = render(text)
+        content = TextMessageEventContent(msgtype=MessageType.NOTICE, body=body, format=Format.HTML,
+                                          formatted_body=html)
+        content.set_thread_parent(self.threads[tree_id])
+        await intent.send_message(room_id, content)

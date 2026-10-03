@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import logging
 
+from .bus import BusServer
 from .channels.matrix import MatrixChannel
 from .channels.telegram import TelegramChannel
 from .config import RouterConfig
@@ -33,8 +34,10 @@ def main() -> None:
     core = Core(cfg.agents, store, cfg.owner)
     channels = [MatrixChannel(cfg, store, loop)]
     if cfg.telegram:
-        channels.append(TelegramChannel(cfg.telegram, cfg.agents, store))
+        channels.append(TelegramChannel(cfg.telegram, cfg.agents, store, cfg.default_agent))
     loop.run_until_complete(core.start(channels))
+    if cfg.bus_secret:
+        loop.run_until_complete(BusServer(core, cfg.bus_secret, cfg.bus_listen_port).start())
     loop.run_forever()
 
 

@@ -33,11 +33,14 @@ class FakeChannel:
     async def protocol(self, line):
         self.events.append(("protocol", line))
 
+    async def trace(self, agent_id, tree_id, text):
+        self.events.append(("trace", agent_id, text))
+
 
 async def _run(tmp_path):
     contexts = []
 
-    async def fake_ask(url, text, context_id, on_progress=None):
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
         contexts.append(context_id)
         await on_progress("…")
         return "done", f"echo: {text}", [AgentFile("a.txt", "text/plain", b"x")] if text == "file" else []

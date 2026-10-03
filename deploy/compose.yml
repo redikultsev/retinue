@@ -53,6 +53,7 @@ services:
       RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN}
       RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}   # only with a `telegram:` section in router.yaml
+      RETINUE_BUS_SECRET: ${RETINUE_BUS_SECRET:-}   # agents ask each other through the router
     networks: [matrix, agents]
     depends_on: [tuwunel]
 
@@ -66,6 +67,8 @@ services:
       - study-data:/data
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      RETINUE_BUS_URL: http://router:9100
+      RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_STUDY:-}
     networks: [agents]
     depends_on: [router]
 
@@ -79,6 +82,23 @@ services:
       - travel-data:/data
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      RETINUE_BUS_URL: http://router:9100
+      RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_TRAVEL:-}
+    networks: [agents]
+    depends_on: [router]
+
+  agent-concierge:
+    image: retinue:local
+    restart: unless-stopped
+    command: ["retinue-agent", "--config", "/agent/agent.yaml"]
+    volumes:
+      - /srv/retinue/agents/concierge/agent.yaml:/agent/agent.yaml:ro
+      - /srv/retinue/agents/concierge/workspace:/workspace
+      - concierge-data:/data
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      RETINUE_BUS_URL: http://router:9100
+      RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_CONCIERGE:-}
     networks: [agents]
     depends_on: [router]
 
@@ -87,6 +107,7 @@ volumes:
   router-data:
   study-data:
   travel-data:
+  concierge-data:
 
 networks:
   matrix:       # homeserver <-> router only

@@ -16,12 +16,18 @@ def _env(name: str) -> str:
     return value
 
 
+TRUST_CLASSES = ("private", "web", "none")  # base without web | web without base | neither (Concierge)
+
+
 @dataclass
 class RouterAgent:
     id: str
     name: str
     url: str
     topic: str = ""
+    description: str = ""                 # shown to other agents in the bus tool
+    trust_class: str = "web"
+    can_call: list[str] = field(default_factory=list)  # agent ids this agent may ask through the bus; "*" = all
 
 
 @dataclass
@@ -45,6 +51,9 @@ class RouterConfig:
     as_token: str = ""
     hs_token: str = ""
     telegram: TelegramConfig | None = None
+    default_agent: str | None = None    # who gets unaddressed messages (Telegram general chat): the Concierge
+    bus_listen_port: int = 9100         # agents ask each other here (network `agents` only)
+    bus_secret: str = ""                # from RETINUE_BUS_SECRET; per-agent tokens are derived from it
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -55,6 +64,10 @@ class RouterConfig:
         cfg = cls(agents=agents, telegram=telegram, **raw)
         if cfg.telegram:
             cfg.telegram.bot_token = _env("TELEGRAM_BOT_TOKEN")
+        cfg.bus_secret = os.environ.get("RETINUE_BUS_SECRET", "")
+        for agent in cfg.agents:
+            if agent.trust_class not in TRUST_CLASSES:
+                raise SystemExit(f"agent {agent.id}: unknown trust_class {agent.trust_class!r}")
         cfg.as_token = _env("RETINUE_AS_TOKEN")
         cfg.hs_token = _env("RETINUE_HS_TOKEN")
         return cfg
@@ -86,7 +99,7 @@ class AgentConfig:
     id: str
     name: str
     description: str
-    trust_class: str  # "private" (base, no web) | "web" (web, no base)
+    trust_class: str  # "private" (base, no web) | "web" (web, no base) | "none" (neither: the Concierge)
     skills: list[Skill]
     engine: EngineConfig
     workspace: str = "/workspace"
@@ -94,6 +107,8 @@ class AgentConfig:
     public_url: str = "http://localhost:9000"
     listen_host: str = "0.0.0.0"
     listen_port: int = 9000
+    bus_url: str = ""    # from RETINUE_BUS_URL: the router's bus; empty = this agent cannot ask others
+    bus_token: str = ""  # from RETINUE_BUS_TOKEN
 
     @classmethod
     def load(cls, path: str | Path) -> AgentConfig:
@@ -101,6 +116,8 @@ class AgentConfig:
         skills = [Skill(**s) for s in raw.pop("skills")]
         engine = EngineConfig(**raw.pop("engine", {}))
         cfg = cls(skills=skills, engine=engine, **raw)
-        if cfg.trust_class not in ("private", "web"):
+        cfg.bus_url = os.environ.get("RETINUE_BUS_URL", "")
+        cfg.bus_token = os.environ.get("RETINUE_BUS_TOKEN", "")
+        if cfg.trust_class not in TRUST_CLASSES:
             raise SystemExit(f"unknown trust_class {cfg.trust_class!r}")
         return cfg

@@ -1,0 +1,16 @@
+id: concierge
+name: Главная
+description: Первая линия. Отвечает сам или спрашивает нужных агентов через Роутер и сводит ответ.
+trust_class: none         # neither the personal base nor the web: knows only what the owner wrote and agents answered
+skills:
+  - id: route
+    name: Спросить нужных агентов
+    description: Понять, кому из агентов адресован вопрос, спросить одного или нескольких и свести ответ.
+    examples: ["Лечу в Ереван 10–15 ноября — что сдвинется по учёбе и какие билеты?"]
+engine:
+  allowed_tools: ["Read(./**)", "Glob"]   # + ask_agent / list_agents, added by the host when the bus is configured
+  disallowed_tools: ["Bash", "WebSearch", "WebFetch", "Edit", "Read(//proc/**)", "Read(//run/**)", "Read(//etc/**)", "Read(//root/**)", "Read(//home/**)"]
+  max_turns: 30
+workspace: /workspace
+state_db: /data/agent.sqlite
+public_url: http://agent-concierge:9000

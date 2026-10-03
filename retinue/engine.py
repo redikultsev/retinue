@@ -6,12 +6,14 @@ Another engine (Codex, an open-weight model) plugs in by implementing `Engine`.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, StreamEvent, query
+import httpx
+from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, StreamEvent, create_sdk_mcp_server, query, tool
 from claude_agent_sdk._errors import ResultError
 
 from .config import EngineConfig
@@ -35,7 +37,36 @@ OnText = Callable[[str], Awaitable[None]]
 
 
 class Engine(Protocol):
-    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None) -> EngineResult: ...
+    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
+                  turn_id: str | None = None) -> EngineResult: ...
+
+
+BUS_TOOL = "mcp__retinue__ask_agent"
+
+
+def bus_server(bus_url: str, bus_token: str, turn_id: str):
+    """The only way an agent reaches another agent: the router's bus, bound to the current turn."""
+    headers = {"Authorization": f"Bearer {bus_token}"}
+
+    @tool("ask_agent",
+          "Спросить другого агента Retinue через Роутер и дождаться ответа. Роутер решает, разрешено ли; "
+          "отказ приходит с причиной. agent — id агента, text — самодостаточный вопрос: агент не видит этот "
+          "разговор. Список агентов — инструмент list_agents.",
+          {"agent": str, "text": str})
+    async def ask_agent(args):
+        async with httpx.AsyncClient(timeout=900) as http:
+            response = await http.post(f"{bus_url}/call", headers=headers,
+                                       json={"turn": turn_id, "agent": args["agent"], "text": args["text"]})
+        data = response.json()
+        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
+
+    @tool("list_agents", "Агенты Retinue, к которым тебе можно обращаться: id, имя, описание.", {})
+    async def list_agents(args):
+        async with httpx.AsyncClient(timeout=30) as http:
+            agents = (await http.get(f"{bus_url}/agents", headers=headers)).json()
+        return {"content": [{"type": "text", "text": json.dumps(agents, ensure_ascii=False)}]}
+
+    return create_sdk_mcp_server("retinue", tools=[ask_agent, list_agents])
 
 
 class ClaudeEngine:
@@ -45,27 +76,36 @@ class ClaudeEngine:
     run. The workspace's CLAUDE.md is the agent's instructions (setting source "project").
     """
 
-    def __init__(self, cfg: EngineConfig, workspace: str) -> None:
+    def __init__(self, cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "") -> None:
         self.cfg = cfg
         self.workspace = workspace
+        self.bus_url = bus_url
+        self.bus_token = bus_token
 
-    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None) -> EngineResult:
+    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
+                  turn_id: str | None = None) -> EngineResult:
         try:
-            return await self._run(prompt, session_id, on_text)
+            return await self._run(prompt, session_id, on_text, turn_id)
         except ResultError as exc:
             # The session transcript is gone (e.g. lost config dir): start over instead of failing every turn.
             if not session_id or "No conversation found" not in str(exc):
                 raise
             log.warning("session %s not found, starting a new one", session_id)
-            result = await self._run(prompt, None, on_text)
+            result = await self._run(prompt, None, on_text, turn_id)
             result.text = SESSION_LOST + result.text
             return result
 
-    async def _run(self, prompt: str, session_id: str | None, on_text: OnText | None) -> EngineResult:
+    async def _run(self, prompt: str, session_id: str | None, on_text: OnText | None,
+                   turn_id: str | None) -> EngineResult:
         # session_id comes only from our own state DB, never from a message (CVE-2026-96620).
+        allowed, servers = list(self.cfg.allowed_tools), {}
+        if self.bus_url and self.bus_token and turn_id:
+            servers["retinue"] = bus_server(self.bus_url, self.bus_token, turn_id)
+            allowed += [BUS_TOOL, "mcp__retinue__list_agents"]
         options = ClaudeAgentOptions(
             cwd=self.workspace,
-            allowed_tools=self.cfg.allowed_tools,
+            allowed_tools=allowed,
+            mcp_servers=servers,
             disallowed_tools=self.cfg.disallowed_tools,
             permission_mode="dontAsk",
             setting_sources=["project"],
@@ -103,15 +143,16 @@ class ClaudeEngine:
 class EchoEngine:
     """No-model engine for smoke tests: answers with the prompt."""
 
-    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None) -> EngineResult:
+    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
+                  turn_id: str | None = None) -> EngineResult:
         if on_text:
             await on_text("echo: ")
         return EngineResult(text=f"echo: {prompt}", session_id=session_id or "echo-session", is_error=False)
 
 
-def make_engine(cfg: EngineConfig, workspace: str) -> Engine:
+def make_engine(cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "") -> Engine:
     if cfg.type == "echo":
         return EchoEngine()
     if cfg.type == "claude":
-        return ClaudeEngine(cfg, workspace)
+        return ClaudeEngine(cfg, workspace, bus_url, bus_token)
     raise SystemExit(f"unknown engine type {cfg.type!r}")

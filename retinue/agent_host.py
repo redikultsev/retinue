@@ -26,6 +26,8 @@ from .engine import Engine, make_engine
 
 log = logging.getLogger("retinue.agent")
 
+TURN_KEY = "retinue/turn"  # set by the router; passed back when the agent uses the bus
+
 OUTBOX = "out"  # files the agent writes here during a turn go to the owner as attachments
 MAX_FILES = 10
 MAX_FILE_BYTES = 15 * 1024 * 1024
@@ -108,7 +110,9 @@ class EngineExecutor(AgentExecutor):
                     last = time.monotonic()
                     await updater.update_status(TaskState.TASK_STATE_WORKING, message=new_text_message(draft))
 
-            result = await self.engine.run(prompt, self.sessions.get(task.context_id), on_text)
+            metadata = context.message.metadata if context.message else {}
+            turn_id = str(metadata[TURN_KEY]) if TURN_KEY in metadata else None
+            result = await self.engine.run(prompt, self.sessions.get(task.context_id), on_text, turn_id)
             if result.session_id:
                 self.sessions.set(task.context_id, result.session_id)
             files, skipped = self.outbox.changed(before) if self.outbox else ([], [])
@@ -154,7 +158,8 @@ def main() -> None:
     cfg = AgentConfig.load(args.config)
     card = build_card(cfg)
     handler = DefaultRequestHandler(
-        agent_executor=EngineExecutor(make_engine(cfg.engine, cfg.workspace), SessionMap(cfg.state_db),
+        agent_executor=EngineExecutor(make_engine(cfg.engine, cfg.workspace, cfg.bus_url, cfg.bus_token),
+                                      SessionMap(cfg.state_db),
                                       Outbox(cfg.workspace)),
         task_store=InMemoryTaskStore(),
         agent_card=card,

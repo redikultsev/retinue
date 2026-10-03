@@ -18,10 +18,12 @@ from retinue.core import ask_agent
 class FakeEngine:
     def __init__(self, workspace):
         self.calls = []
+        self.turns = []
         self.workspace = workspace
 
-    async def run(self, prompt, session_id, on_text=None):
+    async def run(self, prompt, session_id, on_text=None, turn_id=None):
         self.calls.append((prompt, session_id))
+        self.turns.append(turn_id)
         if on_text and prompt == "hello":
             await on_text("ec")
         if prompt == "file":
@@ -62,7 +64,8 @@ async def _run(tmp_path):
 
         assert await ask_agent(url, "hello", "ctx-1", on_progress) == ("done", "echo: hello", [])
         assert progress == ["ec"], "the partial reply streams before the answer"
-        assert await ask_agent(url, "again", "ctx-1") == ("done", "echo: again", [])
+        assert await ask_agent(url, "again", "ctx-1", None, "turn-7") == ("done", "echo: again", [])
+        assert engine.turns[-1] == "turn-7", "the router's turn id reaches the engine"
         assert engine.calls[1] == ("again", "sess-1"), "second turn must resume the stored session"
         status, answer, _ = await ask_agent(url, "fail", "ctx-2")
         assert status == "failed" and answer == "boom"

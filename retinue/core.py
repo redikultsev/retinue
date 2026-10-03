@@ -17,6 +17,7 @@ from a2a.client import ClientConfig, create_client
 from a2a.helpers import get_message_text, new_text_message
 from a2a.types import Role, SendMessageRequest
 
+from .bus import MAX_PARALLEL, MAX_TEXT, Denied, Turns, check
 from .config import RouterAgent
 from .protocol import Store
 
@@ -49,6 +50,7 @@ class Channel(Protocol):
     async def mirror(self, agent_id: str, origin: str, text: str) -> None: ...
     async def notice(self, agent_id: str, text: str) -> None: ...
     async def protocol(self, line: str) -> None: ...
+    async def trace(self, agent_id: str, tree_id: str, text: str) -> None: ...  # agents talking, under agent_id
 
 
 # Called with the agent's partial reply while it is being written.
@@ -56,8 +58,11 @@ OnProgress = Callable[[str], Awaitable[None]]
 STATES = {3: "done", 4: "failed", 7: "rejected"}
 
 
-async def ask_agent(url: str, text: str, context_id: str,
-                    on_progress: OnProgress | None = None) -> tuple[str, str, list[AgentFile]]:
+TURN_KEY = "retinue/turn"  # message metadata: the turn id an agent passes back when it uses the bus
+
+
+async def ask_agent(url: str, text: str, context_id: str, on_progress: OnProgress | None = None,
+                    turn_id: str | None = None) -> tuple[str, str, list[AgentFile]]:
     """Send one owner message to an agent over A2A (streaming); return (status, answer text, attached files).
 
     WORKING status messages carry the partial reply; artifacts carry the final answer and files.
@@ -76,8 +81,10 @@ async def ask_agent(url: str, text: str, context_id: str,
                 answer = part.text
 
     try:
-        request = SendMessageRequest(message=new_text_message(text, context_id=context_id, role=Role.ROLE_USER))
-        async for response in client.send_message(request):
+        message = new_text_message(text, context_id=context_id, role=Role.ROLE_USER)
+        if turn_id:
+            message.metadata.update({TURN_KEY: turn_id})
+        async for response in client.send_message(SendMessageRequest(message=message)):
             if response.HasField("status_update"):
                 state = response.status_update.status
                 message_text = get_message_text(state.message) if state.HasField("message") else ""
@@ -111,6 +118,8 @@ class Core:
         self.owner = owner
         self.ask = ask
         self.channels: list[Channel] = []
+        self.turns = Turns()
+        self.bus_slots = asyncio.Semaphore(MAX_PARALLEL)
 
     async def start(self, channels: list[Channel]) -> None:
         for agent_id in self.agents:
@@ -157,14 +166,17 @@ class Core:
         records = [c for c in self.channels if c is not origin and c.is_record]
         await self._each(records, "mirror", agent.id, origin.name, shown or text)
         typing = asyncio.create_task(self._keep_typing(origin, agent.id))
+        turn = self.turns.open_root(agent.id)
         status, answer, files = "error", "", []
         try:
             status, answer, files = await self.ask(agent.url, text, context_id,
-                                                   lambda partial: self._each([origin], "draft", agent.id, partial))
+                                                   lambda partial: self._each([origin], "draft", agent.id, partial),
+                                                   turn.id)
         except Exception as exc:  # the owner sees the failure instead of silence
             log.exception("agent %s failed", agent.id)
             answer = f"Агент недоступен: {type(exc).__name__}"
         finally:
+            self.turns.close(turn)
             typing.cancel()
             await self._each([origin], "typing", agent.id, False)
         if status == "done" and not answer.strip() and done_text:
@@ -175,6 +187,47 @@ class Core:
         line = (f"{origin.name}: {self.owner} → {agent.name}: {status}, {len(text)} → {len(answer)} знаков"
                 + (f", файлов: {len(files)}" if files else ""))
         await self._each(self.channels, "protocol", line)
+
+    async def bus_call(self, caller: RouterAgent, turn_id: str, target_id: str, text: str) -> tuple[bool, str]:
+        """An agent asks another agent. The caller is authenticated by its bus token; the rest is checked here."""
+        turn = self.turns.turns.get(turn_id)
+        if turn is None or turn.agent_id != caller.id:
+            return False, "Нет активного запроса: обращаться к агентам можно только во время ответа."
+        target = self.agents.get(target_id)
+        tree = turn.tree
+        try:
+            check(caller, target, turn)
+        except Denied as exc:
+            await self._trace(tree, f"⛔ **{caller.name} → {target.name if target else target_id}:** отказано — {exc}")
+            self.store.log(conversation_id=f"tree-{tree.id}", source=caller.id, target=target_id, status="denied",
+                           input_chars=len(text), output_chars=0, channel="bus")
+            return False, f"Отказано: {exc}."
+        tree.calls += 1
+        text = text[:MAX_TEXT]
+        await self._trace(tree, f"**{caller.name} → {target.name}:**\n\n{text}")
+        child = self.turns.open_child(turn, target.id)
+        status, answer = "error", ""
+        try:
+            async with self.bus_slots:
+                status, answer, files = await self.ask(target.url, text, f"bus-{tree.id}-{target.id}", None, child.id)
+            if files:
+                answer += f"\n\n(файлы агента не переданы: {', '.join(f.name for f in files)})"
+        except Exception as exc:
+            log.exception("bus call %s -> %s failed", caller.id, target.id)
+            answer = f"Агент недоступен: {type(exc).__name__}"
+        finally:
+            self.turns.close(child)
+        if target.trust_class == "web":
+            tree.tainted = True
+        await self._trace(tree, f"**{target.name} → {caller.name}** ({status}):\n\n{answer}")
+        self.store.log(conversation_id=f"tree-{tree.id}", source=caller.id, target=target.id, status=status,
+                       input_chars=len(text), output_chars=len(answer), channel="bus")
+        await self._each(self.channels, "protocol",
+                         f"bus: {caller.name} → {target.name}: {status}, {len(text)} → {len(answer)} знаков")
+        return status == "done", answer
+
+    async def _trace(self, tree, text: str) -> None:
+        await self._each(self.channels, "trace", tree.root_agent, tree.id, text)
 
     def _audience(self, origin: Channel) -> list[Channel]:
         return [origin, *(c for c in self.channels if c is not origin and c.is_record)]

@@ -37,8 +37,10 @@ class TelegramChannel:
     name = "telegram"
     is_record = False
 
-    def __init__(self, cfg: TelegramConfig, agents: list[RouterAgent], store: Store) -> None:
+    def __init__(self, cfg: TelegramConfig, agents: list[RouterAgent], store: Store,
+                 default_agent: str | None = None) -> None:
         self.cfg = cfg
+        self.default_agent = default_agent if default_agent in {a.id for a in agents} else None
         self.agents = {a.id: a for a in agents}
         self.store = store
         self.core: Core | None = None
@@ -120,7 +122,8 @@ class TelegramChannel:
             return
         command = text.split()[0].split("@")[0].lower()
         if command == "/start":
-            await self.send_html(None, "Пиши в тему агента. В общем чате — <code>@агент текст</code>.")
+            await self.send_html(None, "Пиши в тему агента или сюда — тогда ответит «Главная» и сама спросит "
+                                       "нужных агентов. Адресно: <code>@агент текст</code>.")
             return
         text = SLASH_COMMANDS.get(command, command) + text[len(text.split()[0]):] if command in SLASH_COMMANDS else text
         thread = message.get("message_thread_id") if message.get("is_topic_message") else None
@@ -143,8 +146,8 @@ class TelegramChannel:
                 if key in (agent.id.lower(), agent.name.lower()):
                     return agent.id, match.group(2)
         if not self.topics:
-            return self.store.get("telegram.last_agent"), text
-        return None, text
+            return self.store.get("telegram.last_agent") or self.default_agent, text
+        return self.default_agent, text  # the general chat belongs to the Concierge, if there is one
 
     # --- outbound ----------------------------------------------------------------------------
 
@@ -210,3 +213,6 @@ class TelegramChannel:
 
     async def protocol(self, line: str) -> None:
         pass  # the protocol lives in Matrix and in the Store
+
+    async def trace(self, agent_id: str, tree_id: str, text: str) -> None:
+        pass  # agents' conversation is shown in Matrix

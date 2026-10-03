@@ -8,7 +8,8 @@ skills:
     description: Найти перелёт, поезд или отель по заданному маршруту и датам, сравнить и дать ссылки на выдачу.
     examples: ["Белград → Ереван, 10–15 ноября, 1 взрослый, ручная кладь"]
 engine:
-  allowed_tools: ["Read(./**)", "Write(./**)", "Glob", "WebSearch", "WebFetch"]
+  # Edit(path) also governs Write; Claude Code ignores Write(path) rules.
+  allowed_tools: ["Read(./**)", "Edit(./**)", "Glob", "WebSearch", "WebFetch"]
   disallowed_tools: ["Bash", "Read(//proc/**)", "Read(//run/**)", "Read(//etc/**)", "Read(//root/**)", "Read(//home/**)"]
   max_turns: 40
 workspace: /workspace

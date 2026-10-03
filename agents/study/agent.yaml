@@ -8,7 +8,8 @@ skills:
     description: Объяснить тему, составить план изучения, найти материалы, вести конспекты.
     examples: ["Составь план по RAG на 2 недели", "Объясни, как работает BM25"]
 engine:
-  allowed_tools: ["Read(./**)", "Edit(./**)", "Write(./**)", "Glob", "Grep", "WebSearch", "WebFetch"]
+  # Edit(path) also governs Write; Claude Code ignores Write(path) rules.
+  allowed_tools: ["Read(./**)", "Edit(./**)", "Glob", "Grep", "WebSearch", "WebFetch"]
   disallowed_tools: ["Bash", "Read(//proc/**)", "Read(//run/**)", "Read(//etc/**)", "Read(//root/**)", "Read(//home/**)"]
   max_turns: 40
 workspace: /workspace

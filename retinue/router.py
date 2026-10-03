@@ -122,9 +122,33 @@ class Router:
         agent = self.agents.get(agent_id)
         if agent is None:
             return
-        asyncio.create_task(self.forward(agent, event.room_id, context_id, event.content.body))
+        text = event.content.body.strip()
+        if text.startswith("!"):
+            await self.command(agent, event.room_id, context_id, text)
+            return
+        asyncio.create_task(self.forward(agent, event.room_id, context_id, text))
 
-    async def forward(self, agent: RouterAgent, room_id: RoomID, context_id: str, text: str) -> None:
+    async def command(self, agent: RouterAgent, room_id: RoomID, context_id: str, text: str) -> None:
+        """Room commands, handled by the router itself; the agent never sees them."""
+        intent = self.az.intent.user(UserID(self.cfg.agent_mxid(agent.id)))
+        name = text.split()[0].lower()
+        if name == "!new":
+            new_context = f"room-{uuid.uuid4()}"
+            self.store.save_room(agent.id, room_id, new_context)
+            self.store.log(conversation_id=new_context, source=self.cfg.owner, target=agent.id, status="new",
+                           input_chars=0, output_chars=0)
+            reply = "Новый разговор. Прошлый контекст агент больше не видит."
+        elif name == "!compact":
+            # Claude Code compacts the session on the /compact slash command and keeps the same session id.
+            asyncio.create_task(self.forward(agent, room_id, context_id, "/compact", done_text="Контекст сжат."))
+            return
+        else:
+            reply = "Команды: `!new` — новый разговор, `!compact` — сжать контекст, `!help` — эта справка."
+        body, html = render(reply)
+        await intent.send_text(room_id, text=body, html=html, msgtype=MessageType.NOTICE)
+
+    async def forward(self, agent: RouterAgent, room_id: RoomID, context_id: str, text: str,
+                      done_text: str = "") -> None:
         intent = self.az.intent.user(UserID(self.cfg.agent_mxid(agent.id)))
         text = text[:MAX_INPUT_CHARS]
         status, answer = "error", ""
@@ -137,6 +161,8 @@ class Router:
         finally:
             typing.cancel()
             await intent.set_typing(room_id, timeout=0)
+        if status == "done" and not answer.strip() and done_text:
+            answer = done_text
         body, html = render(answer)
         # m.text, not m.notice: clients grey out notices, and the router never reacts to agents anyway.
         await intent.send_text(room_id, text=body, html=html, msgtype=MessageType.TEXT)

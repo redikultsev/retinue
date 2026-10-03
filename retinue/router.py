@@ -138,7 +138,8 @@ class Router:
             typing.cancel()
             await intent.set_typing(room_id, timeout=0)
         body, html = render(answer)
-        await intent.send_text(room_id, text=body, html=html, msgtype=MessageType.NOTICE)
+        # m.text, not m.notice: clients grey out notices, and the router never reacts to agents anyway.
+        await intent.send_text(room_id, text=body, html=html, msgtype=MessageType.TEXT)
         self.store.log(conversation_id=context_id, source=self.cfg.owner, target=agent.id, status=status,
                        input_chars=len(text), output_chars=len(answer))
         await self.post_protocol(f"{self.cfg.owner} → {agent.name}: {status}, {len(text)} → {len(answer)} знаков")

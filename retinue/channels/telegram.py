@@ -25,6 +25,7 @@ log = logging.getLogger("retinue.telegram")
 API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 50
 TOPIC_COLORS = [7322096, 16766590, 13338331, 9367192, 16749490, 16478047]
+TELEGRAM_DRAFT_LIMIT = 4096
 SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/help": "!help"}
 
 
@@ -43,6 +44,7 @@ class TelegramChannel:
         self.core: Core | None = None
         self.topics = False
         self.typing_refresh_s = 4.0
+        self.drafting: dict[str, str] = {}  # agent -> partial reply streaming now
         self.http = httpx.AsyncClient(timeout=POLL_TIMEOUT_S + 15)
 
     # --- Bot API -----------------------------------------------------------------------------
@@ -62,8 +64,8 @@ class TelegramChannel:
         self.core = core
         me = await self.call("getMe")
         self.topics = bool(me.get("has_topics_enabled"))
-        # A draft preview lives 30 s; a chat action 5 s.
-        self.typing_refresh_s = 20.0 if self.topics else 4.0
+        # A chat action lasts 5 s.
+        self.typing_refresh_s = 4.0
         await self.call("setMyCommands", commands=[
             {"command": "new", "description": "новый разговор с агентом этой темы"},
             {"command": "compact", "description": "сжать контекст"},
@@ -161,17 +163,37 @@ class TelegramChannel:
             plain = re.sub(r"<[^>]+>", "", html).replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
             await self.call("sendMessage", chat_id=self.cfg.owner_id, message_thread_id=thread, text=plain)
 
+    def _draft_id(self, agent_id: str) -> int:
+        return zlib.crc32(agent_id.encode()) or 1
+
     async def typing(self, agent_id: str, active: bool) -> None:
         if not active:
             return  # the final message replaces the draft; a chat action expires by itself
+        thread = self._thread(agent_id)
+        await self.call("sendChatAction", chat_id=self.cfg.owner_id, message_thread_id=thread, action="typing")
         if self.topics:
-            # An empty draft shows Telegram's own «Thinking…» placeholder in the agent's topic.
-            await self.call("sendMessageDraft", chat_id=self.cfg.owner_id, message_thread_id=self._thread(agent_id),
-                            draft_id=zlib.crc32(agent_id.encode()) or 1, text="")
-        else:
-            await self.call("sendChatAction", chat_id=self.cfg.owner_id, action="typing")
+            # A draft lives 30 s: repeat it while a long tool call runs. An empty draft shows Telegram's own
+            # «Thinking…» placeholder until text starts streaming.
+            await self.draft(agent_id, self.drafting.get(agent_id, ""))
+
+    async def draft(self, agent_id: str, text: str) -> None:
+        """Stream the partial reply into the topic; the final sendMessage replaces it."""
+        if not self.topics:
+            return
+        self.drafting[agent_id] = text
+        html = render_telegram(text)[0][:TELEGRAM_DRAFT_LIMIT] if text.strip() else ""
+        params = dict(chat_id=self.cfg.owner_id, message_thread_id=self._thread(agent_id),
+                      draft_id=self._draft_id(agent_id))
+        if not html:
+            await self.call("sendMessageDraft", text="", **params)
+            return
+        try:
+            await self.call("sendMessageDraft", text=html, parse_mode="HTML", **params)
+        except TelegramError:  # half-written markup that Telegram refuses: show it plain
+            await self.call("sendMessageDraft", text=text[:TELEGRAM_DRAFT_LIMIT], **params)
 
     async def send(self, agent_id: str, text: str, files: list[AgentFile]) -> None:
+        self.drafting.pop(agent_id, None)
         prefix = "" if self.topics else f"<b>{self.agents[agent_id].name}</b>\n\n"
         for i, html in enumerate(render_telegram(text)):
             await self.send_html(agent_id, (prefix if i == 0 else "") + html)

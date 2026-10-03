@@ -7,6 +7,7 @@ import asyncio
 import logging
 import mimetypes
 import sqlite3
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -28,6 +29,7 @@ log = logging.getLogger("retinue.agent")
 OUTBOX = "out"  # files the agent writes here during a turn go to the owner as attachments
 MAX_FILES = 10
 MAX_FILE_BYTES = 15 * 1024 * 1024
+PROGRESS_INTERVAL_S = 0.8  # how often a partial reply is pushed to the router
 
 
 class Outbox:
@@ -97,7 +99,16 @@ class EngineExecutor(AgentExecutor):
         # One turn at a time per conversation: the engine session is not concurrent-safe.
         async with self.locks[task.context_id]:
             before = self.outbox.snapshot() if self.outbox else {}
-            result = await self.engine.run(prompt, self.sessions.get(task.context_id))
+            last = 0.0
+
+            async def on_text(draft: str) -> None:
+                # The partial reply travels as a WORKING status message; the final answer is the artifact.
+                nonlocal last
+                if time.monotonic() - last >= PROGRESS_INTERVAL_S:
+                    last = time.monotonic()
+                    await updater.update_status(TaskState.TASK_STATE_WORKING, message=new_text_message(draft))
+
+            result = await self.engine.run(prompt, self.sessions.get(task.context_id), on_text)
             if result.session_id:
                 self.sessions.set(task.context_id, result.session_id)
             files, skipped = self.outbox.changed(before) if self.outbox else ([], [])
@@ -126,7 +137,7 @@ def build_card(cfg: AgentConfig) -> AgentCard:
         version="0.1.0",
         default_input_modes=["text/plain"],
         default_output_modes=["text/markdown"],
-        capabilities=AgentCapabilities(streaming=False),
+        capabilities=AgentCapabilities(streaming=True),
         supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=cfg.public_url, protocol_version="1.0")],
         skills=[
             AgentSkill(id=s.id, name=s.name, description=s.description, tags=[cfg.trust_class], examples=s.examples)

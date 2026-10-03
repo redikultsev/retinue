@@ -18,6 +18,9 @@ class FakeChannel:
     async def typing(self, agent_id, active):
         pass
 
+    async def draft(self, agent_id, text):
+        self.events.append(("draft", agent_id, text))
+
     async def send(self, agent_id, text, files):
         self.events.append(("send", agent_id, text, [f.name for f in files]))
 
@@ -34,8 +37,9 @@ class FakeChannel:
 async def _run(tmp_path):
     contexts = []
 
-    async def fake_ask(url, text, context_id):
+    async def fake_ask(url, text, context_id, on_progress=None):
         contexts.append(context_id)
+        await on_progress("…")
         return "done", f"echo: {text}", [AgentFile("a.txt", "text/plain", b"x")] if text == "file" else []
 
     store = Store(str(tmp_path / "r.sqlite"))
@@ -55,6 +59,7 @@ async def _run(tmp_path):
     assert contexts[0] == contexts[1], "both channels talk in the same conversation"
     assert ("send", "travel", "echo: из матрикса", []) in matrix.events
     assert not any(e[0] == "send" for e in telegram.events[:1]), "a Matrix turn is not copied to Telegram"
+    assert ("draft", "travel", "…") in telegram.events, "the partial reply goes to the origin channel"
     assert ("mirror", "travel", "telegram", "file") in matrix.events, "Matrix records what was said in Telegram"
     assert ("send", "travel", "echo: file", ["a.txt"]) in telegram.events
     assert ("send", "travel", "echo: file", ["a.txt"]) in matrix.events

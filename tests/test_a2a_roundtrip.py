@@ -20,8 +20,10 @@ class FakeEngine:
         self.calls = []
         self.workspace = workspace
 
-    async def run(self, prompt, session_id):
+    async def run(self, prompt, session_id, on_text=None):
         self.calls.append((prompt, session_id))
+        if on_text and prompt == "hello":
+            await on_text("ec")
         if prompt == "file":
             (self.workspace / "out").mkdir(exist_ok=True)
             (self.workspace / "out" / "plan.html").write_text("<h1>plan</h1>")
@@ -53,7 +55,13 @@ async def _run(tmp_path):
         await asyncio.sleep(0.05)
     try:
         url = f"http://127.0.0.1:{port}"
-        assert await ask_agent(url, "hello", "ctx-1") == ("done", "echo: hello", [])
+        progress = []
+
+        async def on_progress(text):
+            progress.append(text)
+
+        assert await ask_agent(url, "hello", "ctx-1", on_progress) == ("done", "echo: hello", [])
+        assert progress == ["ec"], "the partial reply streams before the answer"
         assert await ask_agent(url, "again", "ctx-1") == ("done", "echo: again", [])
         assert engine.calls[1] == ("again", "sess-1"), "second turn must resume the stored session"
         status, answer, _ = await ask_agent(url, "fail", "ctx-2")

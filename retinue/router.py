@@ -24,6 +24,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     # The homeserver sends hs_token in the query string; the access log would write it to disk.
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+    # httpx logs every request URL, and Bot API URLs contain the bot token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     cfg = RouterConfig.load(args.config)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

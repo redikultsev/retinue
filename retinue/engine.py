@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, StreamEvent, query
 from claude_agent_sdk._errors import ResultError
 
 from .config import EngineConfig
@@ -29,8 +30,12 @@ class EngineResult:
     duration_ms: int = 0
 
 
+# Called with the text of the reply being written so far (the current assistant message, not a delta).
+OnText = Callable[[str], Awaitable[None]]
+
+
 class Engine(Protocol):
-    async def run(self, prompt: str, session_id: str | None) -> EngineResult: ...
+    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None) -> EngineResult: ...
 
 
 class ClaudeEngine:
@@ -44,19 +49,19 @@ class ClaudeEngine:
         self.cfg = cfg
         self.workspace = workspace
 
-    async def run(self, prompt: str, session_id: str | None) -> EngineResult:
+    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None) -> EngineResult:
         try:
-            return await self._run(prompt, session_id)
+            return await self._run(prompt, session_id, on_text)
         except ResultError as exc:
             # The session transcript is gone (e.g. lost config dir): start over instead of failing every turn.
             if not session_id or "No conversation found" not in str(exc):
                 raise
             log.warning("session %s not found, starting a new one", session_id)
-            result = await self._run(prompt, None)
+            result = await self._run(prompt, None, on_text)
             result.text = SESSION_LOST + result.text
             return result
 
-    async def _run(self, prompt: str, session_id: str | None) -> EngineResult:
+    async def _run(self, prompt: str, session_id: str | None, on_text: OnText | None) -> EngineResult:
         # session_id comes only from our own state DB, never from a message (CVE-2026-96620).
         options = ClaudeAgentOptions(
             cwd=self.workspace,
@@ -68,11 +73,20 @@ class ClaudeEngine:
             max_budget_usd=self.cfg.max_budget_usd,
             model=self.cfg.model,
             resume=session_id,
+            include_partial_messages=on_text is not None,
         )
         result: ResultMessage | None = None
+        draft = ""
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, ResultMessage):
                 result = message
+            elif isinstance(message, StreamEvent) and on_text and message.parent_tool_use_id is None:
+                event = message.event
+                if event.get("type") == "message_start":
+                    draft = ""  # a new assistant message (e.g. after a tool call) starts a new draft
+                elif event.get("type") == "content_block_delta" and event["delta"].get("type") == "text_delta":
+                    draft += event["delta"]["text"]
+                    await on_text(draft)
         if result is None:
             return EngineResult(text="Агент не вернул результат.", session_id=session_id, is_error=True)
         text = result.result or ("; ".join(result.errors or []) or "Пустой ответ.")
@@ -89,7 +103,9 @@ class ClaudeEngine:
 class EchoEngine:
     """No-model engine for smoke tests: answers with the prompt."""
 
-    async def run(self, prompt: str, session_id: str | None) -> EngineResult:
+    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None) -> EngineResult:
+        if on_text:
+            await on_text("echo: ")
         return EngineResult(text=f"echo: {prompt}", session_id=session_id or "echo-session", is_error=False)
 
 

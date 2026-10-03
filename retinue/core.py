@@ -9,11 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 import httpx
 from a2a.client import ClientConfig, create_client
-from a2a.helpers import get_message_text, get_stream_response_text, new_text_message
+from a2a.helpers import get_message_text, new_text_message
 from a2a.types import Role, SendMessageRequest
 
 from .config import RouterAgent
@@ -43,34 +44,64 @@ class Channel(Protocol):
 
     async def start(self, core: Core) -> None: ...
     async def typing(self, agent_id: str, active: bool) -> None: ...
+    async def draft(self, agent_id: str, text: str) -> None: ...  # partial reply; may ignore
     async def send(self, agent_id: str, text: str, files: list[AgentFile]) -> None: ...
     async def mirror(self, agent_id: str, origin: str, text: str) -> None: ...
     async def notice(self, agent_id: str, text: str) -> None: ...
     async def protocol(self, line: str) -> None: ...
 
 
-async def ask_agent(url: str, text: str, context_id: str) -> tuple[str, str, list[AgentFile]]:
-    """Send one owner message to an agent over A2A; return (status, answer text, attached files)."""
-    status, parts, files = "error", [], []
+# Called with the agent's partial reply while it is being written.
+OnProgress = Callable[[str], Awaitable[None]]
+STATES = {3: "done", 4: "failed", 7: "rejected"}
+
+
+async def ask_agent(url: str, text: str, context_id: str,
+                    on_progress: OnProgress | None = None) -> tuple[str, str, list[AgentFile]]:
+    """Send one owner message to an agent over A2A (streaming); return (status, answer text, attached files).
+
+    WORKING status messages carry the partial reply; artifacts carry the final answer and files.
+    """
+    status, answer, status_text, files = "error", "", "", []
     http = httpx.AsyncClient(timeout=AGENT_TIMEOUT)
-    client = await create_client(agent=url, client_config=ClientConfig(streaming=False, httpx_client=http))
+    client = await create_client(agent=url, client_config=ClientConfig(streaming=True, httpx_client=http))
+
+    def take_artifact(artifact) -> None:
+        nonlocal answer
+        for part in artifact.parts:
+            if part.raw:
+                files.append(AgentFile(part.filename or "file", part.media_type or "application/octet-stream",
+                                       part.raw))
+            elif part.text:
+                answer = part.text
+
     try:
         request = SendMessageRequest(message=new_text_message(text, context_id=context_id, role=Role.ROLE_USER))
         async for response in client.send_message(request):
-            chunk = get_stream_response_text(response)
-            if response.HasField("task"):
+            if response.HasField("status_update"):
+                state = response.status_update.status
+                message_text = get_message_text(state.message) if state.HasField("message") else ""
+                if int(state.state) == 2:  # WORKING
+                    if message_text and on_progress:
+                        await on_progress(message_text)
+                else:
+                    status = STATES.get(int(state.state), status)
+                    status_text = message_text or status_text
+            elif response.HasField("artifact_update"):
+                take_artifact(response.artifact_update.artifact)
+            elif response.HasField("task"):  # a non-streaming agent answers with the whole task
                 task = response.task
-                status = {3: "done", 4: "failed", 7: "rejected"}.get(int(task.status.state), status)
-                if not chunk and task.status.HasField("message"):
-                    chunk = get_message_text(task.status.message)
-                files = [AgentFile(p.filename or "file", p.media_type or "application/octet-stream", p.raw)
-                         for a in task.artifacts for p in a.parts if p.raw]
-            if chunk:
-                parts.append(chunk)
+                status = STATES.get(int(task.status.state), status)
+                if task.status.HasField("message"):
+                    status_text = get_message_text(task.status.message)
+                for artifact in task.artifacts:
+                    take_artifact(artifact)
+            elif response.HasField("message"):
+                status, answer = "done", get_message_text(response.message)
     finally:
         await client.close()
         await http.aclose()
-    return status, parts[-1] if parts else "", files
+    return status, answer or status_text, files
 
 
 class Core:
@@ -128,7 +159,8 @@ class Core:
         typing = asyncio.create_task(self._keep_typing(origin, agent.id))
         status, answer, files = "error", "", []
         try:
-            status, answer, files = await self.ask(agent.url, text, context_id)
+            status, answer, files = await self.ask(agent.url, text, context_id,
+                                                   lambda partial: self._each([origin], "draft", agent.id, partial))
         except Exception as exc:  # the owner sees the failure instead of silence
             log.exception("agent %s failed", agent.id)
             answer = f"Агент недоступен: {type(exc).__name__}"

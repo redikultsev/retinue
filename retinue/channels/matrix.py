@@ -102,6 +102,9 @@ class MatrixChannel:
         if room_id := self._room(agent_id):
             await self.intent(agent_id).set_typing(room_id, timeout=int(self.typing_refresh_s * 2000) if active else 0)
 
+    async def draft(self, agent_id: str, text: str) -> None:
+        pass  # Element X shows no live edits well; «печатает…» stays until the answer
+
     async def send(self, agent_id: str, text: str, files: list[AgentFile]) -> None:
         room_id = self._room(agent_id)
         if room_id is None:

@@ -21,10 +21,10 @@ from a2a.types import Role, SendMessageRequest
 from mautrix.appservice import AppService
 from mautrix.appservice.state_store import FileASStateStore
 from mautrix.types import EventType, MessageEvent, MessageType, RoomID, UserID
-from mautrix.util.markdown import render as render_markdown
 
 from .config import RouterAgent, RouterConfig
 from .protocol import Store
+from .render import render
 
 log = logging.getLogger("retinue.router")
 PROTOCOL = "_protocol"
@@ -137,8 +137,8 @@ class Router:
         finally:
             typing.cancel()
             await intent.set_typing(room_id, timeout=0)
-        await intent.send_text(room_id, text=answer or "(пусто)", html=render_markdown(answer or "(пусто)"),
-                               msgtype=MessageType.NOTICE)
+        body, html = render(answer)
+        await intent.send_text(room_id, text=body, html=html, msgtype=MessageType.NOTICE)
         self.store.log(conversation_id=context_id, source=self.cfg.owner, target=agent.id, status=status,
                        input_chars=len(text), output_chars=len(answer))
         await self.post_protocol(f"{self.cfg.owner} → {agent.name}: {status}, {len(text)} → {len(answer)} знаков")

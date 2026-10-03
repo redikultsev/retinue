@@ -14,6 +14,7 @@ import asyncio
 import logging
 import uuid
 
+import httpx
 from a2a.client import ClientConfig, create_client
 from a2a.helpers import get_message_text, get_stream_response_text, new_text_message
 from a2a.types import Role, SendMessageRequest
@@ -28,12 +29,16 @@ from .protocol import Store
 log = logging.getLogger("retinue.router")
 PROTOCOL = "_protocol"
 MAX_INPUT_CHARS = 20_000
+# An agent turn with web search takes minutes; the A2A client default timeout is seconds.
+AGENT_TIMEOUT = httpx.Timeout(900, connect=10)
+TYPING_REFRESH_S = 25
 
 
 async def ask_agent(url: str, text: str, context_id: str) -> tuple[str, str]:
     """Send one owner message to an agent over A2A; return (status, answer text)."""
     status, parts = "error", []
-    client = await create_client(agent=url, client_config=ClientConfig(streaming=False))
+    http = httpx.AsyncClient(timeout=AGENT_TIMEOUT)
+    client = await create_client(agent=url, client_config=ClientConfig(streaming=False, httpx_client=http))
     try:
         request = SendMessageRequest(message=new_text_message(text, context_id=context_id, role=Role.ROLE_USER))
         async for response in client.send_message(request):
@@ -47,6 +52,7 @@ async def ask_agent(url: str, text: str, context_id: str) -> tuple[str, str]:
                 parts.append(chunk)
     finally:
         await client.close()
+        await http.aclose()
     return status, parts[-1] if parts else ""
 
 
@@ -122,19 +128,27 @@ class Router:
         intent = self.az.intent.user(UserID(self.cfg.agent_mxid(agent.id)))
         text = text[:MAX_INPUT_CHARS]
         status, answer = "error", ""
+        typing = asyncio.create_task(self.keep_typing(intent, room_id))
         try:
-            await intent.set_typing(room_id, timeout=120_000)
             status, answer = await ask_agent(agent.url, text, context_id)
         except Exception as exc:  # the owner sees the failure instead of silence
             log.exception("agent %s failed", agent.id)
             answer = f"Агент недоступен: {type(exc).__name__}"
         finally:
+            typing.cancel()
             await intent.set_typing(room_id, timeout=0)
         await intent.send_text(room_id, text=answer or "(пусто)", html=render_markdown(answer or "(пусто)"),
                                msgtype=MessageType.NOTICE)
         self.store.log(conversation_id=context_id, source=self.cfg.owner, target=agent.id, status=status,
                        input_chars=len(text), output_chars=len(answer))
         await self.post_protocol(f"{self.cfg.owner} → {agent.name}: {status}, {len(text)} → {len(answer)} знаков")
+
+    @staticmethod
+    async def keep_typing(intent, room_id: RoomID) -> None:
+        """Clients drop a typing notice after its timeout, so refresh it while the agent works."""
+        while True:
+            await intent.set_typing(room_id, timeout=TYPING_REFRESH_S * 2 * 1000)
+            await asyncio.sleep(TYPING_REFRESH_S)
 
     async def post_protocol(self, line: str) -> None:
         found = self.store.room(PROTOCOL)

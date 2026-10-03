@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import sys
 
 import httpx
@@ -43,7 +44,7 @@ def main() -> None:
     reg.add_argument("--username", required=True)
     args = parser.parse_args()
     if args.cmd == "register":
-        token = getpass.getpass("registration token: ")
+        token = os.environ.get("MATRIX_REGISTRATION_TOKEN") or getpass.getpass("registration token: ")
         password = getpass.getpass("new password: ")
         if password != getpass.getpass("repeat password: "):
             sys.exit("passwords differ")

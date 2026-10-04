@@ -9,9 +9,12 @@ Rules (architecture.md §15):
 - the caller may call the target (`can_call` grant);
 - no loops (the target is not already in the chain), depth at most MAX_DEPTH, MAX_CALLS per owner message,
   at most MAX_PARALLEL bus calls at once;
-- trust classes: free text never goes from an agent with the base to one with the web, nor back; once a
-  chain has read a web agent's answer it cannot reach an agent with the base. Typed skills between the
-  classes come later, with schemas.
+- trust classes: free text never goes from an agent with the base to one with the web, nor back. A chain
+  that has read a web agent's answer cannot reach an agent with the base, and a chain that has read an
+  answer of an agent with the base cannot reach the web. Typed skills between the classes come later.
+
+A bus call runs in the target's own conversation (one agent, one memory), so the owner sees it in the
+target's room as well. That is why the second taint rule matters: an agent's memory travels with its answers.
 """
 
 from __future__ import annotations
@@ -47,6 +50,7 @@ class Tree:
     root_agent: str
     calls: int = 0
     tainted: bool = False  # the chain has read text written by an agent with the web
+    private: bool = False  # the chain has read text written by an agent with the base
 
 
 @dataclass
@@ -102,6 +106,8 @@ def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
         raise Denied("агент с базой не пишет свободным текстом агенту с вебом: нужен типизированный навык")
     if turn.tree.tainted and target.trust_class == "private":
         raise Denied("в цепочке уже был ответ агента с вебом, к агенту с базой она не пойдёт")
+    if turn.tree.private and target.trust_class == "web":
+        raise Denied("в цепочке уже был ответ агента с базой, к агенту с вебом она не пойдёт")
 
 
 class BusServer:

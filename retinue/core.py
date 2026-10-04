@@ -204,12 +204,14 @@ class Core:
             return False, f"Отказано: {exc}."
         tree.calls += 1
         text = text[:MAX_TEXT]
-        await self._trace(tree, f"**{caller.name} → {target.name}:**\n\n{text}")
+        await self._trace(tree, f"**{caller.name} → {target.name}:**\n\n{text}", target.id)
         child = self.turns.open_child(turn, target.id)
         status, answer = "error", ""
         try:
             async with self.bus_slots:
-                status, answer, files = await self.ask(target.url, text, f"bus-{tree.id}-{target.id}", None, child.id)
+                # The target's own conversation: one agent, one memory, whoever asks.
+                status, answer, files = await self.ask(target.url, f"[Вопрос от агента «{caller.name}»]\n\n{text}",
+                                                       self.store.conversation(target.id), None, child.id)
             if files:
                 answer += f"\n\n(файлы агента не переданы: {', '.join(f.name for f in files)})"
         except Exception as exc:
@@ -217,17 +219,19 @@ class Core:
             answer = f"Агент недоступен: {type(exc).__name__}"
         finally:
             self.turns.close(child)
-        if target.trust_class == "web":
-            tree.tainted = True
-        await self._trace(tree, f"**{target.name} → {caller.name}** ({status}):\n\n{answer}")
+        tree.tainted |= target.trust_class == "web"
+        tree.private |= target.trust_class == "private"
+        await self._trace(tree, f"**{target.name} → {caller.name}** ({status}):\n\n{answer}", target.id)
         self.store.log(conversation_id=f"tree-{tree.id}", source=caller.id, target=target.id, status=status,
                        input_chars=len(text), output_chars=len(answer), channel="bus")
         await self._each(self.channels, "protocol",
                          f"bus: {caller.name} → {target.name}: {status}, {len(text)} → {len(answer)} знаков")
         return status == "done", answer
 
-    async def _trace(self, tree, text: str) -> None:
-        await self._each(self.channels, "trace", tree.root_agent, tree.id, text)
+    async def _trace(self, tree, text: str, target_id: str | None = None) -> None:
+        """Show agents talking in the owner's room and in the room of the agent being asked."""
+        for agent_id in dict.fromkeys(a for a in (tree.root_agent, target_id) if a):
+            await self._each(self.channels, "trace", agent_id, tree.id, text)
 
     def _audience(self, origin: Channel) -> list[Channel]:
         return [origin, *(c for c in self.channels if c is not origin and c.is_record)]

@@ -41,7 +41,8 @@ def test_rules(tmp_path):
         ok, text = await core.bus_call(by_id("concierge"), root.id, "travel", "BEG→EVN 10.11")
         assert ok and text == "t: ok"
         child_turn = asked[-1][3]
-        assert asked[-1][2] == f"bus-{root.tree.id}-travel", "bus calls do not touch the owner's conversation"
+        assert asked[-1][2] == core.store.conversation("travel"), "the target answers in its own conversation"
+        assert asked[-1][1].startswith("[Вопрос от агента «Главная»]")
 
         # web agent's answer taints the tree: the chain can no longer reach an agent with the base
         ok, text = await core.bus_call(by_id("concierge"), root.id, "career", "что с отпуском?")
@@ -73,6 +74,19 @@ def test_rules(tmp_path):
     traces = [e[2] for e in matrix.events if e[0] == "trace"]
     assert traces[0].startswith("**Главная → Путешествия:**") and "BEG→EVN" in traces[0]
     assert any(t.startswith("⛔") for t in traces)
+
+
+def test_private_answer_keeps_chain_off_the_web(tmp_path):
+    core, _, _ = make(tmp_path)
+
+    async def run():
+        root = core.turns.open_root("concierge")
+        ok, _ = await core.bus_call(by_id("concierge"), root.id, "career", "что с отпуском?")
+        assert ok
+        ok, text = await core.bus_call(by_id("concierge"), root.id, "travel", "билеты на эти даты")
+        assert not ok and "агента с базой" in text
+
+    asyncio.run(run())
 
 
 def test_depth_limit(tmp_path):

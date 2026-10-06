@@ -41,7 +41,9 @@ def main():
     for _ in range(30):
         time.sleep(1)
         chunk = call(token, "GET", f"/_matrix/client/v3/rooms/{room}/messages?dir=b&limit=5")["chunk"]
-        if any(e["type"] == "m.room.message" and e["content"].get("body") == "echo: ping" for e in chunk):
+        # The echo agent returns the whole request: the router's note with the time, then the message.
+        if any(e["type"] == "m.room.message" and e["content"].get("body", "").startswith("echo:")
+               and e["content"]["body"].rstrip().endswith("ping") for e in chunk):
             print("OK: agent answered over Matrix + A2A")
             return
     raise SystemExit("FAIL: no answer from the agent")

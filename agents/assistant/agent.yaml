@@ -1,0 +1,17 @@
+id: assistant
+name: Ассистентка
+description: Единственное лицо системы. Говорит с Владельцем и помнит разговор через архив.
+trust_class: private      # personal data, no web
+skills:
+  - id: talk
+    name: Разговор с Владельцем
+    description: Ответить Владельцу; о прошлом разговоре — найти в архиве и ответить с датой.
+    examples: ["Что ты советовала по Еревану?"]
+engine:
+  instructions: /agent/CLAUDE.md    # this folder is mounted read-only
+  run_root: /run/retinue            # tmpfs: a run's CLAUDE_CONFIG_DIR lives here and is removed after the run
+  tools: []                         # no built-in tool at all: no Bash, no files, no WebSearch, no WebFetch
+  disallowed_tools: [Bash, WebSearch, WebFetch]   # said twice on purpose: these three never, whatever `tools` says
+  bus_tools: [search_archive]       # ask_agent is not given at this stage
+  max_turns: 8
+public_url: http://assistant:9000

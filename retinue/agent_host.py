@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import logging
 import mimetypes
-import sqlite3
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -59,31 +58,9 @@ class Outbox:
         return send, skipped
 
 
-class SessionMap:
-    """A2A context id -> engine session id. The only source of `resume` values."""
-
-    def __init__(self, path: str) -> None:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path)
-        self.db.execute("CREATE TABLE IF NOT EXISTS sessions (context_id TEXT PRIMARY KEY, session_id TEXT NOT NULL)")
-        self.db.commit()
-
-    def get(self, context_id: str) -> str | None:
-        row = self.db.execute("SELECT session_id FROM sessions WHERE context_id = ?", (context_id,)).fetchone()
-        return row[0] if row else None
-
-    def set(self, context_id: str, session_id: str) -> None:
-        self.db.execute(
-            "INSERT INTO sessions VALUES (?, ?) ON CONFLICT(context_id) DO UPDATE SET session_id = excluded.session_id",
-            (context_id, session_id),
-        )
-        self.db.commit()
-
-
 class EngineExecutor(AgentExecutor):
-    def __init__(self, engine: Engine, sessions: SessionMap, outbox: Outbox | None = None) -> None:
+    def __init__(self, engine: Engine, outbox: Outbox | None = None) -> None:
         self.engine = engine
-        self.sessions = sessions
         self.outbox = outbox
         self.locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
@@ -98,7 +75,7 @@ class EngineExecutor(AgentExecutor):
             await updater.update_status(TaskState.TASK_STATE_REJECTED, message=new_text_message("Пустое сообщение."))
             return
         await updater.update_status(TaskState.TASK_STATE_WORKING)
-        # One turn at a time per conversation: the engine session is not concurrent-safe.
+        # One turn at a time per conversation; the order of the owner's messages is kept by the router.
         async with self.locks[task.context_id]:
             before = self.outbox.snapshot() if self.outbox else {}
             last = 0.0
@@ -112,9 +89,8 @@ class EngineExecutor(AgentExecutor):
 
             metadata = context.message.metadata if context.message else {}
             turn_id = str(metadata[TURN_KEY]) if TURN_KEY in metadata else None
-            result = await self.engine.run(prompt, self.sessions.get(task.context_id), on_text, turn_id)
-            if result.session_id:
-                self.sessions.set(task.context_id, result.session_id)
+            # A short run: no session is stored and none is resumed. The context id only groups A2A tasks.
+            result = await self.engine.run(prompt, on_text, turn_id)
             files, skipped = self.outbox.changed(before) if self.outbox else ([], [])
         metadata = {"num_turns": result.num_turns, "cost_usd": result.cost_usd, "duration_ms": result.duration_ms}
         if result.is_error:
@@ -159,7 +135,6 @@ def main() -> None:
     card = build_card(cfg)
     handler = DefaultRequestHandler(
         agent_executor=EngineExecutor(make_engine(cfg.engine, cfg.workspace, cfg.bus_url, cfg.bus_token),
-                                      SessionMap(cfg.state_db),
                                       Outbox(cfg.workspace)),
         task_store=InMemoryTaskStore(),
         agent_card=card,

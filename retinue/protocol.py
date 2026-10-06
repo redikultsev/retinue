@@ -6,6 +6,7 @@ viewer (Phoenix, Datasette) can read it without translation.
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 import time
 import uuid
@@ -53,6 +54,21 @@ class Store:
             CREATE TABLE IF NOT EXISTS conversations (  -- one current conversation per agent, for every channel
                 agent_id TEXT PRIMARY KEY,
                 context_id TEXT NOT NULL            -- A2A context id
+            );
+            CREATE TABLE IF NOT EXISTS sent (       -- a message the router sent: messenger id -> archive event id
+                channel TEXT NOT NULL,
+                native_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                PRIMARY KEY (channel, native_id)
+            );
+            CREATE TABLE IF NOT EXISTS buttons (    -- one row per button; the messenger carries only `id`
+                id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL,             -- archive id of the card the button belongs to
+                label TEXT NOT NULL,
+                action TEXT NOT NULL,               -- what the router does when it is pressed
+                value TEXT NOT NULL,
+                expires REAL NOT NULL,
+                used REAL                           -- when the card was spent; NULL while it is live
             );
             """
         )
@@ -118,3 +134,31 @@ class Store:
     def set(self, key: str, value: str) -> None:
         self.db.execute("INSERT OR REPLACE INTO kv VALUES (?, ?)", (key, value))
         self.db.commit()
+
+    def save_sent(self, channel: str, native_id: str, event_id: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO sent VALUES (?, ?, ?)", (channel, native_id, event_id))
+        self.db.commit()
+
+    def sent_event(self, channel: str, native_id: str) -> str | None:
+        row = self.db.execute("SELECT event_id FROM sent WHERE channel = ? AND native_id = ?",
+                              (channel, native_id)).fetchone()
+        return row[0] if row else None
+
+    def add_button(self, event_id: str, label: str, action: str, value: str, expires: float) -> str:
+        """Register a button and return its id: the only thing that goes into the messenger's callback data."""
+        button_id = secrets.token_urlsafe(12)
+        self.db.execute("INSERT INTO buttons VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                        (button_id, event_id, label, action, value, expires))
+        self.db.commit()
+        return button_id
+
+    def use_button(self, button_id: str, now: float) -> tuple[str, str, str, str] | None:
+        """Spend a button: (event_id, label, action, value), or None when it is unknown, expired or already
+        used. Pressing one button spends the whole card."""
+        row = self.db.execute("SELECT event_id, label, action, value FROM buttons"
+                              " WHERE id = ? AND used IS NULL AND expires > ?", (button_id, now)).fetchone()
+        if row is None:
+            return None
+        self.db.execute("UPDATE buttons SET used = ? WHERE event_id = ?", (now, row[0]))
+        self.db.commit()
+        return row

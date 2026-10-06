@@ -8,24 +8,25 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import tempfile
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Protocol
 
 import httpx
-from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, StreamEvent, create_sdk_mcp_server, query, tool
-from claude_agent_sdk._errors import ResultError
+from claude_agent_sdk import (ClaudeAgentOptions, ResultMessage, StreamEvent, SystemMessage, create_sdk_mcp_server,
+                              query, tool)
 
 from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
-SESSION_LOST = "_Прошлый разговор не сохранился, начинаю заново._\n\n"
 
 
 @dataclass
 class EngineResult:
     text: str
-    session_id: str | None
     is_error: bool
     num_turns: int = 0
     cost_usd: float | None = None
@@ -37,16 +38,23 @@ OnText = Callable[[str], Awaitable[None]]
 
 
 class Engine(Protocol):
-    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
-                  turn_id: str | None = None) -> EngineResult: ...
+    """One call is one short run: it starts with nothing but the prompt and leaves nothing behind. What the
+    agent should remember of the conversation, the router puts into the prompt."""
+
+    async def run(self, prompt: str, on_text: OnText | None = None, turn_id: str | None = None) -> EngineResult: ...
 
 
-BUS_TOOL = "mcp__retinue__ask_agent"
+BUS_PREFIX = "mcp__retinue__"  # how the model sees the tools below
 
 
-def bus_server(bus_url: str, bus_token: str, turn_id: str):
-    """The only way an agent reaches another agent: the router's bus, bound to the current turn."""
+def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
+    """Everything an agent can do outside its container goes through the router's bus, bound to the current
+    turn and signed with the agent's own token. Which of these an agent gets is `engine.bus_tools`."""
     headers = {"Authorization": f"Bearer {bus_token}"}
+
+    def client(timeout: float) -> httpx.AsyncClient:
+        # trust_env=False: the router is a neighbour on the internal network, never reached through the proxy.
+        return httpx.AsyncClient(timeout=timeout, trust_env=False)
 
     @tool("ask_agent",
           "Спросить другого агента Retinue через Роутер и дождаться ответа. Роутер решает, разрешено ли; "
@@ -54,7 +62,7 @@ def bus_server(bus_url: str, bus_token: str, turn_id: str):
           "разговор. Список агентов — инструмент list_agents.",
           {"agent": str, "text": str})
     async def ask_agent(args):
-        async with httpx.AsyncClient(timeout=900) as http:
+        async with client(900) as http:
             response = await http.post(f"{bus_url}/call", headers=headers,
                                        json={"turn": turn_id, "agent": args["agent"], "text": args["text"]})
         data = response.json()
@@ -62,18 +70,45 @@ def bus_server(bus_url: str, bus_token: str, turn_id: str):
 
     @tool("list_agents", "Агенты Retinue, к которым тебе можно обращаться: id, имя, описание.", {})
     async def list_agents(args):
-        async with httpx.AsyncClient(timeout=30) as http:
+        async with client(30) as http:
             agents = (await http.get(f"{bus_url}/agents", headers=headers)).json()
         return {"content": [{"type": "text", "text": json.dumps(agents, ensure_ascii=False)}]}
 
-    return create_sdk_mcp_server("retinue", tools=[ask_agent, list_agents])
+    @tool("search_archive",
+          "Найти в архиве то, что говорилось раньше: реплики Владельца, твои прошлые ответы, сообщения системы. "
+          "query — одно-три ключевых слова, лучше существительные: окончания подбираются сами. Возвращает "
+          "найденные реплики с датой и автором. Если пусто — назовёт, что архив покрывает; попробуй другие слова.",
+          {"query": str})
+    async def search_archive(args):
+        async with client(30) as http:
+            response = await http.post(f"{bus_url}/archive/search", headers=headers,
+                                       json={"turn": turn_id, "query": args["query"]})
+        data = response.json()
+        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
+
+    return {t.name: t for t in (ask_agent, list_agents, search_archive)}
+
+
+# Set in code for every run, so that no compose file can forget them.
+RUN_ENV = {
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",  # no auto-update, telemetry, error reports, feature flags
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false",           # no claude.ai connectors: a subscription login brings them
+}
 
 
 class ClaudeEngine:
-    """Runs one turn of a Claude Code agent inside its workspace.
+    """Runs one short turn of a Claude Code agent: a new session every time, nothing kept afterwards.
 
-    Permissions are deny-by-default (`dontAsk`): only tools listed in `allowed_tools`
-    run. The workspace's CLAUDE.md is the agent's instructions (setting source "project").
+    What a run may do is decided here and nowhere else:
+    - the instructions are one file read at start (`engine.instructions`, mounted read-only) and passed as the
+      system prompt. No settings, CLAUDE.md, hooks or skills are loaded from any folder (`setting_sources=[]`),
+      so nothing the agent could write is ever read back as configuration;
+    - only the MCP servers passed here exist (`strict_mcp_config`), only the built-in tools in `engine.tools`,
+      and `dontAsk` denies every tool that is not in `allowed_tools`;
+    - the prompt is delivered as written (`verbatim_prompts`): it carries prior turns and other people's text,
+      and an `@/path` or a `/command` inside it must not make Claude Code read a file or run a command;
+    - CLAUDE_CONFIG_DIR, where Claude Code writes the transcript of everything it read, is a fresh directory
+      under `engine.run_root` (a tmpfs in production) and is removed when the run ends.
     """
 
     def __init__(self, cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "") -> None:
@@ -81,45 +116,55 @@ class ClaudeEngine:
         self.workspace = workspace
         self.bus_url = bus_url
         self.bus_token = bus_token
+        instructions = Path(cfg.instructions)
+        if not instructions.is_file():
+            raise SystemExit(f"engine: instructions file {instructions} not found")
+        self.instructions = instructions.read_text()
 
-    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
-                  turn_id: str | None = None) -> EngineResult:
-        try:
-            return await self._run(prompt, session_id, on_text, turn_id)
-        except ResultError as exc:
-            # The session transcript is gone (e.g. lost config dir): start over instead of failing every turn.
-            if not session_id or "No conversation found" not in str(exc):
-                raise
-            log.warning("session %s not found, starting a new one", session_id)
-            result = await self._run(prompt, None, on_text, turn_id)
-            result.text = SESSION_LOST + result.text
-            return result
-
-    async def _run(self, prompt: str, session_id: str | None, on_text: OnText | None,
-                   turn_id: str | None) -> EngineResult:
-        # session_id comes only from our own state DB, never from a message (CVE-2026-96620).
+    def options(self, turn_id: str | None, streaming: bool, config_dir: str) -> ClaudeAgentOptions:
+        """Everything one run is allowed, in one place. There is no `resume`: every run is a new session."""
         allowed, servers = list(self.cfg.allowed_tools), {}
-        if self.bus_url and self.bus_token and turn_id:
-            servers["retinue"] = bus_server(self.bus_url, self.bus_token, turn_id)
-            allowed += [BUS_TOOL, "mcp__retinue__list_agents"]
-        options = ClaudeAgentOptions(
+        if self.bus_url and self.bus_token and turn_id and self.cfg.bus_tools:
+            tools = bus_tools(self.bus_url, self.bus_token, turn_id)
+            servers["retinue"] = create_sdk_mcp_server("retinue", tools=[tools[name] for name in self.cfg.bus_tools])
+            allowed += [BUS_PREFIX + name for name in self.cfg.bus_tools]
+        return ClaudeAgentOptions(
             cwd=self.workspace,
+            system_prompt=self.instructions,
+            setting_sources=[],
+            tools=self.cfg.tools,
             allowed_tools=allowed,
-            mcp_servers=servers,
             disallowed_tools=self.cfg.disallowed_tools,
+            mcp_servers=servers,
+            strict_mcp_config=True,
             permission_mode="dontAsk",
-            setting_sources=["project"],
+            verbatim_prompts=True,
+            env={**RUN_ENV, "CLAUDE_CONFIG_DIR": config_dir},
             max_turns=self.cfg.max_turns,
             max_budget_usd=self.cfg.max_budget_usd,
             model=self.cfg.model,
-            resume=session_id,
-            include_partial_messages=on_text is not None,
+            include_partial_messages=streaming,
         )
+
+    async def run(self, prompt: str, on_text: OnText | None = None, turn_id: str | None = None) -> EngineResult:
+        config_dir = tempfile.mkdtemp(prefix="claude-", dir=self.cfg.run_root)
+        try:
+            return await self._run(prompt, on_text, turn_id, config_dir)
+        finally:
+            shutil.rmtree(config_dir, ignore_errors=True)
+
+    async def _run(self, prompt: str, on_text: OnText | None, turn_id: str | None, config_dir: str) -> EngineResult:
+        options = self.options(turn_id, on_text is not None, config_dir)
         result: ResultMessage | None = None
         draft = ""
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, ResultMessage):
                 result = message
+            elif isinstance(message, SystemMessage) and message.subtype == "init":
+                # What the model really got. On a subscription apiKeySource is not an API key.
+                log.info("run init: tools=%s mcp=%s apiKeySource=%s model=%s", message.data.get("tools"),
+                         [server.get("name") for server in message.data.get("mcp_servers") or []],
+                         message.data.get("apiKeySource"), message.data.get("model"))
             elif isinstance(message, StreamEvent) and on_text and message.parent_tool_use_id is None:
                 event = message.event
                 if event.get("type") == "message_start":
@@ -128,11 +173,10 @@ class ClaudeEngine:
                     draft += event["delta"]["text"]
                     await on_text(draft)
         if result is None:
-            return EngineResult(text="Агент не вернул результат.", session_id=session_id, is_error=True)
+            return EngineResult(text="Агент не вернул результат.", is_error=True)
         text = result.result or ("; ".join(result.errors or []) or "Пустой ответ.")
         return EngineResult(
             text=text,
-            session_id=result.session_id,
             is_error=result.is_error,
             num_turns=result.num_turns,
             cost_usd=result.total_cost_usd,
@@ -143,11 +187,10 @@ class ClaudeEngine:
 class EchoEngine:
     """No-model engine for smoke tests: answers with the prompt."""
 
-    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
-                  turn_id: str | None = None) -> EngineResult:
+    async def run(self, prompt: str, on_text: OnText | None = None, turn_id: str | None = None) -> EngineResult:
         if on_text:
             await on_text("echo: ")
-        return EngineResult(text=f"echo: {prompt}", session_id=session_id or "echo-session", is_error=False)
+        return EngineResult(text=f"echo: {prompt}", is_error=False)
 
 
 def make_engine(cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "") -> Engine:

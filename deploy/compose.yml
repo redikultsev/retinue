@@ -5,6 +5,7 @@ name: retinue
 
 services:
   tuwunel:
+    profiles: ["matrix"]            # off by default: starts only with COMPOSE_PROFILES=matrix
     image: jevolk/tuwunel:latest    # pin a digest after first deploy
     restart: unless-stopped
     stop_grace_period: 30m
@@ -12,19 +13,19 @@ services:
       - tuwunel-db:/var/lib/tuwunel
       - /srv/retinue/tuwunel/appservices:/etc/tuwunel/appservices:ro
     environment:
-      TUWUNEL_SERVER_NAME: ${MATRIX_SERVER_NAME}
+      TUWUNEL_SERVER_NAME: ${MATRIX_SERVER_NAME:-}
       TUWUNEL_DATABASE_PATH: /var/lib/tuwunel
       TUWUNEL_ADDRESS: 0.0.0.0
       TUWUNEL_PORT: 6167
       TUWUNEL_MAX_REQUEST_SIZE: 20000000
       TUWUNEL_ALLOW_FEDERATION: "false"
       TUWUNEL_ALLOW_REGISTRATION: ${MATRIX_ALLOW_REGISTRATION:-false}
-      TUWUNEL_REGISTRATION_TOKEN: ${MATRIX_REGISTRATION_TOKEN}
+      TUWUNEL_REGISTRATION_TOKEN: ${MATRIX_REGISTRATION_TOKEN:-}
       TUWUNEL_APPSERVICE_DIR: /etc/tuwunel/appservices
       TUWUNEL_SHOW_APPSERVICE_USERS_IN_USER_DIRECTORY: "true"
       TUWUNEL_WELL_KNOWN: |
         {
-        client=https://${MATRIX_SERVER_NAME}
+        client=https://${MATRIX_SERVER_NAME:-}
         }
     ulimits:
       nofile: { soft: 1048567, hard: 1048567 }
@@ -32,11 +33,11 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=dokploy-network
-      - traefik.http.routers.retinue-matrix.rule=Host(`${MATRIX_SERVER_NAME}`)
+      - traefik.http.routers.retinue-matrix.rule=Host(`${MATRIX_SERVER_NAME:-}`)
       - traefik.http.routers.retinue-matrix.entrypoints=websecure
       - traefik.http.routers.retinue-matrix.tls.certresolver=letsencrypt
       - traefik.http.routers.retinue-matrix.middlewares=vpn-only@file
-      - traefik.http.routers.retinue-matrix-http.rule=Host(`${MATRIX_SERVER_NAME}`)
+      - traefik.http.routers.retinue-matrix-http.rule=Host(`${MATRIX_SERVER_NAME:-}`)
       - traefik.http.routers.retinue-matrix-http.entrypoints=web
       - traefik.http.routers.retinue-matrix-http.middlewares=retinue-https@file
       - traefik.http.services.retinue-matrix.loadbalancer.server.port=6167
@@ -50,67 +51,45 @@ services:
       - /srv/retinue/router.yaml:/config/router.yaml:ro
       - router-data:/data
     environment:
-      RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN}
-      RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN}
+      RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN:-}         # these two only with a `matrix:` section in router.yaml
+      RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}   # only with a `telegram:` section in router.yaml
       RETINUE_BUS_SECRET: ${RETINUE_BUS_SECRET:-}   # agents ask each other through the router
-    networks: [matrix, agents]
-    depends_on: [tuwunel]
+    networks: [agents, outside, matrix]           # `outside` is its way to Telegram
 
-  agent-study:
+  assistant:
     image: retinue:local
     restart: unless-stopped
     command: ["retinue-agent", "--config", "/agent/agent.yaml"]
     volumes:
-      - /srv/retinue/agents/study/agent.yaml:/agent/agent.yaml:ro
-      - /srv/retinue/agents/study/workspace:/workspace
-      - study-data:/data
+      - /srv/retinue/agents/assistant:/agent:ro   # config and instructions: nothing here can be written
+    tmpfs:
+      # A run's CLAUDE_CONFIG_DIR (the transcript of everything the model read) lives in memory, for one run.
+      - /run/retinue:uid=10001,gid=10001,mode=0700,size=64m
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      HTTPS_PROXY: http://egress:3128             # Claude Code reaches the model API through the proxy only
       RETINUE_BUS_URL: http://router:9100
-      RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_STUDY:-}
-    networks: [agents]
-    depends_on: [router]
+      RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_ASSISTANT:-}
+    networks: [agents]                            # internal: no route out of this network
+    depends_on: [router, egress]
 
-  agent-travel:
-    image: retinue:local
+  egress:
+    image: ubuntu/squid:6.6-24.04_beta            # Squid, GPL-2.0; pin a digest after first deploy
     restart: unless-stopped
-    command: ["retinue-agent", "--config", "/agent/agent.yaml"]
     volumes:
-      - /srv/retinue/agents/travel/agent.yaml:/agent/agent.yaml:ro
-      - /srv/retinue/agents/travel/workspace:/workspace
-      - travel-data:/data
-    environment:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
-      RETINUE_BUS_URL: http://router:9100
-      RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_TRAVEL:-}
-    networks: [agents]
-    depends_on: [router]
-
-  agent-concierge:
-    image: retinue:local
-    restart: unless-stopped
-    command: ["retinue-agent", "--config", "/agent/agent.yaml"]
-    volumes:
-      - /srv/retinue/agents/concierge/agent.yaml:/agent/agent.yaml:ro
-      - /srv/retinue/agents/concierge/workspace:/workspace
-      - concierge-data:/data
-    environment:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
-      RETINUE_BUS_URL: http://router:9100
-      RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_CONCIERGE:-}
-    networks: [agents]
-    depends_on: [router]
+      - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
+      - /srv/retinue/egress/allowed-hosts.txt:/etc/squid/allowed-hosts.txt:ro
+    networks: [agents, outside]
 
 volumes:
   tuwunel-db:
-  router-data:
-  study-data:
-  travel-data:
-  concierge-data:
+  router-data:    # the router's state and the archive; no agent has a volume
 
 networks:
+  agents:       # router <-> agents <-> egress proxy. Internal: containers here have no route to the internet
+    internal: true
+  outside:      # ordinary bridge: the router (Telegram) and the egress proxy (model API) go out through it
   matrix:       # homeserver <-> router only
-  agents:       # router <-> agents only; agents never see the homeserver
   dokploy-network:
     external: true

@@ -2,6 +2,10 @@
 
 import asyncio
 
+from aiohttp.test_utils import TestClient, TestServer
+
+from retinue.archive import ASSISTANT, OWNER, Archive
+from retinue.bus import BusServer, bus_token
 from retinue.config import RouterAgent
 from retinue.core import Core
 from retinue.protocol import Store
@@ -100,3 +104,42 @@ def test_depth_limit(tmp_path):
         assert not ok and "глубже" in text
 
     asyncio.run(run())
+
+
+def test_archive_search_through_the_bus(tmp_path):
+    agents = [RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private", archive=True),
+              RouterAgent(id="travel", name="Путешествия", url="t", trust_class="web")]
+    archive = Archive(str(tmp_path / "archive.sqlite"))
+    archive.append(ASSISTANT, "По Еревану советую Каскад и Матенадаран.", conversation_id="old", channel="telegram", ts=100.0)
+    question, _ = archive.append(OWNER, "Что ты советовала по Еревану?", conversation_id="now", channel="telegram", ts=200.0)
+
+    async def run():
+        core = Core(agents, Store(str(tmp_path / "r.sqlite")), "owner", archive=archive)
+        await core.start([FakeChannel("telegram", False)])
+        turn = core.turns.open_root("assistant")
+        core.inbound[turn.tree.id] = question.id
+        mine = {"Authorization": f"Bearer {bus_token('secret', 'assistant')}"}
+        async with TestClient(TestServer(BusServer(core, "secret", 0).app)) as http:
+            found = await (await http.post("/archive/search", json={"turn": turn.id, "query": "Ереван"}, headers=mine)).json()
+            assert found["ok"] and "Каскад и Матенадаран" in found["text"] and "1970-01-01 00:01 UTC · Ассистентка" in found["text"]
+            assert "Что ты советовала" not in found["text"], "the question being answered is not a result"
+
+            empty = await (await http.post("/archive/search", json={"turn": turn.id, "query": "зарплата"}, headers=mine)).json()
+            assert empty["ok"] and "ничего не найдено" in empty["text"] and "событий — 2" in empty["text"]
+            assert "Почта, файлы и переписка с другими людьми не собираются" in empty["text"]
+
+            nobody = await http.post("/archive/search", json={"turn": turn.id, "query": "Ереван"},
+                                     headers={"Authorization": "Bearer wrong"})
+            assert nobody.status == 401
+            stale = await (await http.post("/archive/search", json={"turn": "closed", "query": "Ереван"}, headers=mine)).json()
+            assert not stale["ok"] and "Нет активного запроса" in stale["text"]
+
+            other = core.turns.open_root("travel")
+            theirs = {"Authorization": f"Bearer {bus_token('secret', 'travel')}"}
+            denied = await (await http.post("/archive/search", json={"turn": other.id, "query": "Ереван"}, headers=theirs)).json()
+            assert not denied["ok"] and "не выдан" in denied["text"] and "Каскад" not in denied["text"]
+        return core
+
+    core = asyncio.run(run())
+    rows = core.store.db.execute("SELECT source, target, status FROM protocol WHERE channel = 'bus'").fetchall()
+    assert rows == [("assistant", "archive", "done")] * 2, "every search is in the protocol"

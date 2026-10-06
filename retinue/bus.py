@@ -111,14 +111,16 @@ def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
 
 
 class BusServer:
-    """HTTP endpoint on the agents network: GET /agents, POST /call. Authenticated by per-agent token."""
+    """HTTP endpoint on the agents network: GET /agents, POST /call, POST /archive/search.
+    Authenticated by per-agent token."""
 
     def __init__(self, core, secret: str, port: int) -> None:
         self.core = core
         self.port = port
         self.tokens = {bus_token(secret, a): a for a in core.agents}
         self.app = web.Application()
-        self.app.add_routes([web.get("/agents", self.list_agents), web.post("/call", self.call)])
+        self.app.add_routes([web.get("/agents", self.list_agents), web.post("/call", self.call),
+                             web.post("/archive/search", self.archive_search)])
 
     async def start(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
@@ -146,4 +148,10 @@ class BusServer:
         body = await request.json()
         ok, text = await self.core.bus_call(caller, str(body.get("turn", "")), str(body.get("agent", "")),
                                             str(body.get("text", "")))
+        return web.json_response({"ok": ok, "text": text})
+
+    async def archive_search(self, request: web.Request) -> web.Response:
+        caller = self.caller(request)
+        body = await request.json()
+        ok, text = await self.core.archive_search(caller, str(body.get("turn", "")), str(body.get("query", "")))
         return web.json_response({"ok": ok, "text": text})

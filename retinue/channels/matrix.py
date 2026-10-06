@@ -14,7 +14,7 @@ from mautrix.appservice.state_store import FileASStateStore
 from mautrix.types import (EventID, EventType, FileInfo, Format, MessageEvent, MessageType, RoomID,
                            TextMessageEventContent, UserID)
 
-from ..config import RouterAgent, RouterConfig
+from ..config import MatrixConfig, RouterAgent
 from ..core import AgentFile, Core
 from ..protocol import Store
 from ..render import render
@@ -30,8 +30,10 @@ class MatrixChannel:
     is_record = True
     typing_refresh_s = 25
 
-    def __init__(self, cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, cfg: MatrixConfig, agents: list[RouterAgent], store: Store,
+                 loop: asyncio.AbstractEventLoop, state_path: str) -> None:
         self.cfg = cfg
+        self.agents = agents
         self.store = store
         self.core: Core | None = None
         self.threads: dict[str, EventID] = {}  # bus tree -> thread root in the agent's room
@@ -42,7 +44,7 @@ class MatrixChannel:
             hs_token=cfg.hs_token,
             bot_localpart=cfg.bot_localpart,
             id=cfg.appservice_id,
-            state_store=FileASStateStore(path=f"{cfg.state_db}.mx-state.json", binary=False),
+            state_store=FileASStateStore(path=state_path, binary=False),
             loop=loop,
         )
         self.az.matrix_event_handler(self.on_event)
@@ -54,7 +56,7 @@ class MatrixChannel:
         await self.az.start(host=self.cfg.listen_host, port=self.cfg.listen_port)
         await self.az.intent.ensure_registered()
         await self.az.intent.set_displayname("Retinue")
-        for agent in self.cfg.agents:
+        for agent in self.agents:
             await self.ensure_agent_room(agent)
         await self.ensure_protocol_room()
         self.az.ready = True
@@ -107,7 +109,7 @@ class MatrixChannel:
     async def draft(self, agent_id: str, text: str) -> None:
         pass  # Element X shows no live edits well; «печатает…» stays until the answer
 
-    async def send(self, agent_id: str, text: str, files: list[AgentFile]) -> None:
+    async def send(self, agent_id: str, text: str, files: list[AgentFile], ref: str | None = None) -> None:
         room_id = self._room(agent_id)
         if room_id is None:
             return
@@ -127,7 +129,9 @@ class MatrixChannel:
             body, html = render(f"**Владелец, {label}:**\n\n" + "\n".join(f"> {line}" for line in text.splitlines()))
             await self.intent(agent_id).send_text(room_id, text=body, html=html, msgtype=MessageType.NOTICE)
 
-    async def notice(self, agent_id: str, text: str) -> None:
+    async def notice(self, agent_id: str, text: str, buttons: list[tuple[str, str]] | None = None,
+                     ref: str | None = None) -> None:
+        # Matrix has no buttons here: a card arrives as plain text and can only be answered in Telegram.
         if room_id := self._room(agent_id):
             body, html = render(text)
             await self.intent(agent_id).send_text(room_id, text=body, html=html, msgtype=MessageType.NOTICE)

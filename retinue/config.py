@@ -28,6 +28,7 @@ class RouterAgent:
     description: str = ""                 # shown to other agents in the bus tool
     trust_class: str = "web"
     can_call: list[str] = field(default_factory=list)  # agent ids this agent may ask through the bus; "*" = all
+    archive: bool = False                 # may search the raw archive through the bus
 
 
 @dataclass
@@ -37,50 +38,76 @@ class TelegramConfig:
 
 
 @dataclass
-class RouterConfig:
+class MatrixConfig:
     homeserver: str
     server_name: str
-    owner: str
-    agents: list[RouterAgent]
+    owner: str                          # the owner's Matrix id, e.g. "@alice:example.com"
     appservice_id: str = "retinue"
     bot_localpart: str = "retinue"
     agent_prefix: str = "agent_"
     listen_host: str = "0.0.0.0"
     listen_port: int = 29400
-    state_db: str = "/data/router.sqlite"
-    as_token: str = ""
-    hs_token: str = ""
-    telegram: TelegramConfig | None = None
-    default_agent: str | None = None    # who gets unaddressed messages (Telegram general chat): the Concierge
-    bus_listen_port: int = 9100         # agents ask each other here (network `agents` only)
-    bus_secret: str = ""                # from RETINUE_BUS_SECRET; per-agent tokens are derived from it
-
-    @classmethod
-    def load(cls, path: str | Path) -> RouterConfig:
-        raw = yaml.safe_load(Path(path).read_text())
-        agents = [RouterAgent(**a) for a in raw.pop("agents")]
-        telegram = TelegramConfig(**raw.pop("telegram")) if raw.get("telegram") else None
-        raw.pop("telegram", None)
-        cfg = cls(agents=agents, telegram=telegram, **raw)
-        if cfg.telegram:
-            cfg.telegram.bot_token = _env("TELEGRAM_BOT_TOKEN")
-        cfg.bus_secret = os.environ.get("RETINUE_BUS_SECRET", "")
-        for agent in cfg.agents:
-            if agent.trust_class not in TRUST_CLASSES:
-                raise SystemExit(f"agent {agent.id}: unknown trust_class {agent.trust_class!r}")
-        cfg.as_token = _env("RETINUE_AS_TOKEN")
-        cfg.hs_token = _env("RETINUE_HS_TOKEN")
-        return cfg
+    as_token: str = ""                  # from RETINUE_AS_TOKEN
+    hs_token: str = ""                  # from RETINUE_HS_TOKEN
 
     def agent_mxid(self, agent_id: str) -> str:
         return f"@{self.agent_prefix}{agent_id}:{self.server_name}"
 
 
 @dataclass
+class RouterConfig:
+    agents: list[RouterAgent]
+    owner: str = "owner"                # how the owner is named in the protocol log
+    state_db: str = "/data/router.sqlite"
+    archive_db: str = "/data/archive.sqlite"  # the raw archive: its own file, never mounted into an agent
+    matrix: MatrixConfig | None = None      # each channel is optional; at least one is required
+    telegram: TelegramConfig | None = None
+    default_agent: str | None = None    # who gets messages without an address; the only agent, if there is one
+    bus_listen_port: int = 9100         # agents reach the router here (network `agents` only)
+    bus_secret: str = ""                # from RETINUE_BUS_SECRET; per-agent tokens are derived from it
+
+    @classmethod
+    def load(cls, path: str | Path) -> RouterConfig:
+        raw = yaml.safe_load(Path(path).read_text())
+        agents = [RouterAgent(**a) for a in raw.pop("agents")]
+        matrix = MatrixConfig(**raw.pop("matrix")) if raw.get("matrix") else None
+        telegram = TelegramConfig(**raw.pop("telegram")) if raw.get("telegram") else None
+        raw.pop("matrix", None)
+        raw.pop("telegram", None)
+        cfg = cls(agents=agents, matrix=matrix, telegram=telegram, **raw)
+        if not (cfg.matrix or cfg.telegram):
+            raise SystemExit("router config: no channel — add a `telegram:` or a `matrix:` section")
+        if cfg.matrix:
+            cfg.matrix.as_token = _env("RETINUE_AS_TOKEN")
+            cfg.matrix.hs_token = _env("RETINUE_HS_TOKEN")
+        if cfg.telegram:
+            cfg.telegram.bot_token = _env("TELEGRAM_BOT_TOKEN")
+        cfg.bus_secret = os.environ.get("RETINUE_BUS_SECRET", "")
+        ids = [a.id for a in cfg.agents]
+        for agent in cfg.agents:
+            if agent.trust_class not in TRUST_CLASSES:
+                raise SystemExit(f"agent {agent.id}: unknown trust_class {agent.trust_class!r}")
+        if cfg.default_agent is None and len(ids) == 1:
+            cfg.default_agent = ids[0]
+        if cfg.default_agent is not None and cfg.default_agent not in ids:
+            raise SystemExit(f"router config: default_agent {cfg.default_agent!r} is not in `agents`")
+        if cfg.telegram and cfg.default_agent is None:
+            raise SystemExit("router config: Telegram is one chat without addresses — set `default_agent`")
+        return cfg
+
+
+BUS_TOOLS = ("ask_agent", "list_agents", "search_archive")  # what an agent can be given through the router
+
+
+@dataclass
 class EngineConfig:
     type: str = "claude"  # "claude" | "echo" (smoke tests, no model)
+    instructions: str = "/agent/CLAUDE.md"  # the agent's instructions: a read-only file outside its working folder
+    tools: list[str] | None = None      # built-in tools the model sees at all: [] = none, None = the CLI default
     allowed_tools: list[str] = field(default_factory=list)
     disallowed_tools: list[str] = field(default_factory=list)
+    bus_tools: list[str] = field(default_factory=lambda: ["ask_agent", "list_agents"])  # subset of BUS_TOOLS
+    run_root: str | None = None         # where a run's CLAUDE_CONFIG_DIR is created and removed; a tmpfs in production
     max_turns: int = 30
     max_budget_usd: float | None = None
     model: str | None = None
@@ -103,7 +130,6 @@ class AgentConfig:
     skills: list[Skill]
     engine: EngineConfig
     workspace: str = "/workspace"
-    state_db: str = "/data/agent.sqlite"
     public_url: str = "http://localhost:9000"
     listen_host: str = "0.0.0.0"
     listen_port: int = 9000
@@ -120,4 +146,6 @@ class AgentConfig:
         cfg.bus_token = os.environ.get("RETINUE_BUS_TOKEN", "")
         if cfg.trust_class not in TRUST_CLASSES:
             raise SystemExit(f"unknown trust_class {cfg.trust_class!r}")
+        if unknown := [t for t in cfg.engine.bus_tools if t not in BUS_TOOLS]:
+            raise SystemExit(f"unknown bus_tools {unknown}; known: {', '.join(BUS_TOOLS)}")
         return cfg

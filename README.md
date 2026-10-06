@@ -1,43 +1,50 @@
 # Retinue
 
-**A private retinue of AI agents.** Specialists — study, travel, career, life — live in your own
-Matrix server, talk to you from your phone and (soon) to each other, while your personal data stays
-on your machine and nothing leaves it without your explicit "yes".
+**A private assistant that cannot leak.** One assistant talks to you in Telegram and remembers the
+conversation in an archive on your own server. It reads your personal data, and therefore has no way out: no
+web, no shell, no network except the model API.
 
-> Status: **pilot**. Owner ↔ agent conversations over Matrix and A2A work. Agent ↔ agent requests,
-> sensitivity labels, approvals and schedules are next. Expect breaking changes.
+> Status: **pilot**. One assistant, short runs, a searchable archive of the conversation, closed egress.
+> Schedules, mail, a web-search tool behind a schema and approvals for messages to other people are next.
+> Expect breaking changes.
 
 ## Why
 
-Personal agents fail in two ways: they leak (one agent with your private data, the web and an
-outbox is one prompt injection away from mailing your life to a stranger), or they are so locked
-down that you approve every keystroke. Retinue splits the work instead:
+A personal agent with your private data, the web and an outbox is one prompt injection away from mailing
+your life to a stranger. Retinue keeps the data and removes the exits, and the removal is done by the system,
+not by a prompt:
 
-- **Trust classes are enforced by the OS, not by prompts.** An agent with your private notes has no
-  web; an agent with the web has no private notes. Each agent runs in its own container.
-- **One router holds every token.** Agents never see Matrix credentials and never talk to each
-  other directly; every exchange goes through the router and lands in an append-only protocol log.
-- **Standard protocols.** Agents speak [A2A](https://a2a-protocol.org); the owner uses any Matrix
-  client (Element X on iPhone and Mac).
-- **Reuse over rewrite.** Claude Agent SDK, a2a-sdk, mautrix, Tuwunel. Retinue is the thin layer
-  between them.
+- **No exits, by construction.** The assistant's container sits on an internal network with no route to the
+  internet; its only way out is a proxy that lets through the model API and nothing else. It has no Bash, no
+  file tools, no web tools. Its config and instructions are mounted read-only.
+- **Short runs.** Every reply is a new run that starts from nothing and leaves nothing: no session is resumed,
+  the run's working files live in memory and are removed. What it needs to remember, the router puts into the
+  request from the archive.
+- **One router holds every token and writes every word down.** Both sides of every turn go to an append-only
+  archive before and after the model is called. The assistant searches the archive through the router; the
+  file is never mounted into its container.
+- **Nothing the assistant writes becomes a link.** Every address in its text reaches you as monospace text,
+  with link previews off on every path.
+- **Reuse over rewrite.** Claude Agent SDK, a2a-sdk, Squid, SQLite FTS5. Retinue is the thin layer between them.
 
 ## How it works
 
 ```
-You (Element X) ──► Matrix (Tuwunel, VPN-only) ──► Router (appservice) ──A2A──► Agent hosts
-                                                       │                        ├─ Study  (web, no base)
-                                                       └─ Protocol log (SQLite) └─ Travel (web, no base)
+You (Telegram) ──► Router ──A2A──► Assistant ──► egress proxy ──► model API, nothing else
+                     │   ◄──bus──┘ (search_archive)
+                     ├─ Archive (SQLite, append-only, full-text)
+                     └─ Protocol log (SQLite)
 ```
 
-- `retinue/router.py` — Matrix appservice. Each agent is a virtual user with its own room. Only the
-  owner's messages are forwarded; agents reply as notices, so bots never answer bots.
-- `retinue/agent_host.py` — one agent behind an A2A server. Remembers the conversation per A2A
-  context; the session id never comes from a message.
-- `retinue/engine.py` — the `Engine` seam. Today: Claude Agent SDK with deny-by-default tool
-  permissions. Other engines plug in behind the same interface.
-- `agents/<id>/` — an agent is a config (`agent.yaml`: trust class, skills, allowed tools) plus a
-  workspace with its instructions (`CLAUDE.md`).
+- `retinue/router.py` — entry point: the core plus the channels in the config (Telegram; Matrix is optional).
+- `retinue/core.py` — one owner message at a time; archives both sides; builds each request from the last
+  turns; buttons and messages the system sends on its own.
+- `retinue/archive.py` — the raw archive: append-only events with a full-text index.
+- `retinue/bus.py` — what an agent may ask the router for: search the archive, or (when granted) another agent.
+- `retinue/agent_host.py` — one agent behind an A2A server; one container, its trust boundary.
+- `retinue/engine.py` — the `Engine` seam. Today: Claude Agent SDK, deny-by-default tools, no settings read
+  from disk. Other engines plug in behind the same interface.
+- `agents/assistant/` — the assistant: `agent.yaml` (tools, limits) and `CLAUDE.md` (instructions).
 
 ## Model access
 
@@ -47,8 +54,8 @@ own personal deployment, your own Claude subscription token (`CLAUDE_CODE_OAUTH_
 
 ## Install
 
-See [docs/install.md](docs/install.md). Requirements: a Linux server with Docker, a WireGuard VPN,
-a domain, and [Dokploy](https://dokploy.com) (or plain `docker compose`).
+See [docs/install.md](docs/install.md). Requirements: a Linux server with Docker, a Telegram bot, and
+[Dokploy](https://dokploy.com) (or plain `docker compose`).
 
 ## License
 

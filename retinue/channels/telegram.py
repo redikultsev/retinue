@@ -1,32 +1,35 @@
-"""Telegram channel: one bot, the owner's private chat split into topics — one topic per agent.
+"""Telegram channel: one bot, one private chat with the owner, one stream. No topics, no drafts.
 
-Bot API over plain HTTP (long polling), no framework: the adapter needs a handful of methods, including recent
-ones (topics in private chats, message drafts) that frameworks add late. Only the owner's user id is served.
-If the bot has no topic mode, the chat falls back to one stream: `@agent text` picks the agent, and the last
-picked agent gets the following messages.
+Bot API over plain HTTP (long polling), no framework. Only the owner's user id is served. Everything the owner
+reads leaves through `_message`: sendMessage or editMessageText with the link preview switched off. No other
+method carries text, and no call ever has a `url` field.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
-import zlib
 
 import httpx
 
-from ..config import RouterAgent, TelegramConfig
+from ..config import TelegramConfig
 from ..core import AgentFile, Core
 from ..protocol import Store
-from ..render import render_telegram
+from ..render import render_telegram, tg_plain
 
 log = logging.getLogger("retinue.telegram")
 
 API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 50
-TOPIC_COLORS = [7322096, 16766590, 13338331, 9367192, 16749490, 16478047]
-TELEGRAM_DRAFT_LIMIT = 4096
-SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/help": "!help"}
+NO_PREVIEW = {"is_disabled": True}
+SLASH_COMMANDS = {"/new": "!new", "/check": "!check", "/help": "!help"}
+# What a message may carry instead of text. None of it is handled yet; each is refused aloud: the value
+# finishes the phrase «Пока не умею принимать …».
+UNSUPPORTED = {"photo": "фото", "document": "файлы", "voice": "голосовые", "audio": "аудио", "video": "видео",
+               "video_note": "видеосообщения", "sticker": "стикеры", "animation": "гифки", "contact": "контакты",
+               "location": "геопозицию", "venue": "места", "poll": "опросы"}
+LOST = "Сообщение не обработано: ошибка на стороне Роутера. Повтори его, пожалуйста."
+START = "Пиши сюда — ответит ассистентка. Команды: /new — новый разговор, /check — проверка канала, /help — справка."
 
 
 class TelegramError(Exception):
@@ -36,17 +39,12 @@ class TelegramError(Exception):
 class TelegramChannel:
     name = "telegram"
     is_record = False
+    typing_refresh_s = 4.0  # a chat action lasts 5 s
 
-    def __init__(self, cfg: TelegramConfig, agents: list[RouterAgent], store: Store,
-                 default_agent: str | None = None) -> None:
+    def __init__(self, cfg: TelegramConfig, store: Store) -> None:
         self.cfg = cfg
-        self.default_agent = default_agent if default_agent in {a.id for a in agents} else None
-        self.agents = {a.id: a for a in agents}
         self.store = store
         self.core: Core | None = None
-        self.topics = False
-        self.typing_refresh_s = 4.0
-        self.drafting: dict[str, str] = {}  # agent -> partial reply streaming now
         self.http = httpx.AsyncClient(timeout=POLL_TIMEOUT_S + 15)
 
     # --- Bot API -----------------------------------------------------------------------------
@@ -65,50 +63,65 @@ class TelegramChannel:
     async def start(self, core: Core) -> None:
         self.core = core
         me = await self.call("getMe")
-        self.topics = bool(me.get("has_topics_enabled"))
-        # A chat action lasts 5 s.
-        self.typing_refresh_s = 4.0
         await self.call("setMyCommands", commands=[
-            {"command": "new", "description": "новый разговор с агентом этой темы"},
-            {"command": "compact", "description": "сжать контекст"},
+            {"command": "new", "description": "новый разговор"},
+            {"command": "check", "description": "проверка канала"},
             {"command": "help", "description": "справка"},
         ])
-        if self.topics:
-            for i, agent in enumerate(self.agents.values()):
-                await self.ensure_topic(agent, TOPIC_COLORS[i % len(TOPIC_COLORS)])
-        else:
-            log.warning("@%s has no topic mode in private chats: enable it in @BotFather; using one stream",
-                        me.get("username"))
         asyncio.create_task(self.poll())
-        log.info("telegram @%s ready, topics: %s", me.get("username"), self.topics)
-
-    async def ensure_topic(self, agent: RouterAgent, color: int) -> None:
-        if self.store.place(self.name, agent.id):
-            return
-        topic = await self.call("createForumTopic", chat_id=self.cfg.owner_id, name=agent.name, icon_color=color)
-        self.store.save_place(self.name, agent.id, str(topic["message_thread_id"]))
-        log.info("created topic %s for agent %s", topic["message_thread_id"], agent.id)
+        log.info("telegram @%s ready", me.get("username"))
 
     # --- inbound -----------------------------------------------------------------------------
 
     async def poll(self) -> None:
-        offset = int(self.store.get("telegram.offset") or 0)
         while True:
             try:
-                updates = await self.call("getUpdates", offset=offset, timeout=POLL_TIMEOUT_S,
-                                          allowed_updates=["message"])
+                updates = await self.call("getUpdates", offset=int(self.store.get("telegram.offset") or 0),
+                                          timeout=POLL_TIMEOUT_S, allowed_updates=["message", "callback_query"])
             except Exception as exc:
                 log.warning("getUpdates failed: %s", exc)
                 await asyncio.sleep(5)
                 continue
             for update in updates:
-                offset = update["update_id"] + 1
-                # Saved before handling: a message that crashes the handler must not replay forever.
-                self.store.set("telegram.offset", str(offset))
-                try:
-                    await self.on_message(update.get("message"))
-                except Exception:
-                    log.exception("update %s failed", update["update_id"])
+                await self.consume(update)
+
+    async def consume(self, update: dict) -> None:
+        """Handle one update, then move the offset past it.
+
+        The offset is saved after the handler, not before: if the router dies while handling, Telegram delivers
+        the update again after the restart, and the core recognises a message it has already answered. A handler
+        that fails does not replay forever either: the owner is told that the message was not processed, and
+        the offset moves on.
+        """
+        try:
+            await self.on_update(update)
+        except Exception:
+            log.exception("update %s failed", update.get("update_id"))
+            try:
+                await self.core.tell_owner(LOST, origin=self)
+            except Exception:
+                log.exception("could not report the failed update %s", update.get("update_id"))
+        self.store.set("telegram.offset", str(update["update_id"] + 1))
+
+    async def on_update(self, update: dict) -> None:
+        if "callback_query" in update:
+            await self.on_callback(update["callback_query"])
+        else:
+            await self.on_message(update.get("message"))
+
+    async def on_callback(self, query: dict) -> None:
+        """A button was pressed. Checked here: who pressed and in which chat. The callback data is only a button
+        id; what the button means, whether it is still alive and whether it was used already, the core reads
+        from its own tables."""
+        message = query.get("message") or {}
+        if not self.core or (query.get("from") or {}).get("id") != self.cfg.owner_id \
+                or (message.get("chat") or {}).get("id") != self.cfg.owner_id:
+            return
+        pressed = await self.core.press(self, str(query.get("data") or ""))
+        await self.call("answerCallbackQuery", callback_query_id=query["id"], text=pressed.toast)
+        if pressed.card and "message_id" in message:
+            # The card is rewritten without a keyboard: the buttons are gone, the choice stays visible.
+            await self._message(render_telegram(pressed.card)[0], edit=message["message_id"])
 
     async def on_message(self, message: dict | None) -> None:
         if not message or not self.core:
@@ -117,102 +130,85 @@ class TelegramChannel:
         # Commands come only from the owner, in the private chat with the bot. Everything else is ignored.
         if sender.get("id") != self.cfg.owner_id or message["chat"]["id"] != self.cfg.owner_id or sender.get("is_bot"):
             return
+        native_id = str(message["message_id"])
         text = (message.get("text") or "").strip()
         if not text:
+            what = next((name for key, name in UNSUPPORTED.items() if key in message), "такие сообщения")
+            await self.core.unsupported(self, what, native_id=native_id, caption=message.get("caption") or "")
             return
+        forwarded_from = self._forwarded_from(message)
         command = text.split()[0].split("@")[0].lower()
-        if command == "/start":
-            await self.send_html(None, "Пиши в тему агента или сюда — тогда ответит «Главная» и сама спросит "
-                                       "нужных агентов. Адресно: <code>@агент текст</code>.")
-            return
-        text = SLASH_COMMANDS.get(command, command) + text[len(text.split()[0]):] if command in SLASH_COMMANDS else text
-        thread = message.get("message_thread_id") if message.get("is_topic_message") else None
-        agent_id = self.store.agent_by_place(self.name, str(thread)) if thread else None
-        if agent_id is None:
-            agent_id, text = self.addressed(text)
-        if agent_id is None:
-            names = ", ".join(f"@{a.id}" for a in self.agents.values())
-            await self.send_html(None, f"Кому? Напиши в тему агента или начни с имени: {names}.")
-            return
-        if not self.topics:
-            self.store.set("telegram.last_agent", agent_id)
-        await self.core.handle(self, agent_id, text)
+        if not forwarded_from:  # somebody else's text is data: «/new» inside it is not a command
+            if command == "/start":
+                await self.core.tell_owner(START, origin=self)
+                return
+            if command in SLASH_COMMANDS:
+                text = SLASH_COMMANDS[command] + text[len(text.split()[0]):]
+        reply = message.get("reply_to_message") or {}
+        # One chat, one assistant: no address, the core picks the default agent.
+        await self.core.handle(self, None, text, native_id=native_id, forwarded_from=forwarded_from,
+                               reply_to=str(reply["message_id"]) if "message_id" in reply else None)
 
-    def addressed(self, text: str) -> tuple[str | None, str]:
-        """`@travel текст` or `@путешествия текст` picks the agent; without topics the last one is kept."""
-        if match := re.match(r"@(\S+)\s*(.*)", text, re.S):
-            key = match.group(1).lower()
-            for agent in self.agents.values():
-                if key in (agent.id.lower(), agent.name.lower()):
-                    return agent.id, match.group(2)
-        if not self.topics:
-            return self.store.get("telegram.last_agent") or self.default_agent, text
-        return self.default_agent, text  # the general chat belongs to the Concierge, if there is one
+    def _forwarded_from(self, message: dict) -> str | None:
+        """Who wrote a forwarded message, or None when the text is the owner's own."""
+        origin = message.get("forward_origin")
+        if not origin:
+            return None
+        user = origin.get("sender_user") or {}
+        if user.get("id") == self.cfg.owner_id:
+            return None  # the owner forwarded his own words
+        name = (" ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or user.get("username")
+                or origin.get("sender_user_name")
+                or (origin.get("sender_chat") or {}).get("title") or (origin.get("chat") or {}).get("title"))
+        return name or "неизвестный отправитель"
 
     # --- outbound ----------------------------------------------------------------------------
 
-    def _thread(self, agent_id: str) -> int | None:
-        place = self.store.place(self.name, agent_id) if self.topics else None
-        return int(place) if place else None
-
-    async def send_html(self, agent_id: str | None, html: str) -> None:
-        thread = self._thread(agent_id) if agent_id else None
+    async def _message(self, html: str, *, ref: str | None = None, keyboard: dict | None = None,
+                       edit: int | None = None) -> None:
+        """The one way text reaches the owner: a new message, or with `edit` a rewrite of an old one. If
+        Telegram refuses the markup, the same text goes out with no markup except <code> around addresses —
+        on that path too the preview is off and nothing is a link."""
+        method = "editMessageText" if edit else "sendMessage"
+        params = dict(chat_id=self.cfg.owner_id, message_id=edit, parse_mode="HTML", link_preview_options=NO_PREVIEW,
+                      reply_markup=keyboard)
         try:
-            await self.call("sendMessage", chat_id=self.cfg.owner_id, message_thread_id=thread, text=html,
-                            parse_mode="HTML", link_preview_options={"is_disabled": True})
+            sent = await self.call(method, text=html, **params)
         except TelegramError as exc:
             if "parse" not in str(exc):
                 raise
-            plain = re.sub(r"<[^>]+>", "", html).replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
-            await self.call("sendMessage", chat_id=self.cfg.owner_id, message_thread_id=thread, text=plain)
-
-    def _draft_id(self, agent_id: str) -> int:
-        return zlib.crc32(agent_id.encode()) or 1
+            sent = await self.call(method, text=tg_plain(html), **params)
+        if ref and sent.get("message_id"):
+            self.store.save_sent(self.name, str(sent["message_id"]), ref)  # so a reply to it can be traced back
 
     async def typing(self, agent_id: str, active: bool) -> None:
-        if not active:
-            return  # the final message replaces the draft; a chat action expires by itself
-        thread = self._thread(agent_id)
-        await self.call("sendChatAction", chat_id=self.cfg.owner_id, message_thread_id=thread, action="typing")
-        if self.topics:
-            # A draft lives 30 s: repeat it while a long tool call runs. An empty draft shows Telegram's own
-            # «Thinking…» placeholder until text starts streaming.
-            await self.draft(agent_id, self.drafting.get(agent_id, ""))
+        if active:  # a chat action expires by itself
+            await self.call("sendChatAction", chat_id=self.cfg.owner_id, action="typing")
 
     async def draft(self, agent_id: str, text: str) -> None:
-        """Stream the partial reply into the topic; the final sendMessage replaces it."""
-        if not self.topics:
-            return
-        self.drafting[agent_id] = text
-        html = render_telegram(text)[0][:TELEGRAM_DRAFT_LIMIT] if text.strip() else ""
-        params = dict(chat_id=self.cfg.owner_id, message_thread_id=self._thread(agent_id),
-                      draft_id=self._draft_id(agent_id))
-        if not html:
-            await self.call("sendMessageDraft", text="", **params)
-            return
-        try:
-            await self.call("sendMessageDraft", text=html, parse_mode="HTML", **params)
-        except TelegramError:  # half-written markup that Telegram refuses: show it plain
-            await self.call("sendMessageDraft", text=text[:TELEGRAM_DRAFT_LIMIT], **params)
+        pass  # no streaming: what sendMessageDraft does with link previews is not established
 
-    async def send(self, agent_id: str, text: str, files: list[AgentFile]) -> None:
-        self.drafting.pop(agent_id, None)
-        prefix = "" if self.topics else f"<b>{self.agents[agent_id].name}</b>\n\n"
-        for i, html in enumerate(render_telegram(text)):
-            await self.send_html(agent_id, (prefix if i == 0 else "") + html)
+    async def send(self, agent_id: str, text: str, files: list[AgentFile], ref: str | None = None) -> None:
+        for html in render_telegram(text):
+            await self._message(html, ref=ref)
         for f in files:
             await self.call("sendDocument", files={"document": (f.name, f.data, f.media_type)},
-                            chat_id=str(self.cfg.owner_id), message_thread_id=self._thread(agent_id))
+                            chat_id=str(self.cfg.owner_id))
 
     async def mirror(self, agent_id: str, origin: str, text: str) -> None:
-        pass  # Telegram is the quick window, not the record
+        pass  # Telegram is not the record of other channels
 
-    async def notice(self, agent_id: str, text: str) -> None:
-        prefix = "" if self.topics else f"<b>{self.agents[agent_id].name}</b>: "
-        await self.send_html(agent_id, prefix + "<i>" + "\n\n".join(render_telegram(text)) + "</i>")
+    async def notice(self, agent_id: str, text: str, buttons: list[tuple[str, str]] | None = None,
+                     ref: str | None = None) -> None:
+        parts = render_telegram(text)
+        # callback_data is the button id and nothing else: Telegram allows 64 bytes, and the meaning stays with us.
+        keyboard = {"inline_keyboard": [[{"text": label, "callback_data": button_id} for label, button_id in buttons]]} \
+            if buttons else None
+        for i, html in enumerate(parts):
+            await self._message(html, ref=ref, keyboard=keyboard if i == len(parts) - 1 else None)
 
     async def protocol(self, line: str) -> None:
-        pass  # the protocol lives in Matrix and in the Store
+        pass  # the protocol lives in the Store
 
     async def trace(self, agent_id: str, tree_id: str, text: str) -> None:
-        pass  # agents' conversation is shown in Matrix
+        pass  # agents' conversation is not shown here

@@ -9,7 +9,7 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from starlette.applications import Starlette
 
-from retinue.agent_host import EngineExecutor, Outbox, SessionMap, build_card
+from retinue.agent_host import EngineExecutor, Outbox, build_card
 from retinue.config import AgentConfig, EngineConfig, Skill
 from retinue.engine import EngineResult
 from retinue.core import ask_agent
@@ -21,18 +21,18 @@ class FakeEngine:
         self.turns = []
         self.workspace = workspace
 
-    async def run(self, prompt, session_id, on_text=None, turn_id=None):
-        self.calls.append((prompt, session_id))
+    async def run(self, prompt, on_text=None, turn_id=None):
+        self.calls.append(prompt)
         self.turns.append(turn_id)
         if on_text and prompt == "hello":
             await on_text("ec")
         if prompt == "file":
             (self.workspace / "out").mkdir(exist_ok=True)
             (self.workspace / "out" / "plan.html").write_text("<h1>plan</h1>")
-            return EngineResult(text="готово", session_id="sess-2", is_error=False)
+            return EngineResult(text="готово", is_error=False)
         if prompt == "fail":
-            return EngineResult(text="boom", session_id=None, is_error=True)
-        return EngineResult(text=f"echo: {prompt}", session_id="sess-1", is_error=False, num_turns=1)
+            return EngineResult(text="boom", is_error=True)
+        return EngineResult(text=f"echo: {prompt}", is_error=False, num_turns=1)
 
 
 def free_port():
@@ -48,7 +48,7 @@ async def _run(tmp_path):
                       public_url=f"http://127.0.0.1:{port}")
     engine = FakeEngine(tmp_path)
     card = build_card(cfg)
-    handler = DefaultRequestHandler(agent_executor=EngineExecutor(engine, SessionMap(str(tmp_path / "s.db")), Outbox(str(tmp_path))),
+    handler = DefaultRequestHandler(agent_executor=EngineExecutor(engine, Outbox(str(tmp_path))),
                                     task_store=InMemoryTaskStore(), agent_card=card)
     app = Starlette(routes=[*create_agent_card_routes(card), *create_jsonrpc_routes(handler, "/")])
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
@@ -66,7 +66,8 @@ async def _run(tmp_path):
         assert progress == ["ec"], "the partial reply streams before the answer"
         assert await ask_agent(url, "again", "ctx-1", None, "turn-7") == ("done", "echo: again", [])
         assert engine.turns[-1] == "turn-7", "the router's turn id reaches the engine"
-        assert engine.calls[1] == ("again", "sess-1"), "second turn must resume the stored session"
+        assert engine.calls == ["hello", "again"], "a second turn in the same context is a new short run"
+        assert not list(tmp_path.glob("*.db")) and not list(tmp_path.glob("*.sqlite")), "the host keeps no session state"
         status, answer, _ = await ask_agent(url, "fail", "ctx-2")
         assert status == "failed" and answer == "boom"
         status, answer, files = await ask_agent(url, "file", "ctx-3")

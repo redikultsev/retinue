@@ -405,14 +405,19 @@ class Core:
             return False, "Отказано: этому агенту поиск по архиву не выдан."
         query = query.strip()[:MAX_QUERY]
         # The owner message being answered is left out: the question is not its own answer.
-        hits = self.archive.search(query, exclude=self.inbound.get(turn.tree.id))
+        asked = self.archive.get(self.inbound.get(turn.tree.id, ""))
+        current = asked.conversation_id if asked else self.store.conversation(caller.id)
+        hits = self.archive.search(query, exclude=asked.id if asked else None)
         if hits:
+            # Which conversation a hit is from: after !new the session does not hold the old one.
             text = f"Найдено: {len(hits)}, сначала самые близкие.\n\n" + "\n\n".join(
-                f"[{e.id} · {stamp(e.ts)} · {SPEAKER[e.kind]}]\n"
+                f"[{e.id} · {stamp(e.ts)} · {SPEAKER[e.kind]} · "
+                f"{'этот разговор' if e.conversation_id == current else 'прошлый разговор'}]\n"
                 + (e.text if len(e.text) <= SEARCH_TEXT_CHARS else snippet) for e, snippet in hits)
         else:
             count, first, last = self.archive.coverage()
-            text = (f"По запросу «{query}» ничего не найдено. В архиве только разговор с Владельцем: событий — {count}"
+            text = (f"По запросу «{query}» ничего не найдено. В архиве только разговоры с Владельцем, этот и прошлые: "
+                    f"событий — {count}"
                     + (f", с {stamp(first)} по {stamp(last)}" if count else "")
                     + ". Почта, файлы и переписка с другими людьми не собираются.")
         self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="archive", status="done",

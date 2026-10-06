@@ -111,6 +111,7 @@ def test_archive_search_through_the_bus(tmp_path):
               RouterAgent(id="travel", name="Путешествия", url="t", trust_class="web")]
     archive = Archive(str(tmp_path / "archive.sqlite"))
     archive.append(ASSISTANT, "По Еревану советую Каскад и Матенадаран.", conversation_id="old", channel="telegram", ts=100.0)
+    archive.append(ASSISTANT, "В Ереване съезди ещё в Гарни.", conversation_id="now", channel="telegram", ts=150.0)
     question, _ = archive.append(OWNER, "Что ты советовала по Еревану?", conversation_id="now", channel="telegram", ts=200.0)
 
     async def run():
@@ -123,9 +124,14 @@ def test_archive_search_through_the_bus(tmp_path):
             found = await (await http.post("/archive/search", json={"turn": turn.id, "query": "Ереван"}, headers=mine)).json()
             assert found["ok"] and "Каскад и Матенадаран" in found["text"] and "1970-01-01 00:01 UTC · Ассистентка" in found["text"]
             assert "Что ты советовала" not in found["text"], "the question being answered is not a result"
+            hits = found["text"].split("\n\n")[1:]
+            where = {("Каскад" in h, "Гарни" in h): h.splitlines()[0] for h in hits}
+            assert where[(True, False)].endswith("· прошлый разговор]") and where[(False, True)].endswith("· этот разговор]"), \
+                "a hit says which conversation it is from: after /new the old one is not «this one»"
 
             empty = await (await http.post("/archive/search", json={"turn": turn.id, "query": "зарплата"}, headers=mine)).json()
-            assert empty["ok"] and "ничего не найдено" in empty["text"] and "событий — 2" in empty["text"]
+            assert empty["ok"] and "ничего не найдено" in empty["text"] and "событий — 3" in empty["text"]
+            assert "этот и прошлые" in empty["text"]
             assert "Почта, файлы и переписка с другими людьми не собираются" in empty["text"]
 
             nobody = await http.post("/archive/search", json={"turn": turn.id, "query": "Ереван"},

@@ -62,6 +62,7 @@ def test_one_stream_owner_only(tmp_path):
         await ch.on_message(msg("@travel из старой темы", message_id=7, message_thread_id=11, is_topic_message=True))
         await ch.on_message(msg("чужой", sender=7))
         await ch.on_message(msg("/start"))
+        await ch.on_message(msg("/help"))
 
     asyncio.run(run())
     assert ch.core.calls == [
@@ -70,6 +71,7 @@ def test_one_stream_owner_only(tmp_path):
         ("handle", None, "!compact", {"native_id": "8", **PLAIN}),
         ("handle", None, "@travel из старой темы", {"native_id": "7", **PLAIN}),  # no topics, no addresses
         ("tell", START),
+        ("tell", START),  # Telegram's help names Telegram's commands, «/new», not the core's «!new»
     ]
     assert ch.sent == [], "the adapter itself says nothing: the core does"
     assert "/compact" in START

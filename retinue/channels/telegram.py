@@ -22,7 +22,7 @@ log = logging.getLogger("retinue.telegram")
 API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 50
 NO_PREVIEW = {"is_disabled": True}
-SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/check": "!check", "/help": "!help"}
+SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/check": "!check"}
 # What a message may carry instead of text. None of it is handled yet; each is refused aloud: the value
 # finishes the phrase «Пока не умею принимать …».
 UNSUPPORTED = {"photo": "фото", "document": "файлы", "voice": "голосовые", "audio": "аудио", "video": "видео",
@@ -141,7 +141,7 @@ class TelegramChannel:
         forwarded_from = self._forwarded_from(message)
         command = text.split()[0].split("@")[0].lower()
         if not forwarded_from:  # somebody else's text is data: «/new» inside it is not a command
-            if command == "/start":
+            if command in ("/start", "/help"):  # the core's help names «!» commands; Telegram uses «/»
                 await self.core.tell_owner(START, origin=self)
                 return
             if command in SLASH_COMMANDS:

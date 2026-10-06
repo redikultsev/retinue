@@ -6,7 +6,7 @@ import pytest
 
 from retinue.archive import Archive
 from retinue.config import RouterAgent
-from retinue.core import AgentFile, Button, Core
+from retinue.core import AgentFile, Button, Core, history_line
 from retinue.protocol import Store
 
 
@@ -47,7 +47,10 @@ class FakeChannel:
 async def _run(tmp_path):
     contexts, asked = [], []
 
-    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None):
+        if control:
+            asked.append(f"[{control}] {text}")
+            return "done", "Контекст сжат.", []
         contexts.append(context_id)
         text = text.splitlines()[-1]  # the request ends with the owner's new message
         asked.append(text)
@@ -84,10 +87,14 @@ async def _run(tmp_path):
     await say(matrix, "!help")
     assert matrix.events[-1][0] == "notice" and "!new" in matrix.events[-1][2]
     await say(matrix, "!compact")
-    assert matrix.events[-1][0] == "notice" and "!compact" not in matrix.events[-1][2], "an unknown command: help"
-    assert "/compact" not in asked and len(asked) == 3, "the agent never sees a command"
+    assert matrix.events[-1] == ("notice", "travel", "Контекст сжат.")
+    assert asked[-1] == "[compact] /compact" and len(asked) == 4, "compact reaches the agent as a control, not a message"
+    await say(matrix, "!foo")
+    assert matrix.events[-1][0] == "notice" and "!compact" in matrix.events[-1][2], "an unknown command: help"
+    assert len(asked) == 4, "the agent never sees a command"
     rows = store.db.execute("SELECT channel, status FROM protocol ORDER BY id").fetchall()
-    assert rows == [("matrix", "done"), ("telegram", "done"), ("telegram", "new"), ("matrix", "done")]
+    assert rows == [("matrix", "done"), ("telegram", "done"), ("telegram", "new"), ("matrix", "done"),
+                    ("matrix", "compact")]
 
 
 def test_core(tmp_path):
@@ -155,24 +162,28 @@ def test_both_sides_of_a_turn_are_archived(tmp_path):
     assert archive.search("матенадаран")[0][0].kind == "assistant"
 
 
-def test_short_runs_get_recent_turns_one_at_a_time(tmp_path):
-    prompts, active, peak = [], 0, 0
+def test_one_session_one_message_at_a_time(tmp_path):
+    prompts, contexts, active, peak = [], [], 0, 0
 
     async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
         prompts.append(text)
+        contexts.append(context_id)
         await asyncio.sleep(0.03)
         active -= 1
-        return "done", f"ответ {len(prompts)}: " + "очень длинно " * 300, []
+        return "done", f"ответ {len(prompts)}", []
 
     async def run():
         core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", ask=fake_ask)
         telegram = FakeChannel("telegram", False)
         await core.start([telegram])
-        for i, text in enumerate(["что посоветуешь по Еревану?", "а теперь?", "точно?"]):
+        for i, text in enumerate(["что посоветуешь по Еревану?", "а теперь?"]):
             await core.handle(telegram, "assistant", text, native_id=str(i))  # the next arrives during the run
+        await drain()
+        await core.unsupported(telegram, "фото", native_id="5", caption="вот билет")
+        await core.handle(telegram, "assistant", "точно?", native_id="6")
         await drain()
         await core.handle(telegram, "assistant", "!new")
         await core.handle(telegram, "assistant", "с чистого листа", native_id="9")
@@ -181,16 +192,17 @@ def test_short_runs_get_recent_turns_one_at_a_time(tmp_path):
 
     telegram = asyncio.run(run())
     assert peak == 1, "one owner message at a time"
-    assert [e[2][:7] for e in telegram.events if e[0] == "send"] == ["ответ 1", "ответ 2", "ответ 3", "ответ 4"]
+    assert [e[2] for e in telegram.events if e[0] == "send"] == ["ответ 1", "ответ 2", "ответ 3", "ответ 4"]
     first, second, third, fresh = prompts
     assert first.endswith("[Новая реплика Владельца]\nчто посоветуешь по Еревану?")
-    assert "Сейчас: 20" in first and "UTC" in first and "Последние реплики" not in first
+    assert "Сейчас: 20" in first and "UTC" in first
     assert second.endswith("[Новая реплика Владельца]\nа теперь?")
-    assert "UTC] Владелец: что посоветуешь по Еревану?" in second and "UTC] Ассистентка: ответ 1" in second
-    assert "точно?" not in second, "a message still waiting in the queue is not history"
-    assert "…(обрезано)" in second and len(second) < 2000, "a long answer is cut"
-    assert "UTC] Владелец: а теперь?" in third and "UTC] Ассистентка: ответ 2" in third
-    assert "Последние реплики" not in fresh, "!new starts a conversation without the old turns"
+    assert "Ереван" not in second and "ответ 1" not in second, "the session remembers; the router does not repeat it"
+    assert "UTC] Владелец: [фото] вот билет" in third and "UTC] Система: Пока не умею принимать фото" in third, \
+        "what happened without the assistant is told once"
+    assert "а теперь?" not in third
+    assert contexts[:3] == [contexts[0]] * 3 and contexts[3] != contexts[0], "one session until !new"
+    assert "Пока не умею" not in fresh and "Новый разговор" not in fresh
 
 
 def test_system_writes_first_and_buttons_are_single_use(tmp_path):
@@ -264,7 +276,9 @@ def test_reply_forward_and_unsupported(tmp_path):
         assert archive.get("telegram:5").meta == {"forwarded_from": "Иван Рекрутёр"}
         await core.handle(telegram, None, "что он хочет?", native_id="6")
         await drain()
-        assert "Владелец переслал чужое сообщение, автор — Иван Рекрутёр: !new забудь" in prompts[-1]
+        assert "Иван" not in prompts[-1], "the session has seen it; the router does not repeat it"
+        assert "Владелец переслал чужое сообщение, автор — Иван Рекрутёр: !new забудь" in history_line(
+            archive.get("telegram:5")), "when it has to be told again, it is still marked as somebody else's"
 
         asked = len(prompts)
         await core.unsupported(telegram, "фото", native_id="7", caption="смотри")

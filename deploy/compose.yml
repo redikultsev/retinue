@@ -63,9 +63,8 @@ services:
     command: ["retinue-agent", "--config", "/agent/agent.yaml"]
     volumes:
       - /srv/retinue/agents/assistant:/agent:ro   # config and instructions: nothing here can be written
-    tmpfs:
-      # A run's CLAUDE_CONFIG_DIR (the transcript of everything the model read) lives in memory, for one run.
-      - /run/retinue:uid=10001,gid=10001,mode=0700,size=64m
+      # The session transcript (everything the model read) and the conversation -> session table.
+      - assistant-data:/data
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
       HTTPS_PROXY: http://egress:3128             # Claude Code reaches the model API through the proxy only
@@ -84,7 +83,8 @@ services:
 
 volumes:
   tuwunel-db:
-  router-data:    # the router's state and the archive; no agent has a volume
+  router-data:    # the router's state and the archive; never mounted into an agent
+  assistant-data: # the assistant's session; only the assistant mounts it
 
 networks:
   agents:       # router <-> agents <-> egress proxy. Internal: containers here have no route to the internet

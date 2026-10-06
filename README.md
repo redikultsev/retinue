@@ -4,7 +4,7 @@
 conversation in an archive on your own server. It reads your personal data, and therefore has no way out: no
 web, no shell, no network except the model API.
 
-> Status: **pilot**. One assistant, short runs, a searchable archive of the conversation, closed egress.
+> Status: **pilot**. One assistant in one long session, a searchable archive of the conversation, closed egress.
 > Schedules, mail, a web-search tool behind a schema and approvals for messages to other people are next.
 > Expect breaking changes.
 
@@ -17,9 +17,9 @@ not by a prompt:
 - **No exits, by construction.** The assistant's container sits on an internal network with no route to the
   internet; its only way out is a proxy that lets through the model API and nothing else. It has no Bash, no
   file tools, no web tools. Its config and instructions are mounted read-only.
-- **Short runs.** Every reply is a new run that starts from nothing and leaves nothing: no session is resumed,
-  the run's working files live in memory and are removed. What it needs to remember, the router puts into the
-  request from the archive.
+- **One conversation, one session.** The assistant talks to you in a single long session that Claude Code
+  compacts when it grows; `!compact` squeezes it on request, `!new` starts over. The transcript lives on the
+  assistant's own volume. Whatever the session has lost is still in the archive, and the assistant searches it.
 - **One router holds every token and writes every word down.** Both sides of every turn go to an append-only
   archive before and after the model is called. The assistant searches the archive through the router; the
   file is never mounted into its container.
@@ -37,8 +37,8 @@ You (Telegram) ──► Router ──A2A──► Assistant ──► egress pr
 ```
 
 - `retinue/router.py` — entry point: the core plus the channels in the config (Telegram; Matrix is optional).
-- `retinue/core.py` — one owner message at a time; archives both sides; builds each request from the last
-  turns; buttons and messages the system sends on its own.
+- `retinue/core.py` — one owner message at a time; archives both sides; tells the assistant what happened in the
+  conversation without it; buttons and messages the system sends on its own.
 - `retinue/archive.py` — the raw archive: append-only events with a full-text index.
 - `retinue/bus.py` — what an agent may ask the router for: search the archive, or (when granted) another agent.
 - `retinue/agent_host.py` — one agent behind an A2A server; one container, its trust boundary.

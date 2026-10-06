@@ -6,28 +6,32 @@ Another engine (Codex, an open-weight model) plugs in by implementing `Engine`.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
-import shutil
-import tempfile
+import os
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Protocol
 
 import httpx
-from claude_agent_sdk import (ClaudeAgentOptions, ResultMessage, StreamEvent, SystemMessage, create_sdk_mcp_server,
-                              query, tool)
+from claude_agent_sdk import (ClaudeAgentOptions, ResultError, ResultMessage, StreamEvent, SystemMessage,
+                              create_sdk_mcp_server, query, tool)
 
 from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
+
+SESSION_LOST = "_Прошлый разговор не сохранился, начинаю заново._\n\n"
+COMPACT = "/compact"  # Claude Code's own command; the only prompt that is not delivered verbatim
 
 
 @dataclass
 class EngineResult:
     text: str
     is_error: bool
+    session_id: str | None = None  # the session to resume next time
     num_turns: int = 0
     cost_usd: float | None = None
     duration_ms: int = 0
@@ -38,10 +42,13 @@ OnText = Callable[[str], Awaitable[None]]
 
 
 class Engine(Protocol):
-    """One call is one short run: it starts with nothing but the prompt and leaves nothing behind. What the
-    agent should remember of the conversation, the router puts into the prompt."""
+    """One conversation is one session: a call continues `session_id` (None starts a new one) and returns the
+    session to continue next time. The host keeps the mapping; the engine keeps the transcript."""
 
-    async def run(self, prompt: str, on_text: OnText | None = None, turn_id: str | None = None) -> EngineResult: ...
+    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
+                  turn_id: str | None = None) -> EngineResult: ...
+
+    async def compact(self, session_id: str | None) -> EngineResult: ...
 
 
 BUS_PREFIX = "mcp__retinue__"  # how the model sees the tools below
@@ -97,7 +104,7 @@ RUN_ENV = {
 
 
 class ClaudeEngine:
-    """Runs one short turn of a Claude Code agent: a new session every time, nothing kept afterwards.
+    """Runs one turn of a Claude Code agent in its conversation's session.
 
     What a run may do is decided here and nowhere else:
     - the instructions are one file read at start (`engine.instructions`, mounted read-only) and passed as the
@@ -107,8 +114,9 @@ class ClaudeEngine:
       and `dontAsk` denies every tool that is not in `allowed_tools`;
     - the prompt is delivered as written (`verbatim_prompts`): it carries prior turns and other people's text,
       and an `@/path` or a `/command` inside it must not make Claude Code read a file or run a command;
-    - CLAUDE_CONFIG_DIR, where Claude Code writes the transcript of everything it read, is a fresh directory
-      under `engine.run_root` (a tmpfs in production) and is removed when the run ends.
+    - CLAUDE_CONFIG_DIR, where Claude Code keeps the session transcript (everything the model read), is
+      `engine.config_dir`: one directory for the agent, on its own volume, readable by nobody else.
+    - Claude Code compacts a long session by itself; `compact()` does it on request.
     """
 
     def __init__(self, cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "") -> None:
@@ -120,9 +128,14 @@ class ClaudeEngine:
         if not instructions.is_file():
             raise SystemExit(f"engine: instructions file {instructions} not found")
         self.instructions = instructions.read_text()
+        self.env = dict(RUN_ENV)
+        if cfg.config_dir:
+            os.makedirs(cfg.config_dir, mode=0o700, exist_ok=True)
+            os.chmod(cfg.config_dir, 0o700)
+            self.env["CLAUDE_CONFIG_DIR"] = cfg.config_dir
 
-    def options(self, turn_id: str | None, streaming: bool, config_dir: str) -> ClaudeAgentOptions:
-        """Everything one run is allowed, in one place. There is no `resume`: every run is a new session."""
+    def options(self, turn_id: str | None, streaming: bool, session_id: str | None = None) -> ClaudeAgentOptions:
+        """Everything one run is allowed, in one place."""
         allowed, servers = list(self.cfg.allowed_tools), {}
         if self.bus_url and self.bus_token and turn_id and self.cfg.bus_tools:
             tools = bus_tools(self.bus_url, self.bus_token, turn_id)
@@ -139,22 +152,40 @@ class ClaudeEngine:
             strict_mcp_config=True,
             permission_mode="dontAsk",
             verbatim_prompts=True,
-            env={**RUN_ENV, "CLAUDE_CONFIG_DIR": config_dir},
+            env=dict(self.env),
+            # session_id comes only from the host's own table, never from a message.
+            resume=session_id,
             max_turns=self.cfg.max_turns,
             max_budget_usd=self.cfg.max_budget_usd,
             model=self.cfg.model,
             include_partial_messages=streaming,
         )
 
-    async def run(self, prompt: str, on_text: OnText | None = None, turn_id: str | None = None) -> EngineResult:
-        config_dir = tempfile.mkdtemp(prefix="claude-", dir=self.cfg.run_root)
+    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
+                  turn_id: str | None = None) -> EngineResult:
         try:
-            return await self._run(prompt, on_text, turn_id, config_dir)
-        finally:
-            shutil.rmtree(config_dir, ignore_errors=True)
+            return await self._run(prompt, self.options(turn_id, on_text is not None, session_id), on_text)
+        except ResultError as exc:
+            # The transcript is gone (e.g. the volume was recreated): start over instead of failing every turn.
+            if not session_id or "No conversation found" not in str(exc):
+                raise
+            log.warning("session %s not found, starting a new one", session_id)
+            result = await self._run(prompt, self.options(turn_id, on_text is not None), on_text)
+            result.text = SESSION_LOST + result.text
+            return result
 
-    async def _run(self, prompt: str, on_text: OnText | None, turn_id: str | None, config_dir: str) -> EngineResult:
-        options = self.options(turn_id, on_text is not None, config_dir)
+    async def compact(self, session_id: str | None) -> EngineResult:
+        """Squeeze the session on the owner's request. The prompt is our constant, so the slash command may run."""
+        if not session_id:
+            return EngineResult(text="Сжимать нечего: разговор ещё не начат.", is_error=False)
+        options = dataclasses.replace(self.options(None, False, session_id), verbatim_prompts=False)
+        result = await self._run(COMPACT, options, None)
+        result.session_id = result.session_id or session_id
+        if not result.is_error:
+            result.text = "Контекст сжат."
+        return result
+
+    async def _run(self, prompt: str, options: ClaudeAgentOptions, on_text: OnText | None) -> EngineResult:
         result: ResultMessage | None = None
         draft = ""
         async for message in query(prompt=prompt, options=options):
@@ -173,11 +204,12 @@ class ClaudeEngine:
                     draft += event["delta"]["text"]
                     await on_text(draft)
         if result is None:
-            return EngineResult(text="Агент не вернул результат.", is_error=True)
+            return EngineResult(text="Агент не вернул результат.", is_error=True, session_id=options.resume)
         text = result.result or ("; ".join(result.errors or []) or "Пустой ответ.")
         return EngineResult(
             text=text,
             is_error=result.is_error,
+            session_id=result.session_id,
             num_turns=result.num_turns,
             cost_usd=result.total_cost_usd,
             duration_ms=result.duration_ms,
@@ -187,10 +219,14 @@ class ClaudeEngine:
 class EchoEngine:
     """No-model engine for smoke tests: answers with the prompt."""
 
-    async def run(self, prompt: str, on_text: OnText | None = None, turn_id: str | None = None) -> EngineResult:
+    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
+                  turn_id: str | None = None) -> EngineResult:
         if on_text:
             await on_text("echo: ")
-        return EngineResult(text=f"echo: {prompt}", is_error=False)
+        return EngineResult(text=f"echo: {prompt}", is_error=False, session_id=session_id or "echo-session")
+
+    async def compact(self, session_id: str | None) -> EngineResult:
+        return EngineResult(text="Контекст сжат.", is_error=False, session_id=session_id)
 
 
 def make_engine(cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "") -> Engine:

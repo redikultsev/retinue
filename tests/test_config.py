@@ -88,13 +88,13 @@ def test_agent_engine_fields(tmp_path, monkeypatch):
     path = tmp_path / "agent.yaml"
     path.write_text(AGENT_YAML)
     engine = AgentConfig.load(path).engine
-    assert engine.instructions == "/agent/CLAUDE.md" and engine.tools is None and engine.run_root is None
+    assert engine.instructions == "/agent/CLAUDE.md" and engine.tools is None and engine.config_dir is None
     assert engine.bus_tools == ["ask_agent", "list_agents"], "an agent without the field keeps the old bus tools"
-    path.write_text(AGENT_YAML + "engine: {tools: [], bus_tools: [search_archive], run_root: /run/retinue,"
+    path.write_text(AGENT_YAML + "engine: {tools: [], bus_tools: [search_archive], config_dir: /data/claude,"
                                  " instructions: /agent/CLAUDE.md, disallowed_tools: [Bash, WebSearch, WebFetch]}\n")
     cfg = AgentConfig.load(path)
     assert cfg.engine.tools == [] and cfg.engine.bus_tools == ["search_archive"]
-    assert cfg.engine.run_root == "/run/retinue" and (cfg.bus_url, cfg.bus_token) == ("http://router:9100", "tok")
+    assert cfg.engine.config_dir == "/data/claude" and cfg.state_db == "/data/agent.sqlite" and (cfg.bus_url, cfg.bus_token) == ("http://router:9100", "tok")
     path.write_text(AGENT_YAML + "engine: {bus_tools: [send_email]}\n")
     with pytest.raises(SystemExit, match="send_email"):
         AgentConfig.load(path)

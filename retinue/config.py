@@ -107,7 +107,7 @@ class EngineConfig:
     allowed_tools: list[str] = field(default_factory=list)
     disallowed_tools: list[str] = field(default_factory=list)
     bus_tools: list[str] = field(default_factory=lambda: ["ask_agent", "list_agents"])  # subset of BUS_TOOLS
-    run_root: str | None = None         # where a run's CLAUDE_CONFIG_DIR is created and removed; a tmpfs in production
+    config_dir: str | None = None       # CLAUDE_CONFIG_DIR: the session transcripts; the agent's own volume
     max_turns: int = 30
     max_budget_usd: float | None = None
     model: str | None = None
@@ -130,6 +130,7 @@ class AgentConfig:
     skills: list[Skill]
     engine: EngineConfig
     workspace: str = "/workspace"
+    state_db: str = "/data/agent.sqlite"  # conversation -> session id; on the agent's own volume
     public_url: str = "http://localhost:9000"
     listen_host: str = "0.0.0.0"
     listen_port: int = 9000

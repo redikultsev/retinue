@@ -33,18 +33,20 @@ def test_one_assistant_and_nothing_else():
     assert engine.tools == [] and engine.allowed_tools == [], "no built-in tool is offered or allowed"
     assert {"Bash", "WebSearch", "WebFetch"} <= set(engine.disallowed_tools)
     assert engine.bus_tools == ["search_archive"], "the archive, and no ask_agent"
-    assert engine.instructions == "/agent/CLAUDE.md" and engine.run_root == "/run/retinue"
+    assert engine.instructions == "/agent/CLAUDE.md" and engine.config_dir == "/data/claude"
     assert sorted(SERVICES) == ["assistant", "egress", "router", "tuwunel"]
-    assert sorted(COMPOSE["volumes"]) == ["router-data", "tuwunel-db"], "no agent has a volume: no sessions on disk"
+    assert sorted(COMPOSE["volumes"]) == ["assistant-data", "router-data", "tuwunel-db"]
 
 
-def test_assistant_container_cannot_write_its_settings_and_keeps_nothing():
+def test_assistant_container_cannot_write_its_settings_and_keeps_only_its_session():
     assistant = SERVICES["assistant"]
-    assert assistant["volumes"] == ["/srv/retinue/agents/assistant:/agent:ro"], "one mount, read-only"
-    assert [t.split(":")[0] for t in assistant["tmpfs"]] == ["/run/retinue"], "the run directory is memory"
+    assert assistant["volumes"] == ["/srv/retinue/agents/assistant:/agent:ro", "assistant-data:/data"], \
+        "settings read-only; the session transcript on its own volume"
+    assert "tmpfs" not in assistant
     assert "CLAUDE_CONFIG_DIR" not in assistant["environment"] and "ANTHROPIC_API_KEY" not in assistant["environment"]
     router_mounts = " ".join(SERVICES["router"]["volumes"])
-    assert "router-data:/data" in router_mounts and "/data" not in str(assistant), "the archive file is the router's alone"
+    assert "router-data:/data" in router_mounts and "router-data" not in str(assistant), \
+        "the archive file is the router's alone"
 
 
 def test_agents_network_is_closed_and_the_proxy_is_the_only_way_out():

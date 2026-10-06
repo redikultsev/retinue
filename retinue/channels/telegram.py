@@ -22,14 +22,15 @@ log = logging.getLogger("retinue.telegram")
 API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 50
 NO_PREVIEW = {"is_disabled": True}
-SLASH_COMMANDS = {"/new": "!new", "/check": "!check", "/help": "!help"}
+SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/check": "!check", "/help": "!help"}
 # What a message may carry instead of text. None of it is handled yet; each is refused aloud: the value
 # finishes the phrase «Пока не умею принимать …».
 UNSUPPORTED = {"photo": "фото", "document": "файлы", "voice": "голосовые", "audio": "аудио", "video": "видео",
                "video_note": "видеосообщения", "sticker": "стикеры", "animation": "гифки", "contact": "контакты",
                "location": "геопозицию", "venue": "места", "poll": "опросы"}
 LOST = "Сообщение не обработано: ошибка на стороне Роутера. Повтори его, пожалуйста."
-START = "Пиши сюда — ответит ассистентка. Команды: /new — новый разговор, /check — проверка канала, /help — справка."
+START = ("Пиши сюда — ответит ассистентка. Команды: /new — новый разговор, /compact — сжать разговор, "
+         "/check — проверка канала, /help — справка.")
 
 
 class TelegramError(Exception):
@@ -65,6 +66,7 @@ class TelegramChannel:
         me = await self.call("getMe")
         await self.call("setMyCommands", commands=[
             {"command": "new", "description": "новый разговор"},
+            {"command": "compact", "description": "сжать разговор"},
             {"command": "check", "description": "проверка канала"},
             {"command": "help", "description": "справка"},
         ])

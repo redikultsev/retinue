@@ -58,6 +58,7 @@ def test_one_stream_owner_only(tmp_path):
     async def run():
         await ch.on_message(msg("билеты в Черногорию", message_id=5))
         await ch.on_message(msg("/new", message_id=6))
+        await ch.on_message(msg("/compact", message_id=8))
         await ch.on_message(msg("@travel из старой темы", message_id=7, message_thread_id=11, is_topic_message=True))
         await ch.on_message(msg("чужой", sender=7))
         await ch.on_message(msg("/start"))
@@ -66,10 +67,12 @@ def test_one_stream_owner_only(tmp_path):
     assert ch.core.calls == [
         ("handle", None, "билеты в Черногорию", {"native_id": "5", **PLAIN}),
         ("handle", None, "!new", {"native_id": "6", **PLAIN}),
+        ("handle", None, "!compact", {"native_id": "8", **PLAIN}),
         ("handle", None, "@travel из старой темы", {"native_id": "7", **PLAIN}),  # no topics, no addresses
         ("tell", START),
     ]
     assert ch.sent == [], "the adapter itself says nothing: the core does"
+    assert "/compact" in START
 
 def test_reply_forward_and_unsupported_types(tmp_path):
     ch = make(tmp_path)

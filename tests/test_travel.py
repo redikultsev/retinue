@@ -25,6 +25,9 @@ def test_the_form_takes_closed_types_only():
     assert travel.check("search_flights", {"origin": "BEG,INI", "destination": "MOW", "depart": "2026-11-14",
                                            "children_ages": [4, 11], "limit": 20, "adults": None})["origin"] \
         == "BEG,INI", "several airports, as travel-ops takes them; null is «not set»"
+    home = {k: v for k, v in TRIP.items() if k != "origin"}
+    assert travel.check("search_trip", home) == home, "no origin: travel-ops takes the profile's home airports"
+    assert travel.check("search_flights", {"destination": "TIV", "depart": "2026-11-14"})
     assert travel.check("stay_details", {"search_id": "sj4bt6gc", "stays": ["Golden Bay Apartment", "Хостел «Б»"]})
     assert travel.check("refine_stays", {"search_id": "sj4bt6gc", "must_have": ["kitchen", "кондиционер"]})
     assert travel.check("sources", {}) == {} and travel.check("watches", {"include_stopped": True})

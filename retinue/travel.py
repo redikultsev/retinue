@@ -158,14 +158,14 @@ AMENITY = pattern(r"[A-Za-zА-Яа-яЁё]+( [A-Za-zА-Яа-яЁё]+)?", "сло
 # Each tool: field -> (check, required). A field travel-ops has and the form lacks is refused: a new field of a new
 # travel-ops version waits until it has a check here.
 FORMS: dict[str, dict[str, tuple[Check, bool]]] = {
-    "search_trip": {"origin": (AIRPORTS, True), "place": (PLACE, True), "depart": (day, True),
+    "search_trip": {"origin": (AIRPORTS, False), "place": (PLACE, True), "depart": (day, True),
                     "return_date": (day, False), "checkout": (day, False), "flex_days": (integer(0, 3), False),
                     "separate_tickets": (flag, False), "country": (PLACE, False), "airports": (AIRPORTS, False),
                     "max_airports": (integer(1, 3), False), "stay_adults": (integer(1, 9), False),
                     "cabin": (CABIN, False), "max_stops": (integer(0, 3), False),
                     "min_rating": (number(0, 10), False), "max_center_km": (number(0.1, 100), False),
                     **{k: (v, False) for k, v in {**PARTY, **ASK}.items()}},
-    "search_flights": {"origin": (AIRPORTS, True), "destination": (AIRPORTS, True), "depart": (day, True),
+    "search_flights": {"origin": (AIRPORTS, False), "destination": (AIRPORTS, True), "depart": (day, True),
                        "return_date": (day, False), "flex_days": (integer(0, 3), False), "cabin": (CABIN, False),
                        "sources": (many(SOURCE, 8), False), "max_stops": (integer(0, 3), False),
                        "separate_tickets": (flag, False), **{k: (v, False) for k, v in {**PARTY, **ASK}.items()}},

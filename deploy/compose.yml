@@ -85,7 +85,7 @@ services:
   travel-ops:
     profiles: ["travel"]
     # A pinned commit of the public repo; its Dockerfile pins the base image by digest.
-    build: { context: "https://github.com/redikultsev/travel-ops.git#17dc3e7fccb6d3abbb68f049ddacdca3c965ed71" }
+    build: { context: "https://github.com/redikultsev/travel-ops.git#57627efcd267cc1727f710e9667836c7c91fb1b9" }
     image: travel-ops:local
     restart: unless-stopped
     volumes: &travel-mounts

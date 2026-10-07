@@ -7,6 +7,7 @@ shows the core's replies. The core knows nothing about messengers; agents know n
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -52,6 +53,7 @@ REMINDER_NOTE = ("Напиши Владельцу это напоминание 
 LIMITED = "Ответ задержался: был исчерпан лимит подписки. Реплики Владельца пришли раньше, время — у каждой."
 LIMIT_MARGIN_S = 60     # a retry waits this long after the limit window resets
 LIMIT_RETRY_S = 3600    # when the CLI did not say when the window resets, the retry comes this much later
+BACKUP_STALE_S = 26 * 3600  # a nightly backup older than this is missing: a day plus the timer's slack
 SUMMARY_EVENTS = 60     # the morning summary reads at most this many events of the last day
 SUMMARY_PROMPT = (
     "[Утренняя сводка. Это отдельный запуск вне разговора с Владельцем: твой ответ Роутер отправит ему сообщением.]\n"
@@ -200,8 +202,9 @@ def history_line(event: Event, tz: str = clock.DEFAULT_TZ) -> str:
 class Core:
     def __init__(self, agents: list[RouterAgent], store: Store, owner: str, ask=ask_agent,
                  archive: Archive | None = None, default_agent: str | None = None,
-                 tz: str = clock.DEFAULT_TZ) -> None:
+                 tz: str = clock.DEFAULT_TZ, backup_status: str | None = None) -> None:
         self.agents = {a.id: a for a in agents}
+        self.backup_status = backup_status  # the host's backup writes it; None: this core says nothing of backups
         self.tz = tz  # the owner's zone: every time the model and the owner see is local time there
         # Who the system speaks as, and who gets a message without an address.
         self.default_agent = default_agent if default_agent in self.agents else next(iter(self.agents), None)
@@ -429,7 +432,34 @@ class Core:
                          f"на {clock.stamp(rate['seen'], self.tz)})")
         else:
             parts.append("доля лимита подписки неизвестна")
+        if self.backup_status:
+            parts.append(self.backup(now))
         return "Здоровье за сутки: " + ", ".join(parts) + "."
+
+    def backup(self, now: float) -> str:
+        """How old the last good backup is, from the status file the host writes after every run."""
+        try:
+            with open(self.backup_status) as file:
+                status = json.load(file)
+        except FileNotFoundError:
+            return "бэкап не настроен"
+        except (OSError, ValueError):
+            return "статус бэкапа не читается"
+        if not isinstance(status, dict):
+            return "статус бэкапа не читается"
+        error = str(status.get("error") or "причина не записана").rstrip(". ")  # the line ends with its own stop
+        last = status.get("finished") if status.get("ok") else status.get("last_ok")
+        if last is None:
+            return f"бэкапа нет ни одного: {error}"
+        age = now - last
+        if age > BACKUP_STALE_S:
+            reason = "ночной запуск не состоялся" if status.get("ok") else error
+            return f"бэкапа нет {max(1, round(age / 86400))} сут: {reason}"
+        hours = int(age // 3600)
+        text = f"бэкап — {hours} ч назад" if hours else "бэкап — меньше часа назад"
+        if not status.get("ok"):
+            return f"{text}, последний запуск не удался: {error}"
+        return f"{text}, с предупреждением: {str(status['warning']).rstrip('. ')}" if status.get("warning") else text
 
     async def summary(self, job: Job, now: float) -> None:
         """The morning summary: a run outside the conversation's session (`oneshot`), so the night's work does not

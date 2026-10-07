@@ -66,6 +66,7 @@ class RouterConfig:
     telegram: TelegramConfig | None = None
     default_agent: str | None = None    # who gets messages without an address; the only agent, if there is one
     owner_tz: str = "Europe/Moscow"     # IANA zone: every time the model and the owner see is local time here
+    backup_status: str = "/status/backup.json"  # written by the host's backup; the morning summary reports it
     bus_listen_port: int = 9100         # agents reach the router here (network `agents` only)
     bus_secret: str = ""                # from RETINUE_BUS_SECRET; per-agent tokens are derived from it
 

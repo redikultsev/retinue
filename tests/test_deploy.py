@@ -132,3 +132,48 @@ def test_setup_refuses_to_run_without_a_channel(tmp_path):
     run = subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
                          env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(tmp_path / "srv"), "RETINUE_HOST_SETUP": "0"})
     assert run.returncode == 1 and "no channel" in run.stderr and not (tmp_path / "srv").exists()
+
+def test_backup_is_off_until_asked_and_then_stays_on(tmp_path):
+    target, _ = setup(tmp_path, TELEGRAM_OWNER_ID="42")
+    assert not (target / "backup.env").exists(), "no backup unless the owner asks for it"
+    assert (target / "status").is_dir() and oct((target / "status").stat().st_mode & 0o777) == "0o755", \
+        "the router mounts it read-only either way"
+    run = subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
+                         env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(target), "RETINUE_HOST_SETUP": "0",
+                              "TELEGRAM_OWNER_ID": "42", "BACKUP": "1"})
+    assert run.returncode == 0, run.stderr
+    backup_env = target / "backup.env"
+    assert oct(backup_env.stat().st_mode & 0o777) == "0o600"
+    names = ["RESTIC_REPOSITORY", "RESTIC_PASSWORD", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION"]
+    assert [line.split("=")[0] for line in backup_env.read_text().splitlines()] == names
+    assert all(f"Fill in {backup_env}: {name}" in run.stdout for name in names)
+    filled = {name: f"owner-value-{i}" for i, name in enumerate(names)}
+    backup_env.write_text("".join(f"{k}={v}\n" for k, v in filled.items()))
+    again = subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
+                           env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(target), "RETINUE_HOST_SETUP": "0",
+                                "TELEGRAM_OWNER_ID": "42"})
+    assert again.returncode == 0, again.stderr
+    assert backup_env.read_text() == "".join(f"{k}={v}\n" for k, v in filled.items()), \
+        "a later run without BACKUP=1 keeps it, and what the owner filled in"
+    assert not any(value in again.stdout + again.stderr for value in filled.values()), "names only, never values"
+    assert "Backup: on" in again.stdout
+
+
+def test_backup_units_run_the_script_nightly_and_catch_up():
+    timer = (ROOT / "deploy" / "backup" / "retinue-backup.timer").read_text()
+    assert "OnCalendar=*-*-* 03:30 Europe/Moscow" in timer and "Persistent=true" in timer
+    service = (ROOT / "deploy" / "backup" / "retinue-backup.service").read_text()
+    assert "Type=oneshot" in service and "EnvironmentFile=/srv/retinue/backup.env" in service
+    assert "ExecStart=/usr/bin/python3 /usr/local/lib/retinue/retinue-backup.py" in service
+    script = (ROOT / "deploy" / "setup.sh").read_text()
+    assert "/usr/local/lib/retinue/retinue-backup.py" in script and "RESTIC_VERSION=0.19.1" in script
+    assert "sha256sum -c" in script, "the restic binary is checked against a pinned hash"
+
+
+def test_router_reads_the_backup_status_read_only(tmp_path, monkeypatch):
+    assert "/srv/retinue/status:/status:ro" in SERVICES["router"]["volumes"], "the host writes it, the router cannot"
+    assert "status" not in str(SERVICES["assistant"]["volumes"])
+    target, _ = setup(tmp_path, TELEGRAM_OWNER_ID="42")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    assert RouterConfig.load(target / "router.yaml").backup_status == "/status/backup.json"
+    assert "backup_status=cfg.backup_status" in (ROOT / "retinue" / "router.py").read_text()

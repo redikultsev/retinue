@@ -56,6 +56,12 @@ docker compose exec egress cat /var/log/squid/access.log | grep -c TCP_DENIED
 # refused requests, if any: see "Hosts the proxy lets through"
 ```
 
+## 5. Backup
+
+Add `BACKUP=1` to the `setup.sh` command and follow [backup.md](backup.md): a nightly restic backup to S3 storage
+at another provider, with a server key that cannot delete, a monthly check and test restore from your own
+computer, and a line about it in the morning summary.
+
 ## Hosts the proxy lets through
 
 `/srv/retinue/egress/allowed-hosts.txt` starts with one line, `api.anthropic.com`. If a run fails and the proxy

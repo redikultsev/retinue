@@ -2,6 +2,7 @@
 
 import asyncio
 import dataclasses
+import json
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -724,3 +725,33 @@ def test_morning_summary_every_day_at_nine(tmp_path):
         ("summary", "done"), ("summary", "error"), ("summary", "done")]
     archived = [e for e in archive.recent(conversation, 20) if e.kind == "system" and "Здоровье" in e.text]
     assert len(archived) == 3, "on record as the system's messages: the session will see them"
+
+
+def test_the_health_line_tells_how_old_the_backup_is(tmp_path):
+    status = tmp_path / "status" / "backup.json"
+    core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", archive=Archive(":memory:"),
+                backup_status=str(status))
+    hour, now = 3600, WEDNESDAY
+
+    def health(**written):
+        if written:
+            status.parent.mkdir(exist_ok=True)
+            status.write_text(json.dumps(written))
+        return core.health(now).removeprefix("Здоровье за сутки: ").split(", доля лимита подписки неизвестна, ")[1]
+
+    assert health() == "бэкап не настроен.", "no file: the host never ran a backup"
+    assert health(ok=True, finished=now - 5.5 * hour, snapshot="4f9c2a1b") == "бэкап — 5 ч назад."
+    assert health(ok=True, finished=now - 600, snapshot="4f9c2a1b") == "бэкап — меньше часа назад."
+    assert health(ok=True, finished=now - 5 * hour, snapshot="4f", warning="Warning: 1 file unreadable") == \
+        "бэкап — 5 ч назад, с предупреждением: Warning: 1 file unreadable."
+    assert health(ok=True, finished=now - 27 * hour, snapshot="4f") == "бэкапа нет 1 сут: ночной запуск не состоялся."
+    assert health(ok=False, finished=now - 5 * hour, error="Fatal: Access Denied.", exit=1,
+                  last_ok=now - 53 * hour) == "бэкапа нет 2 сут: Fatal: Access Denied."
+    assert health(ok=False, finished=now - 1 * hour, error="Fatal: wrong password", exit=12,
+                  last_ok=now - 7 * hour) == "бэкап — 7 ч назад, последний запуск не удался: Fatal: wrong password."
+    assert health(ok=False, finished=now - 5 * hour, error="no volume x", exit=1, last_ok=None) == \
+        "бэкапа нет ни одного: no volume x."
+    status.write_text("{torn")
+    assert health() == "статус бэкапа не читается."
+    plain = Core([AGENT], Store(str(tmp_path / "p.sqlite")), "owner", archive=Archive(":memory:"))
+    assert "бэкап" not in plain.health(now), "a core without a status file says nothing about backups"

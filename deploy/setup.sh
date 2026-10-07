@@ -30,6 +30,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 ROOT=${RETINUE_ROOT:-/srv/retinue}      # tests point this at a temporary folder
 HOST_SETUP=${RETINUE_HOST_SETUP:-1}     # 0: write files under ROOT only; no Traefik or split DNS (tests)
 ROTATE_BUS_SECRET=${ROTATE_BUS_SECRET:-0}
+BACKUP=${BACKUP:-0}                     # 1: nightly restic backup to S3; on for good once backup.env exists
 AGENTS=(assistant)
 token() { openssl rand -hex 32; }
 upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
@@ -84,6 +85,8 @@ for agent in "${AGENTS[@]}"; do
   install -m 644 "$REPO/agents/$agent/agent.yaml" "$REPO/agents/$agent/CLAUDE.md" "$ROOT/agents/$agent/"
 done
 
+install -d -m 755 "$ROOT/status"       # the host writes, the router reads (mounted read-only)
+
 install -d -m 755 "$ROOT/egress"
 install -m 644 "$REPO/deploy/egress/squid.conf" "$ROOT/egress/squid.conf"
 # The list of allowed hosts belongs to the owner: written once, then edited only by hand.
@@ -123,8 +126,8 @@ STACK="$ROOT/stack.env"
 chmod 600 "$STACK"
 WRITTEN=() MISSING=()
 put() { drop "$1" "$STACK"; printf '%s=%s\n' "$1" "$2" >> "$STACK"; WRITTEN+=("$1"); }
-keep() { grep -q "^$1=" "$STACK" || printf '%s=%s\n' "$1" "$2" >> "$STACK"; }
-fill() { keep "$1" ""; grep -q "^$1=." "$STACK" || MISSING+=("$1 ($2)"); }
+keep() { local file=${3:-$STACK}; grep -q "^$1=" "$file" || printf '%s=%s\n' "$1" "$2" >> "$file"; }
+fill() { local file=${3:-$STACK}; keep "$1" "" "$file"; grep -q "^$1=." "$file" || MISSING+=("$file: $1 ($2)"); }
 put RETINUE_BUS_SECRET "$RETINUE_BUS_SECRET"
 for a in "${AGENTS[@]}"; do put "RETINUE_BUS_TOKEN_$(upper "$a")" "$(bus_token "$a")"; done
 fill CLAUDE_CODE_OAUTH_TOKEN "claude setup-token"
@@ -139,12 +142,56 @@ if [[ -n $MATRIX_SERVER_NAME ]]; then
 fi
 chmod 600 "$STACK"
 
+# Backup: restic on the host, not in the stack — it must outlive a broken deploy, and its keys stay out of Dokploy.
+BACKUP_ENV="$ROOT/backup.env"
+RESTIC_VERSION=0.19.1
+# restic_0.19.1_linux_amd64.bz2 in the release's SHA256SUMS, signed by CF8F18F2844575973F79D4E191A6868BD3F7A907
+RESTIC_SHA256=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
+install_restic() {
+  [[ $(/usr/local/bin/restic version 2>/dev/null) == "restic $RESTIC_VERSION "* ]] && return 0
+  [[ $(uname -m) == x86_64 ]] || { echo "restic: only linux amd64 is pinned here; install restic $RESTIC_VERSION" >&2; return 1; }
+  local tmp; tmp=$(mktemp -d)
+  curl -fsSL -o "$tmp/restic.bz2" \
+    "https://github.com/restic/restic/releases/download/v$RESTIC_VERSION/restic_${RESTIC_VERSION}_linux_amd64.bz2"
+  echo "$RESTIC_SHA256  $tmp/restic.bz2" | sha256sum -c --quiet -
+  python3 -c 'import bz2, sys; sys.stdout.buffer.write(bz2.open(sys.argv[1]).read())' "$tmp/restic.bz2" > "$tmp/restic"
+  install -m 755 "$tmp/restic" /usr/local/bin/restic
+  rm -rf "$tmp"
+}
+BACKUP_STATE=""
+if [[ $BACKUP == 1 || -f $BACKUP_ENV ]]; then
+  [[ -f $BACKUP_ENV ]] || (umask 077; : > "$BACKUP_ENV")
+  chmod 600 "$BACKUP_ENV"
+  before=${#MISSING[@]}
+  fill RESTIC_REPOSITORY "s3:https://<endpoint>/<bucket>/retinue" "$BACKUP_ENV"
+  fill RESTIC_PASSWORD "from your password manager; keep a copy off this server" "$BACKUP_ENV"
+  fill AWS_ACCESS_KEY_ID "the server's S3 key: no delete except locks/" "$BACKUP_ENV"
+  fill AWS_SECRET_ACCESS_KEY "the same key's secret" "$BACKUP_ENV"
+  fill AWS_DEFAULT_REGION "the endpoint's region, e.g. eu-luxembourg-1" "$BACKUP_ENV"
+  if (( ${#MISSING[@]} == before )); then BACKUP_STATE=on; else BACKUP_STATE=unfilled; fi
+  if [[ $HOST_SETUP == 1 ]]; then
+    install_restic
+    install -d -m 755 /usr/local/lib/retinue
+    install -m 755 "$REPO/deploy/backup/retinue-backup.py" /usr/local/lib/retinue/retinue-backup.py
+    for unit in retinue-backup.service retinue-backup.timer; do
+      sed "s|/srv/retinue|$ROOT|g" "$REPO/deploy/backup/$unit" > "/etc/systemd/system/$unit"
+      chmod 644 "/etc/systemd/system/$unit"
+    done
+    systemctl daemon-reload
+    if [[ $BACKUP_STATE == on ]]; then systemctl enable --now retinue-backup.timer; fi
+  fi
+fi
+
 echo
 echo "Done. Stack environment: $STACK (mode 600; values are not printed)."
 echo "Written: ${WRITTEN[*]}"
-if (( ${#MISSING[@]} )); then
-  printf 'Fill in there: %s\n' "${MISSING[@]}"
-fi
+for missing in ${MISSING[@]+"${MISSING[@]}"}; do
+  echo "Fill in $missing"
+done
+case $BACKUP_STATE in
+  on) echo "Backup: on, every night at 03:30 Europe/Moscow; the result goes to $ROOT/status/backup.json" ;;
+  unfilled) echo "Backup: off until $BACKUP_ENV is filled; then run this script again, and see docs/backup.md" ;;
+esac
 echo "Start: docker compose -p retinue --env-file $STACK -f deploy/compose.yml up -d  (Dokploy: copy the file into Environment)"
 if [[ -n $MATRIX_SERVER_NAME ]]; then
   echo "Split DNS check (from a VPN client): dig @10.8.0.1 $MATRIX_SERVER_NAME  → 10.8.0.1"

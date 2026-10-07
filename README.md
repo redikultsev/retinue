@@ -54,6 +54,8 @@ You (Telegram) ──► Router ──A2A──► Assistant ──► egress pr
 - `retinue/engine.py` — the `Engine` seam. Today: Claude Agent SDK, deny-by-default tools, no settings read
   from disk. Other engines plug in behind the same interface.
 - `agents/assistant/` — the assistant: `agent.yaml` (tools, limits) and `CLAUDE.md` (instructions).
+- `deploy/backup/` — the host's nightly restic backup and the monthly check, restore and prune from your own
+  computer: [docs/backup.md](docs/backup.md).
 
 ## Model access
 

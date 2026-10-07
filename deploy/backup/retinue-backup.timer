@@ -1,0 +1,12 @@
+# Every night at 03:30 Moscow time, whatever the server's own zone. Persistent: a night missed while the server
+# was off runs right after boot. The router reports a backup older than 26 hours, so the delay below is safe.
+[Unit]
+Description=Retinue backup every night
+
+[Timer]
+OnCalendar=*-*-* 03:30 Europe/Moscow
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+# Installed by deploy/setup.sh (BACKUP=1). Run by hand: systemctl start retinue-backup; log: journalctl -u retinue-backup
+[Unit]
+Description=Retinue backup: consistent SQLite copies, restic to S3, status for the morning summary
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+Environment=RETINUE_ROOT=/srv/retinue
+EnvironmentFile=/srv/retinue/backup.env
+ExecStart=/usr/bin/python3 /usr/local/lib/retinue/retinue-backup.py
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h

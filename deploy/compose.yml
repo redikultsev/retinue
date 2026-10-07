@@ -50,6 +50,7 @@ services:
     volumes:
       - /srv/retinue/router.yaml:/config/router.yaml:ro
       - router-data:/data
+      - /srv/retinue/status:/status:ro            # the host's backup result: read here, written only by the host
     environment:
       RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN:-}         # these two only with a `matrix:` section in router.yaml
       RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN:-}

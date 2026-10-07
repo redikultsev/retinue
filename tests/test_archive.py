@@ -64,3 +64,32 @@ def test_search(tmp_path):
     assert archive.search("самолёт") == [] and archive.search('"" ( *') == [] and archive.search("") == []
     count, first, last = archive.coverage()
     assert (count, first, last) == (3, 100.0, 300.0)
+
+
+def test_one_reply_covers_several_messages(tmp_path):
+    archive = make(tmp_path)
+    a, _ = archive.append(OWNER, "первый", conversation_id="c1", channel="telegram", native_id="1", ts=10.0)
+    b, _ = archive.append(OWNER, "второй", conversation_id="c1", channel="telegram", native_id="2", ts=11.0)
+    c, _ = archive.append(OWNER, "третий", conversation_id="c1", channel="telegram", native_id="3", ts=12.0)
+    archive.append(ASSISTANT, "ответ на оба", conversation_id="c1", channel="telegram", ref=b.id,
+                   meta={"covers": [a.id, b.id]})
+    assert archive.answered(a.id) and archive.answered(b.id), "a merged reply answers every message in it"
+    assert not archive.answered(c.id)
+    archive.append(OWNER, "[фото] смотри", conversation_id="c1", channel="telegram", native_id="4", ts=13.0,
+                   meta={"unsupported": "фото"})
+    archive.append(OWNER, "[кнопка] Да", conversation_id="c1", channel="telegram", ref=c.id, ts=14.0)
+    assert [e.id for e in archive.unanswered(0)] == [c.id], "a refused photo and a button are not questions"
+    assert archive.unanswered(12.5) == []
+
+
+def test_conversation_window_and_counts(tmp_path):
+    archive = make(tmp_path)
+    assert not archive.spoke("c1")
+    archive.append(OWNER, "старое", conversation_id="c1", channel="telegram", ts=10.0)
+    archive.append(ASSISTANT, "ответ", conversation_id="c1", channel="telegram", ts=20.0)
+    archive.append(SYSTEM, "напоминание", conversation_id="c1", channel="system", ts=30.0)
+    archive.append(OWNER, "другой разговор", conversation_id="c2", channel="telegram", ts=40.0)
+    assert archive.spoke("c1") and not archive.spoke("c2")
+    assert [e.text for e in archive.since("c1", 15.0, 10)] == ["ответ", "напоминание"]
+    assert [e.text for e in archive.since("c1", 0, 1)] == ["напоминание"]
+    assert (archive.count(ASSISTANT, 0), archive.count(OWNER, 15.0)) == (1, 1)

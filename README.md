@@ -4,9 +4,9 @@
 conversation in an archive on your own server. It reads your personal data, and therefore has no way out: no
 web, no shell, no network except the model API.
 
-> Status: **pilot**. One assistant in one long session, a searchable archive of the conversation, closed egress.
-> Schedules, mail, a web-search tool behind a schema and approvals for messages to other people are next.
-> Expect breaking changes.
+> Status: **pilot**. One assistant in one long session, a searchable archive of the conversation, reminders and
+> a morning summary in your time zone, closed egress. Mail, a web-search tool behind a schema and approvals for
+> messages to other people are next. Expect breaking changes.
 
 ## Why
 
@@ -23,6 +23,12 @@ not by a prompt:
 - **One router holds every token and writes every word down.** Both sides of every turn go to an append-only
   archive before and after the model is called. The assistant searches the archive through the router; the
   file is never mounted into its container.
+- **Time is the router's, not the model's.** Every request carries your local time and weekday. The assistant
+  sets reminders with tools (`set_reminder`, `list_reminders`, `cancel_reminder`, `move_reminder`); the router
+  checks them — the weekday against the date, the past, a repeat — and sends each one on time, word for word,
+  without the model. A morning summary arrives every day at 09:00: written by a separate run outside the
+  conversation, or bare if that run fails. A subscription limit is told to you without the model, and the
+  refused turn runs again when the window opens.
 - **Nothing the assistant writes becomes a link.** Every address in its text reaches you as monospace text,
   with link previews off on every path.
 - **Reuse over rewrite.** Claude Agent SDK, a2a-sdk, Squid, SQLite FTS5. Retinue is the thin layer between them.
@@ -31,15 +37,17 @@ not by a prompt:
 
 ```
 You (Telegram) ──► Router ──A2A──► Assistant ──► egress proxy ──► model API, nothing else
-                     │   ◄──bus──┘ (search_archive)
+                     │   ◄──bus──┘ (search_archive, reminders)
                      ├─ Archive (SQLite, append-only, full-text)
-                     └─ Protocol log (SQLite)
+                     ├─ Scheduler (reminders, the morning summary, a retry after the subscription limit)
+                     └─ Protocol log and model runs (SQLite)
 ```
 
 - `retinue/router.py` — entry point: the core plus the channels in the config (Telegram; Matrix is optional).
 - `retinue/core.py` — one owner message at a time; archives both sides; tells the assistant what happened in the
   conversation without it; buttons and messages the system sends on its own.
 - `retinue/archive.py` — the raw archive: append-only events with a full-text index.
+- `retinue/scheduler.py` — reminders and the router's own timed jobs; `retinue/clock.py` — the owner's local time.
 - `retinue/bus.py` — what an agent may ask the router for: search the archive, or (when granted) another agent.
 - `retinue/agent_host.py` — one agent behind an A2A server; one container, its trust boundary.
 - `retinue/engine.py` — the `Engine` seam. Today: Claude Agent SDK, deny-by-default tools, no settings read

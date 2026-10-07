@@ -12,6 +12,8 @@ engine:
   config_dir: /data/claude          # the session transcript: the assistant's own volume, nobody else mounts it
   tools: []                         # no built-in tool at all: no Bash, no files, no WebSearch, no WebFetch
   disallowed_tools: [Bash, WebSearch, WebFetch]   # said twice on purpose: these three never, whatever `tools` says
-  bus_tools: [search_archive]       # ask_agent is not given at this stage
+  # The archive and the owner's reminders; ask_agent is not given at this stage.
+  bus_tools: [search_archive, set_reminder, list_reminders, cancel_reminder, move_reminder]
   max_turns: 8
+  model: claude-opus-5-5            # pinned by id: an alias names a different model depending on the CLI release
 public_url: http://assistant:9000

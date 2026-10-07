@@ -43,8 +43,10 @@ def main() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     store = Store(cfg.state_db)
-    core = Core(cfg.agents, store, cfg.owner, archive=Archive(cfg.archive_db), default_agent=cfg.default_agent)
+    core = Core(cfg.agents, store, cfg.owner, archive=Archive(cfg.archive_db), default_agent=cfg.default_agent,
+                tz=cfg.owner_tz)
     loop.run_until_complete(core.start(build_channels(cfg, store, loop)))
+    ticking = loop.create_task(core.clock())  # reminders, the morning summary, retries after the limit
     if cfg.bus_secret:
         loop.run_until_complete(BusServer(core, cfg.bus_secret, cfg.bus_listen_port).start())
     loop.run_forever()

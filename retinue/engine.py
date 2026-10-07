@@ -10,14 +10,14 @@ import dataclasses
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Protocol
 
 import httpx
-from claude_agent_sdk import (ClaudeAgentOptions, ResultError, ResultMessage, StreamEvent, SystemMessage,
-                              create_sdk_mcp_server, query, tool)
+from claude_agent_sdk import (ClaudeAgentOptions, RateLimitEvent, RateLimitInfo, ResultError, ResultMessage,
+                              StreamEvent, SystemMessage, create_sdk_mcp_server, query, tool)
 
 from .config import EngineConfig
 
@@ -25,6 +25,10 @@ log = logging.getLogger("retinue.engine")
 
 SESSION_LOST = "_Прошлый разговор не сохранился, начинаю заново._\n\n"
 COMPACT = "/compact"  # Claude Code's own command; the only prompt that is not delivered verbatim
+LIMIT = "Лимит подписки исчерпан."  # the router words it for the owner; this text is for logs
+# Tokens of a run as the API reports them -> the names the router keeps.
+USAGE = {"input_tokens": "input_tokens", "output_tokens": "output_tokens",
+         "cache_read_input_tokens": "cache_read_tokens", "cache_creation_input_tokens": "cache_write_tokens"}
 
 
 @dataclass
@@ -35,6 +39,12 @@ class EngineResult:
     num_turns: int = 0
     cost_usd: float | None = None
     duration_ms: int = 0
+    compacted: bool = False          # the CLI compacted the session during this run
+    new_session: bool = False        # the session to resume was gone: this run started a new one
+    limit: bool = False              # the subscription limit refused the run
+    limit_until: int | None = None   # when the limit window resets, unix seconds, if the CLI said so
+    usage: dict = field(default_factory=dict)       # tokens of this run: input, output, cache_read, cache_write
+    rate_limit: dict = field(default_factory=dict)  # the limit state the CLI last reported in this run
 
 
 # Called with the text of the reply being written so far (the current assistant message, not a delta).
@@ -93,7 +103,38 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         data = response.json()
         return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
-    return {t.name: t for t in (ask_agent, list_agents, search_archive)}
+    async def reminders(action: str, body: dict) -> dict:
+        async with client(30) as http:
+            response = await http.post(f"{bus_url}/reminders/{action}", headers=headers, json={"turn": turn_id, **body})
+        data = response.json()
+        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
+
+    @tool("set_reminder",
+          "Поставить Владельцу напоминание. В срок Роутер сам пришлёт text дословно, без тебя: пиши так, чтобы "
+          "Владелец понял через несколько дней — что сделать, кому, зачем. when — местное время Владельца, в его "
+          "поясе из справки «Сейчас», вида 2026-10-09T18:00. weekday — день недели, который ты имеешь в виду "
+          "(«пятница»): Роутер сверит его с датой и откажет, если не совпало или время уже прошло. Тот же текст на "
+          "то же время вернёт «Уже стоит». Ответ Роутера (номер, день, время) назови Владельцу.",
+          {"text": str, "when": str, "weekday": str})
+    async def set_reminder(args):
+        return await reminders("add", {"text": args["text"], "when": args["when"], "weekday": args["weekday"]})
+
+    @tool("list_reminders", "Активные напоминания Владельца, ближайшие первыми: номер, когда, текст.", {})
+    async def list_reminders(args):
+        return await reminders("list", {})
+
+    @tool("cancel_reminder", "Отменить напоминание по номеру из list_reminders.", {"id": int})
+    async def cancel_reminder(args):
+        return await reminders("cancel", {"id": args["id"]})
+
+    @tool("move_reminder",
+          "Перенести напоминание по номеру из list_reminders на другое время. when и weekday — как в set_reminder.",
+          {"id": int, "when": str, "weekday": str})
+    async def move_reminder(args):
+        return await reminders("move", {"id": args["id"], "when": args["when"], "weekday": args["weekday"]})
+
+    return {t.name: t for t in (ask_agent, list_agents, search_archive, set_reminder, list_reminders,
+                                cancel_reminder, move_reminder)}
 
 
 # Set in code for every run, so that no compose file can forget them.
@@ -172,6 +213,7 @@ class ClaudeEngine:
             log.warning("session %s not found, starting a new one", session_id)
             result = await self._run(prompt, self.options(turn_id, on_text is not None), on_text)
             result.text = SESSION_LOST + result.text
+            result.new_session = True
             return result
 
     async def compact(self, session_id: str | None) -> EngineResult:
@@ -187,24 +229,43 @@ class ClaudeEngine:
 
     async def _run(self, prompt: str, options: ClaudeAgentOptions, on_text: OnText | None) -> EngineResult:
         result: ResultMessage | None = None
+        rate: RateLimitInfo | None = None
         draft = ""
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, ResultMessage):
-                result = message
-            elif isinstance(message, SystemMessage) and message.subtype == "init":
-                # What the model really got. On a subscription apiKeySource is not an API key.
-                log.info("run init: tools=%s mcp=%s apiKeySource=%s model=%s", message.data.get("tools"),
-                         [server.get("name") for server in message.data.get("mcp_servers") or []],
-                         message.data.get("apiKeySource"), message.data.get("model"))
-            elif isinstance(message, StreamEvent) and on_text and message.parent_tool_use_id is None:
-                event = message.event
-                if event.get("type") == "message_start":
-                    draft = ""  # a new assistant message (e.g. after a tool call) starts a new draft
-                elif event.get("type") == "content_block_delta" and event["delta"].get("type") == "text_delta":
-                    draft += event["delta"]["text"]
-                    await on_text(draft)
+        compacted = False
+        try:
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, ResultMessage):
+                    result = message
+                elif isinstance(message, RateLimitEvent):
+                    # Sent when the limit state changes: allowed, allowed_warning or rejected.
+                    rate = message.rate_limit_info
+                elif isinstance(message, SystemMessage) and message.subtype == "compact_boundary":
+                    # Claude Code squeezed the session, by itself or on /compact: the router sends «now» again.
+                    compacted = True
+                    log.info("session compacted: %s", message.data.get("compact_metadata"))
+                elif isinstance(message, SystemMessage) and message.subtype == "init":
+                    # What the model really got. On a subscription apiKeySource is not an API key.
+                    log.info("run init: tools=%s mcp=%s apiKeySource=%s model=%s", message.data.get("tools"),
+                             [server.get("name") for server in message.data.get("mcp_servers") or []],
+                             message.data.get("apiKeySource"), message.data.get("model"))
+                elif isinstance(message, StreamEvent) and on_text and message.parent_tool_use_id is None:
+                    event = message.event
+                    if event.get("type") == "message_start":
+                        draft = ""  # a new assistant message (e.g. after a tool call) starts a new draft
+                    elif event.get("type") == "content_block_delta" and event["delta"].get("type") == "text_delta":
+                        draft += event["delta"]["text"]
+                        await on_text(draft)
+        except ResultError as exc:
+            # The CLI reports a failed run, then exits non-zero, and the SDK raises. A limit is an answer.
+            if exc.api_error_status != 429 and not (rate and rate.status == "rejected"):
+                raise
+            return limited(rate, options.resume, compacted)
+        if result is not None and result.is_error and (result.api_error_status == 429
+                                                       or (rate and rate.status == "rejected")):
+            return limited(rate, options.resume, compacted)
         if result is None:
-            return EngineResult(text="Агент не вернул результат.", is_error=True, session_id=options.resume)
+            return EngineResult(text="Агент не вернул результат.", is_error=True, session_id=options.resume,
+                                compacted=compacted)
         text = result.result or ("; ".join(result.errors or []) or "Пустой ответ.")
         return EngineResult(
             text=text,
@@ -213,7 +274,27 @@ class ClaudeEngine:
             num_turns=result.num_turns,
             cost_usd=result.total_cost_usd,
             duration_ms=result.duration_ms,
+            compacted=compacted,
+            usage={name: int(value) for key, name in USAGE.items()
+                   if isinstance(value := (result.usage or {}).get(key), (int, float))},
+            rate_limit=rate_of(rate),
         )
+
+
+def rate_of(info: RateLimitInfo | None) -> dict:
+    """The subscription limit state as the CLI last reported it: status, window, share used, when it resets."""
+    if info is None:
+        return {}
+    fields = {"status": info.status, "rate_limit_type": info.rate_limit_type, "utilization": info.utilization,
+              "resets_at": info.resets_at}
+    return {key: value for key, value in fields.items() if value is not None}
+
+
+def limited(rate: RateLimitInfo | None, session_id: str | None, compacted: bool) -> EngineResult:
+    """The run was refused by the subscription limit: an answer for the router, not a crash."""
+    log.warning("subscription limit: %s", rate_of(rate) or "HTTP 429, no rate limit event")
+    return EngineResult(text=LIMIT, is_error=True, session_id=session_id, compacted=compacted, limit=True,
+                        limit_until=rate.resets_at if rate else None, rate_limit=rate_of(rate))
 
 
 class EchoEngine:

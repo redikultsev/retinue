@@ -110,9 +110,36 @@ class Archive:
         return self._event(row) if row else None
 
     def answered(self, event_id: str) -> bool:
-        """Has anything been said in reply to this event?"""
-        return self.db.execute("SELECT 1 FROM events WHERE ref = ? AND kind != ? LIMIT 1",
-                               (event_id, OWNER)).fetchone() is not None
+        """Has anything been said in reply to this event? One reply to several owner messages names them all in
+        `meta.covers`; `ref` points at the last of them."""
+        return self.db.execute(
+            "SELECT 1 FROM events WHERE kind != ?2 AND (ref = ?1 OR (meta LIKE '%\"covers\"%' AND EXISTS"
+            " (SELECT 1 FROM json_each(events.meta, '$.covers') WHERE value = ?1))) LIMIT 1",
+            (event_id, OWNER)).fetchone() is not None
+
+    def unanswered(self, since: float) -> list[Event]:
+        """Owner messages since `since` that nobody answered: the router died between the record and the reply.
+        A refused photo and a pressed button are not questions."""
+        rows = self.db.execute(
+            f"SELECT {self._COLUMNS} FROM events WHERE kind = ? AND ts >= ?"
+            " AND json_extract(meta, '$.unsupported') IS NULL AND text NOT LIKE '[кнопка] %' ORDER BY seq",
+            (OWNER, since)).fetchall()
+        return [event for event in map(self._event, rows) if not self.answered(event.id)]
+
+    def spoke(self, conversation_id: str) -> bool:
+        """Has the assistant answered anything in this conversation yet?"""
+        return self.db.execute("SELECT 1 FROM events WHERE conversation_id = ? AND kind = ? LIMIT 1",
+                               (conversation_id, ASSISTANT)).fetchone() is not None
+
+    def since(self, conversation_id: str, ts: float, limit: int) -> list[Event]:
+        """The last `limit` events of a conversation from `ts` on, oldest first."""
+        rows = self.db.execute(
+            f"SELECT {self._COLUMNS} FROM events WHERE conversation_id = ? AND ts >= ? ORDER BY seq DESC LIMIT ?",
+            (conversation_id, ts, limit)).fetchall()
+        return [self._event(row) for row in reversed(rows)]
+
+    def count(self, kind: str, since: float) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM events WHERE kind = ? AND ts >= ?", (kind, since)).fetchone()[0]
 
     def recent(self, conversation_id: str, limit: int, before: str | None = None) -> list[Event]:
         """The last `limit` events of a conversation, oldest first. With `before`, that owner message and the

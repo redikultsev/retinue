@@ -51,6 +51,17 @@ def test_refuses_a_config_nobody_can_talk_to(tmp_path, monkeypatch):
         load(tmp_path, two + "default_agent: nobody\n")
 
 
+def test_owner_time_zone(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    telegram = "telegram:\n  owner_id: 42\n"
+    cfg = load(tmp_path, AGENT + telegram)
+    assert cfg.owner_tz == "Europe/Moscow", "the owner's zone by default"
+    assert not cfg.agents[0].reminders, "reminders are a grant, off unless given"
+    assert load(tmp_path, AGENT + telegram + "owner_tz: Europe/Belgrade\n").owner_tz == "Europe/Belgrade"
+    with pytest.raises(SystemExit, match="not a time zone"):
+        load(tmp_path, AGENT + telegram + "owner_tz: Moscow\n")
+
+
 def test_router_does_not_load_matrix_without_the_section():
     code = "import sys, retinue.router; sys.exit('mautrix' in sys.modules or 'retinue.channels.matrix' in sys.modules)"
     assert subprocess.run([sys.executable, "-c", code]).returncode == 0

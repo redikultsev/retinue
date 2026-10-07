@@ -20,6 +20,9 @@ git clone https://github.com/<you>/retinue /opt/retinue
 sudo TELEGRAM_OWNER_ID=123456789 bash /opt/retinue/deploy/setup.sh
 ```
 
+Your time zone is `Europe/Moscow` unless you say otherwise: add `OWNER_TZ=Europe/Belgrade` (any IANA name) to
+the command. Every time the assistant sees, every reminder and the 09:00 morning summary follow it.
+
 The script creates `/srv/retinue`: `router.yaml`, the assistant's config and instructions
 (`agents/assistant/`, mounted read-only), the proxy config (`egress/`), and `secrets.env` with generated
 tokens. It prints the environment block for the next step. Run it again after every `git pull`.
@@ -38,7 +41,8 @@ only, no volume, config mounted read-only) and `egress` (Squid: the only way out
 
 Send the bot `/check`: a message written by the system arrives with two buttons; press one — the buttons
 disappear and the choice stays. Then ask anything, and later ask what was said before: the assistant searches
-the archive.
+the archive. Ask it to remind you of something in five minutes: it names the day and time back, and the reminder
+arrives on time as a message from the system. The morning summary comes every day at 09:00 your time.
 
 The assistant's container has no way out except the model API:
 

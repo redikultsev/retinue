@@ -2,11 +2,13 @@
 
 import asyncio
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from aiohttp.test_utils import TestServer
-from claude_agent_sdk import ResultError, ResultMessage, SystemMessage
+from claude_agent_sdk import RateLimitEvent, RateLimitInfo, ResultError, ResultMessage, SystemMessage
 
 from retinue.archive import ASSISTANT, Archive
 from retinue.bus import BusServer, bus_token
@@ -36,6 +38,8 @@ def test_agent_gets_only_the_bus_tools_in_its_config(instructions):
     assert tools_of(bus_tools=[]) == ([], [])
     assert tools_of(bus_tools=["search_archive"], bus_url="") == ([], []), "no bus, no tools"
     assert tools_of(bus_tools=["search_archive"], turn_id=None) == ([], [])
+    reminders = ["set_reminder", "list_reminders", "cancel_reminder", "move_reminder"]
+    assert tools_of(bus_tools=reminders)[0] == [f"mcp__retinue__{name}" for name in reminders]
 
 def test_search_archive_tool_reaches_the_router(tmp_path):
     archive = Archive(str(tmp_path / "archive.sqlite"))
@@ -119,6 +123,7 @@ def test_a_lost_session_starts_over_and_says_so(instructions, tmp_path, monkeypa
     result = asyncio.run(engine.run("привет", "gone"))
     assert [s["resume"] for s in seen] == ["gone", None]
     assert result.text.startswith(SESSION_LOST) and result.session_id == "s-new" and not result.is_error
+    assert result.new_session, "the router sends «now» to the new session"
 
 
 def test_compact_is_our_own_command(instructions, tmp_path, monkeypatch):
@@ -134,3 +139,100 @@ def test_compact_is_our_own_command(instructions, tmp_path, monkeypatch):
     assert run["servers"] == [], "no tools while compacting"
     nothing = asyncio.run(engine.compact(None))
     assert len(seen) == 1 and not nothing.is_error and nothing.session_id is None, "no session, nothing to compact"
+
+
+def test_a_run_reports_compaction_and_tokens(instructions, tmp_path, monkeypatch):
+    async def cli(prompt, options):
+        yield SystemMessage(subtype="init", data={"tools": [], "mcp_servers": [], "model": "claude-opus-5-5"})
+        if prompt == "длинный разговор":
+            yield SystemMessage(subtype="compact_boundary",
+                                data={"compact_metadata": {"trigger": "auto", "pre_tokens": 160000}})
+        yield ResultMessage(subtype="success", duration_ms=10, duration_api_ms=5, is_error=False, num_turns=1,
+                            session_id="s-1", result="ответ", total_cost_usd=0.25,
+                            usage={"input_tokens": 12, "output_tokens": 34, "cache_read_input_tokens": 5600,
+                                   "cache_creation_input_tokens": 78, "server_tool_use": {"web_search_requests": 0}})
+
+    monkeypatch.setattr("retinue.engine.query", cli)
+    engine = ClaudeEngine(EngineConfig(instructions=instructions, config_dir=str(tmp_path / "c")), str(tmp_path))
+    long = asyncio.run(engine.run("длинный разговор", "s-1"))
+    assert long.compacted and not long.new_session
+    assert long.usage == {"input_tokens": 12, "output_tokens": 34, "cache_read_tokens": 5600, "cache_write_tokens": 78}
+    assert long.cost_usd == 0.25
+    assert not asyncio.run(engine.run("коротко", "s-1")).compacted
+
+
+def limit_cli(rate_status, http_status=429, raises=True):
+    """What the CLI streams when the subscription window is closed: the rate limit event (when it says so), the
+    failed result, then the SDK raises because the CLI exits non-zero."""
+    async def cli(prompt, options):
+        if rate_status:
+            yield RateLimitEvent(rate_limit_info=RateLimitInfo(status=rate_status, resets_at=1760000000,
+                                                               rate_limit_type="five_hour", utilization=1.0),
+                                 uuid="u", session_id="s-1")
+        failed = http_status is not None
+        yield ResultMessage(subtype="success", duration_ms=10, duration_api_ms=5, is_error=failed, num_turns=1,
+                            session_id="s-1", result="API Error: limit" if failed else "ответ",
+                            api_error_status=http_status)
+        if failed and raises:
+            raise ResultError("Claude Code returned an error result: API Error",
+                              data={"api_error_status": http_status, "session_id": "s-1"})
+    return cli
+
+
+def test_the_subscription_limit_is_an_answer_not_a_crash(instructions, tmp_path, monkeypatch):
+    engine = ClaudeEngine(EngineConfig(instructions=instructions, config_dir=str(tmp_path / "c")), str(tmp_path))
+
+    def run(cli):
+        monkeypatch.setattr("retinue.engine.query", cli)
+        return asyncio.run(engine.run("привет", "s-1"))
+
+    hit = run(limit_cli("rejected"))
+    assert hit.is_error and hit.limit and hit.limit_until == 1760000000 and hit.session_id == "s-1"
+    assert hit.rate_limit == {"status": "rejected", "rate_limit_type": "five_hour", "utilization": 1.0,
+                              "resets_at": 1760000000}
+    bare = run(limit_cli(None))
+    assert bare.limit and bare.limit_until is None, "a 429 without the event: a limit, reset time unknown"
+    quiet = run(limit_cli("rejected", raises=False))
+    assert quiet.limit, "the failed result alone is enough"
+    warned = run(limit_cli("allowed_warning", http_status=None))
+    assert not warned.is_error and not warned.limit and warned.rate_limit["status"] == "allowed_warning"
+    with pytest.raises(ResultError):
+        run(limit_cli(None, http_status=500))
+
+
+def test_reminder_tools_reach_the_router(tmp_path):
+    friday = datetime.now(ZoneInfo("Europe/Moscow")) + timedelta(days=7)
+    while friday.weekday() != 4:
+        friday += timedelta(days=1)
+    when = friday.strftime("%Y-%m-%dT18:00")
+
+    async def run():
+        agent = RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private", reminders=True)
+        core = Core([agent], Store(str(tmp_path / "r.sqlite")), "owner")
+        await core.start([FakeChannel("telegram", False)])
+        turn = core.turns.open_root("assistant")
+        server = TestServer(BusServer(core, "secret", 0).app)
+        await server.start_server()
+        try:
+            tools = bus_tools(str(server.make_url("")).rstrip("/"), bus_token("secret", "assistant"), turn.id)
+            call = lambda name, **args: tools[name].handler(args)  # noqa: E731
+            out = [await call("set_reminder", text="позвонить Х", when=when, weekday="пятница"),
+                   await call("set_reminder", text="позвонить Х", when=when, weekday="четверг"),
+                   await call("list_reminders"),
+                   await call("move_reminder", id=1, when=when.replace("18:00", "19:30"), weekday="пт"),
+                   await call("cancel_reminder", id=1),
+                   await call("cancel_reminder", id=1)]
+            core.turns.close(turn)
+            out.append(await call("list_reminders"))
+            return out
+        finally:
+            await server.close()
+
+    set_, wrong, listed, moved, cancelled, again, late = [(r["is_error"], r["content"][0]["text"]) for r in asyncio.run(run())]
+    assert not set_[0] and set_[1].startswith(f"Поставила #1 · пт {friday.day} ") and set_[1].endswith(
+        ", 18:00 МСК — позвонить Х.")
+    assert wrong[0] and "пятница, а не четверг" in wrong[1], "code checks the weekday, not the model"
+    assert not listed[0] and "#1 · пт " in listed[1]
+    assert not moved[0] and moved[1].startswith("Перенесла #1") and "19:30 МСК" in moved[1]
+    assert not cancelled[0] and cancelled[1].startswith("Отменила #1") and again[0]
+    assert late[0] and "Нет активного запроса" in late[1], "only during the agent's own turn"

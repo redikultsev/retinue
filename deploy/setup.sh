@@ -3,6 +3,7 @@
 # Safe to run again after `git pull`.
 #
 #   sudo TELEGRAM_OWNER_ID=123456789 bash deploy/setup.sh
+#   sudo TELEGRAM_OWNER_ID=123456789 OWNER_TZ=Europe/Belgrade bash deploy/setup.sh   # default: Europe/Moscow
 #   sudo TELEGRAM_OWNER_ID=123456789 MATRIX_SERVER_NAME=matrix.example.com MATRIX_OWNER=alice bash deploy/setup.sh
 #
 # At least one channel is required. Everything Matrix needs (appservice registration, Traefik middleware,
@@ -12,6 +13,7 @@ set -euo pipefail
 TELEGRAM_OWNER_ID=${TELEGRAM_OWNER_ID:-}
 MATRIX_SERVER_NAME=${MATRIX_SERVER_NAME:-}
 MATRIX_OWNER=${MATRIX_OWNER:-}
+OWNER_TZ=${OWNER_TZ:-Europe/Moscow}     # the owner's time zone: reminders, the morning summary, every time shown
 if [[ -z $TELEGRAM_OWNER_ID && -z $MATRIX_SERVER_NAME ]]; then
   echo "no channel: set TELEGRAM_OWNER_ID (your Telegram user id) or MATRIX_SERVER_NAME and MATRIX_OWNER" >&2
   exit 1
@@ -44,6 +46,7 @@ bus_token() { printf 'retinue-bus:%s' "$1" | openssl dgst -sha256 -hmac "$RETINU
 {
   cat <<YAML
 owner: owner
+owner_tz: $OWNER_TZ
 default_agent: assistant
 agents:
   - id: assistant
@@ -52,6 +55,7 @@ agents:
     description: Единственное лицо системы
     trust_class: private
     archive: true     # may search the raw archive through the bus
+    reminders: true   # may set, list, move and cancel the owner's reminders through the bus
     can_call: []      # no other agents at this stage
 YAML
   if [[ -n $TELEGRAM_OWNER_ID ]]; then

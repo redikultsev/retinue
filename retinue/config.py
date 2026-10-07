@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -29,6 +30,7 @@ class RouterAgent:
     trust_class: str = "web"
     can_call: list[str] = field(default_factory=list)  # agent ids this agent may ask through the bus; "*" = all
     archive: bool = False                 # may search the raw archive through the bus
+    reminders: bool = False               # may set, list, move and cancel the owner's reminders through the bus
 
 
 @dataclass
@@ -63,6 +65,7 @@ class RouterConfig:
     matrix: MatrixConfig | None = None      # each channel is optional; at least one is required
     telegram: TelegramConfig | None = None
     default_agent: str | None = None    # who gets messages without an address; the only agent, if there is one
+    owner_tz: str = "Europe/Moscow"     # IANA zone: every time the model and the owner see is local time here
     bus_listen_port: int = 9100         # agents reach the router here (network `agents` only)
     bus_secret: str = ""                # from RETINUE_BUS_SECRET; per-agent tokens are derived from it
 
@@ -83,6 +86,10 @@ class RouterConfig:
         if cfg.telegram:
             cfg.telegram.bot_token = _env("TELEGRAM_BOT_TOKEN")
         cfg.bus_secret = os.environ.get("RETINUE_BUS_SECRET", "")
+        try:
+            ZoneInfo(cfg.owner_tz)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise SystemExit(f"router config: owner_tz {cfg.owner_tz!r} is not a time zone, e.g. Europe/Moscow")
         ids = [a.id for a in cfg.agents]
         for agent in cfg.agents:
             if agent.trust_class not in TRUST_CLASSES:
@@ -96,7 +103,9 @@ class RouterConfig:
         return cfg
 
 
-BUS_TOOLS = ("ask_agent", "list_agents", "search_archive")  # what an agent can be given through the router
+# What an agent can be given through the router.
+BUS_TOOLS = ("ask_agent", "list_agents", "search_archive",
+             "set_reminder", "list_reminders", "cancel_reminder", "move_reminder")
 
 
 @dataclass

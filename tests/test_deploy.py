@@ -32,7 +32,11 @@ def test_one_assistant_and_nothing_else():
     engine = AgentConfig.load(ROOT / "agents" / "assistant" / "agent.yaml").engine
     assert engine.tools == [] and engine.allowed_tools == [], "no built-in tool is offered or allowed"
     assert {"Bash", "WebSearch", "WebFetch"} <= set(engine.disallowed_tools)
-    assert engine.bus_tools == ["search_archive"], "the archive, and no ask_agent"
+    assert engine.bus_tools == ["search_archive", "set_reminder", "list_reminders", "cancel_reminder",
+                                "move_reminder"], "the archive and reminders, and no ask_agent"
+    assert engine.model == "claude-opus-5-5", "Opus, pinned by id"
+    instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
+    assert all(f"`{name}`" in instructions for name in engine.bus_tools), "she is told about every tool she has"
     assert engine.instructions == "/agent/CLAUDE.md" and engine.config_dir == "/data/claude"
     assert sorted(SERVICES) == ["assistant", "egress", "router", "tuwunel"]
     assert sorted(COMPOSE["volumes"]) == ["assistant-data", "router-data", "tuwunel-db"]
@@ -85,7 +89,8 @@ def test_setup_without_matrix(tmp_path, monkeypatch):
     monkeypatch.delenv("RETINUE_AS_TOKEN", raising=False)
     cfg = RouterConfig.load(target / "router.yaml")
     assert cfg.matrix is None and cfg.telegram.owner_id == 42 and cfg.default_agent == "assistant"
-    assert [(a.id, a.archive, a.can_call) for a in cfg.agents] == [("assistant", True, [])]
+    assert [(a.id, a.archive, a.reminders, a.can_call) for a in cfg.agents] == [("assistant", True, True, [])]
+    assert cfg.owner_tz == "Europe/Moscow"
     assert (target / "agents" / "assistant" / "CLAUDE.md").read_text() == (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
     assert "${RETINUE_BUS_TOKEN_ASSISTANT:-}" in (ROOT / "deploy" / "compose.yml").read_text()
     for agent in cfg.agents:

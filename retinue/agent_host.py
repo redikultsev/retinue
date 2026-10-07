@@ -22,12 +22,12 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, 
 from starlette.applications import Starlette
 
 from .config import AgentConfig
-from .engine import Engine, make_engine
+from .engine import Engine, EngineResult, make_engine
 
 log = logging.getLogger("retinue.agent")
 
 TURN_KEY = "retinue/turn"  # set by the router; passed back when the agent uses the bus
-CONTROL_KEY = "retinue/control"  # set by the router for its own requests: "compact"
+CONTROL_KEY = "retinue/control"  # set by the router for its own requests: "compact", "oneshot"
 
 OUTBOX = "out"  # files the agent writes here during a turn go to the owner as attachments
 MAX_FILES = 10
@@ -79,6 +79,14 @@ class SessionMap:
         self.db.commit()
 
 
+def run_metadata(result: EngineResult) -> dict:
+    """What the router learns about a run besides the answer: usage for the status page, the subscription limit,
+    and whether the session was compacted or started over (then the router sends the «now» block again)."""
+    return {"num_turns": result.num_turns, "cost_usd": result.cost_usd, "duration_ms": result.duration_ms,
+            "compacted": result.compacted, "new_session": result.new_session, "limit": result.limit,
+            "limit_until": result.limit_until, "usage": result.usage, "rate_limit": result.rate_limit}
+
+
 class EngineExecutor(AgentExecutor):
     def __init__(self, engine: Engine, sessions: SessionMap, outbox: Outbox | None = None) -> None:
         self.engine = engine
@@ -112,14 +120,20 @@ class EngineExecutor(AgentExecutor):
             metadata = context.message.metadata if context.message else {}
             turn_id = str(metadata[TURN_KEY]) if TURN_KEY in metadata else None
             session_id = self.sessions.get(task.context_id)
-            if CONTROL_KEY in metadata and metadata[CONTROL_KEY] == "compact":
+            control = metadata[CONTROL_KEY] if CONTROL_KEY in metadata else None
+            if control == "compact":
                 result = await self.engine.compact(session_id)
+            elif control == "oneshot":
+                # A background run outside the conversation (the morning summary): a fresh session, not kept.
+                result = await self.engine.run(prompt, None, on_text, turn_id)
             else:
                 result = await self.engine.run(prompt, session_id, on_text, turn_id)
-            if result.session_id:
+                if session_id is None:  # nothing to resume (a new conversation, or the table was lost)
+                    result.new_session = True
+            if result.session_id and control != "oneshot":
                 self.sessions.set(task.context_id, result.session_id)
             files, skipped = self.outbox.changed(before) if self.outbox else ([], [])
-        metadata = {"num_turns": result.num_turns, "cost_usd": result.cost_usd, "duration_ms": result.duration_ms}
+        metadata = run_metadata(result)
         if result.is_error:
             await updater.update_status(TaskState.TASK_STATE_FAILED, message=new_text_message(result.text), metadata=metadata)
             return

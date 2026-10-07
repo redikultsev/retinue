@@ -70,6 +70,25 @@ class Store:
                 expires REAL NOT NULL,
                 used REAL                           -- when the card was spent; NULL while it is live
             );
+            CREATE TABLE IF NOT EXISTS runs (       -- one row per model run: what the status page will count
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL,
+                agent_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                kind TEXT NOT NULL,                 -- conversation | retry | summary | compact
+                status TEXT NOT NULL,               -- done | failed | rejected | error | limit
+                num_turns INTEGER,
+                duration_ms INTEGER,
+                cost_usd REAL,                      -- the CLI's estimate; on a subscription a gauge, not a bill
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_read_tokens INTEGER,
+                cache_write_tokens INTEGER,
+                rate_status TEXT,                   -- the subscription limit as the CLI last reported it in this run
+                rate_type TEXT,                     -- five_hour | seven_day | seven_day_opus | ...
+                rate_utilization REAL,              -- share of the window used, 0..1
+                rate_resets_at INTEGER              -- unix seconds
+            );
             """
         )
         if "channel" not in {row[1] for row in self.db.execute("PRAGMA table_info(protocol)")}:
@@ -89,6 +108,37 @@ class Store:
              num_turns, cost_usd, duration_ms, channel),
         )
         self.db.commit()
+
+    def run(self, *, agent_id: str, conversation_id: str, kind: str, status: str, meta: dict,
+            ts: float | None = None) -> None:
+        """Account for one model run from what the host reported (`Reply.meta`). Numbers come through A2A as
+        floats; counts are stored as integers."""
+        usage, rate = meta.get("usage") or {}, meta.get("rate_limit") or {}
+
+        def whole(value) -> int | None:
+            return None if value is None else int(value)
+
+        self.db.execute(
+            "INSERT INTO runs (ts, agent_id, conversation_id, kind, status, num_turns, duration_ms, cost_usd,"
+            " input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, rate_status, rate_type,"
+            " rate_utilization, rate_resets_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (time.time() if ts is None else ts, agent_id, conversation_id, kind, status,
+             whole(meta.get("num_turns")), whole(meta.get("duration_ms")), meta.get("cost_usd"),
+             whole(usage.get("input_tokens")), whole(usage.get("output_tokens")),
+             whole(usage.get("cache_read_tokens")), whole(usage.get("cache_write_tokens")),
+             rate.get("status"), rate.get("rate_limit_type"), rate.get("utilization"), whole(rate.get("resets_at"))),
+        )
+        self.db.commit()
+
+    def runs_since(self, ts: float) -> dict[str, int]:
+        """How many runs ended how, since `ts`: {"done": 12, "limit": 1, ...}."""
+        return dict(self.db.execute("SELECT status, COUNT(*) FROM runs WHERE ts >= ? GROUP BY status", (ts,)))
+
+    def last_rate_limit(self) -> dict | None:
+        """The subscription limit as the CLI last reported it, in any run; None until it has."""
+        row = self.db.execute("SELECT rate_status, rate_type, rate_utilization, rate_resets_at, ts FROM runs"
+                              " WHERE rate_status IS NOT NULL ORDER BY id DESC LIMIT 1").fetchone()
+        return dict(zip(("status", "type", "utilization", "resets_at", "seen"), row)) if row else None
 
     def conversation(self, agent_id: str) -> str:
         """The agent's current conversation id, created on first use."""

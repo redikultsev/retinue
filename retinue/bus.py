@@ -111,8 +111,8 @@ def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
 
 
 class BusServer:
-    """HTTP endpoint on the agents network: GET /agents, POST /call, POST /archive/search.
-    Authenticated by per-agent token."""
+    """HTTP endpoint on the agents network: GET /agents, POST /call, POST /archive/search,
+    POST /reminders/{add,list,cancel,move}. Authenticated by per-agent token."""
 
     def __init__(self, core, secret: str, port: int) -> None:
         self.core = core
@@ -120,7 +120,8 @@ class BusServer:
         self.tokens = {bus_token(secret, a): a for a in core.agents}
         self.app = web.Application()
         self.app.add_routes([web.get("/agents", self.list_agents), web.post("/call", self.call),
-                             web.post("/archive/search", self.archive_search)])
+                             web.post("/archive/search", self.archive_search),
+                             web.post("/reminders/{action}", self.reminders)])
 
     async def start(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
@@ -154,4 +155,10 @@ class BusServer:
         caller = self.caller(request)
         body = await request.json()
         ok, text = await self.core.archive_search(caller, str(body.get("turn", "")), str(body.get("query", "")))
+        return web.json_response({"ok": ok, "text": text})
+
+    async def reminders(self, request: web.Request) -> web.Response:
+        caller = self.caller(request)
+        body = await request.json()
+        ok, text = await self.core.reminders(caller, str(body.get("turn", "")), request.match_info["action"], body)
         return web.json_response({"ok": ok, "text": text})

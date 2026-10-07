@@ -1,12 +1,16 @@
 """Core with fake channels and a fake agent: one conversation per agent across channels, mirroring, commands."""
 
 import asyncio
+import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from retinue.archive import Archive
 from retinue.config import RouterAgent
-from retinue.core import AgentFile, Button, Core, history_line
+from retinue import clock
+from retinue.core import LIMITED, AgentFile, Button, Core, Reply, history_line
 from retinue.protocol import Store
 
 
@@ -181,6 +185,7 @@ def test_one_session_one_message_at_a_time(tmp_path):
         await core.start([telegram])
         for i, text in enumerate(["что посоветуешь по Еревану?", "а теперь?"]):
             await core.handle(telegram, "assistant", text, native_id=str(i))  # the next arrives during the run
+            await asyncio.sleep(0.01)
         await drain()
         await core.unsupported(telegram, "фото", native_id="5", caption="вот билет")
         await core.handle(telegram, "assistant", "точно?", native_id="6")
@@ -195,10 +200,10 @@ def test_one_session_one_message_at_a_time(tmp_path):
     assert [e[2] for e in telegram.events if e[0] == "send"] == ["ответ 1", "ответ 2", "ответ 3", "ответ 4"]
     first, second, third, fresh = prompts
     assert first.endswith("[Новая реплика Владельца]\nчто посоветуешь по Еревану?")
-    assert "Сейчас: 20" in first and "UTC" in first
+    assert "Сейчас: 20" in first and "МСК, " in first and "UTC" not in first, "the owner's clock, with the weekday"
     assert second.endswith("[Новая реплика Владельца]\nа теперь?")
     assert "Ереван" not in second and "ответ 1" not in second, "the session remembers; the router does not repeat it"
-    assert "UTC] Владелец: [фото] вот билет" in third and "UTC] Система: Пока не умею принимать фото" in third, \
+    assert "МСК, " in third and "] Владелец: [фото] вот билет" in third and "] Система: Пока не умею принимать фото" in third, \
         "what happened without the assistant is told once"
     assert "а теперь?" not in third
     assert contexts[:3] == [contexts[0]] * 3 and contexts[3] != contexts[0], "one session until !new"
@@ -259,10 +264,10 @@ def test_reply_forward_and_unsupported(tmp_path):
         await core.handle(telegram, None, "а подробнее про второе?", native_id="2", reply_to="500")
         await drain()
         assert "Владелец отвечает на это сообщение:\n[" in prompts[-1]
-        assert "UTC] Ассистентка: Каскад, потом Матенадаран" in prompts[-1], "found by the messenger's id, not by history"
+        assert "] Ассистентка: Каскад, потом Матенадаран" in prompts[-1], "found by the messenger's id, not by history"
         await core.handle(telegram, None, "напомню свой вопрос", native_id="3", reply_to="1")
         await drain()
-        assert "отвечает на это сообщение:\n" in prompts[-1] and "UTC] Владелец: что посмотреть в Ереване?" in prompts[-1]
+        assert "отвечает на это сообщение:\n" in prompts[-1] and "] Владелец: что посмотреть в Ереване?" in prompts[-1]
         await core.handle(telegram, None, "ответ на неизвестное", native_id="4", reply_to="777")
         await drain()
         assert "отвечает на это сообщение" not in prompts[-1]
@@ -312,3 +317,366 @@ def test_message_redelivered_after_a_crash_is_answered(tmp_path):
 
     asyncio.run(run())
     assert len(prompts) == 1 and archive.coverage()[0] == 2, "answered once, recorded once"
+
+
+def test_history_line_is_the_owners_local_time():
+    event = Archive(":memory:").append("owner", "привет", conversation_id="c", channel="telegram", ts=100.0)[0]
+    assert history_line(event) == "[1970-01-01 03:01 МСК, четверг] Владелец: привет"
+    assert history_line(event, "Europe/Belgrade") == "[1970-01-01 01:01 Europe/Belgrade, четверг] Владелец: привет"
+
+
+def test_messages_written_during_a_run_get_one_answer(tmp_path):
+    archive, prompts = Archive(str(tmp_path / "archive.sqlite")), []
+
+    async def run():
+        gate = asyncio.Event()
+
+        async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
+            prompts.append(text)
+            if len(prompts) == 1:
+                await gate.wait()  # the first answer is still being written
+            return "done", f"ответ {len(prompts)}", []
+
+        core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", ask=fake_ask, archive=archive)
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        await core.handle(telegram, None, "что посмотреть в Ереване?", native_id="1")
+        await asyncio.sleep(0.01)
+        await core.handle(telegram, None, "и где поесть", native_id="2")
+        await core.handle(telegram, None, "бюджет до 50 евро", native_id="3")
+        await core.handle(telegram, None, "и где поесть", native_id="2")  # delivered twice while it waits
+        gate.set()
+        await drain()
+        await core.handle(telegram, None, "бюджет до 50 евро", native_id="3")  # and once more after the answer
+        await drain()
+        return telegram
+
+    telegram = asyncio.run(run())
+    assert len(prompts) == 2, "two messages written during a run: one more run, not two"
+    assert [e[2] for e in telegram.events if e[0] == "send"] == ["ответ 1", "ответ 2"]
+    merged = prompts[1]
+    assert "[Новые реплики Владельца: 2. Он писал, пока ты отвечала; ответь на все одним сообщением.]" in merged
+    assert "[Новая реплика Владельца, 1 из 2, " in merged and "МСК, " in merged
+    assert merged.index("и где поесть") < merged.index("бюджет до 50 евро") and "Ереван" not in merged
+    reply = archive.recent(archive.get("telegram:1").conversation_id, 10)[-1]
+    assert (reply.kind, reply.ref, reply.meta) == ("assistant", "telegram:3", {"covers": ["telegram:2", "telegram:3"]})
+    assert archive.answered("telegram:2") and archive.answered("telegram:3")
+
+
+def test_every_run_is_accounted(tmp_path):
+    store = Store(str(tmp_path / "r.sqlite"))
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None):
+        if control == "compact":
+            return Reply("done", "Контекст сжат.", [], {"usage": {"input_tokens": 9000.0}})
+        if text.endswith("упади"):
+            raise RuntimeError("boom")
+        return Reply("done", "ответ", [], {"num_turns": 1.0, "usage": {"input_tokens": 1200.0, "output_tokens": 80.0},
+                                           "rate_limit": {"status": "allowed", "rate_limit_type": "five_hour",
+                                                          "utilization": 0.3, "resets_at": 1760000000.0}})
+
+    async def run():
+        core = Core([AGENT], store, "owner", ask=fake_ask)
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        for i, text in enumerate(["привет", "упади", "!compact"]):
+            await core.handle(telegram, None, text, native_id=str(i))
+            await drain()
+
+    asyncio.run(run())
+    rows = store.db.execute("SELECT agent_id, kind, status, input_tokens, output_tokens FROM runs ORDER BY id").fetchall()
+    assert rows == [("assistant", "conversation", "done", 1200, 80), ("assistant", "conversation", "error", None, None),
+                    ("assistant", "compact", "done", 9000, None)]
+    assert store.last_rate_limit()["utilization"] == 0.3
+
+
+NOW_BLOCK = "[Сейчас. Роутер даёт это в начале сессии и после сжатия.]"
+
+
+def test_now_block_at_the_start_of_a_session_and_after_compaction(tmp_path):
+    prompts, reports = [], []
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None):
+        if control == "compact":
+            return Reply("done", "Контекст сжат.", [], {})
+        prompts.append(text)
+        if text.endswith("упади"):
+            raise RuntimeError("max turns")
+        return Reply("done", "ответ", [], reports.pop(0) if reports else {})
+
+    async def run():
+        core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", ask=fake_ask)
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        friday = datetime.fromtimestamp(time.time() + 3 * 86400, ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%dT18:00")
+        assert core.jobs.add("позвонить Х", friday, "", time.time())[0]
+
+        async def say(text, report=None):
+            if report:
+                reports.append(report)
+            await core.handle(telegram, None, text, native_id=f"{len(prompts)}-{text}")
+            await drain()
+            return prompts[-1] if not text.startswith("!") else None
+
+        first = await say("привет")
+        assert NOW_BLOCK in first and "Пояс Владельца: Europe/Moscow (МСК)." in first
+        assert "- #1 · " in first and "18:00 МСК — позвонить Х" in first, "the owner's reminders are in it"
+        assert NOW_BLOCK not in await say("как дела"), "once per session"
+        assert NOW_BLOCK not in await say("длинно", {"compacted": True}), "compaction is learnt after the run"
+        assert NOW_BLOCK in await say("и ещё"), "the first request after compaction carries it"
+        assert NOW_BLOCK not in await say("дальше")
+        await say("!compact")
+        assert NOW_BLOCK in await say("после /compact")
+        await say("!new")
+        assert NOW_BLOCK in await say("с чистого листа"), "a new conversation is a new session"
+        await say("сессия потерялась", {"new_session": True})
+        assert NOW_BLOCK in await say("после потери")
+        assert NOW_BLOCK not in await say("снова обычный")
+        await say("упади")
+        assert NOW_BLOCK in await say("после сбоя"), "a failed run may have compacted the session first"
+        assert NOW_BLOCK not in await say("и снова обычный")
+
+    asyncio.run(run())
+
+
+WEDNESDAY = datetime(2026, 10, 7, 14, 5, tzinfo=ZoneInfo("Europe/Moscow")).timestamp()
+
+
+def moscow(day: int, hour: int, minute: int = 0) -> float:
+    return datetime(2026, 10, day, hour, minute, tzinfo=ZoneInfo("Europe/Moscow")).timestamp()
+
+
+def test_a_reminder_fires_once_by_code_and_says_when_late(tmp_path):
+    archive, store, prompts = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite")), []
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
+        prompts.append(text)
+        return "done", "ответ", []
+
+    async def run():
+        core = Core([AGENT], store, "owner", ask=fake_ask, archive=archive)
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        core.jobs.add("купить хлеб", "2026-10-08T09:30", "чт", WEDNESDAY)
+        core.jobs.add("позвонить Х", "2026-10-09T18:00", "пт", WEDNESDAY)
+        await core.tick(moscow(8, 9, 29))
+        assert telegram.cards == [], "nothing is due yet"
+        await core.tick(moscow(8, 9, 30) + 20)
+        await core.tick(moscow(8, 9, 31))
+        restarted = Core([AGENT], store, "owner", ask=fake_ask, archive=archive)
+        await restarted.start([telegram])
+        await restarted.tick(moscow(8, 9, 32))
+        assert [c[0] for c in telegram.cards] == ["Напоминание: купить хлеб"], "on time, once, also after a restart"
+        await restarted.tick(moscow(9, 21, 5))  # the server was down at 18:00
+        assert telegram.cards[-1][0] == "Напоминание: позвонить Х\n\n_Опоздало на 3 ч 5 мин: Роутер не работал._"
+        await restarted.handle(telegram, None, "спасибо", native_id="1")
+        await drain()
+
+    asyncio.run(run())
+    assert len(prompts) == 1, "no model when a reminder fires"
+    assert "] Система: Напоминание: купить хлеб" in prompts[0], "the session learns of it as the system's message"
+    fired = [e for e in archive.recent(store.conversation("assistant"), 10) if e.kind == "system"]
+    assert [e.meta["job"] for e in fired] == [f"1:{moscow(8, 9, 30):.0f}", f"2:{moscow(9, 18):.0f}"]
+    assert store.db.execute("SELECT id, status FROM jobs ORDER BY id").fetchall() == [(1, "sent"), (2, "sent")]
+
+
+def test_after_a_restart_unanswered_messages_are_answered_or_listed(tmp_path):
+    archive, store, prompts = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite")), []
+    conversation, now = store.conversation("assistant"), time.time()
+
+    def said(native_id, text, age_s, conversation_id=conversation, **kw):
+        return archive.append("owner", text, conversation_id=conversation_id, channel="telegram", native_id=native_id,
+                              ts=now - age_s, **kw)[0]
+
+    said("1", "совсем давнее", 30 * 86400)
+    said("2", "позавчерашнее", 2 * 86400)
+    said("3", "из прошлого разговора", 3600, conversation_id="conv-old")
+    answered = said("4", "отвеченное", 900)
+    archive.append("assistant", "ответ", conversation_id=conversation, channel="telegram", ref=answered.id, ts=now - 890)
+    said("5", "[фото] билет", 800, meta={"unsupported": "фото"})
+    said("6", "что посмотреть в Ереване?", 600)
+    said("7", "и где поесть", 590)
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
+        prompts.append(text)
+        return "done", "Каскад; поесть — в Таверне", []
+
+    async def run():
+        core = Core([AGENT], store, "owner", ask=fake_ask, archive=archive)
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        await core.handle(telegram, None, "и где поесть", native_id="7")  # Telegram delivers the last one again
+        await drain()
+        again = Core([AGENT], store, "owner", ask=fake_ask, archive=archive)  # and one more restart
+        await again.start([telegram])
+        await drain()
+        return telegram
+
+    telegram = asyncio.run(run())
+    assert len(prompts) == 1, "the last day's messages run once, together; nothing runs on the second restart"
+    (prompt,) = prompts
+    assert RESTARTED_NOTE in prompt and "[Новые реплики Владельца: 2." in prompt and "МСК, " in prompt
+    assert prompt.index("что посмотреть в Ереване?") < prompt.index("и где поесть")
+    assert "давнее" not in prompt and "отвеченное" not in prompt and "фото" not in prompt.split("[Новые реплики")[1]
+    (listing,) = [c[0] for c in telegram.cards]
+    assert listing.startswith("После перезапуска Роутера нашлись сообщения без ответа.")
+    assert "«позавчерашнее»" in listing and "«из прошлого разговора»" in listing and "совсем давнее" not in listing
+    assert [e[2] for e in telegram.events if e[0] == "send"] == ["Каскад; поесть — в Таверне"]
+    assert all(archive.answered(f"telegram:{i}") for i in (2, 3, 6, 7)) and not archive.answered("telegram:1")
+
+
+RESTARTED_NOTE = "Ответ задержался: Роутер перезапускался."
+
+
+def test_the_limit_is_told_without_the_model_and_the_turn_runs_again(tmp_path):
+    archive, store, prompts = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite")), []
+    resets = time.time() + 2 * 3600
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
+        prompts.append(text)
+        if len(prompts) == 1:
+            return Reply("failed", "Лимит подписки исчерпан.", [], {"limit": True, "limit_until": float(resets)})
+        return Reply("done", f"ответ {len(prompts)}", [], {})
+
+    async def run():
+        core = Core([AGENT], store, "owner", ask=fake_ask, archive=archive)
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        await core.handle(telegram, None, "привет", native_id="1")
+        await drain()
+        await core.handle(telegram, None, "ты тут?", native_id="2")
+        await drain()
+        assert len(prompts) == 1, "while the limit is known, the model is not started"
+        await core.tick(resets + 30)
+        await drain()
+        assert len(prompts) == 1, "not before the window has reset"
+        await core.tick(resets + 61)
+        await drain()
+        return telegram
+
+    telegram = asyncio.run(run())
+    notice = f"Лимит подписки до {clock.until(resets, time.time())}. Отвечу, когда откроется."
+    assert [c[0] for c in telegram.cards] == [notice, notice]
+    assert len(prompts) == 2 and LIMITED in prompts[1], "the refused turns run again, once, as one turn"
+    assert "привет" in prompts[1] and prompts[1].endswith("ты тут?")
+    assert [e[2] for e in telegram.events if e[0] == "send"] == ["ответ 2"]
+    assert store.db.execute("SELECT kind, status FROM jobs").fetchall() == [("retry", "sent")] * 2
+    assert store.db.execute("SELECT kind, status FROM runs ORDER BY id").fetchall() == [
+        ("conversation", "limit"), ("retry", "done")]
+    assert archive.answered("telegram:1") and archive.answered("telegram:2")
+
+
+def test_a_retry_cut_by_a_restart_runs_again(tmp_path):
+    archive, path, prompts = Archive(str(tmp_path / "archive.sqlite")), str(tmp_path / "r.sqlite"), []
+    resets = time.time() + 3600
+
+    async def before(url, text, context_id, on_progress=None, turn_id=None):
+        prompts.append(text)
+        if len(prompts) == 1:
+            return Reply("failed", "Лимит подписки исчерпан.", [], {"limit": True, "limit_until": float(resets)})
+        await asyncio.Event().wait()  # the router stops in the middle of this run
+
+    async def after(url, text, context_id, on_progress=None, turn_id=None):
+        prompts.append(text)
+        return Reply("done", "ответ после рестарта", [], {})
+
+    async def run():
+        core = Core([AGENT], Store(path), "owner", ask=before, archive=archive)
+        await core.start([FakeChannel("telegram", False)])
+        await core.handle(core.channels[0], None, "привет", native_id="1")
+        await drain()
+        await core.tick(resets + 61)
+        await asyncio.sleep(0.05)
+        assert len(prompts) == 2, "the retry is running"
+        for task in asyncio.all_tasks() - {asyncio.current_task()}:  # the router is stopped
+            task.cancel()
+        await drain()
+        restarted = Core([AGENT], Store(path), "owner", ask=after, archive=archive)
+        telegram = FakeChannel("telegram", False)
+        await restarted.start([telegram])
+        await restarted.tick(resets + 90)
+        await drain()
+        return telegram
+
+    telegram = asyncio.run(run())
+    assert len(prompts) == 3 and LIMITED in prompts[2] and prompts[2].endswith("привет")
+    assert [e[2] for e in telegram.events if e[0] == "send"] == ["ответ после рестарта"]
+
+
+def test_a_limit_without_a_reset_time_is_tried_again_in_an_hour(tmp_path):
+    store = Store(str(tmp_path / "r.sqlite"))
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
+        return Reply("failed", "Лимит подписки исчерпан.", [], {"limit": True})
+
+    async def run():
+        core = Core([AGENT], store, "owner", ask=fake_ask)
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        await core.handle(telegram, None, "привет", native_id="1")
+        await drain()
+        return telegram, core
+
+    telegram, core = asyncio.run(run())
+    assert telegram.cards[-1][0].startswith("Упёрлась в лимит подписки; когда он откроется, неизвестно. Попробую снова в ")
+    (due,) = store.db.execute("SELECT due FROM jobs WHERE kind = 'retry'").fetchone()
+    assert abs(due - time.time() - 3600) < 60 and core.limit_until == 0.0, "an unknown reset does not stop other runs"
+
+
+def test_morning_summary_every_day_at_nine(tmp_path):
+    archive, store, asked = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite")), []
+    conversation = store.conversation("assistant")
+    question, _ = archive.append("owner", "что посмотреть в Ереване?", conversation_id=conversation,
+                                 channel="telegram", ts=moscow(7, 20))
+    archive.append("assistant", "Каскад и Матенадаран", conversation_id=conversation, channel="telegram",
+                   ref=question.id, ts=moscow(7, 20, 1))
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None):
+        asked.append((text, context_id, control))
+        if len(asked) == 2:
+            raise RuntimeError("model down")
+        report = {"rate_limit": {"status": "allowed", "rate_limit_type": "five_hour", "utilization": 0.25}}
+        return Reply("done", "Доброе утро. Сегодня в 18:30 — купить хлеб.", [], report if len(asked) == 3 else {})
+
+    async def run():
+        core = Core([AGENT], store, "owner", ask=fake_ask, archive=archive)
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        core.jobs.add("купить хлеб", "2026-10-08T18:30", "чт", WEDNESDAY)
+        core.jobs.add("позвонить Х", "2026-10-09T18:00", "пт", WEDNESDAY)
+
+        async def loop_at(now):  # one pass of Core.clock at a given moment
+            core.jobs.ensure_summary(now)
+            await core.tick(now)
+            await drain()
+
+        await loop_at(WEDNESDAY)
+        await loop_at(moscow(8, 8, 59))
+        assert telegram.cards == [], "not before nine"
+        await loop_at(moscow(8, 9, 0) + 10)
+        await loop_at(moscow(8, 9, 0) + 40)
+        await loop_at(moscow(9, 9, 0) + 10)  # the model fails: a bare summary all the same
+        await loop_at(moscow(10, 11, 7))  # the router was down at nine on Saturday
+        return telegram
+
+    telegram = asyncio.run(run())
+    cards = [c[0] for c in telegram.cards if "Здоровье за сутки" in c[0]]
+    assert len(cards) == 3, "one summary a day, even when the loop ticks twice"
+    assert store.db.execute("SELECT status FROM jobs WHERE kind = 'summary' AND due < ?", (moscow(10, 12),)).fetchall() == [
+        ("sent",)] * 3, "a summary is done once it is sent, failed run or not"
+    prompt, context_id, control = asked[0]
+    assert control == "oneshot" and context_id != conversation, "outside the conversation's session"
+    assert prompt.startswith("[Утренняя сводка.") and "Сейчас: 2026-10-08 09:00 МСК, четверг." in prompt
+    assert "чт 8 октября, 18:30 МСК — купить хлеб" in prompt and "позвонить Х" not in prompt, "today's reminders only"
+    assert "Владелец: что посмотреть в Ереване?" in prompt and "Ассистентка: Каскад и Матенадаран" in prompt
+    assert cards[0] == ("Доброе утро. Сегодня в 18:30 — купить хлеб.\n\nЗдоровье за сутки: ответов — 1, "
+                        "напоминаний — 0, сбоев — 0, доля лимита подписки неизвестна.")
+    assert cards[1].startswith("Утренняя сводка — без ассистентки: её запуск не удался.\nНапоминания на сегодня:\n"
+                               "- #2 · пт 9 октября, 18:00 МСК — позвонить Х\n\nЗдоровье за сутки: ответов — 0, "
+                               "напоминаний — 1, сбоев — ")
+    assert "лимит подписки израсходован на 25 % (пятичасовое окно, на " in cards[2]
+    assert cards[2].endswith("_Сводка опоздала на 2 ч 7 мин: Роутер не работал._")
+    assert store.db.execute("SELECT kind, status FROM runs ORDER BY id").fetchall() == [
+        ("summary", "done"), ("summary", "error"), ("summary", "done")]
+    archived = [e for e in archive.recent(conversation, 20) if e.kind == "system" and "Здоровье" in e.text]
+    assert len(archived) == 3, "on record as the system's messages: the session will see them"

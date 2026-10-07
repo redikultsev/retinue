@@ -3,7 +3,8 @@ for the subscription limit to reset. One table in the router's SQLite and one lo
 no framework.
 
 A reminder keeps the owner's wall time and zone as they were said (`local`, `tz`) and the moment it fires (`due`,
-UTC). The text is written when the reminder is set and sent as it is: no model is needed when it fires.
+UTC). The text is written when the reminder is set; when it fires, the assistant tells it in her own words, and
+code sends the text as it is when she cannot.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from . import clock
 
 REMINDER, SUMMARY, RETRY = "reminder", "summary", "retry"
 ACTIVE, RUNNING, SENT, CANCELLED = "active", "running", "sent", "cancelled"
-LONG = (SUMMARY, RETRY)  # jobs that run the model for minutes: done only after the run
 MAX_TEXT = 500
 SUMMARY_AT = "09:00"  # the morning summary, the owner's wall time
 _COLUMNS = "id, kind, text, local, tz, due, status, data"
@@ -150,9 +150,12 @@ class Scheduler:
         """There is always a next morning summary in the table. One row per local day (a unique index), so the
         loop and a restart add nothing twice; a summary missed while the router was down stays due and goes late."""
         moment = clock.next_at(SUMMARY_AT, now, self.tz)
+        local = f"{moment:%Y-%m-%dT%H:%M}"
+        # Checked before the insert: a refused insert would still spend an id, and the loop asks every 30 s.
         self.db.execute("INSERT OR IGNORE INTO jobs (kind, text, local, tz, due, status, created)"
-                        " VALUES (?, '', ?, ?, ?, ?, ?)",
-                        (SUMMARY, f"{moment:%Y-%m-%dT%H:%M}", self.tz, moment.timestamp(), ACTIVE, now))
+                        " SELECT ?, '', ?, ?, ?, ?, ? WHERE NOT EXISTS"
+                        " (SELECT 1 FROM jobs WHERE kind = ? AND local = ?)",
+                        (SUMMARY, local, self.tz, moment.timestamp(), ACTIVE, now, SUMMARY, local))
         self.db.commit()
 
     def add_retry(self, data: dict, due: float, now: float) -> int:
@@ -172,12 +175,12 @@ class Scheduler:
         return [self._job(row) for row in rows]
 
     def claim(self, job: Job, now: float) -> bool:
-        """Take a due job for sending, at most once: a compare-and-set on this row at this moment (`job.key`).
-        A reminder is taken as sent before it is sent, so a restart never sends it twice; the price is that a crash
-        in the instant between taking and sending loses it. A summary or a retry runs the model for minutes, so it
-        is taken as running and becomes sent with `done`; a restart in between runs it again."""
+        """Take a due job, at most once: a compare-and-set on this row at this moment (`job.key`). Every job runs
+        the model for seconds or minutes, so it is taken as running and becomes sent with `done`; a restart in
+        between runs it again. The price is a second message if the router dies in the instant between sending
+        and `done` — a duplicate rather than a loss."""
         cursor = self.db.execute("UPDATE jobs SET status = ?, fired = ? WHERE id = ? AND status = ? AND due = ?",
-                                 (RUNNING if job.kind in LONG else SENT, now, job.id, ACTIVE, job.due))
+                                 (RUNNING, now, job.id, ACTIVE, job.due))
         self.db.commit()
         return cursor.rowcount == 1
 

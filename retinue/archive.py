@@ -117,6 +117,14 @@ class Archive:
             " (SELECT 1 FROM json_each(events.meta, '$.covers') WHERE value = ?1))) LIMIT 1",
             (event_id, OWNER)).fetchone() is not None
 
+    def reply_to(self, event_id: str) -> Event | None:
+        """The assistant's answer to this owner message: its own reply, or one reply to several messages."""
+        row = self.db.execute(
+            f"SELECT {self._COLUMNS} FROM events WHERE kind = ?2 AND (ref = ?1 OR (meta LIKE '%\"covers\"%' AND"
+            " EXISTS (SELECT 1 FROM json_each(events.meta, '$.covers') WHERE value = ?1))) ORDER BY seq LIMIT 1",
+            (event_id, ASSISTANT)).fetchone()
+        return self._event(row) if row else None
+
     def unanswered(self, since: float) -> list[Event]:
         """Owner messages since `since` that nobody answered: the router died between the record and the reply.
         A refused photo and a pressed button are not questions."""

@@ -42,7 +42,7 @@ only, no volume, config mounted read-only) and `egress` (Squid: the only way out
 Send the bot `/check`: a message written by the system arrives with two buttons; press one — the buttons
 disappear and the choice stays. Then ask anything, and later ask what was said before: the assistant searches
 the archive. Ask it to remind you of something in five minutes: it names the day and time back, and the reminder
-arrives on time as a message from the system. The morning summary comes every day at 09:00 your time.
+arrives on time, written by the assistant. The morning summary comes every day at 09:00 your time.
 
 The assistant's container has no way out except the model API:
 

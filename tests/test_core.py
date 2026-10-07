@@ -1,6 +1,7 @@
 """Core with fake channels and a fake agent: one conversation per agent across channels, mirroring, commands."""
 
 import asyncio
+import dataclasses
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -446,12 +447,15 @@ def moscow(day: int, hour: int, minute: int = 0) -> float:
     return datetime(2026, 10, day, hour, minute, tzinfo=ZoneInfo("Europe/Moscow")).timestamp()
 
 
-def test_a_reminder_fires_once_by_code_and_says_when_late(tmp_path):
-    archive, store, prompts = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite")), []
+def test_a_reminder_is_written_by_the_assistant_and_by_code_when_she_cannot(tmp_path):
+    archive, store, asked = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite")), []
+    written = "Пора за хлебом. И молоко захвати: вчера ты про него говорил."
 
     async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
-        prompts.append(text)
-        return "done", "ответ", []
+        asked.append((text, context_id, turn_id))
+        if "«позвонить Х»" in text:  # this reminder, not the list of them in «now»
+            raise RuntimeError("model down")
+        return Reply("done", written, [], {})
 
     async def run():
         core = Core([AGENT], store, "owner", ask=fake_ask, archive=archive)
@@ -459,25 +463,62 @@ def test_a_reminder_fires_once_by_code_and_says_when_late(tmp_path):
         await core.start([telegram])
         core.jobs.add("купить хлеб", "2026-10-08T09:30", "чт", WEDNESDAY)
         core.jobs.add("позвонить Х", "2026-10-09T18:00", "пт", WEDNESDAY)
+        core.jobs.add("выпить воды", "2026-10-09T21:30", "пт", WEDNESDAY)
         await core.tick(moscow(8, 9, 29))
-        assert telegram.cards == [], "nothing is due yet"
+        await drain()
+        assert telegram.events == [] and telegram.cards == [], "nothing is due yet"
         await core.tick(moscow(8, 9, 30) + 20)
+        await drain()
         await core.tick(moscow(8, 9, 31))
+        await drain()
         restarted = Core([AGENT], store, "owner", ask=fake_ask, archive=archive)
         await restarted.start([telegram])
         await restarted.tick(moscow(8, 9, 32))
-        assert [c[0] for c in telegram.cards] == ["Напоминание: купить хлеб"], "on time, once, also after a restart"
-        await restarted.tick(moscow(9, 21, 5))  # the server was down at 18:00
-        assert telegram.cards[-1][0] == "Напоминание: позвонить Х\n\n_Опоздало на 3 ч 5 мин: Роутер не работал._"
-        await restarted.handle(telegram, None, "спасибо", native_id="1")
         await drain()
+        await restarted.tick(moscow(9, 21, 5))  # the server was down at 18:00, and now the model fails
+        await drain()
+        restarted.limit_until = moscow(9, 23)  # the subscription limit is known: no model at all
+        await restarted.tick(moscow(9, 21, 31))
+        await drain()
+        return telegram
 
-    asyncio.run(run())
-    assert len(prompts) == 1, "no model when a reminder fires"
-    assert "] Система: Напоминание: купить хлеб" in prompts[0], "the session learns of it as the system's message"
-    fired = [e for e in archive.recent(store.conversation("assistant"), 10) if e.kind == "system"]
-    assert [e.meta["job"] for e in fired] == [f"1:{moscow(8, 9, 30):.0f}", f"2:{moscow(9, 18):.0f}"]
-    assert store.db.execute("SELECT id, status FROM jobs ORDER BY id").fetchall() == [(1, "sent"), (2, "sent")]
+    telegram = asyncio.run(run())
+    assert [e[2] for e in telegram.events if e[0] == "send"] == [written], "her words, once, also after a restart"
+    prompt, context_id, turn_id = asked[0]
+    assert context_id == store.conversation("assistant") and turn_id, "in the conversation's session, with tools"
+    assert "«купить хлеб»" in prompt and "чт 8 октября, 09:30 МСК" in prompt and "опоздало" not in prompt
+    assert len(asked) == 2 and "Оно опоздало на 3 ч 5 мин: Роутер не работал." in asked[1][0]
+    assert [c[0] for c in telegram.cards] == [
+        "Напоминание: позвонить Х\n\n_Опоздало на 3 ч 5 мин: Роутер не работал._",
+        "Напоминание: выпить воды"], "code, when she cannot"
+    fired = [e for e in archive.recent(store.conversation("assistant"), 10) if e.meta and "job" in e.meta]
+    assert [(e.kind, e.meta["job"]) for e in fired] == [("assistant", f"1:{moscow(8, 9, 30):.0f}"),
+                                                       ("system", f"2:{moscow(9, 18):.0f}"),
+                                                       ("system", f"3:{moscow(9, 21, 30):.0f}")]
+    assert store.db.execute("SELECT status FROM jobs WHERE kind = 'reminder'").fetchall() == [("sent",)] * 3
+    assert store.db.execute("SELECT kind, status FROM runs ORDER BY id").fetchall() == [
+        ("reminder", "done"), ("reminder", "error")]
+
+
+def test_a_found_question_comes_with_its_answer(tmp_path):
+    archive, store = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite"))
+    core = Core([dataclasses.replace(AGENT, archive=True)], store, "owner", ask=None, archive=archive)
+    conversation = store.conversation("assistant")
+
+    def pair(question, answer, hour):
+        asked, _ = archive.append("owner", question, conversation_id=conversation, channel="telegram",
+                                  ts=moscow(7, hour))
+        archive.append("assistant", answer, conversation_id=conversation, channel="telegram", ref=asked.id,
+                       ts=moscow(7, hour, 1))
+
+    pair("Посоветуй, что посмотреть в Ереване за один день", "Вот маршрут: Каскад, Матенадаран, Вернисаж.", 14)
+    pair("А где там поесть?", "В Ереване — хоровац в Таверне Ереван.", 15)
+    turn = core.turns.open_root("assistant")
+    ok, text = asyncio.run(core.archive_search(core.agents["assistant"], turn.id, "Ереван"))
+    assert ok and text.startswith("Найдено: 2"), text
+    assert "Вот маршрут: Каскад, Матенадаран, Вернисаж." in text, "the answer, though it never names the city"
+    assert "А где там поесть?" in text, "and the question an answer was given to"
+    assert text.count("хоровац") == 1, "an answer found itself is not repeated"
 
 
 def test_after_a_restart_unanswered_messages_are_answered_or_listed(tmp_path):
@@ -632,6 +673,8 @@ def test_morning_summary_every_day_at_nine(tmp_path):
                    ref=question.id, ts=moscow(7, 20, 1))
 
     async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None):
+        if "[Сработало напоминание" in text:  # a reminder in the conversation, not the summary
+            return Reply("done", "Пора за хлебом.", [], {})
         asked.append((text, context_id, control))
         if len(asked) == 2:
             raise RuntimeError("model down")
@@ -676,7 +719,7 @@ def test_morning_summary_every_day_at_nine(tmp_path):
                                "напоминаний — 1, сбоев — ")
     assert "лимит подписки израсходован на 25 % (пятичасовое окно, на " in cards[2]
     assert cards[2].endswith("_Сводка опоздала на 2 ч 7 мин: Роутер не работал._")
-    assert store.db.execute("SELECT kind, status FROM runs ORDER BY id").fetchall() == [
+    assert store.db.execute("SELECT kind, status FROM runs WHERE kind = 'summary' ORDER BY id").fetchall() == [
         ("summary", "done"), ("summary", "error"), ("summary", "done")]
     archived = [e for e in archive.recent(conversation, 20) if e.kind == "system" and "Здоровье" in e.text]
     assert len(archived) == 3, "on record as the system's messages: the session will see them"

@@ -25,8 +25,9 @@ not by a prompt:
   file is never mounted into its container.
 - **Time is the router's, not the model's.** Every request carries your local time and weekday. The assistant
   sets reminders with tools (`set_reminder`, `list_reminders`, `cancel_reminder`, `move_reminder`); the router
-  checks them — the weekday against the date, the past, a repeat — and sends each one on time, word for word,
-  without the model. A morning summary arrives every day at 09:00: written by a separate run outside the
+  checks them — the weekday against the date, the past, a repeat — and wakes the assistant on time: she tells
+  you in her own words and adds what she notices in the conversation; if she cannot, the router sends the
+  reminder word for word. A morning summary arrives every day at 09:00: written by a separate run outside the
   conversation, or bare if that run fails. A subscription limit is told to you without the model, and the
   refused turn runs again when the window opens.
 - **Nothing the assistant writes becomes a link.** Every address in its text reaches you as monospace text,

@@ -66,12 +66,20 @@ def test_a_long_job_taken_by_a_process_that_died_runs_again(tmp_path):
     taken = jobs.due(later)
     assert [j.kind for j in taken] == ["reminder", "retry", "summary"] and all(jobs.claim(j, later) for j in taken)
     assert [j.kind for j in jobs.due(later)] == [], "taken: the loop does not take them twice"
-    # The router restarts while the retry and the summary are running: a reminder is sent the instant it is
-    # taken, but those two run the model for minutes, so they are taken again; nothing is lost silently.
+    # The router restarts while they are running: each runs the model for seconds or minutes, so each is taken
+    # again; nothing is lost silently.
     again = Scheduler(jobs.db)
-    assert [j.kind for j in again.due(later)] == ["retry", "summary"]
+    assert [j.kind for j in again.due(later)] == ["reminder", "retry", "summary"]
     for job in again.due(later):
         assert again.claim(job, later)
         again.done(job)
     assert Scheduler(jobs.db).due(later) == [], "done is done"
     assert jobs.db.execute("SELECT DISTINCT status FROM jobs").fetchall() == [("sent",)]
+
+
+def test_the_summary_check_spends_no_reminder_numbers(tmp_path):
+    jobs = make(tmp_path)
+    for tick in range(50):  # the loop checks every 30 seconds
+        jobs.ensure_summary(NOW + tick * 30)
+    assert jobs.add("позвонить Х", "2026-10-09T18:00", "пт", NOW)[0]
+    assert [row[0] for row in jobs.db.execute("SELECT id FROM jobs ORDER BY id")] == [1, 2]

@@ -59,7 +59,8 @@ copy() {
   "$RESTIC" -r "$RETINUE_LOCAL_REPO" copy --from-repo "$RESTIC_REPOSITORY" "${SNAPSHOTS[@]}"
 }
 
-forget() { "$RESTIC" forget "${SNAPSHOTS[@]}" "${KEEP[@]}" --prune; }
+# The server's key may not delete, its own locks included: each night leaves one behind. Only stale ones go.
+forget() { "$RESTIC" unlock; "$RESTIC" forget "${SNAPSHOTS[@]}" "${KEEP[@]}" --prune; }
 
 case ${1:-} in
   monthly) check; restore; copy; forget; "$RESTIC" -r "$RETINUE_LOCAL_REPO" check ;;

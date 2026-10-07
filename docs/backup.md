@@ -33,7 +33,9 @@ lock cannot be made append-only, but the server's key can be denied deletes:
 It can still overwrite what it wrote. That is caught by the monthly `check --read-data`, and survived by the
 copy in a local repository on your computer.
 
-The bucket policy for the server's key, with your bucket and the key's user ARN:
+A key with no delete at all works too: restic backs up and warns that it could not remove its lock. Each night
+then leaves one lock behind; `mac.sh monthly` removes the stale ones before `forget`. To let the server remove
+its own locks instead, give its key's user this bucket policy, with your bucket and the user's ARN:
 
 ```json
 {

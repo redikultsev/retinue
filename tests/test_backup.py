@@ -15,6 +15,7 @@ SCRIPT = ROOT / "deploy" / "backup" / "retinue-backup.py"
 FAKE_RESTIC = """#!{python}
 import json, os, sys
 open(os.environ["FAKE_LOG"], "a").write(json.dumps(sys.argv[1:]) + "\\n")
+open(os.environ["FAKE_LOG"] + ".cache", "w").write(os.environ.get("RESTIC_CACHE_DIR", ""))
 args = sys.argv[1:]
 if "--exclude-file" in args:
     open(os.environ["FAKE_LOG"] + ".exclude", "w").write(open(args[args.index("--exclude-file") + 1]).read())
@@ -91,6 +92,8 @@ def test_a_night_backup_copies_databases_consistently_and_leaves_secrets_out(tmp
     assert f"{srv}/*.env" in excluded and f"{srv}/*.env.*" in excluded, \
         "stack.env holds the subscription token; backup.env the backup's own keys"
     assert f"{srv}/tuwunel/appservices" in excluded, "the Matrix registration carries tokens too"
+    assert (tmp_path / "restic.log.cache").read_text() == "/var/cache/restic", \
+        "systemd gives the service no HOME, and restic finds no cache without one"
 
     status = json.loads((srv / "status" / "backup.json").read_text())
     assert status["ok"] is True and status["snapshot"] == "4f9c2a1b" * 8
@@ -107,7 +110,10 @@ def test_a_failed_night_is_on_record_with_the_error_and_the_last_good_one(tmp_pa
     status = json.loads((srv / "status" / "backup.json").read_text())
     assert status["ok"] is False and status["exit"] == 1 and status["last_ok"] == good
     assert status["error"] == "Fatal: unable to open config file: Stat: Access Denied."
-    run(env, FAKE_EXIT="1")
+    run(env, FAKE_EXIT="1", FAKE_ERROR=json.dumps({"message_type": "exit_error", "code": 1,
+                                                   "message": "unable to locate cache directory"}))
+    status = json.loads((srv / "status" / "backup.json").read_text())
+    assert status["error"] == "unable to locate cache directory", "restic 0.19 writes its fatal error as JSON"
     assert json.loads((srv / "status" / "backup.json").read_text())["last_ok"] == good, "kept across failed nights"
 
     partial = run(env, FAKE_EXIT="3", FAKE_ERROR="Warning: at least one source file could not be read")
@@ -165,16 +171,17 @@ def mac(tmp_path, archive_bytes=None):
 def test_monthly_care_on_the_mac_checks_restores_copies_and_only_then_prunes(tmp_path):
     run, steps, calls = mac(tmp_path)
     assert run.returncode == 0, run.stderr
-    assert steps == ["check", "restore", "init", "copy", "forget", "check"], calls
+    assert steps == ["check", "restore", "init", "copy", "unlock", "forget", "check"], calls
     assert calls[0] == "check --read-data", "every byte read back: the server's key could overwrite what it wrote"
     assert calls[1].startswith("restore latest --host retinue --tag retinue --target ")
     assert calls[2] == f"-r {tmp_path / 'local-repo'} init --from-repo s3:https://s3.example/bucket/retinue " \
                        "--copy-chunker-params", "the copy on the Mac is made once, deduplicating like the original"
     assert calls[3] == f"-r {tmp_path / 'local-repo'} copy --from-repo s3:https://s3.example/bucket/retinue " \
                        "--host retinue --tag retinue"
-    assert calls[4] == ("forget --host retinue --tag retinue --keep-within-daily 7d --keep-within-weekly 1m "
+    assert calls[4] == "unlock", "the server's key cannot delete its own locks; forget needs them gone"
+    assert calls[5] == ("forget --host retinue --tag retinue --keep-within-daily 7d --keep-within-weekly 1m "
                         "--keep-within-monthly 6m --prune")
-    assert calls[5] == f"-r {tmp_path / 'local-repo'} check"
+    assert calls[6] == f"-r {tmp_path / 'local-repo'} check"
     assert "integrity ok: agent.sqlite, archive.sqlite, router.sqlite" in run.stdout
     assert not list(tmp_path.glob("retinue-restore.*")), "the restored copy is removed"
 

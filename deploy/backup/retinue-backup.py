@@ -26,6 +26,7 @@ STAGING = Path(os.environ.get("RETINUE_BACKUP_STAGING", "/var/backups/retinue/st
 RESTIC = os.environ.get("RESTIC", "/usr/local/bin/restic")
 HOST = os.environ.get("RETINUE_BACKUP_HOST", "retinue")  # snapshots are grouped by it; not the machine's name
 STATUS = ROOT / "status" / "backup.json"
+CACHE = "/var/cache/restic"  # systemd gives the service no HOME, and restic finds no cache without one
 # Never leaves the host: Claude Code's login file; the env files with the subscription token (stack.env), the
 # generated secrets and the backup's own keys, the owner's dated copies of them included; the Matrix registration,
 # which carries tokens from secrets.env. setup.sh writes the last two anew after a restore.
@@ -76,9 +77,14 @@ def last_line(text: str) -> str:
     if not lines:
         return ""
     try:
-        return str(json.loads(lines[-1])["error"]["message"])[:300]
-    except (ValueError, KeyError, TypeError):
+        message = json.loads(lines[-1])
+    except ValueError:
         return lines[-1][:300]
+    if isinstance(message, dict):  # 0.19: {"message_type": "exit_error", "message": …}; older: {"error": {"message": …}}
+        text = message.get("message") or (message.get("error") or {}).get("message")
+        if text:
+            return str(text)[:300]
+    return lines[-1][:300]
 
 
 def backup(folders: list[Path], raw: list[Path]) -> dict:
@@ -87,7 +93,8 @@ def backup(folders: list[Path], raw: list[Path]) -> dict:
                                    *SECRETS]) + "\n")
     run = subprocess.run([RESTIC, "backup", "--json", "--host", HOST, "--tag", "retinue", "--retry-lock", "30m",
                           "-o", "s3.connections=2", "--exclude-file", str(excludes),
-                          str(STAGING), *map(str, folders), str(ROOT)], capture_output=True, text=True)
+                          str(STAGING), *map(str, folders), str(ROOT)], capture_output=True, text=True,
+                         env={"RESTIC_CACHE_DIR": CACHE, **os.environ})
     summary = {}
     for line in run.stdout.splitlines():
         try:

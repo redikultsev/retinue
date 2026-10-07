@@ -47,10 +47,11 @@ class TelegramChannel:
     is_record = False
     typing_refresh_s = 4.0  # a chat action lasts 5 s
 
-    def __init__(self, cfg: TelegramConfig, store: Store) -> None:
+    def __init__(self, cfg: TelegramConfig, store: Store, link_hosts: list[str] | tuple = ()) -> None:
         self.cfg = cfg
         self.store = store
         self.core: Core | None = None
+        self.link_hosts = tuple(link_hosts)  # travel-ops' sites: a link there is clickable (render.linkable)
         self.http = httpx.AsyncClient(timeout=POLL_TIMEOUT_S + 15)
 
     # --- Bot API -----------------------------------------------------------------------------
@@ -263,7 +264,7 @@ class TelegramChannel:
         pass  # no streaming: what sendMessageDraft does with link previews is not established
 
     async def send(self, agent_id: str, text: str, files: list[AgentFile], ref: str | None = None) -> None:
-        for html in render_telegram(text):
+        for html in render_telegram(text, self.link_hosts):
             await self._message(html, ref=ref)
         for f in files:
             await self.call("sendDocument", files={"document": (f.name, f.data, f.media_type)},
@@ -274,7 +275,7 @@ class TelegramChannel:
 
     async def notice(self, agent_id: str, text: str, buttons: list[tuple[str, str]] | None = None,
                      ref: str | None = None) -> None:
-        parts = render_telegram(text)
+        parts = render_telegram(text, self.link_hosts)
         # callback_data is the button id and nothing else: Telegram allows 64 bytes, and the meaning stays with us.
         keyboard = {"inline_keyboard": [[{"text": label, "callback_data": button_id} for label, button_id in buttons]]} \
             if buttons else None

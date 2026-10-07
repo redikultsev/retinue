@@ -1032,3 +1032,86 @@ def test_transcripts_left_at_elevenlabs_are_swept_on_start(tmp_path):
 
     asyncio.run(run())
     assert Sweeping.swept == 1
+
+
+def test_a_price_drop_is_kept_then_confirmed_and_always_told(tmp_path):
+    """The router looks at travel-ops' alerts, keeps them, then confirms: a restart anywhere loses none and adds
+    none twice. The assistant tells it in her words in the conversation; when she cannot, code tells the fields."""
+    from test_travel import SLIPPED, travel_ops
+
+    archive, store, asked, seen = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite")), [], []
+    drop = {"alert_id": 4, "watch_id": "wq3m7k2a", "what": "flights BEG→LIS 2026-11-14", "price": 99.0,
+            "currency": "EUR", "last_told": 120.0, "why": "18% below the 120 last told", "seller": "kiwi",
+            "link": "https://kiwi.com/u/abc", "seen_at": "2026-10-07T10:00:00+00:00", "note": SLIPPED}
+    other = dict(drop, alert_id=5, watch_id="wz9z9z9z", what="stays Lisbon", price=300.0, link="javascript:x")
+    written = "Билеты в Лиссабон подешевели: 99 € вместо 120, у kiwi."
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
+        asked.append((text, context_id, turn_id))
+        if "stays Lisbon" in text:
+            raise RuntimeError("model down")
+        return Reply("done", written, [], {})
+
+    async def run():
+        # 1: travel-ops is reached, the confirmation is not; 2: the same alert again, and a new one; 3: nothing.
+        answers = [{"alerts": [drop]}, 503, {"alerts": [drop, other]}, {"alerts": [drop, other]}, {"alerts": []}]
+        core = Core([AGENT], store, "owner", ask=fake_ask, archive=archive, travel=travel_ops(answers, seen))
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        with pytest.raises(Exception):
+            await core.collect_prices(WEDNESDAY)  # kept, then travel-ops failed to take the confirmation
+        kept = store.db.execute("SELECT kind, status FROM jobs WHERE kind = 'price'").fetchall()
+        assert await core.collect_prices(WEDNESDAY + 300) == 1, "the kept one is not added again"
+        assert await core.collect_prices(WEDNESDAY + 600) == 0
+        await core.tick(WEDNESDAY + 600)
+        await drain()
+        return telegram, kept
+
+    telegram, kept = asyncio.run(run())
+    assert kept == [("price", "active")], "kept before the confirmation was sent"
+    assert [s[2]["params"]["arguments"] for s in seen] == [{"take": False}, {"upto": 4}, {"take": False},
+                                                           {"upto": 5}, {"take": False}]
+    assert [e[2] for e in telegram.events if e[0] == "send"] == [written], "her words"
+    prompt, context_id, turn_id = asked[0]
+    assert context_id == store.conversation("assistant") and turn_id, "in the conversation's session, with tools"
+    assert "Сработало слежение за ценой" in prompt and "https://kiwi.com/u/abc" in prompt and SLIPPED not in prompt
+    assert [c[0] for c in telegram.cards] == [
+        "Цена упала: stays Lisbon — 300 EUR (было 120).\nПочему: 18% below the 120 last told.\nПродавец: kiwi.\n"
+        "_Цена на момент проверки, 2026-10-07T10:00:00+00:00: перед покупкой повтори поиск._"], "code, when she cannot"
+    assert store.db.execute("SELECT status FROM jobs WHERE kind = 'price'").fetchall() == [("sent",)] * 2
+    assert store.db.execute("SELECT kind, status FROM runs ORDER BY id").fetchall() == [
+        ("price", "done"), ("price", "error")]
+
+
+def test_a_hung_travel_ops_does_not_hold_a_reminder(tmp_path):
+    """Looking for price drops is a task of its own: a travel-ops that does not answer cannot make a reminder,
+    a summary or a retry late, and a second look does not start while the first still waits."""
+    store, asked = Store(str(tmp_path / "r.sqlite")), []
+
+    class Hung:
+        looks = 0
+
+        async def alerts(self):
+            Hung.looks += 1
+            await asyncio.Event().wait()  # never answers
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
+        asked.append(text)
+        return Reply("done", "Пора за хлебом.", [], {})
+
+    async def run():
+        core = Core([AGENT], store, "owner", ask=fake_ask, travel=Hung())
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        core.jobs.add("купить хлеб", "2026-10-08T09:30", "чт", WEDNESDAY)
+        await asyncio.wait_for(core.step(moscow(8, 9, 30) + 5), 1)
+        await asyncio.sleep(0.05)
+        await asyncio.wait_for(core.step(moscow(8, 9, 30) + 400), 1)  # past PRICE_POLL_S, the first look hangs
+        await asyncio.sleep(0.05)
+        sent = [e for e in telegram.events if e[0] == "send"]
+        core.collecting.cancel()
+        return sent
+
+    sent = asyncio.run(run())
+    assert sent and sent[0][2] == "Пора за хлебом.", "the reminder went while travel-ops hung"
+    assert Hung.looks == 1, "one look at a time"

@@ -124,3 +124,30 @@ def test_every_agent_in_the_repo_loads():
     assert configs, "the repo ships at least one agent"
     for path in configs:
         assert AgentConfig.load(path).id == path.parent.name
+
+
+def test_travel_ops_address_comes_from_the_environment(tmp_path, monkeypatch):
+    path = tmp_path / "agent.yaml"
+    path.write_text(AGENT_YAML)
+    monkeypatch.delenv("RETINUE_TRAVEL_URL", raising=False)
+    assert AgentConfig.load(path).travel_url == "", "off unless the stack says so"
+    monkeypatch.setenv("RETINUE_TRAVEL_URL", "http://travel-ops:8765/mcp")
+    assert AgentConfig.load(path).travel_url == "http://travel-ops:8765/mcp"
+
+
+def test_the_router_reaches_travel_ops_for_price_alerts(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    assert load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n").travel_url == "", "off unless the config says so"
+    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\ntravel_url: http://travel-ops:8765/mcp\n")
+    assert cfg.travel_url == "http://travel-ops:8765/mcp"
+
+
+def test_the_travel_sites_whose_links_are_clickable(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    assert load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n").link_hosts == [], "none: every address is code"
+    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nlink_hosts: [kiwi.com, www.trivago.*]\n")
+    assert cfg.link_hosts == ["kiwi.com", "www.trivago.*"]
+    from retinue.router import build_channels
+
+    (channel,) = build_channels(cfg, None, None)
+    assert channel.link_hosts == ("kiwi.com", "www.trivago.*")

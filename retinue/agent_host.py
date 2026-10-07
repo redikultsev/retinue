@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import hmac
 import logging
 import mimetypes
 import sqlite3
@@ -21,6 +22,7 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, TaskState
 from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
 
 from .config import AgentConfig
 from .engine import Engine, EngineResult, Prompt, make_engine
@@ -190,6 +192,29 @@ def build_card(cfg: AgentConfig) -> AgentCard:
     )
 
 
+class RouterOnly:
+    """Answer only the router: every request but the card must carry the agent's own bus token, which only the
+    router and this agent know. Needed since a neighbour that is not the router shares a network with the agent
+    (travel-ops on `travel`): an unsigned message would land in the agent's session like the owner's."""
+
+    def __init__(self, app, token: str) -> None:
+        self.app, self.token = app, token
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and not (scope["method"] == "GET" and scope["path"].startswith("/.well-known/")):
+            header = dict(scope.get("headers") or []).get(b"authorization", b"").decode("latin-1")
+            if not hmac.compare_digest(header.removeprefix("Bearer ").strip(), self.token):
+                await PlainTextResponse("unauthorized", status_code=401)(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+def app_of(card: AgentCard, handler: DefaultRequestHandler, token: str):
+    """The agent's A2A app; with a token, it answers only requests signed with it."""
+    app = Starlette(routes=[*create_agent_card_routes(card), *create_jsonrpc_routes(handler, "/")])
+    return RouterOnly(app, token) if token else app
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Retinue agent host")
     parser.add_argument("--config", default="/agent/agent.yaml")
@@ -198,14 +223,14 @@ def main() -> None:
     cfg = AgentConfig.load(args.config)
     card = build_card(cfg)
     handler = DefaultRequestHandler(
-        agent_executor=EngineExecutor(make_engine(cfg.engine, cfg.workspace, cfg.bus_url, cfg.bus_token),
+        agent_executor=EngineExecutor(make_engine(cfg.engine, cfg.workspace, cfg.bus_url, cfg.bus_token,
+                                                  cfg.travel_url),
                                       SessionMap(cfg.state_db), Outbox(cfg.workspace)),
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
-    routes = [*create_agent_card_routes(card), *create_jsonrpc_routes(handler, "/")]
     log.info("agent %s (%s) on %s:%s", cfg.id, cfg.trust_class, cfg.listen_host, cfg.listen_port)
-    uvicorn.run(Starlette(routes=routes), host=cfg.listen_host, port=cfg.listen_port)
+    uvicorn.run(app_of(card, handler, cfg.bus_token), host=cfg.listen_host, port=cfg.listen_port)
 
 
 if __name__ == "__main__":

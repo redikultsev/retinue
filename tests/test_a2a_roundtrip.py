@@ -121,3 +121,67 @@ async def _run(tmp_path):
 
 def test_roundtrip(tmp_path):
     asyncio.run(_run(tmp_path))
+
+
+async def _signed(tmp_path):
+    """travel-ops shares a network with the assistant (stage 8в): a neighbour that is not the router must not be
+    able to put a message into her session. The host answers only a request signed with its own bus token."""
+    import httpx
+
+    from retinue.agent_host import app_of
+
+    port = free_port()
+    cfg = AgentConfig(id="t", name="Test", description="d", trust_class="web",
+                      skills=[Skill(id="chat", name="Chat", description="d")], engine=EngineConfig(),
+                      public_url=f"http://127.0.0.1:{port}")
+    engine, card = FakeEngine(tmp_path), build_card(cfg)
+    handler = DefaultRequestHandler(agent_executor=EngineExecutor(engine, SessionMap(str(tmp_path / "a.sqlite")),
+                                                                  Outbox(str(tmp_path))),
+                                    task_store=InMemoryTaskStore(), agent_card=card)
+    server = uvicorn.Server(uvicorn.Config(app_of(card, handler, "s3cret"), host="127.0.0.1", port=port,
+                                           log_level="warning"))
+    serve = asyncio.create_task(server.serve())
+    while not server.started:
+        await asyncio.sleep(0.05)
+    url = f"http://127.0.0.1:{port}"
+    try:
+        signed = await ask_agent(url, "hello", "ctx-1", token="s3cret")
+        async with httpx.AsyncClient() as http:
+            card_status = (await http.get(f"{url}/.well-known/agent-card.json")).status_code
+            body = {"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {}}
+            unsigned = (await http.post(url + "/", json=body)).status_code
+            forged = (await http.post(url + "/", json=body, headers={"Authorization": "Bearer guess"})).status_code
+        try:
+            await ask_agent(url, "inject", "ctx-1", token="")
+            refused = "answered"
+        except Exception as exc:  # the A2A client raises on 401
+            refused = type(exc).__name__
+        return signed, card_status, unsigned, forged, refused, engine.calls
+    finally:
+        server.should_exit = True
+        await serve
+
+
+def test_only_the_router_reaches_the_agent(tmp_path):
+    signed, card_status, unsigned, forged, refused, calls = asyncio.run(_signed(tmp_path))
+    assert signed == ("done", "echo: hello", []), "the router's request, signed"
+    assert card_status == 200, "the card says nothing secret"
+    assert unsigned == forged == 401 and refused != "answered"
+    assert calls == ["hello"], "nothing unsigned reached the engine"
+
+
+def test_the_router_signs_each_request_with_that_agents_token(monkeypatch):
+    from retinue import router
+
+    sent = []
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None, attachments=None,
+                       token=""):
+        sent.append((url, token))
+        return "done", "", []
+
+    monkeypatch.setattr(router, "ask_agent", fake_ask)
+    ask = router.signed({"http://assistant:9000": "tok-a"})
+    asyncio.run(ask("http://assistant:9000", "x", "ctx", None, "turn", control=None))
+    asyncio.run(ask("http://other:9000", "x", "ctx"))
+    assert sent == [("http://assistant:9000", "tok-a"), ("http://other:9000", "")]

@@ -1,6 +1,6 @@
 """Scheduler: what has to happen at a given moment — the owner's reminders, the morning summary, a turn that waits
-for the subscription limit to reset. One table in the router's SQLite and one loop in the router (`Core.clock`);
-no framework.
+for the subscription limit to reset, a price drop a watch found. One table in the router's SQLite and one loop
+in the router (`Core.clock`); no framework.
 
 A reminder keeps the owner's wall time and zone as they were said (`local`, `tz`) and the moment it fires (`due`,
 UTC). The text is written when the reminder is set; when it fires, the assistant tells it in her own words, and
@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 from . import clock
 
-REMINDER, SUMMARY, RETRY = "reminder", "summary", "retry"
+REMINDER, SUMMARY, RETRY, PRICE = "reminder", "summary", "retry", "price"
 ACTIVE, RUNNING, SENT, CANCELLED = "active", "running", "sent", "cancelled"
 MAX_TEXT = 500
 SUMMARY_AT = "09:00"  # the morning summary, the owner's wall time
@@ -48,13 +48,13 @@ class Scheduler:
             """
             CREATE TABLE IF NOT EXISTS jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT NOT NULL,                 -- reminder | summary | retry
+                kind TEXT NOT NULL,                 -- reminder | summary | retry | price
                 text TEXT NOT NULL,                 -- a reminder's words, written in advance and sent as they are
                 local TEXT NOT NULL,                -- the owner's wall time: 2026-10-09T18:00
                 tz TEXT NOT NULL,                   -- IANA zone of `local`
                 due REAL NOT NULL,                  -- when it fires, UTC epoch seconds
                 status TEXT NOT NULL,               -- active | running | sent | cancelled
-                data TEXT NOT NULL DEFAULT '{}',    -- retry: which owner messages wait for the limit
+                data TEXT NOT NULL DEFAULT '{}',    -- retry: which owner messages wait; price: the alert
                 created REAL NOT NULL,
                 fired REAL                          -- when it was taken for sending
             );
@@ -169,6 +169,21 @@ class Scheduler:
                                   json.dumps(data), now))
         self.db.commit()
         return cursor.lastrowid
+
+    def add_price(self, alert: dict, now: float) -> bool:
+        """Keep a price drop a watch found (`travel.alert`), to be told at once. One row per alert: a second look
+        after a restart adds nothing. travel-ops numbers its alerts anew on a new volume, so an alert is its
+        number, its watch and the moment it was seen. Returns whether it was new."""
+        key = [alert.get("alert_id"), alert.get("watch_id"), alert.get("seen_at")]
+        if any(json.loads(data).get("key") == key for (data,) in
+               self.db.execute("SELECT data FROM jobs WHERE kind = ?", (PRICE,))):
+            return False
+        self.db.execute("INSERT INTO jobs (kind, text, local, tz, due, status, data, created)"
+                        " VALUES (?, '', ?, ?, ?, ?, ?, ?)",
+                        (PRICE, f"{clock.local(now, self.tz):%Y-%m-%dT%H:%M}", self.tz, now, ACTIVE,
+                         json.dumps({**alert, "key": key}, ensure_ascii=False), now))
+        self.db.commit()
+        return True
 
     # --- firing: what the router's loop does -----------------------------------------------------
 

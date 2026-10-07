@@ -68,9 +68,12 @@ class RouterConfig:
     default_agent: str | None = None    # who gets messages without an address; the only agent, if there is one
     owner_tz: str = "Europe/Moscow"     # IANA zone: every time the model and the owner see is local time here
     backup_status: str = "/status/backup.json"  # written by the host's backup; the morning summary reports it
-    bus_listen_port: int = 9100         # agents reach the router here (network `agents` only)
+    bus_listen_port: int = 9100         # agents reach the router here, on `agents`. The router listens on every
+    # network it is on, so travel-ops (on `travel-router`) reaches the port too: every call needs an agent's token
     bus_secret: str = ""                # from RETINUE_BUS_SECRET; per-agent tokens are derived from it
     stt_key: str = ""                   # from ELEVENLABS_API_KEY: speech to text; without it voice is refused aloud
+    travel_url: str = ""                # travel-ops' MCP over HTTP: the router collects price alerts there
+    link_hosts: list[str] = field(default_factory=list)  # travel-ops' sites: a link there is clickable in Telegram
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -149,6 +152,7 @@ class AgentConfig:
     listen_port: int = 9000
     bus_url: str = ""    # from RETINUE_BUS_URL: the router's bus; empty = this agent cannot ask others
     bus_token: str = ""  # from RETINUE_BUS_TOKEN
+    travel_url: str = ""  # from RETINUE_TRAVEL_URL: travel-ops' MCP over HTTP; empty = no travel tools
 
     @classmethod
     def load(cls, path: str | Path) -> AgentConfig:
@@ -158,6 +162,7 @@ class AgentConfig:
         cfg = cls(skills=skills, engine=engine, **raw)
         cfg.bus_url = os.environ.get("RETINUE_BUS_URL", "")
         cfg.bus_token = os.environ.get("RETINUE_BUS_TOKEN", "")
+        cfg.travel_url = os.environ.get("RETINUE_TRAVEL_URL", "")
         if cfg.trust_class not in TRUST_CLASSES:
             raise SystemExit(f"unknown trust_class {cfg.trust_class!r}")
         if unknown := [t for t in cfg.engine.bus_tools if t not in BUS_TOOLS]:

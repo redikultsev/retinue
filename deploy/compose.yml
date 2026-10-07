@@ -57,7 +57,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}   # only with a `telegram:` section in router.yaml
       RETINUE_BUS_SECRET: ${RETINUE_BUS_SECRET:-}   # agents ask each other through the router
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}   # speech to text; the router calls it, the assistant never
-    networks: [agents, outside, matrix]           # `outside` is its way to Telegram
+    networks: [agents, outside, matrix, travel-router]   # `outside`: Telegram; `travel-router`: price alerts
 
   assistant:
     image: retinue:local
@@ -72,8 +72,51 @@ services:
       HTTPS_PROXY: http://egress:3128             # Claude Code reaches the model API through the proxy only
       RETINUE_BUS_URL: http://router:9100
       RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_ASSISTANT:-}
-    networks: [agents]                            # internal: no route out of this network
+      RETINUE_TRAVEL_URL: ${RETINUE_TRAVEL_URL:-}   # travel-ops' MCP; empty = no travel tools
+      NO_PROXY: travel-ops,router                 # neighbours on internal networks, never through the proxy
+    networks: [agents, travel-assistant]          # both internal: no route out of either
     depends_on: [router, egress]
+
+  # travel-ops: live prices from the travel sites, in containers of their own with a way out to the sites. The
+  # assistant calls its MCP over HTTP on `travel-assistant` (every call's arguments checked by the engine's guard),
+  # the router collects price alerts on `travel-router`: one bridge per pair, so the owner's traffic between the
+  # router and the assistant never crosses a bridge travel-ops is on. Off until the owner turns it on (setup.sh
+  # TRAVEL=1): the image is about 5 GB, both browsers inside.
+  travel-ops:
+    profiles: ["travel"]
+    # A pinned commit of the public repo; its Dockerfile pins the base image by digest.
+    build: { context: "https://github.com/redikultsev/travel-ops.git#b15f3ed2191dfdf844a2a822700d5c7951ee8627" }
+    image: travel-ops:local
+    restart: unless-stopped
+    volumes: &travel-mounts
+      - travel-data:/data                                           # searches (7 days), watches, request limits
+      - /srv/retinue/travel/profile.yml:/app/profile.yml:ro         # home airports, party: the owner's, not git's
+    shm_size: 1gb                 # Chrome and Firefox keep their pages in shared memory; 64 MB crashes them
+    mem_limit: 3g
+    cpus: 2
+    pids_limit: 512
+    <<: &travel-hardening
+      # Browsers that open strangers' pages: no capabilities and no way to gain any; the image cannot be changed,
+      # only the scratch space (browser profiles, font cache) and the data volume can.
+      cap_drop: [ALL]
+      security_opt: ["no-new-privileges:true"]
+      read_only: true
+      tmpfs: ["/tmp:size=1g", "/home/travel/.cache/fontconfig:size=64m"]
+    networks: [travel-assistant, travel-router, travel-out]
+
+  travel-watch:                   # the owner's price watches, checked one search at a time
+    profiles: ["travel"]
+    image: travel-ops:local
+    restart: unless-stopped
+    command: ["travelops", "watch", "run", "--every-minutes", "30"]
+    volumes: *travel-mounts
+    shm_size: 1gb
+    mem_limit: 2g
+    cpus: 1
+    pids_limit: 512
+    <<: *travel-hardening
+    networks: [travel-out]
+    depends_on: [travel-ops]      # its image is built there
 
   egress:
     image: ubuntu/squid:6.6-24.04_beta            # Squid, GPL-2.0; pin a digest after first deploy
@@ -87,11 +130,17 @@ volumes:
   tuwunel-db:
   router-data:    # the router's state and the archive; never mounted into an agent
   assistant-data: # the assistant's session; only the assistant mounts it
+  travel-data:    # travel-ops' searches, watches and limits; only travel-ops mounts it
 
 networks:
   agents:       # router <-> agents <-> egress proxy. Internal: containers here have no route to the internet
     internal: true
   outside:      # ordinary bridge: the router (Telegram) and the egress proxy (model API) go out through it
   matrix:       # homeserver <-> router only
+  travel-assistant:  # assistant <-> travel-ops only. Internal: no route out
+    internal: true
+  travel-router:     # router <-> travel-ops only (price alerts). Internal: no route out
+    internal: true
+  travel-out:   # travel-ops' way to the travel sites; nobody else is on it
   dokploy-network:
     external: true

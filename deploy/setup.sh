@@ -6,6 +6,7 @@
 #   sudo TELEGRAM_OWNER_ID=123456789 OWNER_TZ=Europe/Belgrade bash deploy/setup.sh   # default: Europe/Moscow
 #   sudo TELEGRAM_OWNER_ID=123456789 MATRIX_SERVER_NAME=matrix.example.com MATRIX_OWNER=alice bash deploy/setup.sh
 #   sudo TELEGRAM_OWNER_ID=123456789 ROTATE_BUS_SECRET=1 bash deploy/setup.sh   # a new bus secret and agent tokens
+#   sudo TELEGRAM_OWNER_ID=123456789 TRAVEL=1 bash deploy/setup.sh   # travel-ops: trip search and price watches
 #
 # The stack's environment goes to /srv/retinue/stack.env (mode 600). The script prints names, never values:
 # a terminal ends up in logs and transcripts.
@@ -31,6 +32,10 @@ ROOT=${RETINUE_ROOT:-/srv/retinue}      # tests point this at a temporary folder
 HOST_SETUP=${RETINUE_HOST_SETUP:-1}     # 0: write files under ROOT only; no Traefik or split DNS (tests)
 ROTATE_BUS_SECRET=${ROTATE_BUS_SECRET:-0}
 BACKUP=${BACKUP:-0}                     # 1: nightly restic backup to S3; on for good once backup.env exists
+TRAVEL=${TRAVEL:-0}                     # 1: travel-ops; on for good once travel/profile.yml exists
+TRAVEL_ON=0
+[[ $TRAVEL == 1 || -f $ROOT/travel/profile.yml ]] && TRAVEL_ON=1
+TRAVEL_URL=http://travel-ops:8765/mcp
 AGENTS=(assistant)
 token() { openssl rand -hex 32; }
 upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
@@ -66,6 +71,12 @@ agents:
     attachments: true # may fetch what the owner sent (#N) again through the bus
     can_call: []      # no other agents at this stage
 YAML
+  if [[ $TRAVEL_ON == 1 ]]; then
+    printf 'travel_url: %s\n' "$TRAVEL_URL"      # the router collects price alerts there
+    printf 'link_hosts:\n'                       # travel-ops' sites: a link there is clickable in Telegram
+    sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e "s/^[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/  - '\1'/" \
+      "$REPO/deploy/travel/link-hosts.txt"
+  fi
   if [[ -n $TELEGRAM_OWNER_ID ]]; then
     printf 'telegram:\n  owner_id: %s\n' "$TELEGRAM_OWNER_ID"
   fi
@@ -87,6 +98,15 @@ for agent in "${AGENTS[@]}"; do
 done
 
 install -d -m 755 "$ROOT/status"       # the host writes, the router reads (mounted read-only)
+
+PROFILE="$ROOT/travel/profile.yml"
+if [[ $TRAVEL_ON == 1 ]]; then
+  install -d -m 755 "$ROOT/travel"
+  # The owner's home and party: written by the owner, never by this script and never in git.
+  [[ -f $PROFILE ]] || printf '%s\n' "# travel-ops profile: home_airports, travellers, currency, stays." \
+    "# The fields are in profile.example.yml of travel-ops. Without home_airports the assistant asks." > "$PROFILE"
+  chmod 644 "$PROFILE"   # read by travel-ops' own user in its container
+fi
 
 install -d -m 755 "$ROOT/egress"
 install -m 644 "$REPO/deploy/egress/squid.conf" "$ROOT/egress/squid.conf"
@@ -134,8 +154,19 @@ for a in "${AGENTS[@]}"; do put "RETINUE_BUS_TOKEN_$(upper "$a")" "$(bus_token "
 fill CLAUDE_CODE_OAUTH_TOKEN "claude setup-token"
 fill ELEVENLABS_API_KEY "elevenlabs.io: a key with speech_to_text only and a credit limit; empty = voice refused"
 [[ -n $TELEGRAM_OWNER_ID ]] && fill TELEGRAM_BOT_TOKEN "@BotFather"
+PROFILES=()
+[[ -n $MATRIX_SERVER_NAME ]] && PROFILES+=(matrix)
+[[ $TRAVEL_ON == 1 ]] && PROFILES+=(travel)
+if (( ${#PROFILES[@]} )); then
+  put COMPOSE_PROFILES "$(IFS=,; echo "${PROFILES[*]}")"
+else
+  drop COMPOSE_PROFILES "$STACK"
+fi
+if [[ $TRAVEL_ON == 1 ]]; then put RETINUE_TRAVEL_URL "$TRAVEL_URL"; else put RETINUE_TRAVEL_URL ""; fi
+if [[ $TRAVEL_ON == 1 ]] && ! grep -q '^home_airports:' "$PROFILE"; then
+  MISSING+=("$PROFILE: home_airports (your airports, IATA)")
+fi
 if [[ -n $MATRIX_SERVER_NAME ]]; then
-  put COMPOSE_PROFILES matrix
   put MATRIX_SERVER_NAME "$MATRIX_SERVER_NAME"
   keep MATRIX_ALLOW_REGISTRATION true   # the owner turns it off after creating the account
   put MATRIX_REGISTRATION_TOKEN "$MATRIX_REGISTRATION_TOKEN"
@@ -171,6 +202,11 @@ if [[ $BACKUP == 1 || -f $BACKUP_ENV ]]; then
   fill AWS_SECRET_ACCESS_KEY "the same key's secret" "$BACKUP_ENV"
   fill AWS_DEFAULT_REGION "the endpoint's region, e.g. eu-luxembourg-1" "$BACKUP_ENV"
   if (( ${#MISSING[@]} == before )); then BACKUP_STATE=on; else BACKUP_STATE=unfilled; fi
+  # With travel on, travel-ops' searches and the owner's watches are backed up too; without it, the script's list.
+  drop RETINUE_VOLUMES "$BACKUP_ENV"
+  if [[ $TRAVEL_ON == 1 ]]; then
+    echo 'RETINUE_VOLUMES="retinue_router-data retinue_assistant-data retinue_travel-data"' >> "$BACKUP_ENV"
+  fi
   if [[ $HOST_SETUP == 1 ]]; then
     install_restic
     install -d -m 755 /usr/local/lib/retinue
@@ -190,6 +226,7 @@ echo "Written: ${WRITTEN[*]}"
 for missing in ${MISSING[@]+"${MISSING[@]}"}; do
   echo "Fill in $missing"
 done
+[[ $TRAVEL_ON == 1 ]] && echo "Travel: on — the travel-ops image (about 5 GB) is built from GitHub by \`up -d --build\`"
 case $BACKUP_STATE in
   on) echo "Backup: on, every night at 03:30 Europe/Moscow; the result goes to $ROOT/status/backup.json" ;;
   unfilled) echo "Backup: off until $BACKUP_ENV is filled; then run this script again, and see docs/backup.md" ;;

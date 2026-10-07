@@ -12,12 +12,13 @@ import asyncio
 import logging
 
 from .archive import Archive
-from .bus import BusServer
+from .bus import BusServer, bus_token
 from .channels.telegram import TelegramChannel
 from .config import RouterConfig
-from .core import Core
+from .core import Core, ask_agent
 from .protocol import Store
 from .speech import Scribe
+from .travel import TravelOps
 
 
 def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventLoop) -> list:
@@ -27,8 +28,15 @@ def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventL
         from .channels.matrix import MatrixChannel
         channels.append(MatrixChannel(cfg.matrix, cfg.agents, store, loop, f"{cfg.state_db}.mx-state.json"))
     if cfg.telegram:
-        channels.append(TelegramChannel(cfg.telegram, store))
+        channels.append(TelegramChannel(cfg.telegram, store, cfg.link_hosts))
     return channels
+
+
+def signed(tokens: dict[str, str]):
+    """`ask_agent` with each agent's own bus token: its host answers nothing else."""
+    async def ask(url, *args, **kwargs):
+        return await ask_agent(url, *args, token=tokens.get(url, ""), **kwargs)
+    return ask
 
 
 def main() -> None:
@@ -44,8 +52,11 @@ def main() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     store = Store(cfg.state_db)
-    core = Core(cfg.agents, store, cfg.owner, archive=Archive(cfg.archive_db), default_agent=cfg.default_agent,
-                tz=cfg.owner_tz, backup_status=cfg.backup_status, scribe=Scribe(cfg.stt_key, store=store))
+    tokens = {a.url: bus_token(cfg.bus_secret, a.id) for a in cfg.agents} if cfg.bus_secret else {}
+    core = Core(cfg.agents, store, cfg.owner, ask=signed(tokens), archive=Archive(cfg.archive_db),
+                default_agent=cfg.default_agent,
+                tz=cfg.owner_tz, backup_status=cfg.backup_status, scribe=Scribe(cfg.stt_key, store=store),
+                travel=TravelOps(cfg.travel_url) if cfg.travel_url else None)
     loop.run_until_complete(core.start(build_channels(cfg, store, loop)))
     ticking = loop.create_task(core.clock())  # reminders, the morning summary, retries after the limit
     if cfg.bus_secret:

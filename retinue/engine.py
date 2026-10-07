@@ -17,9 +17,10 @@ from pathlib import Path
 from typing import Protocol
 
 import httpx
-from claude_agent_sdk import (ClaudeAgentOptions, RateLimitEvent, RateLimitInfo, ResultError, ResultMessage,
-                              StreamEvent, SystemMessage, create_sdk_mcp_server, query, tool)
+from claude_agent_sdk import (ClaudeAgentOptions, HookMatcher, RateLimitEvent, RateLimitInfo, ResultError,
+                              ResultMessage, StreamEvent, SystemMessage, create_sdk_mcp_server, query, tool)
 
+from . import travel
 from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
@@ -190,10 +191,84 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
                                 cancel_reminder, move_reminder, get_attachment)}
 
 
+TRAVEL = "travel"  # the MCP server's name: its tools are mcp__travel__<tool>
+# One call to travel-ops: a search asks the sites for minutes, and travel-ops answers JSON only at the end, so the
+# server's own limit (CLI 2.1.286: wall clock and idle) is raised past the five-minute idle default, below the
+# router's 900 s for the whole turn.
+TRAVEL_TIMEOUT_MS = 840_000
+
+
+TRAVEL_CALLS = 12  # calls to travel-ops one run may make: each can carry a few checked words to the sites
+
+
+def _deny(reason: str) -> dict:
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+
+
+async def _record(bus_url: str, bus_token: str, turn_id: str, tool: str, decision: str, reason: str, args) -> None:
+    """Tell the router's protocol about a decision. Never raises: the decision is made before, and stands."""
+    try:
+        try:
+            chars = len(json.dumps(args, ensure_ascii=True, default=str))
+        except Exception:
+            chars = 0
+        body = json.dumps({"turn": turn_id, "tool": tool, "decision": decision, "reason": reason, "chars": chars},
+                          ensure_ascii=True)  # a lone surrogate in a key is \\ud800 here, not an encoder error
+        async with httpx.AsyncClient(timeout=5, trust_env=False) as http:
+            await http.post(f"{bus_url}/travel/log", content=body.encode("ascii"),
+                            headers={"Authorization": f"Bearer {bus_token}", "Content-Type": "application/json"})
+    except Exception as exc:
+        log.warning("travel-ops call %s (%s) not recorded at the router: %s", tool, decision, type(exc).__name__)
+
+
+def travel_guard(bus_url: str, bus_token: str, turn_id: str):
+    """PreToolUse for every call to travel-ops. Its arguments are what the travel sites receive, and the agent
+    holds the owner's data: each field is checked against `travel.FORMS` in code and must be sent exactly as the
+    check would write it (`travel.exact`); a wrong one is refused with the reason, which the model reads as the
+    tool's answer. At most TRAVEL_CALLS calls go out in one run.
+
+    It fails closed: CLI 2.1.286 takes a hook that raised for «no decision», and the call would go out. So every
+    error inside the check is a refusal, the decision is made before the router is told, and telling the router
+    cannot raise. Other tools are not this hook's."""
+    allowed = 0
+
+    async def guard(hook_input, tool_use_id, context) -> dict:
+        nonlocal allowed
+        try:
+            name = str(hook_input.get("tool_name", ""))
+        except Exception:
+            return _deny("Не отправлено: вызов не прочитан.")
+        if not name.startswith(travel.PREFIX):
+            return {}
+        tool, args = name[len(travel.PREFIX):], None
+        try:
+            args = hook_input.get("tool_input")
+            if allowed >= TRAVEL_CALLS:
+                raise travel.Refused(f"не больше {TRAVEL_CALLS} вызовов travel-ops за один ход: ответь тем, что "
+                                     "уже нашлось, и предложи продолжить следующей репликой")
+            travel.exact(tool, args)
+            decision, reason = "allow", ""
+        except travel.Refused as exc:
+            decision, reason = "deny", f"Не отправлено на сайты: {exc}"
+        except Exception as exc:
+            decision, reason = "deny", f"Не отправлено на сайты: проверка аргументов не удалась ({type(exc).__name__})."
+        if decision == "allow":
+            allowed += 1
+        out = {} if decision == "allow" else _deny(reason)
+        await _record(bus_url, bus_token, turn_id, tool, decision, reason, args)
+        return out
+    return guard
+
+
 # Set in code for every run, so that no compose file can forget them.
 RUN_ENV = {
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",  # no auto-update, telemetry, error reports, feature flags
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false",           # no claude.ai connectors: a subscription login brings them
+    # Connecting and listing an MCP server (CLI 2.1.286 defaults: 5 s and 30 s): travel-ops down or hung must not
+    # hold the owner's turn. A tool call has its own limit (the server's `timeout`).
+    "MCP_CONNECT_TIMEOUT_MS": "5000",
+    "MCP_TIMEOUT": "5000",
 }
 
 
@@ -213,11 +288,13 @@ class ClaudeEngine:
     - Claude Code compacts a long session by itself; `compact()` does it on request.
     """
 
-    def __init__(self, cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "") -> None:
+    def __init__(self, cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "",
+                 travel_url: str = "") -> None:
         self.cfg = cfg
         self.workspace = workspace
         self.bus_url = bus_url
         self.bus_token = bus_token
+        self.travel_url = travel_url  # travel-ops' MCP over HTTP, on the internal network `travel`
         instructions = Path(cfg.instructions)
         if not instructions.is_file():
             raise SystemExit(f"engine: instructions file {instructions} not found")
@@ -241,18 +318,27 @@ class ClaudeEngine:
     def options(self, turn_id: str | None, streaming: bool, session_id: str | None = None) -> ClaudeAgentOptions:
         """Everything one run is allowed, in one place."""
         allowed, servers = list(self.cfg.allowed_tools), {}
+        denied, hooks = list(self.cfg.disallowed_tools), {}
         if self.bus_url and self.bus_token and turn_id and self.cfg.bus_tools:
             tools = bus_tools(self.bus_url, self.bus_token, turn_id)
             servers["retinue"] = create_sdk_mcp_server("retinue", tools=[tools[name] for name in self.cfg.bus_tools])
             allowed += [BUS_PREFIX + name for name in self.cfg.bus_tools]
+        if self.travel_url and self.bus_url and turn_id:
+            # Every tool of travel-ops and its whole answer; the arguments of each call pass the guard first.
+            servers[TRAVEL] = {"type": "http", "url": self.travel_url, "timeout": TRAVEL_TIMEOUT_MS, "alwaysLoad": True}
+            allowed.append(f"mcp__{TRAVEL}")
+            denied += [travel.PREFIX + tool for tool in travel.NOT_HERS]
+            hooks["PreToolUse"] = [HookMatcher(matcher=None, hooks=[travel_guard(self.bus_url, self.bus_token,
+                                                                                  turn_id)])]
         return ClaudeAgentOptions(
             cwd=self.workspace,
             system_prompt=self.instructions,
             setting_sources=[],
             tools=self.cfg.tools,
             allowed_tools=allowed,
-            disallowed_tools=self.cfg.disallowed_tools,
+            disallowed_tools=denied,
             mcp_servers=servers,
+            hooks=hooks or None,
             strict_mcp_config=True,
             permission_mode="dontAsk",
             verbatim_prompts=True,
@@ -403,9 +489,10 @@ class EchoEngine:
         return EngineResult(text="Контекст сжат.", is_error=False, session_id=session_id)
 
 
-def make_engine(cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "") -> Engine:
+def make_engine(cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "",
+                travel_url: str = "") -> Engine:
     if cfg.type == "echo":
         return EchoEngine()
     if cfg.type == "claude":
-        return ClaudeEngine(cfg, workspace, bus_url, bus_token)
+        return ClaudeEngine(cfg, workspace, bus_url, bus_token, travel_url)
     raise SystemExit(f"unknown engine type {cfg.type!r}")

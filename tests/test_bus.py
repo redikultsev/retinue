@@ -179,3 +179,39 @@ def test_reminders_through_the_bus(tmp_path):
     core = asyncio.run(run())
     rows = core.store.db.execute("SELECT source, target, status FROM protocol WHERE channel = 'bus'").fetchall()
     assert rows == [("assistant", "reminders/list", "done"), ("assistant", "reminders/add", "rejected")]
+
+
+def test_every_guard_decision_on_travel_ops_is_on_record(tmp_path):
+    """The assistant calls travel-ops herself; the engine's guard tells the router what it let through and what
+    it refused, so the protocol shows every search and every refusal."""
+    agents = [RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private")]
+
+    async def run():
+        core = Core(agents, Store(str(tmp_path / "r.sqlite")), "owner")
+        matrix = FakeChannel("matrix", True)
+        await core.start([matrix])
+        mine = {"Authorization": f"Bearer {bus_token('secret', 'assistant')}"}
+        turn = core.turns.open_root("assistant")
+        async with TestClient(TestServer(BusServer(core, "secret", 0).app)) as http:
+            async def post(headers=mine, **body):
+                response = await http.post("/travel/log", json=body, headers=headers)
+                return response.status, await response.json() if response.status == 200 else None
+
+            allowed = await post(turn=turn.id, tool="search_trip", decision="allow", chars=93)
+            denied = await post(turn=turn.id, tool="search_trip", decision="deny", chars=140,
+                                reason="place: название латиницей, до пяти слов")
+            odd = await post(turn=turn.id, tool="search_trip; DROP TABLE protocol", decision="allow", chars="x")
+            core.turns.close(turn)
+            late = await post(turn=turn.id, tool="search_trip", decision="allow", chars=1)
+            stranger = await post({"Authorization": "Bearer wrong"}, turn=turn.id, tool="x", decision="allow")
+        return core, matrix, allowed, denied, odd, late, stranger
+
+    core, matrix, allowed, denied, odd, late, stranger = asyncio.run(run())
+    assert allowed == denied == odd == (200, {"ok": True, "text": ""})
+    assert late == (200, {"ok": False, "text": "Нет активного запроса."}) and stranger[0] == 401
+    rows = core.store.db.execute("SELECT source, target, status, input_chars FROM protocol WHERE channel = 'bus'")
+    assert rows.fetchall() == [("assistant", "travel/search_trip", "allowed", 93),
+                               ("assistant", "travel/search_trip", "denied", 140),
+                               ("assistant", "travel/search_tripDROPTABLEprotocol", "allowed", 0)]
+    assert ("protocol", "travel: Ассистентка → search_trip: denied — place: название латиницей, до пяти слов") \
+        in matrix.events, "the reason is shown where the protocol is shown"

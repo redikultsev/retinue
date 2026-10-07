@@ -7,6 +7,8 @@ external images. Tables become lists here, in code, so the result does not depen
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
+from urllib.parse import unquote, urlsplit
 
 from markdown_it import MarkdownIt
 from markdown_it.common.utils import escapeHtml
@@ -77,6 +79,9 @@ def render(text: str) -> tuple[str, str]:
 # No address leaves here as a link. Telegram makes any bare address clickable, and a click (or a link preview)
 # carries whatever the model wrote into the address to a stranger's server. So every address — a Markdown
 # link's target, a bare URL, a domain, an e-mail — is wrapped in <code>: shown, copyable, not clickable.
+# The one exception (§15, the owner's decision of 2026-10-08): an https address on a host travel-ops links to
+# (`link_hosts`, exact hosts). The model may choose the path there, not the host: the click reaches only a site
+# that already gets the owner's searches.
 
 TELEGRAM_LIMIT = 4000
 _FORMAT = {"strong": "b", "em": "i", "s": "s"}
@@ -100,25 +105,66 @@ def _tg_code(text: str, outer: list[str]) -> str:
     return f"{closing}<code>{_tg_escape(text)}</code>{opening}"
 
 
-def _tg_text(text: str, outer: list[str] | tuple = ()) -> str:
-    """Escape plain text and wrap every address in <code>."""
+_CLIMB = re.compile(r"%2e|%2f|%5c", re.IGNORECASE)  # an encoded dot, slash or backslash: a path that hides a climb
+
+
+def linkable(url: str, hosts: Collection[str]) -> bool:
+    """An https address on one of `hosts`: each is an exact host (`kiwi.com` is not `evil.kiwi.com`), optionally
+    with a path the address must stay under (`www.google.com/travel/`). No login, no port, no backslash, and no
+    path segment that is `.` or `..` — plainly or percent-encoded — so that a prefix cannot be climbed out of."""
+    if not hosts or not url.startswith("https://") or any(c in url for c in " \"'<>`\\"):
+        return False
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if port is not None or "@" in parts.netloc or not host or _CLIMB.search(parts.path):
+        return False
+    path = parts.path or "/"
+    if any(segment in (".", "..") for segment in unquote(path).split("/")):
+        return False
+    for entry in hosts:
+        name, _, prefix = entry.lower().partition("/")
+        if host == name and path.startswith("/" + prefix):
+            return True
+    return False
+
+
+def _tg_link(target: str, words: str) -> str:
+    return f'<a href="{_tg_escape(target).replace(chr(34), "&quot;")}">{_tg_escape(words)}</a>'
+
+
+def _tg_text(text: str, outer: list[str] | tuple = (), hosts: Collection[str] = ()) -> str:
+    """Escape plain text and wrap every address in <code>, except one on `hosts`, which becomes a link."""
     out, pos = [], 0
     for match in _ADDRESS.finditer(text):
         address = match.group().rstrip(_TRAILING)
         if not address:
             continue
         out.append(_tg_escape(text[pos:match.start()]))
-        out.append(_tg_code(address, list(outer)))
+        out.append(_tg_link(address, address) if linkable(address, hosts) else _tg_code(address, list(outer)))
         pos = match.start() + len(address)
     out.append(_tg_escape(text[pos:]))
     return "".join(out)
 
 
-def _tg_inline(children, outer: list[str] | tuple = ()) -> str:
+def _tg_inline(children, outer: list[str] | tuple = (), hosts: Collection[str] = ()) -> str:
     out, open_tags, links = [], list(outer), []  # links: stack of (target, position in out where the text starts)
-    for t in children or []:
+    tokens = iter(children or [])
+    for t in tokens:
+        if t.type == "link_open" and linkable(t.attrGet("href") or "", hosts):
+            # A link to a travel site: its words become the link, as plain text; nothing inside is another link.
+            words = []
+            for inner in tokens:
+                if inner.type == "link_close":
+                    break
+                words.append(inner.content if inner.type in ("text", "code_inline") else "")
+            out.append(_tg_link(t.attrGet("href"), "".join(words) or t.attrGet("href")))
+            continue
         if t.type == "text":
-            out.append(_tg_text(t.content, open_tags))
+            out.append(_tg_text(t.content, open_tags, hosts))
         elif t.type == "code_inline":
             out.append(_tg_code(t.content, open_tags))
         elif t.type in ("softbreak", "hardbreak"):
@@ -143,11 +189,11 @@ def _tg_inline(children, outer: list[str] | tuple = ()) -> str:
             open_tags.remove(tag)
             out.append(f"</{tag}>")
         elif t.content:
-            out.append(_tg_text(t.content, open_tags))
+            out.append(_tg_text(t.content, open_tags, hosts))
     return "".join(out)
 
 
-def _tg_blocks(tokens) -> list[str]:
+def _tg_blocks(tokens, hosts: Collection[str] = ()) -> list[str]:
     """Render each top-level block separately so long answers split between blocks, never inside a tag."""
     blocks, out, lists = [], [], []  # lists: stack of [kind, counter]
     heading = False
@@ -182,7 +228,7 @@ def _tg_blocks(tokens) -> list[str]:
         elif kind == "hr":
             out.append("———")
         elif kind == "inline":
-            out.append(_tg_inline(t.children, ["b"] if heading else []))
+            out.append(_tg_inline(t.children, ["b"] if heading else [], hosts))
         if t.level == 0 and t.nesting <= 0:  # a top-level block just ended
             block = re.sub(r"<(b|i|s)></\1>", "", "".join(out)).strip()  # pairs left empty around a <code>
             if block:
@@ -198,9 +244,9 @@ def tg_plain(html: str) -> str:
     return _tg_text(plain)
 
 
-def render_telegram(text: str) -> list[str]:
-    """Agent Markdown -> Telegram HTML messages (each within TELEGRAM_LIMIT)."""
-    blocks = _tg_blocks(_md.parse(tables_to_lists(text)))
+def render_telegram(text: str, hosts: Collection[str] = ()) -> list[str]:
+    """Agent Markdown -> Telegram HTML messages (each within TELEGRAM_LIMIT). `hosts`: sites a link may lead to."""
+    blocks = _tg_blocks(_md.parse(tables_to_lists(text)), hosts)
     messages, current = [], ""
     for block in blocks:
         if len(block) > TELEGRAM_LIMIT:  # one huge block (e.g. code): send it as plain text pieces

@@ -85,3 +85,18 @@ def test_the_summary_check_spends_no_reminder_numbers(tmp_path):
         jobs.ensure_summary(NOW + tick * 30)
     assert jobs.add("позвонить Х", "2026-10-09T18:00", "пт", NOW)[0]
     assert [row[0] for row in jobs.db.execute("SELECT id FROM jobs ORDER BY id")] == [1, 2]
+
+
+def test_a_price_drop_is_kept_once_and_sent_at_once(tmp_path):
+    """The router keeps an alert before it confirms it to travel-ops: a second look after a restart adds nothing,
+    and a kept one waits as a due job until it is sent."""
+    jobs = make(tmp_path)
+    alert = {"alert_id": 3, "watch_id": "wq3m7k2a", "what": "flights BEG→LIS", "price": 99.0, "currency": "EUR",
+             "seen_at": "2026-10-07T10:00:00+00:00"}
+    assert jobs.add_price(alert, NOW) and not jobs.add_price(dict(alert), NOW + 300), "one row per alert"
+    # travel-ops' numbers start again on a new volume: the same number with another watch or moment is another alert
+    assert jobs.add_price(dict(alert, seen_at="2026-11-01T10:00:00+00:00"), NOW)
+    (job, _) = jobs.due(NOW)
+    assert job.kind == "price" and job.due == NOW and {k: v for k, v in job.data.items() if k != "key"} == alert
+    assert jobs.claim(job, NOW) and Scheduler(jobs.db).due(NOW)[0].id == job.id, "a restart before `done` resends"
+    assert jobs.reminders() == [] and jobs.listing() == "Активных напоминаний нет.", "not one of the owner's reminders"

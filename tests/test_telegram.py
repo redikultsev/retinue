@@ -292,3 +292,12 @@ def test_render_telegram_splits_and_escapes():
     html = render_telegram("## Итог\n\n| a | b |\n|---|---|\n| **x** | <y> |\n\n" + "длинный абзац. " * 600)
     assert html[0].startswith("<b>Итог</b>\n\n• <b>x</b> — &lt;y&gt;")
     assert len(html) > 1 and all(len(m) <= 4000 for m in html)
+
+
+def test_a_link_to_a_travel_site_is_clickable_and_still_has_no_preview(tmp_path):
+    ch = make(tmp_path)
+    ch.link_hosts = ("kiwi.com",)
+    asyncio.run(ch.send("assistant", "[kiwi, 99 €](https://kiwi.com/u/abc) или https://evil.example/u", [], "ev-1"))
+    (out,) = texts(ch)
+    assert out["text"] == '<a href="https://kiwi.com/u/abc">kiwi, 99 €</a> или <code>https://evil.example/u</code>'
+    assert out["link_preview_options"] == {"is_disabled": True}, "a link, and still no preview"

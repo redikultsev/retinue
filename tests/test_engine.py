@@ -83,7 +83,8 @@ def test_a_run_reads_no_settings_from_any_folder(instructions, tmp_path):
     assert {"Bash", "WebSearch", "WebFetch"} <= set(options.disallowed_tools)
     assert options.strict_mcp_config and options.verbatim_prompts and options.permission_mode == "dontAsk"
     assert options.env == {"CLAUDE_CONFIG_DIR": cfg.config_dir, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                           "ENABLE_CLAUDEAI_MCP_SERVERS": "false"}
+                           "ENABLE_CLAUDEAI_MCP_SERVERS": "false", "MCP_CONNECT_TIMEOUT_MS": "5000",
+                           "MCP_TIMEOUT": "5000"}
     with pytest.raises(SystemExit, match="instructions file"):
         ClaudeEngine(EngineConfig(instructions=str(tmp_path / "missing.md")), str(tmp_path))
     assert "CLAUDE_CONFIG_DIR" not in (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
@@ -368,3 +369,137 @@ def test_only_a_refusal_about_files_resets_the_session(instructions, tmp_path, m
     with pytest.raises(ResultError):
         asyncio.run(later.run("просто текст", "s-other")), "413 in a session without files is not about files"
     assert "get_attachment" in UNREADABLE_NOTE
+
+
+def test_travel_ops_is_her_own_mcp_server_with_a_guard(instructions):
+    """travel-ops is an MCP server of the run itself: every tool but the alerts the router takes, every answer
+    whole; a PreToolUse hook checks the arguments of each call to it."""
+    engine = ClaudeEngine(EngineConfig(instructions=instructions, tools=[], bus_tools=["search_archive"]),
+                          "/workspace", "http://router:9100", "token", "http://travel-ops:8765/mcp")
+    options = engine.options("turn-1", False)
+    assert options.mcp_servers["travel"] == {"type": "http", "url": "http://travel-ops:8765/mcp",
+                                             "timeout": 840_000, "alwaysLoad": True}
+    assert "mcp__travel" in options.allowed_tools and "mcp__travel__watch_alerts" in options.disallowed_tools
+    (matcher,) = options.hooks["PreToolUse"]
+    assert matcher.matcher is None and len(matcher.hooks) == 1, "every call goes through it; it picks travel's"
+    assert "travel" not in ClaudeEngine(EngineConfig(instructions=instructions), "/w", "http://r", "t").options(
+        "turn-1", False).mcp_servers, "no address, no server"
+    assert "travel" not in engine.options(None, False).mcp_servers, "a run outside a turn (the summary) has none"
+
+
+def test_the_guard_refuses_owners_data_in_a_search_and_says_why(tmp_path):
+    """An injected «city» with digits, a long text, Cyrillic personal data: refused before the call, with a reason
+    the model reads; every decision is a protocol line at the router."""
+    from retinue.engine import travel_guard
+
+    async def run():
+        agent = RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private")
+        core = Core([agent], Store(str(tmp_path / "r.sqlite")), "owner")
+        await core.start([FakeChannel("telegram", False)])
+        turn = core.turns.open_root("assistant")
+        server = TestServer(BusServer(core, "secret", 0).app)
+        await server.start_server()
+        try:
+            guard = travel_guard(str(server.make_url("")).rstrip("/"), bus_token("secret", "assistant"), turn.id)
+
+            async def call(tool, **args):
+                return await guard({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": args,
+                                    "tool_use_id": "t1"}, "t1", {"signal": None})
+
+            trip = {"origin": "BEG", "place": "Kotor", "depart": "2026-10-22"}
+            out = [await call("mcp__travel__search_trip", **trip),
+                   await call("mcp__travel__search_trip", **dict(trip, place="Kotor 4510 123456")),
+                   await call("mcp__travel__search_trip", **dict(trip, place="Kotor, " + "my employer Acme " * 5)),
+                   await call("mcp__travel__airports_near", place="Иванов Иван Иванович, ул. Ленина"),
+                   await call("mcp__travel__stay_photos", search_id="sj4bt6gc", stays=["Golden Bay Apartment"]),
+                   await call("mcp__retinue__search_archive", query="паспорт")]
+            return core, out
+        finally:
+            await server.close()
+
+    core, (allowed, digits, long, cyrillic, photos, other) = asyncio.run(run())
+    assert allowed == {} and photos == {} and other == {}, "allowed calls and other tools: no decision of its own"
+    for denied, field in ((digits, "place"), (long, "place"), (cyrillic, "place")):
+        out = denied["hookSpecificOutput"]
+        assert out["hookEventName"] == "PreToolUse" and out["permissionDecision"] == "deny"
+        assert out["permissionDecisionReason"].startswith(f"Не отправлено на сайты: {field}: название латиницей")
+    rows = core.store.db.execute("SELECT target, status FROM protocol WHERE channel = 'bus' ORDER BY id").fetchall()
+    assert rows == [("travel/search_trip", "allowed"), ("travel/search_trip", "denied"),
+                    ("travel/search_trip", "denied"), ("travel/airports_near", "denied"),
+                    ("travel/stay_photos", "allowed")], "the archive search is not travel's"
+
+
+def test_the_guard_lets_a_call_through_when_the_router_cannot_be_told():
+    from retinue.engine import travel_guard
+
+    guard = travel_guard("http://127.0.0.1:9", "token", "turn-1")  # nothing listens there
+    out = asyncio.run(guard({"tool_name": "mcp__travel__sources", "tool_input": {}}, "t1", {"signal": None}))
+    assert out == {}, "the record is best effort; the check is not"
+    out = asyncio.run(guard({"tool_name": "mcp__travel__book", "tool_input": {}}, "t1", {"signal": None}))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny", "an unknown tool of travel-ops: refused"
+
+
+def test_the_guard_fails_closed(tmp_path, monkeypatch):
+    """CLI 2.1.286 takes a hook that raised for «no decision», and the call goes out. So nothing in the guard may
+    raise: a key no encoder takes, a null where the form needs a value, a bug in the check — each is a refusal,
+    decided before the router is told, and telling the router cannot break it."""
+    import json
+
+    from retinue import engine as engine_module
+    from retinue.engine import travel_guard
+
+    async def run():
+        agent = RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private")
+        core = Core([agent], Store(str(tmp_path / "r.sqlite")), "owner")
+        await core.start([FakeChannel("telegram", False)])
+        turn = core.turns.open_root("assistant")
+        server = TestServer(BusServer(core, "secret", 0).app)
+        await server.start_server()
+        try:
+            guard = travel_guard(str(server.make_url("")).rstrip("/"), bus_token("secret", "assistant"), turn.id)
+
+            async def call(tool, args):
+                return await guard({"tool_name": f"mcp__travel__{tool}", "tool_input": args}, "t", {"signal": None})
+
+            trip = {"origin": "BEG", "place": "Kotor", "depart": "2026-10-22"}
+            out = {"surrogate": await call("search_trip", {**trip, json.loads('"\\ud800"'): 1}),
+                   "kind-null": await call("watch_price", {"kind": None, "arguments": {"x": "secret 123"}}),
+                   "lower": await call("search_trip", dict(trip, origin="beg")),
+                   "not-a-dict": await call("search_trip", "BEG Kotor")}
+            monkeypatch.setattr(engine_module.travel, "exact", lambda tool, args: 1 / 0)
+            out["bug"] = await call("search_trip", trip)
+            return core, out
+        finally:
+            await server.close()
+
+    core, out = asyncio.run(run())
+    for name, result in out.items():
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny", name
+    assert "проверка аргументов не удалась (ZeroDivisionError)" in out["bug"]["hookSpecificOutput"][
+        "permissionDecisionReason"], "a bug refuses, and says so"
+    assert "нет поля kind" in out["kind-null"]["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "пиши ровно 'BEG'" in out["lower"]["hookSpecificOutput"]["permissionDecisionReason"]
+    rows = core.store.db.execute("SELECT target, status FROM protocol WHERE channel = 'bus'").fetchall()
+    assert rows == [("travel/search_trip", "denied"), ("travel/watch_price", "denied"),
+                    ("travel/search_trip", "denied"), ("travel/search_trip", "denied"),
+                    ("travel/search_trip", "denied")], "even the key no encoder takes is on record"
+
+
+def test_a_run_may_call_travel_ops_twelve_times():
+    """Each allowed call can carry a few words to the sites; a run gets at most twelve of them."""
+    from retinue.engine import TRAVEL_CALLS, travel_guard
+
+    guard = travel_guard("http://127.0.0.1:9", "token", "turn-1")
+    call = {"tool_name": "mcp__travel__refine_flights", "tool_input": {"search_id": "fwgug2dt"}}
+    outs = [asyncio.run(guard(call, "t", {"signal": None})) for _ in range(TRAVEL_CALLS + 1)]
+    assert TRAVEL_CALLS == 12 and outs[:-1] == [{}] * 12
+    assert "не больше 12 вызовов travel-ops" in outs[-1]["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_a_travel_ops_that_does_not_answer_costs_a_turn_seconds():
+    """The CLI connects every MCP server before the turn; travel-ops down or hung must not hold the owner's turn
+    for the CLI's 30 s default. Five seconds for connecting and listing; a tool call keeps its own limit."""
+    from retinue.engine import RUN_ENV
+
+    assert RUN_ENV["MCP_TIMEOUT"] == "5000" and RUN_ENV["MCP_CONNECT_TIMEOUT_MS"] == "5000"
+    assert "MCP_TOOL_TIMEOUT" not in RUN_ENV, "a search's minutes are the server's own `timeout`"

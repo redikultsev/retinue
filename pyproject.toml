@@ -23,6 +23,7 @@ dependencies = [
     "openpyxl>=3.1",
     "python-pptx>=1",
     "defusedxml>=0.7",             # openpyxl parses through it when it is installed: no entity expansion
+    "airportsdata>=20260905",      # travel: an airport code in a search must be a real one (3 MB of CSV)
 ]
 
 [project.scripts]

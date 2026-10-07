@@ -77,6 +77,31 @@ Add `BACKUP=1` to the `setup.sh` command and follow [backup.md](backup.md): a ni
 at another provider, with a server key that cannot delete, a monthly check and test restore from your own
 computer, and a line about it in the morning summary.
 
+## 6. Travel (optional)
+
+Trip search and price watches come from [travel-ops](https://github.com/redikultsev/travel-ops), built by
+compose from a pinned commit (`deploy/compose.yml`) into an image of about 5 GB: Google Chrome and Camoufox are
+inside. Add `TRAVEL=1` to the `setup.sh` command once; from then on it stays on.
+
+```bash
+sudo TELEGRAM_OWNER_ID=123456789 TRAVEL=1 bash /opt/retinue/deploy/setup.sh
+sudo nano /srv/retinue/travel/profile.yml   # home_airports, travellers, currency: profile.example.yml in travel-ops
+docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml up -d --build
+```
+
+Two containers run: `travel-ops` (the MCP server, on the internal network `travel` with the assistant and the
+router) and `travel-watch` (the price watches, every 30 minutes). Both reach the travel sites through their own
+network; the assistant does not. She calls travel-ops' tools herself and reads its whole answer; the arguments
+of each call are checked by the engine before they leave, and every check is a line in the router's protocol.
+Links to the sites in `deploy/travel/link-hosts.txt` are clickable; every other address stays monospace. Sites
+may limit automated requests: use it for your own trips, as travel-ops' README says.
+
+Both browsers in the travel-ops image are pinned (its `Dockerfile`: `CHROME_VERSION`, `CHROME_SHA256`,
+`CAMOUFOX_VERSION`). Once a month: move the pins in travel-ops (its README says where the current values are),
+commit and push it, put the new SHA in `deploy/compose.yml` (`tests/test_deploy.py` refuses the old base), and
+rebuild without the cache: `docker compose … build --no-cache travel-ops && docker compose … up -d`. Google keeps
+only recent Chrome packages, so a build with an old pin fails — that failure is the reminder.
+
 ## Hosts the proxy lets through
 
 `/srv/retinue/egress/allowed-hosts.txt` starts with one line, `api.anthropic.com`. If a run fails and the proxy

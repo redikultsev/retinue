@@ -237,6 +237,13 @@ def test_travel_ops_is_a_neighbour_of_the_assistant_and_the_only_one_with_a_way_
         # but their scratch space and the data volume.
         assert service["cap_drop"] == ["ALL"] and service["security_opt"] == ["no-new-privileges:true"]
         assert service["read_only"] is True and any(t.startswith("/tmp:") for t in service["tmpfs"])
+        # Where Chrome and Camoufox write at start (docker diff of a run on the server), as the travel user.
+        scratch = {t.split(":")[0]: t for t in service["tmpfs"]}
+        for path in ("/home/travel/.local", "/home/travel/.config", "/home/travel/.cache/google-chrome",
+                     "/home/travel/.cache/fontconfig", "/home/travel/.cache/camoufox/fontconfig",
+                     "/home/travel/Downloads", "/home/travel/camoufox"):
+            assert path in scratch and "uid=10001" in scratch[path], path
+        assert "/home/travel/.cache" not in scratch, "Camoufox's Firefox is installed there: a tmpfs would hide it"
 
 
 def test_the_travel_ops_commit_is_bumped_before_retinue_is_committed():

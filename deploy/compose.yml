@@ -85,7 +85,7 @@ services:
   travel-ops:
     profiles: ["travel"]
     # A pinned commit of the public repo; its Dockerfile pins the base image by digest.
-    build: { context: "https://github.com/redikultsev/travel-ops.git#b15f3ed2191dfdf844a2a822700d5c7951ee8627" }
+    build: { context: "https://github.com/redikultsev/travel-ops.git#17dc3e7fccb6d3abbb68f049ddacdca3c965ed71" }
     image: travel-ops:local
     restart: unless-stopped
     volumes: &travel-mounts
@@ -101,7 +101,16 @@ services:
       cap_drop: [ALL]
       security_opt: ["no-new-privileges:true"]
       read_only: true
-      tmpfs: ["/tmp:size=1g", "/home/travel/.cache/fontconfig:size=64m"]
+      # Where the browsers write at start, as the travel user (10001). Not ~/.cache itself: Camoufox lives there.
+      tmpfs:
+        - /tmp:size=1g
+        - /home/travel/.local:size=16m,uid=10001,gid=10001
+        - /home/travel/.config:size=256m,uid=10001,gid=10001
+        - /home/travel/.cache/google-chrome:size=256m,uid=10001,gid=10001
+        - /home/travel/.cache/fontconfig:size=64m,uid=10001,gid=10001
+        - /home/travel/.cache/camoufox/fontconfig:size=16m,uid=10001,gid=10001
+        - /home/travel/Downloads:size=64m,uid=10001,gid=10001
+        - /home/travel/camoufox:size=256m,uid=10001,gid=10001
     networks: [travel-assistant, travel-router, travel-out]
 
   travel-watch:                   # the owner's price watches, checked one search at a time

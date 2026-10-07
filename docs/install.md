@@ -24,14 +24,17 @@ Your time zone is `Europe/Moscow` unless you say otherwise: add `OWNER_TZ=Europe
 the command. Every time the assistant sees, every reminder and the 09:00 morning summary follow it.
 
 The script creates `/srv/retinue`: `router.yaml`, the assistant's config and instructions
-(`agents/assistant/`, mounted read-only), the proxy config (`egress/`), and `secrets.env` with generated
-tokens. It prints the environment block for the next step. Run it again after every `git pull`.
+(`agents/assistant/`, mounted read-only), the proxy config (`egress/`), `secrets.env` with generated tokens, and
+`stack.env` (mode 600) — the stack's environment. It prints names, never values: which it wrote and which you fill
+in. Run it again after every `git pull`; it keeps what you filled in. If a secret ever leaks, run it with
+`ROTATE_BUS_SECRET=1` and redeploy: a new bus secret and new agent tokens.
 
 ## 3. Deploy the stack
 
-Dokploy → project → *Compose* from your Git repo, compose path `./deploy/compose.yml`. Paste the printed
-environment block and fill in `TELEGRAM_BOT_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`:
-your own subscription, personal use). Do not set `ANTHROPIC_API_KEY`: when it is present, Claude Code bills the
+Fill in `TELEGRAM_BOT_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`: your own subscription,
+personal use) in `/srv/retinue/stack.env`. Then either `sudo docker compose -p retinue --env-file
+/srv/retinue/stack.env -f deploy/compose.yml up -d --build` from `/opt/retinue`, or Dokploy → project →
+*Compose* from your Git repo, compose path `./deploy/compose.yml`, with the file's lines in *Environment*. Do not set `ANTHROPIC_API_KEY`: when it is present, Claude Code bills the
 key instead of the subscription. Deploy.
 
 Three containers start: `router` (Telegram, the archive, the bus), `assistant` (the model; internal network
@@ -84,9 +87,9 @@ sudo TELEGRAM_OWNER_ID=123456789 MATRIX_SERVER_NAME=matrix.example.com MATRIX_OW
 ```
 
 The script then also writes the appservice registration, installs the Traefik middleware `vpn-only` and starts
-split DNS (dnsmasq on `10.8.0.1`). Paste the longer environment block it prints: `COMPOSE_PROFILES=matrix`
+split DNS (dnsmasq on `10.8.0.1`), and adds the Matrix variables to `stack.env`: `COMPOSE_PROFILES=matrix`
 starts Tuwunel. Create your account with `docker compose exec router retinue-admin register --username alice`,
-then set `MATRIX_ALLOW_REGISTRATION=false` and redeploy. Sign in with Element X.
+then set `MATRIX_ALLOW_REGISTRATION=false` in `stack.env` and redeploy. Sign in with Element X.
 
 ## Tests
 

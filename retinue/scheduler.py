@@ -20,6 +20,7 @@ REMINDER, SUMMARY, RETRY = "reminder", "summary", "retry"
 ACTIVE, RUNNING, SENT, CANCELLED = "active", "running", "sent", "cancelled"
 MAX_TEXT = 500
 SUMMARY_AT = "09:00"  # the morning summary, the owner's wall time
+ID_NOTE = "id — для отмены и переноса; Владельцу его не называй, говори, о чём и когда."
 _COLUMNS = "id, kind, text, local, tz, due, status, data"
 
 
@@ -71,8 +72,9 @@ class Scheduler:
         return Job(row[0], row[1], row[2], row[3], row[4], row[5], row[6], json.loads(row[7]))
 
     def line(self, job: Job, numbered: bool = True) -> str:
-        """How a reminder is named: with its number for the tools, without it wherever it may reach the owner."""
-        return (f"#{job.id} · " if numbered else "") + f"{clock.day(job.due, job.tz)} — {job.text}"
+        """How a reminder is named: with its id as a service mark at the end for the tools, without it wherever it
+        may reach the owner. A «#3» at the front reads as a label, and the model repeats it to the owner."""
+        return f"{clock.day(job.due, job.tz)} — {job.text}" + (f" [id {job.id}]" if numbered else "")
 
     # --- the owner's reminders: what the assistant's tools do ------------------------------------
 
@@ -105,12 +107,12 @@ class Scheduler:
         due = moment.timestamp()
         for job in self.reminders():
             if job.due == due and job.text.casefold() == text.casefold():
-                return True, f"Уже стоит: {self.line(job)}."
+                return True, f"Уже стоит: {self.line(job)}. {ID_NOTE}"
         cursor = self.db.execute("INSERT INTO jobs (kind, text, local, tz, due, status, created)"
                                  " VALUES (?, ?, ?, ?, ?, ?, ?)",
                                  (REMINDER, text, f"{moment:%Y-%m-%dT%H:%M}", self.tz, due, ACTIVE, now))
         self.db.commit()
-        return True, f"Поставила {self.line(self.get(cursor.lastrowid))}."
+        return True, f"Поставила: {self.line(self.get(cursor.lastrowid))}. {ID_NOTE}"
 
     def get(self, job_id: int) -> Job | None:
         row = self.db.execute(f"SELECT {_COLUMNS} FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -126,7 +128,7 @@ class Scheduler:
         jobs = self.reminders()
         if not jobs:
             return "Активных напоминаний нет."
-        return "Активные напоминания, ближайшие первыми:\n" + "\n".join(self.line(job) for job in jobs)
+        return "Активные напоминания, ближайшие первыми:\n" + "\n".join(self.line(job) for job in jobs) + f"\n{ID_NOTE}"
 
     def _active_reminder(self, job_id: int) -> Job | None:
         job = self.get(job_id)
@@ -135,10 +137,10 @@ class Scheduler:
     def cancel(self, job_id: int) -> tuple[bool, str]:
         job = self._active_reminder(job_id)
         if job is None:
-            return False, f"Нет активного напоминания #{job_id}. Список — list_reminders."
+            return False, f"Нет активного напоминания с id {job_id}. Список — list_reminders."
         self.db.execute("UPDATE jobs SET status = ? WHERE id = ? AND status = ?", (CANCELLED, job.id, ACTIVE))
         self.db.commit()
-        return True, f"Отменила {self.line(job)}."
+        return True, f"Отменила: {self.line(job)}."
 
     def today(self, now: float) -> list[Job]:
         """Active reminders that fire before the owner's day is over."""
@@ -197,11 +199,11 @@ class Scheduler:
     def move(self, job_id: int, when: str, weekday: str, now: float) -> tuple[bool, str]:
         job = self._active_reminder(job_id)
         if job is None:
-            return False, f"Нет активного напоминания #{job_id}. Список — list_reminders."
+            return False, f"Нет активного напоминания с id {job_id}. Список — list_reminders."
         moment, refusal = self.when(when, weekday, now)
         if moment is None:
             return False, refusal.replace("Не поставила", "Не перенесла")
         self.db.execute("UPDATE jobs SET local = ?, tz = ?, due = ? WHERE id = ? AND status = ?",
                         (f"{moment:%Y-%m-%dT%H:%M}", self.tz, moment.timestamp(), job.id, ACTIVE))
         self.db.commit()
-        return True, f"Перенесла {self.line(self.get(job.id))}."
+        return True, f"Перенесла: {self.line(self.get(job.id))}."

@@ -5,7 +5,10 @@
 #   sudo TELEGRAM_OWNER_ID=123456789 bash deploy/setup.sh
 #   sudo TELEGRAM_OWNER_ID=123456789 OWNER_TZ=Europe/Belgrade bash deploy/setup.sh   # default: Europe/Moscow
 #   sudo TELEGRAM_OWNER_ID=123456789 MATRIX_SERVER_NAME=matrix.example.com MATRIX_OWNER=alice bash deploy/setup.sh
+#   sudo TELEGRAM_OWNER_ID=123456789 ROTATE_BUS_SECRET=1 bash deploy/setup.sh   # a new bus secret and agent tokens
 #
+# The stack's environment goes to /srv/retinue/stack.env (mode 600). The script prints names, never values:
+# a terminal ends up in logs and transcripts.
 # At least one channel is required. Everything Matrix needs (appservice registration, Traefik middleware,
 # split DNS) is made only when MATRIX_SERVER_NAME is set.
 set -euo pipefail
@@ -26,6 +29,7 @@ fi
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ROOT=${RETINUE_ROOT:-/srv/retinue}      # tests point this at a temporary folder
 HOST_SETUP=${RETINUE_HOST_SETUP:-1}     # 0: write files under ROOT only; no Traefik or split DNS (tests)
+ROTATE_BUS_SECRET=${ROTATE_BUS_SECRET:-0}
 AGENTS=(assistant)
 token() { openssl rand -hex 32; }
 upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
@@ -34,6 +38,8 @@ install -d -m 755 "$ROOT"
 SECRETS="$ROOT/secrets.env"
 [[ -f $SECRETS ]] || (umask 077; : > "$SECRETS")
 secret() { grep -q "^$1=" "$SECRETS" || echo "$1=$(token)" >> "$SECRETS"; }   # made once, then kept
+drop() { local rest; rest=$(grep -v "^$1=" "$2" || true); printf '%s\n' "$rest" | sed '/^$/d' > "$2"; }
+[[ $ROTATE_BUS_SECRET == 1 ]] && drop RETINUE_BUS_SECRET "$SECRETS"   # the agents' tokens follow from it
 secret RETINUE_BUS_SECRET
 if [[ -n $MATRIX_SERVER_NAME ]]; then
   secret RETINUE_AS_TOKEN
@@ -110,26 +116,36 @@ YAML
   fi
 fi
 
-cat <<OUT
-
-Done. Paste into Dokploy → retinue → Environment (CLAUDE_CODE_OAUTH_TOKEN from \`claude setup-token\`):
-
-RETINUE_BUS_SECRET=$RETINUE_BUS_SECRET
-$(for a in "${AGENTS[@]}"; do echo "RETINUE_BUS_TOKEN_$(upper "$a")=$(bus_token "$a")"; done)
-CLAUDE_CODE_OAUTH_TOKEN=<paste>
-OUT
-if [[ -n $TELEGRAM_OWNER_ID ]]; then
-  echo "TELEGRAM_BOT_TOKEN=<paste: from @BotFather>"
-fi
+# The stack's environment: generated values are written (and replaced after a rotation), what the owner pastes is
+# kept as it is. Nothing here is printed.
+STACK="$ROOT/stack.env"
+[[ -f $STACK ]] || (umask 077; : > "$STACK")
+chmod 600 "$STACK"
+WRITTEN=() MISSING=()
+put() { drop "$1" "$STACK"; printf '%s=%s\n' "$1" "$2" >> "$STACK"; WRITTEN+=("$1"); }
+keep() { grep -q "^$1=" "$STACK" || printf '%s=%s\n' "$1" "$2" >> "$STACK"; }
+fill() { keep "$1" ""; grep -q "^$1=." "$STACK" || MISSING+=("$1 ($2)"); }
+put RETINUE_BUS_SECRET "$RETINUE_BUS_SECRET"
+for a in "${AGENTS[@]}"; do put "RETINUE_BUS_TOKEN_$(upper "$a")" "$(bus_token "$a")"; done
+fill CLAUDE_CODE_OAUTH_TOKEN "claude setup-token"
+[[ -n $TELEGRAM_OWNER_ID ]] && fill TELEGRAM_BOT_TOKEN "@BotFather"
 if [[ -n $MATRIX_SERVER_NAME ]]; then
-  cat <<OUT
-COMPOSE_PROFILES=matrix
-MATRIX_SERVER_NAME=$MATRIX_SERVER_NAME
-MATRIX_ALLOW_REGISTRATION=true
-MATRIX_REGISTRATION_TOKEN=$MATRIX_REGISTRATION_TOKEN
-RETINUE_AS_TOKEN=$RETINUE_AS_TOKEN
-RETINUE_HS_TOKEN=$RETINUE_HS_TOKEN
+  put COMPOSE_PROFILES matrix
+  put MATRIX_SERVER_NAME "$MATRIX_SERVER_NAME"
+  keep MATRIX_ALLOW_REGISTRATION true   # the owner turns it off after creating the account
+  put MATRIX_REGISTRATION_TOKEN "$MATRIX_REGISTRATION_TOKEN"
+  put RETINUE_AS_TOKEN "$RETINUE_AS_TOKEN"
+  put RETINUE_HS_TOKEN "$RETINUE_HS_TOKEN"
+fi
+chmod 600 "$STACK"
 
-Split DNS check (from a VPN client): dig @10.8.0.1 $MATRIX_SERVER_NAME  → 10.8.0.1
-OUT
+echo
+echo "Done. Stack environment: $STACK (mode 600; values are not printed)."
+echo "Written: ${WRITTEN[*]}"
+if (( ${#MISSING[@]} )); then
+  printf 'Fill in there: %s\n' "${MISSING[@]}"
+fi
+echo "Start: docker compose -p retinue --env-file $STACK -f deploy/compose.yml up -d  (Dokploy: copy the file into Environment)"
+if [[ -n $MATRIX_SERVER_NAME ]]; then
+  echo "Split DNS check (from a VPN client): dig @10.8.0.1 $MATRIX_SERVER_NAME  → 10.8.0.1"
 fi

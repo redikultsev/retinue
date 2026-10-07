@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from retinue.protocol import Store
-from retinue.scheduler import Scheduler
+from retinue.scheduler import ID_NOTE, Scheduler
 
 NOW = datetime(2026, 10, 7, 11, 5, tzinfo=timezone.utc).timestamp()  # Wednesday, 14:05 МСК
 FRIDAY_18 = datetime(2026, 10, 9, 15, 0, tzinfo=timezone.utc).timestamp()  # Friday, 18:00 МСК
@@ -16,12 +16,13 @@ def make(tmp_path):
 def test_a_reminder_is_set_in_the_owners_time(tmp_path):
     jobs = make(tmp_path)
     assert jobs.add("позвонить Х", "2026-10-09T18:00", "пятница", NOW) == (
-        True, "Поставила #1 · пт 9 октября, 18:00 МСК — позвонить Х.")
+        True, f"Поставила: пт 9 октября, 18:00 МСК — позвонить Х [id 1]. {ID_NOTE}")
+    assert "#" not in ID_NOTE and "не называй" in ID_NOTE, "the id is not a label the owner hears"
     (job,) = jobs.reminders()
     assert (job.kind, job.local, job.tz, job.due, job.status) == ("reminder", "2026-10-09T18:00", "Europe/Moscow",
                                                                   FRIDAY_18, "active")
     assert jobs.add("Позвонить   х", "2026-10-09 18:00", "пт", NOW) == (
-        True, "Уже стоит: #1 · пт 9 октября, 18:00 МСК — позвонить Х."), "the same words at the same time: no second"
+        True, f"Уже стоит: пт 9 октября, 18:00 МСК — позвонить Х [id 1]. {ID_NOTE}"), "the same words at the same time: no second"
     assert jobs.add("позвонить Х", "2026-10-09T19:00", "", NOW)[0] and len(jobs.reminders()) == 2, \
         "another time is another reminder; the weekday may be left out"
     assert Scheduler(jobs.db).reminders()[0].text == "позвонить Х", "kept in the router's file"
@@ -46,13 +47,14 @@ def test_list_move_cancel(tmp_path):
     jobs.add("позвонить Х", "2026-10-09T18:00", "пт", NOW)
     jobs.add("купить хлеб", "2026-10-08T09:30", "чт", NOW)
     assert jobs.listing() == ("Активные напоминания, ближайшие первыми:\n"
-                              "#2 · чт 8 октября, 09:30 МСК — купить хлеб\n#1 · пт 9 октября, 18:00 МСК — позвонить Х")
-    assert jobs.move(1, "2026-10-10T11:00", "суббота", NOW) == (True, "Перенесла #1 · сб 10 октября, 11:00 МСК — позвонить Х.")
+                              "чт 8 октября, 09:30 МСК — купить хлеб [id 2]\n"
+                              f"пт 9 октября, 18:00 МСК — позвонить Х [id 1]\n{ID_NOTE}")
+    assert jobs.move(1, "2026-10-10T11:00", "суббота", NOW) == (True, "Перенесла: сб 10 октября, 11:00 МСК — позвонить Х [id 1].")
     assert jobs.get(1).local == "2026-10-10T11:00"
     assert jobs.move(1, "2026-10-10T11:00", "пт", NOW) == (
         False, "Не перенесла: 2026-10-10 — суббота, а не пятница. Проверь дату.")
-    assert jobs.cancel(2) == (True, "Отменила #2 · чт 8 октября, 09:30 МСК — купить хлеб.")
-    assert jobs.cancel(2) == (False, "Нет активного напоминания #2. Список — list_reminders.")
+    assert jobs.cancel(2) == (True, "Отменила: чт 8 октября, 09:30 МСК — купить хлеб [id 2].")
+    assert jobs.cancel(2) == (False, "Нет активного напоминания с id 2. Список — list_reminders.")
     assert jobs.move(99, "2026-10-10T11:00", "", NOW)[0] is False
     assert [j.id for j in jobs.reminders()] == [1]
 

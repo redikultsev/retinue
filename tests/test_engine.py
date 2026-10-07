@@ -229,10 +229,9 @@ def test_reminder_tools_reach_the_router(tmp_path):
             await server.close()
 
     set_, wrong, listed, moved, cancelled, again, late = [(r["is_error"], r["content"][0]["text"]) for r in asyncio.run(run())]
-    assert not set_[0] and set_[1].startswith(f"Поставила #1 · пт {friday.day} ") and set_[1].endswith(
-        ", 18:00 МСК — позвонить Х.")
+    assert not set_[0] and set_[1].startswith(f"Поставила: пт {friday.day} ") and ", 18:00 МСК — позвонить Х [id 1]." in set_[1]
     assert wrong[0] and "пятница, а не четверг" in wrong[1], "code checks the weekday, not the model"
-    assert not listed[0] and "#1 · пт " in listed[1]
-    assert not moved[0] and moved[1].startswith("Перенесла #1") and "19:30 МСК" in moved[1]
-    assert not cancelled[0] and cancelled[1].startswith("Отменила #1") and again[0]
+    assert not listed[0] and "— позвонить Х [id 1]" in listed[1] and "#" not in listed[1]
+    assert not moved[0] and moved[1].startswith("Перенесла: ") and "19:30 МСК" in moved[1]
+    assert not cancelled[0] and cancelled[1].startswith("Отменила: ") and again[0]
     assert late[0] and "Нет активного запроса" in late[1], "only during the agent's own turn"

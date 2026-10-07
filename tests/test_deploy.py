@@ -16,13 +16,20 @@ SERVICES = COMPOSE["services"]
 
 
 def setup(tmp_path, **env):
-    """Run deploy/setup.sh into a temporary folder; return (folder, the environment block it printed)."""
+    """Run deploy/setup.sh into a temporary folder; return (folder, the stack environment it wrote).
+    A value it wrote never appears in what it prints: the terminal ends up in logs and transcripts."""
     target = tmp_path / "srv"
     run = subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
                          env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(target), "RETINUE_HOST_SETUP": "0", **env})
     assert run.returncode == 0, run.stderr
-    printed = dict(line.split("=", 1) for line in run.stdout.splitlines() if "=" in line and " " not in line.split("=")[0])
-    return target, printed
+    stack = target / "stack.env"
+    assert oct(stack.stat().st_mode & 0o777) == "0o600"
+    written = dict(line.split("=", 1) for line in stack.read_text().splitlines() if "=" in line)
+    leaked = [name for name, value in written.items()
+              if ("SECRET" in name or "TOKEN" in name) and value and value in run.stdout + run.stderr]
+    assert not leaked, f"printed: {leaked}"
+    assert "RETINUE_BUS_SECRET" in run.stdout, "names are printed, values are not"
+    return target, written
 
 
 def test_one_assistant_and_nothing_else():
@@ -96,9 +103,17 @@ def test_setup_without_matrix(tmp_path, monkeypatch):
     for agent in cfg.agents:
         assert printed[f"RETINUE_BUS_TOKEN_{agent.id.upper()}"] == bus_token(printed["RETINUE_BUS_SECRET"], agent.id)
         assert AgentConfig.load(target / "agents" / agent.id / "agent.yaml").public_url == agent.url
+    assert printed["TELEGRAM_BOT_TOKEN"] == "" and printed["CLAUDE_CODE_OAUTH_TOKEN"] == "", "left for the owner"
+    stack = target / "stack.env"
+    stack.write_text(stack.read_text().replace("TELEGRAM_BOT_TOKEN=\n", "TELEGRAM_BOT_TOKEN=123:owner-pasted\n"))
     again, printed_again = setup(tmp_path, TELEGRAM_OWNER_ID="42")
     assert printed_again["RETINUE_BUS_SECRET"] == printed["RETINUE_BUS_SECRET"], "a second run keeps the secrets"
+    assert printed_again["TELEGRAM_BOT_TOKEN"] == "123:owner-pasted", "and what the owner filled in"
     assert oct((target / "secrets.env").stat().st_mode & 0o777) == "0o600"
+    _, rotated = setup(tmp_path, TELEGRAM_OWNER_ID="42", ROTATE_BUS_SECRET="1")
+    assert rotated["RETINUE_BUS_SECRET"] != printed["RETINUE_BUS_SECRET"], "a leaked secret is replaced"
+    assert rotated["RETINUE_BUS_TOKEN_ASSISTANT"] == bus_token(rotated["RETINUE_BUS_SECRET"], "assistant")
+    assert rotated["TELEGRAM_BOT_TOKEN"] == "123:owner-pasted"
 
 
 def test_setup_with_matrix(tmp_path, monkeypatch):

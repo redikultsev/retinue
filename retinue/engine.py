@@ -115,21 +115,21 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
           "сделать, кому, зачем. when — местное время Владельца, в его "
           "поясе из справки «Сейчас», вида 2026-10-09T18:00. weekday — день недели, который ты имеешь в виду "
           "(«пятница»): Роутер сверит его с датой и откажет, если не совпало или время уже прошло. Тот же текст на "
-          "то же время вернёт «Уже стоит». Владельцу назови день и время из ответа Роутера, номер — нет.",
+          "то же время вернёт «Уже стоит». Владельцу назови день и время из ответа Роутера, id — нет.",
           {"text": str, "when": str, "weekday": str})
     async def set_reminder(args):
         return await reminders("add", {"text": args["text"], "when": args["when"], "weekday": args["weekday"]})
 
-    @tool("list_reminders", "Активные напоминания Владельца, ближайшие первыми: номер, когда, текст.", {})
+    @tool("list_reminders", "Активные напоминания Владельца, ближайшие первыми: когда, текст, [id].", {})
     async def list_reminders(args):
         return await reminders("list", {})
 
-    @tool("cancel_reminder", "Отменить напоминание по номеру из list_reminders.", {"id": int})
+    @tool("cancel_reminder", "Отменить напоминание по id из list_reminders.", {"id": int})
     async def cancel_reminder(args):
         return await reminders("cancel", {"id": args["id"]})
 
     @tool("move_reminder",
-          "Перенести напоминание по номеру из list_reminders на другое время. when и weekday — как в set_reminder.",
+          "Перенести напоминание по id из list_reminders на другое время. when и weekday — как в set_reminder.",
           {"id": int, "when": str, "weekday": str})
     async def move_reminder(args):
         return await reminders("move", {"id": args["id"], "when": args["when"], "weekday": args["weekday"]})

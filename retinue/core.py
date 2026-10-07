@@ -45,7 +45,8 @@ LATE_S = 120        # a reminder sent later than this says how late it is
 RERUN_S = 24 * 3600     # after a restart an unanswered owner message younger than this is answered,
 LIST_S = 7 * 24 * 3600  # an older one, up to this age, is named to the owner instead; older still is left alone
 LIST_MAX = 20
-RESTARTED = "Ответ задержался: Роутер перезапускался. Реплики Владельца пришли раньше, время — у каждой."
+RESTARTED = ("Ответ задержался: Роутер перезапускался. Реплики Владельца пришли раньше, время — у каждой. "
+             "Если ты уже отвечала на них, тот ответ до Владельца не дошёл: ответь заново, полностью.")
 REMINDER_NOTE = ("Напиши Владельцу это напоминание своими словами, как в разговоре. Если из разговора видно что-то "
                  "полезное к нему — добавь коротко. Номер не называй.")
 LIMITED = "Ответ задержался: был исчерпан лимит подписки. Реплики Владельца пришли раньше, время — у каждой."
@@ -444,7 +445,7 @@ class Core:
 
     async def _summary(self, job: Job, now: float) -> None:
         agent = self.agents[self.default_agent]
-        plans = [f"- {self.jobs.line(j)}" for j in self.jobs.today(now)] or ["- напоминаний на сегодня нет"]
+        plans = [f"- {self.jobs.line(j, numbered=False)}" for j in self.jobs.today(now)] or ["- напоминаний на сегодня нет"]
         context_id = f"summary-{job.key}"
         status, answer, meta = "error", "", {}
         if self.limit_until <= now:
@@ -591,7 +592,7 @@ class Core:
         reminders = self.jobs.reminders(NOW_REMINDERS)
         if reminders:
             lines.append("Напоминания Владельца, ближайшие:")
-            lines += [f"- {self.jobs.line(job)}" for job in reminders]
+            lines += [f"- {self.jobs.line(job, numbered=False)}" for job in reminders]
         else:
             lines.append("Активных напоминаний нет.")
         return lines

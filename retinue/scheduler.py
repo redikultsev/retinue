@@ -70,8 +70,9 @@ class Scheduler:
     def _job(row) -> Job:
         return Job(row[0], row[1], row[2], row[3], row[4], row[5], row[6], json.loads(row[7]))
 
-    def line(self, job: Job) -> str:
-        return f"#{job.id} · {clock.day(job.due, job.tz)} — {job.text}"
+    def line(self, job: Job, numbered: bool = True) -> str:
+        """How a reminder is named: with its number for the tools, without it wherever it may reach the owner."""
+        return (f"#{job.id} · " if numbered else "") + f"{clock.day(job.due, job.tz)} — {job.text}"
 
     # --- the owner's reminders: what the assistant's tools do ------------------------------------
 

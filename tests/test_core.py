@@ -421,7 +421,8 @@ def test_now_block_at_the_start_of_a_session_and_after_compaction(tmp_path):
 
         first = await say("привет")
         assert NOW_BLOCK in first and "Пояс Владельца: Europe/Moscow (МСК)." in first
-        assert "- #1 · " in first and "18:00 МСК — позвонить Х" in first, "the owner's reminders are in it"
+        assert "18:00 МСК — позвонить Х" in first, "the owner's reminders are in it"
+        assert "#1" not in first, "without numbers: they are for the tools, and the owner is not told them"
         assert NOW_BLOCK not in await say("как дела"), "once per session"
         assert NOW_BLOCK not in await say("длинно", {"compacted": True}), "compaction is learnt after the run"
         assert NOW_BLOCK in await say("и ещё"), "the first request after compaction carries it"
@@ -556,7 +557,7 @@ def test_after_a_restart_unanswered_messages_are_answered_or_listed(tmp_path):
     telegram = asyncio.run(run())
     assert len(prompts) == 1, "the last day's messages run once, together; nothing runs on the second restart"
     (prompt,) = prompts
-    assert RESTARTED_NOTE in prompt and "[Новые реплики Владельца: 2." in prompt and "МСК, " in prompt
+    assert RESTARTED_NOTE in prompt and "до Владельца не дошёл" in prompt and "[Новые реплики Владельца: 2." in prompt and "МСК, " in prompt
     assert prompt.index("что посмотреть в Ереване?") < prompt.index("и где поесть")
     assert "давнее" not in prompt and "отвеченное" not in prompt and "фото" not in prompt.split("[Новые реплики")[1]
     (listing,) = [c[0] for c in telegram.cards]
@@ -715,7 +716,7 @@ def test_morning_summary_every_day_at_nine(tmp_path):
     assert cards[0] == ("Доброе утро. Сегодня в 18:30 — купить хлеб.\n\nЗдоровье за сутки: ответов — 1, "
                         "напоминаний — 0, сбоев — 0, доля лимита подписки неизвестна.")
     assert cards[1].startswith("Утренняя сводка — без ассистентки: её запуск не удался.\nНапоминания на сегодня:\n"
-                               "- #2 · пт 9 октября, 18:00 МСК — позвонить Х\n\nЗдоровье за сутки: ответов — 0, "
+                               "- пт 9 октября, 18:00 МСК — позвонить Х\n\nЗдоровье за сутки: ответов — 0, "
                                "напоминаний — 1, сбоев — ")
     assert "лимит подписки израсходован на 25 % (пятичасовое окно, на " in cards[2]
     assert cards[2].endswith("_Сводка опоздала на 2 ч 7 мин: Роутер не работал._")

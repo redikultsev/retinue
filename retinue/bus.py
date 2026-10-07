@@ -20,6 +20,7 @@ target's room as well. That is why the second taint rule matters: an agent's mem
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import logging
@@ -112,7 +113,7 @@ def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
 
 class BusServer:
     """HTTP endpoint on the agents network: GET /agents, POST /call, POST /archive/search,
-    POST /reminders/{add,list,cancel,move}. Authenticated by per-agent token."""
+    POST /reminders/{add,list,cancel,move}, POST /attachments/get. Authenticated by per-agent token."""
 
     def __init__(self, core, secret: str, port: int) -> None:
         self.core = core
@@ -121,7 +122,8 @@ class BusServer:
         self.app = web.Application()
         self.app.add_routes([web.get("/agents", self.list_agents), web.post("/call", self.call),
                              web.post("/archive/search", self.archive_search),
-                             web.post("/reminders/{action}", self.reminders)])
+                             web.post("/reminders/{action}", self.reminders),
+                             web.post("/attachments/get", self.attachment)])
 
     async def start(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
@@ -162,3 +164,14 @@ class BusServer:
         body = await request.json()
         ok, text = await self.core.reminders(caller, str(body.get("turn", "")), request.match_info["action"], body)
         return web.json_response({"ok": ok, "text": text})
+
+    async def attachment(self, request: web.Request) -> web.Response:
+        caller = self.caller(request)
+        body = await request.json()
+        try:
+            number = int(body.get("id") or 0)
+        except (TypeError, ValueError):
+            number = 0
+        ok, text, images = await self.core.get_attachment(caller, str(body.get("turn", "")), number)
+        return web.json_response({"ok": ok, "text": text, "images": [
+            {"mimeType": media_type, "data": base64.b64encode(data).decode()} for media_type, data in images]})

@@ -17,6 +17,7 @@ from .channels.telegram import TelegramChannel
 from .config import RouterConfig
 from .core import Core
 from .protocol import Store
+from .speech import Scribe
 
 
 def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventLoop) -> list:
@@ -44,7 +45,7 @@ def main() -> None:
     asyncio.set_event_loop(loop)
     store = Store(cfg.state_db)
     core = Core(cfg.agents, store, cfg.owner, archive=Archive(cfg.archive_db), default_agent=cfg.default_agent,
-                tz=cfg.owner_tz, backup_status=cfg.backup_status)
+                tz=cfg.owner_tz, backup_status=cfg.backup_status, scribe=Scribe(cfg.stt_key, store=store))
     loop.run_until_complete(core.start(build_channels(cfg, store, loop)))
     ticking = loop.create_task(core.clock())  # reminders, the morning summary, retries after the limit
     if cfg.bus_secret:

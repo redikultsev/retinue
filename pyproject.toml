@@ -15,6 +15,14 @@ dependencies = [
     "uvicorn>=0.30",
     "httpx>=0.27",
     "tzdata>=2024.1",              # zoneinfo data: the slim image may have no /usr/share/zoneinfo
+    "pillow>=11",                  # photos: upright, at most 1568 px, JPEG — before the model sees them
+    "pillow-heif>=1",              # HEIC/HEIF: what an iPhone sends when a photo goes as a file
+    "pypdf>=5",                    # PDF: pages, password, text layer — checked before the model gets the file
+    "cryptography>=42",            # pypdf opens AES-locked PDFs through it; came only through other packages
+    "python-docx>=1.1",            # the text of office files; markitdown would bring numpy, onnxruntime, pandas
+    "openpyxl>=3.1",
+    "python-pptx>=1",
+    "defusedxml>=0.7",             # openpyxl parses through it when it is installed: no entity expansion
 ]
 
 [project.scripts]

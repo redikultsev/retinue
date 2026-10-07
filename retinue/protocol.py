@@ -145,6 +145,12 @@ class Store:
         row = self.db.execute("SELECT context_id FROM conversations WHERE agent_id = ?", (agent_id,)).fetchone()
         return row[0] if row else self.new_conversation(agent_id)
 
+    def belongs(self, conversation_id: str, agent_id: str) -> bool:
+        """Is this the agent's conversation: its current one, or one it has been asked in before (the protocol)."""
+        return conversation_id == self.conversation(agent_id) or self.db.execute(
+            "SELECT 1 FROM protocol WHERE conversation_id = ? AND target = ? LIMIT 1",
+            (conversation_id, agent_id)).fetchone() is not None
+
     def new_conversation(self, agent_id: str) -> str:
         context_id = f"conv-{uuid.uuid4()}"
         self.db.execute("INSERT OR REPLACE INTO conversations VALUES (?, ?)", (agent_id, context_id))

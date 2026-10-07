@@ -10,6 +10,7 @@ import dataclasses
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -24,6 +25,18 @@ from .config import EngineConfig
 log = logging.getLogger("retinue.engine")
 
 SESSION_LOST = "_Прошлый разговор не сохранился, начинаю заново._\n\n"
+UNREADABLE = "_Файл не прочитался, поэтому разговор начат заново._\n\n"
+TOO_LARGE = "_Разговор с файлами стал больше, чем принимает модель, поэтому начат заново._\n\n"
+UNREADABLE_NOTE = ("[Справка от Роутера: файлы из этой реплики модель прочитать не смогла — API их отклонил, и "
+                   "разговор начат заново. Скажи Владельцу об этом одной фразой и ответь на то, на что можно "
+                   "ответить без файлов. Понадобится вложение — достань его инструментом get_attachment по номеру "
+                   "из метки.]")
+TOO_LARGE_NOTE = ("[Справка от Роутера: с файлами разговор стал больше, чем принимает API, и начат заново. Скажи "
+                  "Владельцу об этом одной фразой и ответь. Понадобится вложение — достань его инструментом "
+                  "get_attachment по номеру из метки.]")
+# A 400 is about the files only when it names them; any other 400 is an ordinary failure.
+ABOUT_FILES = re.compile(r"image|document|pdf|media", re.IGNORECASE)
+FILE_SESSIONS = "retinue-file-sessions.json"  # in the config dir: sessions that hold files, across restarts
 COMPACT = "/compact"  # Claude Code's own command; the only prompt that is not delivered verbatim
 LIMIT = "Лимит подписки исчерпан."  # the router words it for the owner; this text is for logs
 # Tokens of a run as the API reports them -> the names the router keeps.
@@ -49,13 +62,38 @@ class EngineResult:
 
 # Called with the text of the reply being written so far (the current assistant message, not a delta).
 OnText = Callable[[str], Awaitable[None]]
+# What one turn says: text, or content blocks (text, image, document) when the owner sent files.
+Prompt = str | list[dict]
+
+
+class FilesRefused(Exception):
+    """The API refused a run because of files: a file it cannot read (400 naming it) or a request swollen by them
+    (413). The session holds them and would fail on every resume. `args[0]` is the HTTP status."""
+
+
+def has_files(prompt: Prompt) -> bool:
+    return isinstance(prompt, list) and any(block.get("type") in ("image", "document") for block in prompt)
+
+
+def as_prompt(prompt: Prompt):
+    """What `query()` takes. Text goes as it is. Content blocks go as streaming input: one user message, built
+    before the stream, so that nothing can fail inside it. A new stream for every call: a retry needs its own."""
+    if isinstance(prompt, str):
+        return prompt
+    message = {"type": "user", "session_id": "", "parent_tool_use_id": None,
+               "message": {"role": "user", "content": prompt}}
+
+    async def once():
+        yield message
+
+    return once()
 
 
 class Engine(Protocol):
     """One conversation is one session: a call continues `session_id` (None starts a new one) and returns the
     session to continue next time. The host keeps the mapping; the engine keeps the transcript."""
 
-    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
+    async def run(self, prompt: Prompt, session_id: str | None, on_text: OnText | None = None,
                   turn_id: str | None = None) -> EngineResult: ...
 
     async def compact(self, session_id: str | None) -> EngineResult: ...
@@ -134,8 +172,22 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
     async def move_reminder(args):
         return await reminders("move", {"id": args["id"], "when": args["when"], "weekday": args["weekday"]})
 
+    @tool("get_attachment",
+          "Достать снова то, что прислал Владелец, по номеру из метки [вложение #N: …]. После сжатия картинок и "
+          "PDF в разговоре нет — этот инструмент вернёт картинку и текст: расшифровку, текст "
+          "документа; у PDF — только его текстовый слой.",
+          {"id": int})
+    async def get_attachment(args):
+        async with client(60) as http:
+            response = await http.post(f"{bus_url}/attachments/get", headers=headers,
+                                       json={"turn": turn_id, "id": args["id"]})
+        data = response.json()
+        images = [{"type": "image", "data": image["data"], "mimeType": image["mimeType"]}
+                  for image in data.get("images", [])]
+        return {"content": [*images, {"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
+
     return {t.name: t for t in (ask_agent, list_agents, search_archive, set_reminder, list_reminders,
-                                cancel_reminder, move_reminder)}
+                                cancel_reminder, move_reminder, get_attachment)}
 
 
 # Set in code for every run, so that no compose file can forget them.
@@ -175,6 +227,16 @@ class ClaudeEngine:
             os.makedirs(cfg.config_dir, mode=0o700, exist_ok=True)
             os.chmod(cfg.config_dir, 0o700)
             self.env["CLAUDE_CONFIG_DIR"] = cfg.config_dir
+        self.sessions_file = Path(cfg.config_dir) / FILE_SESSIONS if cfg.config_dir else None
+        self.with_files: set[str] = set()  # sessions that have been sent files
+        if self.sessions_file and self.sessions_file.is_file():
+            self.with_files = set(json.loads(self.sessions_file.read_text()))
+
+    def _took_files(self, session_id: str | None) -> None:
+        if session_id and session_id not in self.with_files:
+            self.with_files.add(session_id)
+            if self.sessions_file:
+                self.sessions_file.write_text(json.dumps(sorted(self.with_files)))
 
     def options(self, turn_id: str | None, streaming: bool, session_id: str | None = None) -> ClaudeAgentOptions:
         """Everything one run is allowed, in one place."""
@@ -203,19 +265,38 @@ class ClaudeEngine:
             include_partial_messages=streaming,
         )
 
-    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
+    async def run(self, prompt: Prompt, session_id: str | None, on_text: OnText | None = None,
                   turn_id: str | None = None) -> EngineResult:
         try:
-            return await self._run(prompt, self.options(turn_id, on_text is not None, session_id), on_text)
-        except ResultError as exc:
-            # The transcript is gone (e.g. the volume was recreated): start over instead of failing every turn.
-            if not session_id or "No conversation found" not in str(exc):
-                raise
-            log.warning("session %s not found, starting a new one", session_id)
-            result = await self._run(prompt, self.options(turn_id, on_text is not None), on_text)
-            result.text = SESSION_LOST + result.text
+            try:
+                return await self._run(prompt, self.options(turn_id, on_text is not None, session_id), on_text)
+            except ResultError as exc:
+                # The transcript is gone (e.g. the volume was recreated): start over instead of failing every turn.
+                if not session_id or "No conversation found" not in str(exc):
+                    raise
+                log.warning("session %s not found, starting a new one", session_id)
+                result = await self._run(prompt, self.options(turn_id, on_text is not None), on_text)
+                result.text = SESSION_LOST + result.text
+                result.new_session = True
+                return result
+        except FilesRefused as refused:
+            # The files are in the transcript now: every resume would send them again and fail. The same turn runs in
+            # a new session without its files, the owner is told, and the model learns how to get a file back.
+            status = refused.args[0]
+            log.warning("the API refused the run because of files (%s); starting a new session without them", status)
+            note = UNREADABLE_NOTE if status == 400 else TOO_LARGE_NOTE
+            text = f"{note}\n\n{prompt}" if isinstance(prompt, str) else \
+                [{"type": "text", "text": note}] + [b for b in prompt if b.get("type") == "text"]
+            result = await self._run(text, self.options(turn_id, on_text is not None), on_text)
+            result.text = (UNREADABLE if status == 400 else TOO_LARGE) + result.text
             result.new_session = True
             return result
+
+    def _about_files(self, status: int | None, message: str, prompt: Prompt, session_id: str | None) -> bool:
+        """Did the API refuse the run because of files: 413, or a 400 that names them — in a turn with files or in a
+        session that has been sent some."""
+        files_here = has_files(prompt) or (session_id is not None and session_id in self.with_files)
+        return files_here and (status == 413 or (status == 400 and bool(ABOUT_FILES.search(message))))
 
     async def compact(self, session_id: str | None) -> EngineResult:
         """Squeeze the session on the owner's request. The prompt is our constant, so the slash command may run."""
@@ -228,13 +309,13 @@ class ClaudeEngine:
             result.text = "Контекст сжат."
         return result
 
-    async def _run(self, prompt: str, options: ClaudeAgentOptions, on_text: OnText | None) -> EngineResult:
+    async def _run(self, prompt: Prompt, options: ClaudeAgentOptions, on_text: OnText | None) -> EngineResult:
         result: ResultMessage | None = None
         rate: RateLimitInfo | None = None
         draft = ""
         compacted = False
         try:
-            async for message in query(prompt=prompt, options=options):
+            async for message in query(prompt=as_prompt(prompt), options=options):
                 if isinstance(message, ResultMessage):
                     result = message
                 elif isinstance(message, RateLimitEvent):
@@ -257,6 +338,9 @@ class ClaudeEngine:
                         draft += event["delta"]["text"]
                         await on_text(draft)
         except ResultError as exc:
+            said = f"{exc} {exc.result or ''} {exc.errors or ''} {result.result if result else ''}"
+            if self._about_files(exc.api_error_status, said, prompt, options.resume):
+                raise FilesRefused(exc.api_error_status) from exc
             # The CLI reports a failed run, then exits non-zero, and the SDK raises. A limit is an answer.
             if exc.api_error_status != 429 and not (rate and rate.status == "rejected"):
                 raise
@@ -264,6 +348,11 @@ class ClaudeEngine:
         if result is not None and result.is_error and (result.api_error_status == 429
                                                        or (rate and rate.status == "rejected")):
             return limited(rate, options.resume, compacted)
+        if result is not None and result.is_error and self._about_files(
+                result.api_error_status, f"{result.result or ''} {result.errors or ''}", prompt, options.resume):
+            raise FilesRefused(result.api_error_status)
+        if result is not None and not result.is_error and has_files(prompt):
+            self._took_files(result.session_id)
         if result is None:
             return EngineResult(text="Агент не вернул результат.", is_error=True, session_id=options.resume,
                                 compacted=compacted)
@@ -301,10 +390,13 @@ def limited(rate: RateLimitInfo | None, session_id: str | None, compacted: bool)
 class EchoEngine:
     """No-model engine for smoke tests: answers with the prompt."""
 
-    async def run(self, prompt: str, session_id: str | None, on_text: OnText | None = None,
+    async def run(self, prompt: Prompt, session_id: str | None, on_text: OnText | None = None,
                   turn_id: str | None = None) -> EngineResult:
         if on_text:
             await on_text("echo: ")
+        if isinstance(prompt, list):  # the text, and how many files came with it
+            files = sum(block.get("type") in ("image", "document") for block in prompt)
+            prompt = "\n".join(b["text"] for b in prompt if b.get("type") == "text") + f"\n(файлов: {files})"
         return EngineResult(text=f"echo: {prompt}", is_error=False, session_id=session_id or "echo-session")
 
     async def compact(self, session_id: str | None) -> EngineResult:

@@ -62,6 +62,14 @@ def test_owner_time_zone(tmp_path, monkeypatch):
         load(tmp_path, AGENT + telegram + "owner_tz: Moscow\n")
 
 
+def test_the_speech_key_comes_from_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    assert load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n").stt_key == "", "optional: voice is refused aloud"
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-test")
+    assert load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n").stt_key == "sk-test"
+
+
 def test_router_does_not_load_matrix_without_the_section():
     code = "import sys, retinue.router; sys.exit('mautrix' in sys.modules or 'retinue.channels.matrix' in sys.modules)"
     assert subprocess.run([sys.executable, "-c", code]).returncode == 0

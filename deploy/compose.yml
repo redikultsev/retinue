@@ -56,6 +56,7 @@ services:
       RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}   # only with a `telegram:` section in router.yaml
       RETINUE_BUS_SECRET: ${RETINUE_BUS_SECRET:-}   # agents ask each other through the router
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}   # speech to text; the router calls it, the assistant never
     networks: [agents, outside, matrix]           # `outside` is its way to Telegram
 
   assistant:

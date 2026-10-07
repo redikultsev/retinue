@@ -63,6 +63,7 @@ agents:
     trust_class: private
     archive: true     # may search the raw archive through the bus
     reminders: true   # may set, list, move and cancel the owner's reminders through the bus
+    attachments: true # may fetch what the owner sent (#N) again through the bus
     can_call: []      # no other agents at this stage
 YAML
   if [[ -n $TELEGRAM_OWNER_ID ]]; then
@@ -131,6 +132,7 @@ fill() { local file=${3:-$STACK}; keep "$1" "" "$file"; grep -q "^$1=." "$file" 
 put RETINUE_BUS_SECRET "$RETINUE_BUS_SECRET"
 for a in "${AGENTS[@]}"; do put "RETINUE_BUS_TOKEN_$(upper "$a")" "$(bus_token "$a")"; done
 fill CLAUDE_CODE_OAUTH_TOKEN "claude setup-token"
+fill ELEVENLABS_API_KEY "elevenlabs.io: a key with speech_to_text only and a credit limit; empty = voice refused"
 [[ -n $TELEGRAM_OWNER_ID ]] && fill TELEGRAM_BOT_TOKEN "@BotFather"
 if [[ -n $MATRIX_SERVER_NAME ]]; then
   put COMPOSE_PROFILES matrix

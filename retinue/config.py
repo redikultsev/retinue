@@ -31,6 +31,7 @@ class RouterAgent:
     can_call: list[str] = field(default_factory=list)  # agent ids this agent may ask through the bus; "*" = all
     archive: bool = False                 # may search the raw archive through the bus
     reminders: bool = False               # may set, list, move and cancel the owner's reminders through the bus
+    attachments: bool = False             # may fetch what the owner sent (#N) again through the bus
 
 
 @dataclass
@@ -69,6 +70,7 @@ class RouterConfig:
     backup_status: str = "/status/backup.json"  # written by the host's backup; the morning summary reports it
     bus_listen_port: int = 9100         # agents reach the router here (network `agents` only)
     bus_secret: str = ""                # from RETINUE_BUS_SECRET; per-agent tokens are derived from it
+    stt_key: str = ""                   # from ELEVENLABS_API_KEY: speech to text; without it voice is refused aloud
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -87,6 +89,7 @@ class RouterConfig:
         if cfg.telegram:
             cfg.telegram.bot_token = _env("TELEGRAM_BOT_TOKEN")
         cfg.bus_secret = os.environ.get("RETINUE_BUS_SECRET", "")
+        cfg.stt_key = os.environ.get("ELEVENLABS_API_KEY", "")
         try:
             ZoneInfo(cfg.owner_tz)
         except (ZoneInfoNotFoundError, ValueError):
@@ -106,7 +109,7 @@ class RouterConfig:
 
 # What an agent can be given through the router.
 BUS_TOOLS = ("ask_agent", "list_agents", "search_archive",
-             "set_reminder", "list_reminders", "cancel_reminder", "move_reminder")
+             "set_reminder", "list_reminders", "cancel_reminder", "move_reminder", "get_attachment")
 
 
 @dataclass

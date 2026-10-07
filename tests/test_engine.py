@@ -14,7 +14,7 @@ from retinue.archive import ASSISTANT, Archive
 from retinue.bus import BusServer, bus_token
 from retinue.config import EngineConfig, RouterAgent
 from retinue.core import Core
-from retinue.engine import SESSION_LOST, ClaudeEngine, bus_tools
+from retinue.engine import SESSION_LOST, TOO_LARGE, UNREADABLE, UNREADABLE_NOTE, ClaudeEngine, bus_tools
 from retinue.protocol import Store
 
 from test_core import FakeChannel
@@ -161,6 +161,55 @@ def test_a_run_reports_compaction_and_tokens(instructions, tmp_path, monkeypatch
     assert not asyncio.run(engine.run("коротко", "s-1")).compacted
 
 
+PHOTO = {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "/9j/"}}
+TURN = [{"type": "text", "text": "[вложение #1]"}, PHOTO, {"type": "text", "text": "что на фото?"}]
+
+
+def blocks_cli(seen, refuse_files=False, lost=()):
+    """A CLI that reads its prompt as the SDK would: a string, or every message of the stream."""
+    async def cli(prompt, options):
+        messages = prompt if isinstance(prompt, str) else [message async for message in prompt]
+        seen.append({"prompt": messages, "resume": options.resume})
+        if options.resume in lost:
+            raise ResultError(f"No conversation found with session ID: {options.resume}")
+        content = messages if isinstance(messages, str) else messages[0]["message"]["content"]
+        if refuse_files and any(block["type"] == "image" for block in content):
+            yield ResultMessage(subtype="success", duration_ms=10, duration_api_ms=5, is_error=True, num_turns=1,
+                                session_id=options.resume or "s-new", api_error_status=400,
+                                result="API Error: 400 Could not process image")
+            raise ResultError("Claude Code returned an error result: API Error", data={"api_error_status": 400})
+        yield ResultMessage(subtype="success", duration_ms=10, duration_api_ms=5, is_error=False, num_turns=1,
+                            session_id=options.resume or "s-new", result="вижу")
+    return cli
+
+
+def test_files_go_as_one_prebuilt_message_of_content_blocks(instructions, tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr("retinue.engine.query", blocks_cli(seen, lost={"gone"}))
+    engine = ClaudeEngine(EngineConfig(instructions=instructions, config_dir=str(tmp_path / "c")), str(tmp_path))
+    result = asyncio.run(engine.run(TURN, "gone"))
+    message = {"type": "user", "session_id": "", "parent_tool_use_id": None,
+               "message": {"role": "user", "content": TURN}}
+    assert [s["prompt"] for s in seen] == [[message], [message]], "the retry without resume gets a fresh stream"
+    assert [s["resume"] for s in seen] == ["gone", None] and result.text.startswith(SESSION_LOST)
+    asyncio.run(engine.run("просто текст", "s-new"))
+    assert seen[-1]["prompt"] == "просто текст", "a turn without files goes as before"
+
+
+def test_files_the_api_refuses_start_a_new_session_without_them(instructions, tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr("retinue.engine.query", blocks_cli(seen, refuse_files=True))
+    engine = ClaudeEngine(EngineConfig(instructions=instructions, config_dir=str(tmp_path / "c")), str(tmp_path))
+    result = asyncio.run(engine.run(TURN, "s-1"))
+    assert [s["resume"] for s in seen] == ["s-1", None], "the session that holds the refused file is left"
+    content = seen[1]["prompt"][0]["message"]["content"]
+    assert content == [{"type": "text", "text": UNREADABLE_NOTE}, TURN[0], TURN[2]], "the same turn, without files"
+    assert result.text.startswith(UNREADABLE) and result.new_session and not result.is_error
+    monkeypatch.setattr("retinue.engine.query", limit_cli(None, http_status=400))
+    with pytest.raises(ResultError):
+        asyncio.run(engine.run("текст", "s-1")), "a 400 on a turn without files is not this case"
+
+
 def limit_cli(rate_status, http_status=429, raises=True):
     """What the CLI streams when the subscription window is closed: the rate limit event (when it says so), the
     failed result, then the SDK raises because the CLI exits non-zero."""
@@ -235,3 +284,87 @@ def test_reminder_tools_reach_the_router(tmp_path):
     assert not moved[0] and moved[1].startswith("Перенесла: ") and "19:30 МСК" in moved[1]
     assert not cancelled[0] and cancelled[1].startswith("Отменила: ") and again[0]
     assert late[0] and "Нет активного запроса" in late[1], "only during the agent's own turn"
+
+
+def test_get_attachment_tool_returns_the_same_picture_and_text(tmp_path):
+    archive = Archive(str(tmp_path / "archive.sqlite"))
+    photo = archive.attach("telegram:5", "photo", "фото 800×600", "своё", "", [("image/jpeg", b"jpeg")])
+    paper = archive.attach("telegram:5", "document", "PDF «счёт.pdf», 1 стр.", "своё", "Invoice 4711",
+                           [("application/pdf", b"%PDF")])
+    store = Store(str(tmp_path / "r.sqlite"))
+    archive.append("owner", "[вложения]", conversation_id=store.conversation("assistant"), channel="telegram",
+                   native_id="5")
+    stranger = archive.attach("system-x", "photo", "фото", "своё", "", [("image/jpeg", b"j")])  # not an owner message
+
+    async def run():
+        agents = [RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private", attachments=True),
+                  RouterAgent(id="other", name="Другой", url="o", trust_class="private")]
+        core = Core(agents, store, "owner", archive=archive)
+        await core.start([FakeChannel("telegram", False)])
+        turn, other = core.turns.open_root("assistant"), core.turns.open_root("other")
+        server = TestServer(BusServer(core, "secret", 0).app)
+        await server.start_server()
+        try:
+            url = str(server.make_url("")).rstrip("/")
+            get = bus_tools(url, bus_token("secret", "assistant"), turn.id)["get_attachment"].handler
+            out = [await get({"id": photo.id}), await get({"id": paper.id}), await get({"id": 99}),
+                   await get({"id": stranger.id}),
+                   await bus_tools(url, bus_token("secret", "other"), other.id)["get_attachment"].handler({"id": 1})]
+            core.turns.close(turn)
+            out.append(await get({"id": photo.id}))
+            return out
+        finally:
+            await server.close()
+
+    picture, pdf, missing, foreign, denied, late = asyncio.run(run())
+    image, text = picture["content"]
+    assert not picture["is_error"] and image == {"type": "image", "data": "anBlZw==", "mimeType": "image/jpeg"}
+    assert text["text"].startswith("[вложение #1: фото 800×600 · своё] — из сообщения 20") and "МСК" in text["text"]
+    assert not pdf["is_error"] and [c["type"] for c in pdf["content"]] == ["text"], "a PDF cannot travel in a tool result"
+    assert "Текстовый слой PDF" in pdf["content"][0]["text"] and "Invoice 4711" in pdf["content"][0]["text"]
+    assert missing["is_error"] and "Вложения #99 нет" in missing["content"][0]["text"]
+    assert foreign["is_error"], "only what the owner sent"
+    assert denied["is_error"] and "не выданы" in denied["content"][0]["text"], "a grant in router.yaml, like reminders"
+    assert late["is_error"] and "Нет активного запроса" in late["content"][0]["text"]
+
+
+def refusing_cli(seen, status, message, when):
+    """A CLI whose API refuses a run with `status` and `message` when `when(content, resume)` holds."""
+    async def cli(prompt, options):
+        messages = prompt if isinstance(prompt, str) else [message async for message in prompt]
+        seen.append({"prompt": messages, "resume": options.resume})
+        content = messages if isinstance(messages, str) else messages[0]["message"]["content"]
+        if when(content, options.resume):
+            yield ResultMessage(subtype="success", duration_ms=10, duration_api_ms=5, is_error=True, num_turns=1,
+                                session_id=options.resume or "s-new", api_error_status=status,
+                                result=f"API Error: {status} {message}")
+            raise ResultError("Claude Code returned an error result: API Error",
+                              data={"api_error_status": status, "result": f"API Error: {status} {message}"})
+        yield ResultMessage(subtype="success", duration_ms=10, duration_api_ms=5, is_error=False, num_turns=1,
+                            session_id=options.resume or "s-files", result="ответ")
+    return cli
+
+
+def test_only_a_refusal_about_files_resets_the_session(instructions, tmp_path, monkeypatch):
+    config = str(tmp_path / "c")
+    engine = ClaudeEngine(EngineConfig(instructions=instructions, config_dir=config), str(tmp_path))
+    seen = []
+    monkeypatch.setattr("retinue.engine.query", refusing_cli(
+        seen, 400, "messages.0.content: text content blocks must be non-empty", lambda content, resume: True))
+    with pytest.raises(ResultError):
+        asyncio.run(engine.run(TURN, "s-1")), "a 400 about something else is an ordinary failure"
+    assert [s["resume"] for s in seen] == ["s-1"]
+
+    seen.clear()
+    monkeypatch.setattr("retinue.engine.query", refusing_cli(seen, 413, "request_too_large", lambda c, r: False))
+    assert asyncio.run(engine.run(TURN, None)).session_id == "s-files", "a session that took files is remembered"
+    monkeypatch.setattr("retinue.engine.query", refusing_cli(
+        seen, 413, "request_too_large: Request exceeds the maximum size", lambda content, resume: resume in ("s-files", "s-other")))
+    later = ClaudeEngine(EngineConfig(instructions=instructions, config_dir=config), str(tmp_path))  # a restart
+    result = asyncio.run(later.run("а теперь?", "s-files"))
+    assert [s["resume"] for s in seen[1:]] == ["s-files", None] and result.new_session and not result.is_error
+    assert result.text.startswith(TOO_LARGE) and "get_attachment" in seen[-1]["prompt"], \
+        "a turn without files in a session full of them: too large, a new session, and the way back to the file"
+    with pytest.raises(ResultError):
+        asyncio.run(later.run("просто текст", "s-other")), "413 in a session without files is not about files"
+    assert "get_attachment" in UNREADABLE_NOTE

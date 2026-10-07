@@ -32,7 +32,11 @@ in. Run it again after every `git pull`; it keeps what you filled in. If a secre
 ## 3. Deploy the stack
 
 Fill in `TELEGRAM_BOT_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`: your own subscription,
-personal use) in `/srv/retinue/stack.env`. Then either `sudo docker compose -p retinue --env-file
+personal use) in `/srv/retinue/stack.env`. `ELEVENLABS_API_KEY` is optional: voice notes, audio and the sound of
+videos are transcribed by [ElevenLabs](https://elevenlabs.io) Scribe; without the key they are refused aloud. Use
+a paid plan or pay-as-you-go (the free tier blocks datacenter addresses), turn off the use of your data for
+training in the account settings, and create a key with the `speech_to_text` permission only and a credit
+limit. Audio goes to ElevenLabs in the US; the router deletes each transcript there right after reading it. Then either `sudo docker compose -p retinue --env-file
 /srv/retinue/stack.env -f deploy/compose.yml up -d --build` from `/opt/retinue`, or Dokploy → project →
 *Compose* from your Git repo, compose path `./deploy/compose.yml`, with the file's lines in *Environment*. Do not set `ANTHROPIC_API_KEY`: when it is present, Claude Code bills the
 key instead of the subscription. Deploy.
@@ -46,6 +50,17 @@ Send the bot `/check`: a message written by the system arrives with two buttons;
 disappear and the choice stays. Then ask anything, and later ask what was said before: the assistant searches
 the archive. Ask it to remind you of something in five minutes: it names the day and time back, and the reminder
 arrives on time, written by the assistant. The morning summary comes every day at 09:00 your time.
+
+Before sending your own files, run the multimodal probe in the assistant's container: a picture and a PDF it
+makes itself go through the assistant's engine, then a question with `resume`, `/compact` and a question after
+it. Every step must have `"ok": true`; `broken_photo` must answer without an error.
+
+```bash
+docker compose exec -T assistant python - < tests/e2e/multimodal.py
+```
+
+Then send the bot a photo, a PDF, a voice note: she answers on substance. Files over 20 MB are refused aloud —
+the Bot API serves bots nothing bigger.
 
 The assistant's container has no way out except the model API:
 

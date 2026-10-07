@@ -3,6 +3,9 @@
 Bot API over plain HTTP (long polling), no framework. Only the owner's user id is served. Everything the owner
 reads leaves through `_message`: sendMessage or editMessageText with the link preview switched off. No other
 method carries text, and no call ever has a `url` field.
+
+Files the owner sends are downloaded here (getFile, up to 20 MB) and handed to the core as they are; reading them
+is the core's work. A file URL carries the bot token: it is never logged and never put into an error text.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ import logging
 
 import httpx
 
+from ..attachments import MAX_DOWNLOAD, Upload, too_big
 from ..config import TelegramConfig
 from ..core import AgentFile, Core
 from ..protocol import Store
@@ -23,12 +27,13 @@ API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 50
 NO_PREVIEW = {"is_disabled": True}
 SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/check": "!check"}
-# What a message may carry instead of text. None of it is handled yet; each is refused aloud: the value
-# finishes the phrase «Пока не умею принимать …».
-UNSUPPORTED = {"photo": "фото", "document": "файлы", "voice": "голосовые", "audio": "аудио", "video": "видео",
-               "video_note": "видеосообщения", "sticker": "стикеры", "animation": "гифки", "contact": "контакты",
-               "location": "геопозицию", "venue": "места", "poll": "опросы"}
+# Files a message may carry; the core reads them. A GIF (animation) also carries `document`: it is checked first.
+MEDIA = ("photo", "document", "voice", "audio", "video", "video_note")
+# What is still refused aloud: the value finishes the phrase «Пока не умею принимать …».
+UNSUPPORTED = {"animation": "гифки", "poll": "опросы", "dice": "кубики", "game": "игры", "story": "истории"}
 LOST = "Сообщение не обработано: ошибка на стороне Роутера. Повтори его, пожалуйста."
+POISON = ("Сообщение с файлом не обработано: пока Роутер его разбирал, он перезапустился. Пришли файл ещё раз — "
+          "лучше в другом формате.")
 START = ("Пиши сюда — ответит ассистентка. Команды: /new — новый разговор, /compact — сжать разговор, "
          "/check — проверка канала, /help — справка.")
 
@@ -93,8 +98,20 @@ class TelegramChannel:
         The offset is saved after the handler, not before: if the router dies while handling, Telegram delivers
         the update again after the restart, and the core recognises a message it has already answered. A handler
         that fails does not replay forever either: the owner is told that the message was not processed, and
-        the offset moves on.
+        the offset moves on. A message with a file is marked before it is touched: if the process dies on it (a file
+        that swells the router), the second delivery is refused aloud instead of killing the router again.
         """
+        message = update.get("message") or {}
+        if any(key in message for key in MEDIA):
+            if self.store.get("telegram.attempt") == str(update["update_id"]):
+                log.warning("update %s: the previous process died on it; refused", update["update_id"])
+                try:
+                    await self.core.tell_owner(POISON, origin=self)
+                except Exception:
+                    log.exception("could not report the refused update %s", update["update_id"])
+                self.store.set("telegram.offset", str(update["update_id"] + 1))
+                return
+            self.store.set("telegram.attempt", str(update["update_id"]))
         try:
             await self.on_update(update)
         except Exception:
@@ -133,12 +150,19 @@ class TelegramChannel:
         if sender.get("id") != self.cfg.owner_id or message["chat"]["id"] != self.cfg.owner_id or sender.get("is_bot"):
             return
         native_id = str(message["message_id"])
-        text = (message.get("text") or "").strip()
+        text = (message.get("text") or "").strip() or self._as_text(message)
+        forwarded_from = self._forwarded_from(message)
+        reply = message.get("reply_to_message") or {}
+        reply_to = str(reply["message_id"]) if "message_id" in reply else None
         if not text:
+            if "animation" not in message and any(key in message for key in MEDIA):
+                await self.core.receive(self, message.get("caption") or "", [self._upload(message)],
+                                        native_id=native_id, reply_to=reply_to, forwarded_from=forwarded_from,
+                                        group=message.get("media_group_id"))
+                return
             what = next((name for key, name in UNSUPPORTED.items() if key in message), "такие сообщения")
             await self.core.unsupported(self, what, native_id=native_id, caption=message.get("caption") or "")
             return
-        forwarded_from = self._forwarded_from(message)
         command = text.split()[0].split("@")[0].lower()
         if not forwarded_from:  # somebody else's text is data: «/new» inside it is not a command
             if command in ("/start", "/help"):  # the core's help names «!» commands; Telegram uses «/»
@@ -146,10 +170,58 @@ class TelegramChannel:
                 return
             if command in SLASH_COMMANDS:
                 text = SLASH_COMMANDS[command] + text[len(text.split()[0]):]
-        reply = message.get("reply_to_message") or {}
         # One chat, one assistant: no address, the core picks the default agent.
         await self.core.handle(self, None, text, native_id=native_id, forwarded_from=forwarded_from,
-                               reply_to=str(reply["message_id"]) if "message_id" in reply else None)
+                               reply_to=reply_to)
+
+    @staticmethod
+    def _as_text(message: dict) -> str:
+        """A sticker, a place or a contact is said in words: the model needs no file for them."""
+        if sticker := message.get("sticker"):
+            return f"[стикер {sticker.get('emoji') or ''}]".replace(" ]", "]")
+        if venue := message.get("venue"):
+            place = venue.get("location") or {}
+            return (f"[место: {venue.get('title', '')}, {venue.get('address', '')} "
+                    f"({place.get('latitude')}, {place.get('longitude')})]")
+        if place := message.get("location"):
+            return f"[геопозиция: {place.get('latitude')}, {place.get('longitude')}]"
+        if contact := message.get("contact"):
+            name = " ".join(filter(None, [contact.get("first_name"), contact.get("last_name")]))
+            return f"[контакт: {name}, {contact.get('phone_number', '')}]"
+        return ""
+
+    def _upload(self, message: dict) -> Upload:
+        """The file of a message as the core takes it: not downloaded yet — the core fetches it when it reads it,
+        so an album is gathered without waiting for downloads. Too big for the Bot API: the reason instead of a
+        download, said to the owner by the core."""
+        kind = next(key for key in MEDIA if key in message)
+        item = message[kind][-1] if kind == "photo" else message[kind]  # a photo comes in sizes, the largest last
+        upload = Upload(kind, name=item.get("file_name", ""), media_type=item.get("mime_type", ""),
+                        duration=int(item.get("duration") or 0), size=int(item.get("file_size") or 0))
+        if upload.size > MAX_DOWNLOAD:
+            upload.refused = too_big(upload)
+            return upload
+
+        async def fetch() -> bytes:
+            try:
+                return await self.download(item["file_id"])
+            except TelegramError:
+                raise
+            except Exception as exc:  # worded by its type only: a Bot API address carries the token
+                raise TelegramError(type(exc).__name__) from None
+
+        upload.fetch = fetch
+        return upload
+
+    async def download(self, file_id: str) -> bytes:
+        path = (await self.call("getFile", file_id=file_id))["file_path"]
+        try:
+            response = await self.http.get(f"{API}/file/bot{self.cfg.bot_token}/{path}")
+        except httpx.HTTPError as exc:
+            raise TelegramError(f"file: {type(exc).__name__}") from None  # its text may hold the URL, and the token
+        if response.status_code != 200:  # not raise_for_status(): its message carries the URL
+            raise TelegramError(f"file: {response.status_code}")
+        return response.content
 
     def _forwarded_from(self, message: dict) -> str | None:
         """Who wrote a forwarded message, or None when the text is the owner's own."""

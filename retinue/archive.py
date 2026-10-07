@@ -3,17 +3,25 @@
 It lives in the router process, in its own SQLite file. Agents never get the file: they search it through the
 router's bus (`POST /archive/search`), the same way they ask each other. A status is a new event that refers to
 an older one (`ref`), never an edit of a row.
+
+What the owner sent besides text is kept next to it: the `attachments` table says what the model got from each
+file (the number `#N` it sees, a transcript or a document's text), and the files it got as content blocks (a JPEG,
+a PDF) lie in the folder `attachments/` beside the database, one subfolder per owner message.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+log = logging.getLogger("retinue.archive")
 
 OWNER, ASSISTANT, SYSTEM = "owner", "assistant", "system"  # who wrote the text
 KINDS = (OWNER, ASSISTANT, SYSTEM)
@@ -31,6 +39,23 @@ class Event:
     channel: str
     ref: str | None = None
     meta: dict = field(default_factory=dict)
+
+
+@dataclass
+class Attachment:
+    id: int                 # the number the model sees: #12
+    event_id: str           # the owner message it came with
+    kind: str               # photo | document | voice | audio | video | video_note
+    what: str               # «фото 1280×960», «голосовое 0:42»
+    origin: str             # «своё» | «переслано от …»
+    text: str               # a transcript, a document's text, a PDF's text layer
+    files: list = field(default_factory=list)  # [[media type, path under the attachments folder], ...]
+
+    def mark(self) -> str:
+        return f"[вложение #{self.id}: {self.what} · {self.origin}]"
+
+
+SUFFIXES = {"image/jpeg": ".jpg", "application/pdf": ".pdf"}
 
 
 def event_id(kind: str, ts: float, text: str, channel: str = "", native_id: str | None = None) -> str:
@@ -51,6 +76,8 @@ class Archive:
     def __init__(self, path: str) -> None:
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
+        # Files the model got as content blocks; an archive in memory (tests) keeps them in a temporary folder.
+        self.folder = Path(path).parent / "attachments" if path != ":memory:" else Path(tempfile.mkdtemp())
         self.db = sqlite3.connect(path)
         self.db.executescript(
             """
@@ -74,6 +101,21 @@ class Archive:
                 USING fts5(text, content='events', content_rowid='seq', tokenize='unicode61');
             CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events
                 BEGIN INSERT INTO events_fts (rowid, text) VALUES (new.seq, new.text); END;
+            CREATE TABLE IF NOT EXISTS attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,   -- the #N the model sees
+                ts REAL NOT NULL,
+                event_id TEXT NOT NULL,                 -- the owner message it came with
+                kind TEXT NOT NULL,
+                what TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                text TEXT NOT NULL,
+                files TEXT NOT NULL                     -- JSON: [[media type, path under attachments/], ...]
+            );
+            CREATE INDEX IF NOT EXISTS attachments_event ON attachments (event_id);
+            CREATE TRIGGER IF NOT EXISTS attachments_append_only_u BEFORE UPDATE ON attachments
+                BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS attachments_append_only_d BEFORE DELETE ON attachments
+                BEGIN SELECT RAISE(ABORT, 'archive is append-only'); END;
             """
         )
         self.db.commit()
@@ -176,3 +218,47 @@ class Archive:
     def coverage(self) -> tuple[int, float | None, float | None]:
         """(number of events, time of the first, time of the last): what an empty search result must name."""
         return tuple(self.db.execute("SELECT COUNT(*), MIN(ts), MAX(ts) FROM events").fetchone())
+
+    _ATTACHMENT = "id, event_id, kind, what, origin, text, files"
+
+    @staticmethod
+    def _attachment(row) -> Attachment:
+        return Attachment(row[0], row[1], row[2], row[3], row[4], row[5], json.loads(row[6]))
+
+    def attach(self, event_id: str, kind: str, what: str, origin: str, text: str,
+               files: list[tuple[str, bytes]], commit: bool = True) -> Attachment:
+        """Keep one attachment of an owner message: its files first (named by their content, so a second write of
+        the same file changes nothing), then the row that numbers it. `commit=False` leaves the row to the
+        transaction of the event it belongs to (`append` commits): a failure in between rolls both back."""
+        folder = self.folder / event_id.replace(":", "_").replace("/", "_")
+        stored = []
+        for media_type, data in files:
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"{hashlib.sha256(data).hexdigest()[:16]}{SUFFIXES.get(media_type, '.bin')}"
+            path.write_bytes(data)
+            stored.append([media_type, str(path.relative_to(self.folder))])
+        cursor = self.db.execute(
+            "INSERT INTO attachments (ts, event_id, kind, what, origin, text, files) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (time.time(), event_id, kind, what, origin, text, json.dumps(stored)))
+        if commit:
+            self.db.commit()
+        return Attachment(cursor.lastrowid, event_id, kind, what, origin, text, stored)
+
+    def attachment(self, number: int) -> Attachment | None:
+        row = self.db.execute(f"SELECT {self._ATTACHMENT} FROM attachments WHERE id = ?", (number,)).fetchone()
+        return self._attachment(row) if row else None
+
+    def attachments_of(self, event_id: str) -> list[Attachment]:
+        rows = self.db.execute(f"SELECT {self._ATTACHMENT} FROM attachments WHERE event_id = ? ORDER BY id",
+                               (event_id,)).fetchall()
+        return [self._attachment(row) for row in rows]
+
+    def read(self, attachment: Attachment) -> list[tuple[str, bytes]]:
+        """The files of an attachment as (media type, bytes). A file gone from the disk is left out."""
+        out = []
+        for media_type, path in attachment.files:
+            try:
+                out.append((media_type, (self.folder / path).read_bytes()))
+            except OSError:
+                log.warning("attachment #%s: file %s is missing", attachment.id, path)
+        return out

@@ -5,7 +5,7 @@ conversation in an archive on your own server. It reads your personal data, and 
 web, no shell, no network except the model API.
 
 > Status: **pilot**. One assistant in one long session, a searchable archive of the conversation, reminders and
-> a morning summary in your time zone, closed egress. Mail, a web-search tool behind a schema and approvals for
+> a morning summary in your time zone, photos, PDFs, documents and voice notes, closed egress. Mail, a web-search tool behind a schema and approvals for
 > messages to other people are next. Expect breaking changes.
 
 ## Why
@@ -30,15 +30,20 @@ not by a prompt:
   reminder word for word. A morning summary arrives every day at 09:00: written by a separate run outside the
   conversation, or bare if that run fails. A subscription limit is told to you without the model, and the
   refused turn runs again when the window opens.
+- **Files are read by the router, not by the assistant.** A photo (HEIC too) is turned upright and shrunk, a
+  short PDF goes whole, a long one as its text, an office or text file as its text, a voice note or a video's
+  sound as a transcript (ElevenLabs, optional). The assistant gets content blocks and text, never a file to open:
+  it still has no file tools. Every attachment is marked `#N` and «own» or «forwarded from …»; after compaction
+  she fetches it again with `get_attachment`. What cannot be read is refused aloud.
 - **Nothing the assistant writes becomes a link.** Every address in its text reaches you as monospace text,
   with link previews off on every path.
-- **Reuse over rewrite.** Claude Agent SDK, a2a-sdk, Squid, SQLite FTS5. Retinue is the thin layer between them.
+- **Reuse over rewrite.** Claude Agent SDK, a2a-sdk, Squid, SQLite FTS5, Pillow, pypdf. Retinue is the thin layer between them.
 
 ## How it works
 
 ```
 You (Telegram) ──► Router ──A2A──► Assistant ──► egress proxy ──► model API, nothing else
-                     │   ◄──bus──┘ (search_archive, reminders)
+                     │   ◄──bus──┘ (search_archive, reminders, get_attachment)
                      ├─ Archive (SQLite, append-only, full-text)
                      ├─ Scheduler (reminders, the morning summary, a retry after the subscription limit)
                      └─ Protocol log and model runs (SQLite)
@@ -47,7 +52,9 @@ You (Telegram) ──► Router ──A2A──► Assistant ──► egress pr
 - `retinue/router.py` — entry point: the core plus the channels in the config (Telegram; Matrix is optional).
 - `retinue/core.py` — one owner message at a time; archives both sides; tells the assistant what happened in the
   conversation without it; buttons and messages the system sends on its own.
-- `retinue/archive.py` — the raw archive: append-only events with a full-text index.
+- `retinue/archive.py` — the raw archive: append-only events with a full-text index, and the attachments.
+- `retinue/attachments.py` — what the owner sends besides text, made readable: Pillow, pypdf, office files;
+  `retinue/speech.py` — speech to text (ElevenLabs Scribe over plain HTTP).
 - `retinue/scheduler.py` — reminders and the router's own timed jobs; `retinue/clock.py` — the owner's local time.
 - `retinue/bus.py` — what an agent may ask the router for: search the archive, or (when granted) another agent.
 - `retinue/agent_host.py` — one agent behind an A2A server; one container, its trust boundary.

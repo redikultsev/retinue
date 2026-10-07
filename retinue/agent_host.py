@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import logging
 import mimetypes
 import sqlite3
@@ -22,7 +23,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, 
 from starlette.applications import Starlette
 
 from .config import AgentConfig
-from .engine import Engine, EngineResult, make_engine
+from .engine import Engine, EngineResult, Prompt, make_engine
 
 log = logging.getLogger("retinue.agent")
 
@@ -33,6 +34,28 @@ OUTBOX = "out"  # files the agent writes here during a turn go to the owner as a
 MAX_FILES = 10
 MAX_FILE_BYTES = 15 * 1024 * 1024
 PROGRESS_INTERVAL_S = 0.8  # how often a partial reply is pushed to the router
+IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}  # what the API takes as an image block
+
+
+def prompt_of(message) -> Prompt:
+    """The turn as the engine takes it: the text alone, or — when the router sent files — content blocks: each file
+    after a line with its name (the router names it by its mark, «вложение #12: фото»), then the text."""
+    text = get_message_text(message)
+    files = [part for part in message.parts if part.raw]
+    if not files:
+        return text
+    blocks = []
+    for part in files:
+        data = base64.b64encode(part.raw).decode()
+        if part.media_type in IMAGE_TYPES:
+            block = {"type": "image", "source": {"type": "base64", "media_type": part.media_type, "data": data}}
+        elif part.media_type == "application/pdf":
+            block = {"type": "document", "source": {"type": "base64", "media_type": part.media_type, "data": data}}
+        else:
+            blocks.append({"type": "text", "text": f"[файл «{part.filename}» не передан: тип {part.media_type}]"})
+            continue
+        blocks += [{"type": "text", "text": f"[{part.filename}]"}, block]
+    return blocks + [{"type": "text", "text": text}]
 
 
 class Outbox:
@@ -100,10 +123,10 @@ class EngineExecutor(AgentExecutor):
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
         updater = TaskUpdater(event_queue=event_queue, task_id=task.id, context_id=task.context_id)
-        prompt = get_message_text(context.message) if context.message else ""
-        if not prompt.strip():
+        if not context.message or not get_message_text(context.message).strip():
             await updater.update_status(TaskState.TASK_STATE_REJECTED, message=new_text_message("Пустое сообщение."))
             return
+        prompt = prompt_of(context.message)
         await updater.update_status(TaskState.TASK_STATE_WORKING)
         # One turn at a time per conversation: a session is not safe to run twice at once.
         async with self.locks[task.context_id]:

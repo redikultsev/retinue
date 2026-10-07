@@ -2,7 +2,11 @@
 
 import asyncio
 
-from retinue.channels.telegram import LOST, START, TelegramChannel, TelegramError
+import httpx
+import pytest
+
+from retinue.attachments import Upload
+from retinue.channels.telegram import LOST, POISON, START, TelegramChannel, TelegramError
 from retinue.config import TelegramConfig
 from retinue.core import Pressed
 from retinue.protocol import Store
@@ -23,6 +27,9 @@ class FakeCore:
 
     async def unsupported(self, channel, what, **kwargs):
         self.calls.append(("unsupported", what, kwargs))
+
+    async def receive(self, channel, text, uploads, **kwargs):
+        self.calls.append(("receive", text, uploads, kwargs))
 
     async def press(self, channel, button_id):
         self.calls.append(("press", button_id))
@@ -86,9 +93,8 @@ def test_reply_forward_and_unsupported_types(tmp_path):
         await ch.on_message(msg("из канала", message_id=12, forward_origin={"type": "channel", "chat": {"title": "Вакансии"}}))
         await ch.on_message(msg("скрытый", message_id=13, forward_origin={"type": "hidden_user", "sender_user_name": "Аноним"}))
         await ch.on_message(msg("/new", message_id=14, forward_origin={"type": "user", "sender_user": {"id": OWNER}}))
-        photo = msg(None, message_id=15, photo=[{"file_id": "x"}], caption="смотри")
-        await ch.on_message(photo)
-        await ch.on_message(msg(None, message_id=16, voice={"file_id": "v"}))
+        await ch.on_message(msg(None, message_id=15, animation={"file_id": "a"}, document={"file_id": "a"}, caption="смотри"))
+        await ch.on_message(msg(None, message_id=16, poll={"id": "p"}))
         await ch.on_message(msg(None, message_id=17, new_chat_title="что-то служебное"))
         await ch.on_message(msg(None, message_id=18, sender=7, photo=[{"file_id": "x"}]))
 
@@ -99,10 +105,105 @@ def test_reply_forward_and_unsupported_types(tmp_path):
         ("handle", None, "из канала", {"native_id": "12", "reply_to": None, "forwarded_from": "Вакансии"}),
         ("handle", None, "скрытый", {"native_id": "13", "reply_to": None, "forwarded_from": "Аноним"}),
         ("handle", None, "!new", {"native_id": "14", **PLAIN}),  # the owner's own words, forwarded by himself
-        ("unsupported", "фото", {"native_id": "15", "caption": "смотри"}),
-        ("unsupported", "голосовые", {"native_id": "16", "caption": ""}),
+        ("unsupported", "гифки", {"native_id": "15", "caption": "смотри"}),  # a GIF is a document too: not read
+        ("unsupported", "опросы", {"native_id": "16", "caption": ""}),
         ("unsupported", "такие сообщения", {"native_id": "17", "caption": ""}),
     ], "a stranger's photo is ignored; the owner's is refused aloud, never dropped in silence"
+
+def fetching(tmp_path, missing=()):
+    """The adapter with a Bot API that serves files: getFile names a path, the file URL returns bytes."""
+    ch = make(tmp_path)
+    plain, ch.fetched = ch.call, []
+
+    async def call(method, files=None, **params):
+        if method == "getFile":
+            if params["file_id"] in missing:
+                raise TelegramError("getFile: 400 Bad Request: wrong file_id")
+            return {"file_path": f"files/{params['file_id']}"}
+        return await plain(method, files, **params)
+
+    def serve(request):
+        ch.fetched.append(request.url.path)
+        return httpx.Response(200, content=f"bytes of {request.url.path.rsplit('/', 1)[1]}".encode())
+
+    ch.call, ch.http = call, httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    return ch
+
+
+def test_files_are_fetched_and_handed_to_the_core(tmp_path):
+    ch = fetching(tmp_path, missing={"lost"})
+    ivan = {"type": "user", "sender_user": {"id": 7, "first_name": "Иван"}}
+
+    async def run():
+        await ch.on_message(msg(None, message_id=30, caption="чек", media_group_id="g1",
+                                photo=[{"file_id": "small", "file_size": 900}, {"file_id": "big", "file_size": 90000}]))
+        await ch.on_message(msg(None, message_id=31, forward_origin=ivan,
+                                voice={"file_id": "v1", "duration": 42, "mime_type": "audio/ogg", "file_size": 1000}))
+        await ch.on_message(msg(None, message_id=32, document={"file_id": "d1", "file_name": "film.mp4",
+                                                               "mime_type": "video/mp4", "file_size": 35 * 2**20}))
+        await ch.on_message(msg(None, message_id=33, document={"file_id": "lost", "file_name": "x.pdf"}))
+
+    asyncio.run(run())
+    (photo, voice, film, lost) = ch.core.calls
+    assert ch.fetched == [], "nothing is downloaded before the core has the message: an album part is not held up"
+    assert photo == ("receive", "чек", [Upload("photo", size=90000)],
+                     {"native_id": "30", "reply_to": None, "forwarded_from": None, "group": "g1"}), "the largest size"
+    assert voice == ("receive", "", [Upload("voice", b"", "", "audio/ogg", 42, 1000)],
+                     {"native_id": "31", "reply_to": None, "forwarded_from": "Иван", "group": None})
+    assert film[2] == [Upload("document", b"", "film.mp4", "video/mp4", 0, 35 * 2**20,
+                              "файл «film.mp4», 35 МБ: Telegram отдаёт ботам файлы до 20 МБ")]
+    assert film[2][0].fetch is None, "a file over 20 MB is not even asked for"
+
+    async def fetch_all():
+        got = [await photo[2][0].fetch(), await voice[2][0].fetch()]
+        with pytest.raises(TelegramError, match="getFile: 400 Bad Request: wrong file_id"):
+            await lost[2][0].fetch()
+        return got
+
+    assert asyncio.run(fetch_all()) == [b"bytes of big", b"bytes of v1"], "the core downloads when it reads"
+    assert ch.fetched == ["/file/bott/files/big", "/file/bott/files/v1"]
+
+
+def test_a_file_that_took_the_router_down_is_not_tried_a_third_time(tmp_path):
+    ch = make(tmp_path)
+    attempts = []
+
+    async def receive(channel, text, uploads, **kwargs):
+        attempts.append(ch.store.get("telegram.attempt"))
+
+    ch.core.receive = receive
+    photo = {"photo": [{"file_id": "p", "file_size": 10}]}
+
+    async def run():
+        await ch.consume({"update_id": 200, "message": msg(None, message_id=1, **photo)})
+        ch.store.set("telegram.offset", "201")
+        ch.store.set("telegram.attempt", "201")  # the router died while handling update 201; Telegram sends it again
+        await ch.consume({"update_id": 201, "message": msg(None, message_id=2, **photo)})
+
+    asyncio.run(run())
+    assert attempts == ["200"], "marked before the file is touched; the replay of 201 is not handled again"
+    assert [c for c in ch.core.calls if c[0] == "tell"] == [("tell", POISON)]
+    assert ch.store.get("telegram.offset") == "202"
+
+
+def test_stickers_places_and_contacts_are_text(tmp_path):
+    ch = make(tmp_path)
+    place = {"latitude": 44.8125, "longitude": 20.4612}
+
+    async def run():
+        await ch.on_message(msg(None, message_id=40, sticker={"emoji": "👍", "file_id": "s"}))
+        await ch.on_message(msg(None, message_id=41, location=place))
+        await ch.on_message(msg(None, message_id=42, location=place,
+                                venue={"location": place, "title": "Кафе", "address": "Кнеза Михаила 1"}))
+        await ch.on_message(msg(None, message_id=43, contact={"first_name": "Иван", "last_name": "Петров",
+                                                              "phone_number": "+381601234567"}))
+
+    asyncio.run(run())
+    assert [(c[2], c[3]["native_id"]) for c in ch.core.calls] == [
+        ("[стикер 👍]", "40"), ("[геопозиция: 44.8125, 20.4612]", "41"),
+        ("[место: Кафе, Кнеза Михаила 1 (44.8125, 20.4612)]", "42"), ("[контакт: Иван Петров, +381601234567]", "43")]
+    assert all(c[0] == "handle" for c in ch.core.calls)
+
 
 def press(data, sender=OWNER, chat=OWNER):
     return {"callback_query": {"id": "q1", "from": {"id": sender}, "data": data,

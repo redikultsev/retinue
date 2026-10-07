@@ -93,3 +93,23 @@ def test_conversation_window_and_counts(tmp_path):
     assert [e.text for e in archive.since("c1", 15.0, 10)] == ["ответ", "напоминание"]
     assert [e.text for e in archive.since("c1", 0, 1)] == ["напоминание"]
     assert (archive.count(ASSISTANT, 0), archive.count(OWNER, 15.0)) == (1, 1)
+
+
+def test_attachments_keep_what_the_model_got(tmp_path):
+    archive = make(tmp_path)
+    photo = archive.attach("telegram:5", "photo", "фото 800×600", "своё", "", [("image/jpeg", b"jpeg-bytes")])
+    voice = archive.attach("telegram:5", "voice", "голосовое 0:42", "переслано от Иван", "купи хлеб", [])
+    assert photo.mark() == "[вложение #1: фото 800×600 · своё]" and voice.id == 2, "the number the model sees"
+    assert [a.id for a in archive.attachments_of("telegram:5")] == [1, 2] and archive.attachments_of("x") == []
+    assert archive.read(photo) == [("image/jpeg", b"jpeg-bytes")] and archive.read(voice) == []
+    (stored,) = (tmp_path / "attachments").rglob("*.jpg")
+    assert stored.parent.name == "telegram_5", "one folder per owner message, named by its archive id"
+    reopened = make(tmp_path)
+    assert reopened.attachment(2).text == "купи хлеб" and reopened.attachment(2).origin == "переслано от Иван"
+    assert reopened.attachment(3) is None
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        archive.db.execute("DELETE FROM attachments")
+    stored.unlink()
+    assert archive.read(photo) == [], "a file lost from the disk is skipped, not a crash"
+    memory = Archive(":memory:")
+    assert memory.read(memory.attach("e", "photo", "фото", "своё", "", [("image/jpeg", b"j")])) == [("image/jpeg", b"j")]

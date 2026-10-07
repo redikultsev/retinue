@@ -40,13 +40,19 @@ def test_one_assistant_and_nothing_else():
     assert engine.tools == [] and engine.allowed_tools == [], "no built-in tool is offered or allowed"
     assert {"Bash", "WebSearch", "WebFetch"} <= set(engine.disallowed_tools)
     assert engine.bus_tools == ["search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-                                "move_reminder"], "the archive and reminders, and no ask_agent"
+                                "move_reminder", "get_attachment"], "the archive, reminders, attachments; no ask_agent"
     assert engine.model == "claude-opus-5-5", "Opus, pinned by id"
     instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
     assert all(f"`{name}`" in instructions for name in engine.bus_tools), "she is told about every tool she has"
+    assert "[вложение #N:" in instructions and "переслано от" in instructions, "what a mark and a forward mean"
     assert engine.instructions == "/agent/CLAUDE.md" and engine.config_dir == "/data/claude"
     assert sorted(SERVICES) == ["assistant", "egress", "router", "tuwunel"]
     assert sorted(COMPOSE["volumes"]) == ["assistant-data", "router-data", "tuwunel-db"]
+
+
+def test_only_the_router_holds_the_speech_key():
+    assert SERVICES["router"]["environment"]["ELEVENLABS_API_KEY"] == "${ELEVENLABS_API_KEY:-}"
+    assert "ELEVENLABS_API_KEY" not in SERVICES["assistant"]["environment"], "the assistant never sees the key"
 
 
 def test_assistant_container_cannot_write_its_settings_and_keeps_only_its_session():
@@ -96,7 +102,8 @@ def test_setup_without_matrix(tmp_path, monkeypatch):
     monkeypatch.delenv("RETINUE_AS_TOKEN", raising=False)
     cfg = RouterConfig.load(target / "router.yaml")
     assert cfg.matrix is None and cfg.telegram.owner_id == 42 and cfg.default_agent == "assistant"
-    assert [(a.id, a.archive, a.reminders, a.can_call) for a in cfg.agents] == [("assistant", True, True, [])]
+    assert [(a.id, a.archive, a.reminders, a.attachments, a.can_call) for a in cfg.agents] == [
+        ("assistant", True, True, True, [])]
     assert cfg.owner_tz == "Europe/Moscow"
     assert (target / "agents" / "assistant" / "CLAUDE.md").read_text() == (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
     assert "${RETINUE_BUS_TOKEN_ASSISTANT:-}" in (ROOT / "deploy" / "compose.yml").read_text()
@@ -104,6 +111,7 @@ def test_setup_without_matrix(tmp_path, monkeypatch):
         assert printed[f"RETINUE_BUS_TOKEN_{agent.id.upper()}"] == bus_token(printed["RETINUE_BUS_SECRET"], agent.id)
         assert AgentConfig.load(target / "agents" / agent.id / "agent.yaml").public_url == agent.url
     assert printed["TELEGRAM_BOT_TOKEN"] == "" and printed["CLAUDE_CODE_OAUTH_TOKEN"] == "", "left for the owner"
+    assert printed["ELEVENLABS_API_KEY"] == "", "pasted by the owner; without it voice is refused aloud"
     stack = target / "stack.env"
     stack.write_text(stack.read_text().replace("TELEGRAM_BOT_TOKEN=\n", "TELEGRAM_BOT_TOKEN=123:owner-pasted\n"))
     again, printed_again = setup(tmp_path, TELEGRAM_OWNER_ID="42")
@@ -177,3 +185,13 @@ def test_router_reads_the_backup_status_read_only(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     assert RouterConfig.load(target / "router.yaml").backup_status == "/status/backup.json"
     assert "backup_status=cfg.backup_status" in (ROOT / "retinue" / "router.py").read_text()
+
+
+def test_install_names_every_key_the_owner_pastes():
+    import re
+
+    asked = re.findall(r"^\[?.*fill (\w+) ", (ROOT / "deploy" / "setup.sh").read_text(), re.M)
+    guides = "".join(page.read_text() for page in (ROOT / "docs").glob("*.md"))
+    assert {"CLAUDE_CODE_OAUTH_TOKEN", "TELEGRAM_BOT_TOKEN", "ELEVENLABS_API_KEY"} <= set(asked)
+    assert [name for name in asked if name not in guides] == [], "the guides say where each one comes from"
+    assert "tests/e2e/multimodal.py" in (ROOT / "docs" / "install.md").read_text(), "the probe runs before files"

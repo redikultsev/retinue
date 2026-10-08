@@ -388,6 +388,9 @@ def test_the_hub_takes_pushes_but_its_config_and_hooks_stay_roots(tmp_path):
     assert not (hub / "kbcheck").exists(), "the lint's copies live elsewhere, one fresh folder per check"
     settings = subprocess.run(["git", "-C", str(hub), "config", "--list"], capture_output=True, text=True).stdout
     assert "receive.autogc=false" in settings and "core.logallrefupdates=false" in settings
+    head = subprocess.run(["git", "-C", str(hub), "symbolic-ref", "HEAD"], capture_output=True, text=True).stdout
+    assert head.strip() == "refs/heads/none", \
+        "a push to the branch HEAD names locks HEAD in the hub's own folder, which the group cannot write"
     clone = tmp_path / "clone"
     subprocess.run(["git", "init", "-q", "-b", "main", str(clone)], check=True)
     (clone / "a.md").write_text("x\n")

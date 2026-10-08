@@ -137,6 +137,9 @@ if [[ $MEMORY_ON == 1 ]]; then
                  "receive.autogc false" "gc.auto 0" "core.logAllRefUpdates false"; do
     git -C "$HUB" config ${setting}
   done
+  # HEAD names no branch: a push to the branch HEAD names also locks HEAD here, in the folder the group cannot
+  # write (seen on the server: «cannot lock ref 'HEAD'»). Clone with -b main.
+  git -C "$HUB" symbolic-ref HEAD refs/heads/none
   rm -rf "$HUB/kbcheck"                 # an earlier version kept the lint's copies here, writable by the group
   install -m 755 "$REPO/retinue/kbcheck.py" "$HUB/hooks/pre-receive"
   install -m 644 "$MEMORY_DIR/policy.json" "$HUB/hooks/kb-policy.json"

@@ -41,6 +41,10 @@ git branch -u hub/main
 
 and restart the stack: the router makes its working copy from the hub at start.
 
+The hub's `HEAD` names no branch (`refs/heads/none`): a push to the branch `HEAD` names also locks `HEAD` in the
+hub's own folder, which the containers' group may not write. So a new clone names the branch:
+`git clone -b main owner@10.8.0.1:/srv/retinue/memory/hub.git`.
+
 ## What the hub checks
 
 Every push, yours and the router's, with the same `kbcheck.py`:

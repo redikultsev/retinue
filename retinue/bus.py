@@ -52,6 +52,7 @@ class Tree:
     calls: int = 0
     tainted: bool = False  # the chain has read text written by an agent with the web
     private: bool = False  # the chain has read text written by an agent with the base
+    foreign: set[str] = field(default_factory=set)  # someone else's text the turn read: forwarded, attachment, travel
 
 
 @dataclass
@@ -113,8 +114,8 @@ def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
 
 class BusServer:
     """HTTP endpoint on the agents network: GET /agents, POST /call, POST /archive/search,
-    POST /reminders/{add,list,cancel,move}, POST /attachments/get, POST /travel/log. Authenticated by per-agent
-    token."""
+    POST /reminders/{add,list,cancel,move}, POST /attachments/get, POST /travel/log, POST /kb/log. Authenticated by
+    per-agent token."""
 
     def __init__(self, core, secret: str, port: int) -> None:
         self.core = core
@@ -125,7 +126,8 @@ class BusServer:
                              web.post("/archive/search", self.archive_search),
                              web.post("/reminders/{action}", self.reminders),
                              web.post("/attachments/get", self.attachment),
-                             web.post("/travel/log", self.travel_log)])
+                             web.post("/travel/log", self.travel_log),
+                             web.post("/kb/log", self.kb_log)])
 
     async def start(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
@@ -177,6 +179,13 @@ class BusServer:
         ok, text, images = await self.core.get_attachment(caller, str(body.get("turn", "")), number)
         return web.json_response({"ok": ok, "text": text, "images": [
             {"mimeType": media_type, "data": base64.b64encode(data).decode()} for media_type, data in images]})
+
+    async def kb_log(self, request: web.Request) -> web.Response:
+        caller = self.caller(request)
+        body = await request.json()
+        ok = await self.core.kb_log(caller, str(body.get("turn", "")), str(body.get("tool", "")),
+                                    str(body.get("decision", "")), str(body.get("path", "")), str(body.get("reason", "")))
+        return web.json_response({"ok": ok, "text": "" if ok else "Нет активного запроса."})
 
     async def travel_log(self, request: web.Request) -> web.Response:
         caller = self.caller(request)

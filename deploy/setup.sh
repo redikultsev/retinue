@@ -7,6 +7,7 @@
 #   sudo TELEGRAM_OWNER_ID=123456789 MATRIX_SERVER_NAME=matrix.example.com MATRIX_OWNER=alice bash deploy/setup.sh
 #   sudo TELEGRAM_OWNER_ID=123456789 ROTATE_BUS_SECRET=1 bash deploy/setup.sh   # a new bus secret and agent tokens
 #   sudo TELEGRAM_OWNER_ID=123456789 TRAVEL=1 bash deploy/setup.sh   # travel-ops: trip search and price watches
+#   sudo TELEGRAM_OWNER_ID=123456789 MEMORY=1 bash deploy/setup.sh   # the knowledge base she writes, and its hub
 #
 # The stack's environment goes to /srv/retinue/stack.env (mode 600). The script prints names, never values:
 # a terminal ends up in logs and transcripts.
@@ -36,11 +37,22 @@ TRAVEL=${TRAVEL:-0}                     # 1: travel-ops; on for good once travel
 TRAVEL_ON=0
 [[ $TRAVEL == 1 || -f $ROOT/travel/profile.yml ]] && TRAVEL_ON=1
 TRAVEL_URL=http://travel-ops:8765/mcp
+MEMORY=${MEMORY:-0}                     # 1: the knowledge base and its hub; on for good once the hub exists
+MEMORY_ON=0
+MEMORY_DIR=$ROOT/memory
+HUB=$MEMORY_DIR/hub.git
+[[ $MEMORY == 1 || -d $HUB ]] && MEMORY_ON=1
+MEMORY_UID=10001                        # the containers' user (Dockerfile): the router writes the hub as it
 AGENTS=(assistant)
 token() { openssl rand -hex 32; }
 upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
 
 install -d -m 755 "$ROOT"
+# The knowledge base. The mounts exist whether it is on or not, so the folders and the policy always do; what she
+# may write and see is the owner's (written once from the examples, then edited by hand).
+install -d -m 755 "$MEMORY_DIR" "$MEMORY_DIR/tree" "$MEMORY_DIR/git"
+[[ -f $MEMORY_DIR/policy.json ]] || install -m 644 "$REPO/deploy/memory/policy.example.json" "$MEMORY_DIR/policy.json"
+[[ -f $MEMORY_DIR/checkout.txt ]] || install -m 644 "$REPO/deploy/memory/checkout.example.txt" "$MEMORY_DIR/checkout.txt"
 SECRETS="$ROOT/secrets.env"
 [[ -f $SECRETS ]] || (umask 077; : > "$SECRETS")
 secret() { grep -q "^$1=" "$SECRETS" || echo "$1=$(token)" >> "$SECRETS"; }   # made once, then kept
@@ -77,6 +89,11 @@ YAML
     sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e "s/^[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/  - '\1'/" \
       "$REPO/deploy/travel/link-hosts.txt"
   fi
+  if [[ $MEMORY_ON == 1 ]]; then
+    printf 'memory:\n  hub: /hub\n  checkout:\n'   # the rest: defaults in config.py (MemoryConfig)
+    sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e "s/^[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/    - '\1'/" \
+      "$MEMORY_DIR/checkout.txt"
+  fi
   if [[ -n $TELEGRAM_OWNER_ID ]]; then
     printf 'telegram:\n  owner_id: %s\n' "$TELEGRAM_OWNER_ID"
   fi
@@ -106,6 +123,38 @@ if [[ $TRAVEL_ON == 1 ]]; then
   [[ -f $PROFILE ]] || printf '%s\n' "# travel-ops profile: home_airports, travellers, currency, stays." \
     "# The fields are in profile.example.yml of travel-ops. Without home_airports the assistant asks." > "$PROFILE"
   chmod 644 "$PROFILE"   # read by travel-ops' own user in its container
+fi
+
+if [[ $MEMORY_ON == 1 ]]; then
+  # The hub: every copy pushes here, and its pre-receive checks every push with the same rules (kbcheck.py).
+  # A push writes objects/ and refs/ and nothing else: no gc after it (it would write packed-refs and gc.* in the
+  # hub's own folder), no reflogs. So only objects/ and refs/ are the group's. The hub's folder and its config are
+  # the owner's (git refuses a repository its user does not own, and he pushes over ssh) and not the group's;
+  # hooks/ is root's. The containers' user can push, but cannot change what checks a push (core.hooksPath,
+  # receive.*) or move hooks/ away.
+  [[ -f $HUB/HEAD ]] || git init -q --bare -b main "$HUB"
+  for setting in "core.sharedRepository group" "receive.denyNonFastForwards true" "receive.denyDeletes true" \
+                 "receive.autogc false" "gc.auto 0" "core.logAllRefUpdates false"; do
+    git -C "$HUB" config ${setting}
+  done
+  rm -rf "$HUB/kbcheck"                 # an earlier version kept the lint's copies here, writable by the group
+  install -m 755 "$REPO/retinue/kbcheck.py" "$HUB/hooks/pre-receive"
+  install -m 644 "$MEMORY_DIR/policy.json" "$HUB/hooks/kb-policy.json"
+  chmod -R go-w "$HUB"
+  chmod -R g+rwX "$HUB/objects" "$HUB/refs"
+  find "$HUB/objects" "$HUB/refs" -type d -exec chmod g+s {} +
+fi
+if [[ $HOST_SETUP == 1 ]]; then
+  # The containers' user owns the working copy; the hub's objects/ and refs/ are shared with the owner through
+  # the group of that uid; the rest of the hub is the owner's, its hooks root's.
+  chown -R "$MEMORY_UID:$MEMORY_UID" "$MEMORY_DIR/tree" "$MEMORY_DIR/git"
+  chmod 700 "$MEMORY_DIR/git"
+  if [[ $MEMORY_ON == 1 ]]; then
+    getent group "$MEMORY_UID" >/dev/null || groupadd -g "$MEMORY_UID" retinue-memory
+    [[ -n ${SUDO_USER:-} ]] && usermod -aG "$(getent group "$MEMORY_UID" | cut -d: -f1)" "$SUDO_USER"
+    chown -R "${SUDO_USER:-root}:$MEMORY_UID" "$HUB"
+    chown -R root:root "$HUB/hooks"
+  fi
 fi
 
 install -d -m 755 "$ROOT/egress"
@@ -163,6 +212,7 @@ else
   drop COMPOSE_PROFILES "$STACK"
 fi
 if [[ $TRAVEL_ON == 1 ]]; then put RETINUE_TRAVEL_URL "$TRAVEL_URL"; else put RETINUE_TRAVEL_URL ""; fi
+if [[ $MEMORY_ON == 1 ]]; then put RETINUE_MEMORY /kb; else put RETINUE_MEMORY ""; fi
 if [[ $TRAVEL_ON == 1 ]] && ! grep -q '^home_airports:' "$PROFILE"; then
   MISSING+=("$PROFILE: home_airports (your airports, IATA)")
 fi
@@ -227,6 +277,7 @@ for missing in ${MISSING[@]+"${MISSING[@]}"}; do
   echo "Fill in $missing"
 done
 [[ $TRAVEL_ON == 1 ]] && echo "Travel: on — the travel-ops image (about 5 GB) is built from GitHub by \`up -d --build\`"
+[[ $MEMORY_ON == 1 ]] && echo "Memory: on — hub $HUB; rules $MEMORY_DIR/policy.json and checkout.txt (see docs/memory.md)"
 case $BACKUP_STATE in
   on) echo "Backup: on, every night at 03:30 Europe/Moscow; the result goes to $ROOT/status/backup.json" ;;
   unfilled) echo "Backup: off until $BACKUP_ENV is filled; then run this script again, and see docs/backup.md" ;;

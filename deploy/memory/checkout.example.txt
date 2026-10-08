@@ -1,0 +1,5 @@
+# What of the knowledge base the assistant's folder holds: git sparse-checkout, non-cone patterns, one per line.
+# Everything at the top, except hidden folders and the scripts the base's lint and builds run.
+/*
+!/.*/
+!/scripts/

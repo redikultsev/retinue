@@ -93,6 +93,9 @@ class Store:
         )
         if "channel" not in {row[1] for row in self.db.execute("PRAGMA table_info(protocol)")}:
             self.db.execute("ALTER TABLE protocol ADD COLUMN channel TEXT")
+        if "alone" not in {row[1] for row in self.db.execute("PRAGMA table_info(buttons)")}:
+            # 1: pressing it spends this button only, the card's others stay alive (the evening list's «Откатить»)
+            self.db.execute("ALTER TABLE buttons ADD COLUMN alone INTEGER NOT NULL DEFAULT 0")
         # Rooms used to own the conversation; keep those conversations when upgrading.
         self.db.execute("INSERT OR IGNORE INTO conversations SELECT agent_id, context_id FROM rooms"
                         " WHERE agent_id != '_protocol' AND context_id != ''")
@@ -200,21 +203,33 @@ class Store:
                               (channel, native_id)).fetchone()
         return row[0] if row else None
 
-    def add_button(self, event_id: str, label: str, action: str, value: str, expires: float) -> str:
+    def add_button(self, event_id: str, label: str, action: str, value: str, expires: float,
+                   alone: bool = False) -> str:
         """Register a button and return its id: the only thing that goes into the messenger's callback data."""
         button_id = secrets.token_urlsafe(12)
-        self.db.execute("INSERT INTO buttons VALUES (?, ?, ?, ?, ?, ?, NULL)",
-                        (button_id, event_id, label, action, value, expires))
+        self.db.execute("INSERT INTO buttons (id, event_id, label, action, value, expires, used, alone)"
+                        " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)", (button_id, event_id, label, action, value, expires,
+                                                               int(alone)))
         self.db.commit()
         return button_id
 
-    def use_button(self, button_id: str, now: float) -> tuple[str, str, str, str] | None:
-        """Spend a button: (event_id, label, action, value), or None when it is unknown, expired or already
-        used. Pressing one button spends the whole card."""
-        row = self.db.execute("SELECT event_id, label, action, value FROM buttons"
+    def use_button(self, button_id: str, now: float) -> tuple[str, str, str, str, bool] | None:
+        """Spend a button: (event_id, label, action, value, alone), or None when it is unknown, expired or already
+        used. Pressing one button spends the whole card, unless it is a button `alone`: then only itself."""
+        row = self.db.execute("SELECT event_id, label, action, value, alone FROM buttons"
                               " WHERE id = ? AND used IS NULL AND expires > ?", (button_id, now)).fetchone()
         if row is None:
             return None
-        self.db.execute("UPDATE buttons SET used = ? WHERE event_id = ?", (now, row[0]))
+        if row[4]:
+            self.db.execute("UPDATE buttons SET used = ? WHERE id = ?", (now, button_id))
+        else:
+            self.db.execute("UPDATE buttons SET used = ? WHERE event_id = ?", (now, row[0]))
         self.db.commit()
-        return row
+        return (*row[:4], bool(row[4]))
+
+    def card_buttons(self, event_id: str, now: float) -> tuple[list[tuple[str, str]], list[str]]:
+        """The card's buttons still alive, (label, id) in their order, and the labels already pressed."""
+        rows = self.db.execute("SELECT label, id, used, expires FROM buttons WHERE event_id = ? ORDER BY rowid",
+                               (event_id,)).fetchall()
+        return ([(label, i) for label, i, used, expires in rows if used is None and expires > now],
+                [label for label, i, used, expires in sorted((r for r in rows if r[2]), key=lambda r: r[2])])

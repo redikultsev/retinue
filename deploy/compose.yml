@@ -51,6 +51,12 @@ services:
       - /srv/retinue/router.yaml:/config/router.yaml:ro
       - router-data:/data
       - /srv/retinue/status:/status:ro            # the host's backup result: read here, written only by the host
+      # The knowledge base (setup.sh MEMORY=1): the files she edits, their repository — the router's alone, so a hook
+      # or a config she wrote could never run here — and the hub, whose hooks/ belongs to root.
+      - /srv/retinue/memory/tree:/kb
+      - /srv/retinue/memory/git:/kb-git
+      - /srv/retinue/memory/hub.git:/hub
+      - /srv/retinue/memory/policy.json:/config/memory-policy.json:ro
     environment:
       RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN:-}         # these two only with a `matrix:` section in router.yaml
       RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN:-}
@@ -67,12 +73,17 @@ services:
       - /srv/retinue/agents/assistant:/agent:ro   # config and instructions: nothing here can be written
       # The session transcript (everything the model read) and the conversation -> session table.
       - assistant-data:/data
+      # The knowledge base's files and nothing of its repository; what she may write there is the policy's.
+      - /srv/retinue/memory/tree:/kb
+      - /srv/retinue/memory/policy.json:/memory-policy.json:ro
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
       HTTPS_PROXY: http://egress:3128             # Claude Code reaches the model API through the proxy only
       RETINUE_BUS_URL: http://router:9100
       RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_ASSISTANT:-}
       RETINUE_TRAVEL_URL: ${RETINUE_TRAVEL_URL:-}   # travel-ops' MCP; empty = no travel tools
+      RETINUE_MEMORY: ${RETINUE_MEMORY:-}           # /kb: her file tools there; empty = no file tools at all
+      RETINUE_MEMORY_POLICY: /memory-policy.json
       NO_PROXY: travel-ops,router                 # neighbours on internal networks, never through the proxy
     networks: [agents, travel-assistant]          # both internal: no route out of either
     depends_on: [router, egress]

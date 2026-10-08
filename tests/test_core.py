@@ -667,7 +667,11 @@ def test_a_limit_without_a_reset_time_is_tried_again_in_an_hour(tmp_path):
     assert abs(due - time.time() - 3600) < 60 and core.limit_until == 0.0, "an unknown reset does not stop other runs"
 
 
-def test_morning_summary_every_day_at_nine(tmp_path):
+def test_morning_summary_every_day_at_nine(tmp_path, monkeypatch):
+    """The days of this test are the week of 2026-10-07 on its own clock: everything the router stamps — archive
+    events, runs, fired reminders — reads the same clock, so the test does not depend on the day it runs."""
+    clock = [moscow(7, 21)]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
     archive, store, asked = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite")), []
     conversation = store.conversation("assistant")
     question, _ = archive.append("owner", "что посмотреть в Ереване?", conversation_id=conversation,
@@ -692,6 +696,7 @@ def test_morning_summary_every_day_at_nine(tmp_path):
         core.jobs.add("позвонить Х", "2026-10-09T18:00", "пт", WEDNESDAY)
 
         async def loop_at(now):  # one pass of Core.clock at a given moment
+            clock[0] = now
             core.jobs.ensure_summary(now)
             await core.tick(now)
             await drain()
@@ -718,8 +723,8 @@ def test_morning_summary_every_day_at_nine(tmp_path):
     assert cards[0] == ("Доброе утро. Сегодня в 18:30 — купить хлеб.\n\nЗдоровье за сутки: ответов — 1, "
                         "напоминаний — 0, сбоев — 0, доля лимита подписки неизвестна.")
     assert cards[1].startswith("Утренняя сводка — без ассистентки: её запуск не удался.\nНапоминания на сегодня:\n"
-                               "- пт 9 октября, 18:00 МСК — позвонить Х\n\nЗдоровье за сутки: ответов — 0, "
-                               "напоминаний — 1, сбоев — ")
+                               "- пт 9 октября, 18:00 МСК — позвонить Х\n\nЗдоровье за сутки: ответов — 1, "
+                               "напоминаний — 1, сбоев — "), "her words for the bread reminder, sent at the same tick"
     assert "лимит подписки израсходован на 25 % (пятичасовое окно, на " in cards[2]
     assert cards[2].endswith("_Сводка опоздала на 2 ч 7 мин: Роутер не работал._")
     assert store.db.execute("SELECT kind, status FROM runs WHERE kind = 'summary' ORDER BY id").fetchall() == [
@@ -1115,3 +1120,46 @@ def test_a_hung_travel_ops_does_not_hold_a_reminder(tmp_path):
     sent = asyncio.run(run())
     assert sent and sent[0][2] == "Пора за хлебом.", "the reminder went while travel-ops hung"
     assert Hung.looks == 1, "one look at a time"
+
+
+def test_a_button_that_spends_only_itself_leaves_the_others_on_the_card(tmp_path):
+    from retinue.core import Button
+
+    async def run():
+        core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner")
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        pressed = []
+
+        async def note(value):
+            pressed.append(value)
+            return f"принято {value}"
+
+        core.actions["note"] = note
+        await core.tell_owner("Список", buttons=[Button("Один", "note", "1", alone=True),
+                                                 Button("Два", "note", "2", alone=True)])
+        (one, first), (two, second) = telegram.cards[-1][1]
+        a = await core.press(telegram, first)
+        again = await core.press(telegram, first)
+        b = await core.press(telegram, second)
+        return pressed, a, again, b
+
+    pressed, a, again, b = asyncio.run(run())
+    assert pressed == ["1", "2"] and a.toast == "принято 1" and not again.ok
+    assert [label for label, _ in a.keep] == ["Два"] and a.card.endswith("_Нажато: Один_")
+    assert b.keep == [] and b.card.endswith("_Нажато: Один, Два_")
+
+
+def test_an_old_revert_button_answers_honestly_without_the_base(tmp_path):
+    from retinue.core import Button
+
+    async def run():
+        core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner")
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        await core.tell_owner("Список", buttons=[Button("Откатить 1", "revert", "a" * 40, alone=True)])
+        return await core.press(telegram, telegram.cards[-1][1][0][1])
+
+    pressed = asyncio.run(run())
+    assert pressed.ok and pressed.toast == ("База знаний сейчас не подключена — не откатила. На Mac: "
+                                            "git revert aaaaaaaaaaaa")

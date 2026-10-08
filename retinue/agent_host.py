@@ -224,7 +224,7 @@ def main() -> None:
     card = build_card(cfg)
     handler = DefaultRequestHandler(
         agent_executor=EngineExecutor(make_engine(cfg.engine, cfg.workspace, cfg.bus_url, cfg.bus_token,
-                                                  cfg.travel_url),
+                                                  cfg.travel_url, cfg.memory, cfg.memory_policy),
                                       SessionMap(cfg.state_db), Outbox(cfg.workspace)),
         task_store=InMemoryTaskStore(),
         agent_card=card,

@@ -301,3 +301,31 @@ def test_a_link_to_a_travel_site_is_clickable_and_still_has_no_preview(tmp_path)
     (out,) = texts(ch)
     assert out["text"] == '<a href="https://kiwi.com/u/abc">kiwi, 99 €</a> или <code>https://evil.example/u</code>'
     assert out["link_preview_options"] == {"is_disabled": True}, "a link, and still no preview"
+
+
+def test_many_buttons_go_in_rows_and_a_press_can_leave_the_others(tmp_path):
+    """Telegram takes at most 8 buttons in a row; ten «Откатить» go in rows of four. A press that spends only its
+    own button (an evening list) rewrites the card with the buttons still alive."""
+    ch = make(tmp_path)
+    buttons = [(f"Откатить {i}", f"b{i}") for i in range(1, 11)]
+
+    async def press(channel, button_id):
+        return Pressed(True, "Откатываю…", "Список\n\n_Нажато: Откатить 2_", keep=[b for b in buttons if b[1] != "b2"])
+
+    ch.core.press = press
+
+    async def run():
+        await ch.notice("assistant", "Список", buttons, "ev-1")
+        await ch.on_update(press_of("b2"))
+
+    def press_of(data):
+        return {"callback_query": {"id": "q2", "from": {"id": OWNER}, "data": data,
+                                   "message": {"message_id": 900, "chat": {"id": OWNER}}}}
+
+    asyncio.run(run())
+    rows = ch.sent[0][1]["reply_markup"]["inline_keyboard"]
+    assert [len(row) for row in rows] == [4, 4, 2]
+    assert [(b["text"], b["callback_data"]) for row in rows for b in row] == buttons
+    edit = ch.sent[2][1]
+    kept = [(b["text"], b["callback_data"]) for row in edit["reply_markup"]["inline_keyboard"] for b in row]
+    assert kept == [b for b in buttons if b[1] != "b2"] and edit["text"].endswith("<i>Нажато: Откатить 2</i>")

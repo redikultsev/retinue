@@ -58,6 +58,19 @@ class MatrixConfig:
 
 
 @dataclass
+class MemoryConfig:
+    """The knowledge base the assistant writes: a git repository whose hub is outside the stack. The router holds the
+    working copy's repository and commits; the assistant's container sees only the files (`tree`)."""
+    tree: str = "/kb"                   # the working copy's files; the assistant mounts the same folder
+    git_dir: str = "/kb-git"            # its repository: in the router's container only, so she cannot write hooks
+    hub: str = "/hub"                   # the bare repository every copy pushes to; its pre-receive checks each push
+    policy: str = "/config/memory-policy.json"  # what she may write (kbcheck.Policy); the hub has the same file
+    author: str = "Ассистентка <assistant@retinue>"
+    checkout: list[str] = field(default_factory=lambda: ["/*"])  # sparse checkout: what of the base she sees
+    digest_at: str = "21:00"            # the evening list of her commits, the owner's wall time
+
+
+@dataclass
 class RouterConfig:
     agents: list[RouterAgent]
     owner: str = "owner"                # how the owner is named in the protocol log
@@ -74,6 +87,7 @@ class RouterConfig:
     stt_key: str = ""                   # from ELEVENLABS_API_KEY: speech to text; without it voice is refused aloud
     travel_url: str = ""                # travel-ops' MCP over HTTP: the router collects price alerts there
     link_hosts: list[str] = field(default_factory=list)  # travel-ops' sites: a link there is clickable in Telegram
+    memory: MemoryConfig | None = None  # the knowledge base she writes; without the section she has no base
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -81,9 +95,11 @@ class RouterConfig:
         agents = [RouterAgent(**a) for a in raw.pop("agents")]
         matrix = MatrixConfig(**raw.pop("matrix")) if raw.get("matrix") else None
         telegram = TelegramConfig(**raw.pop("telegram")) if raw.get("telegram") else None
+        memory = MemoryConfig(**raw.pop("memory")) if raw.get("memory") else None
         raw.pop("matrix", None)
         raw.pop("telegram", None)
-        cfg = cls(agents=agents, matrix=matrix, telegram=telegram, **raw)
+        raw.pop("memory", None)
+        cfg = cls(agents=agents, matrix=matrix, telegram=telegram, memory=memory, **raw)
         if not (cfg.matrix or cfg.telegram):
             raise SystemExit("router config: no channel — add a `telegram:` or a `matrix:` section")
         if cfg.matrix:
@@ -153,6 +169,8 @@ class AgentConfig:
     bus_url: str = ""    # from RETINUE_BUS_URL: the router's bus; empty = this agent cannot ask others
     bus_token: str = ""  # from RETINUE_BUS_TOKEN
     travel_url: str = ""  # from RETINUE_TRAVEL_URL: travel-ops' MCP over HTTP; empty = no travel tools
+    memory: str = ""      # from RETINUE_MEMORY: the knowledge base's folder; empty = no file tools at all
+    memory_policy: str = ""  # from RETINUE_MEMORY_POLICY: what she may write there (kbcheck.Policy), read-only
 
     @classmethod
     def load(cls, path: str | Path) -> AgentConfig:
@@ -163,6 +181,10 @@ class AgentConfig:
         cfg.bus_url = os.environ.get("RETINUE_BUS_URL", "")
         cfg.bus_token = os.environ.get("RETINUE_BUS_TOKEN", "")
         cfg.travel_url = os.environ.get("RETINUE_TRAVEL_URL", "")
+        cfg.memory = os.environ.get("RETINUE_MEMORY", "")
+        cfg.memory_policy = os.environ.get("RETINUE_MEMORY_POLICY", "")
+        if cfg.memory and not cfg.memory_policy:
+            raise SystemExit("RETINUE_MEMORY needs RETINUE_MEMORY_POLICY: without the policy nothing may be written")
         if cfg.trust_class not in TRUST_CLASSES:
             raise SystemExit(f"unknown trust_class {cfg.trust_class!r}")
         if unknown := [t for t in cfg.engine.bus_tools if t not in BUS_TOOLS]:

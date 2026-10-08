@@ -51,6 +51,11 @@ def test_one_assistant_and_nothing_else():
     assert "1–3 минуты" in instructions and "`stay_photos`" in instructions and "`watch_alerts`" not in instructions
     assert "не больше 12 вызовов travel-ops" in instructions and "пиши ровно" in instructions, "the guard's limits"
     assert engine.instructions == "/agent/CLAUDE.md" and engine.config_dir == "/data/claude"
+    base = instructions.split("## База знаний")[1].split("\n## ")[0]
+    assert "/kb/AGENTS.md" in base and "written_by: Ассистентка (Opus 5.5)" in base and "ниже маркера" in base
+    assert "База не приняла правку этого хода" in base and "Не записано" in base, "the router's and the guard's words"
+    assert all(f"`{tool}`" in base for tool in ("Read", "Grep", "Glob", "Edit", "Write")) and "`path`" in base
+    assert "MEMORY=1" in (ROOT / "docs" / "memory.md").read_text(), "the base has its install path in the repo"
     assert sorted(SERVICES) == ["assistant", "egress", "router", "travel-ops", "travel-watch", "tuwunel"]
     assert sorted(COMPOSE["volumes"]) == ["assistant-data", "router-data", "travel-data", "tuwunel-db"]
 
@@ -62,8 +67,9 @@ def test_only_the_router_holds_the_speech_key():
 
 def test_assistant_container_cannot_write_its_settings_and_keeps_only_its_session():
     assistant = SERVICES["assistant"]
-    assert assistant["volumes"] == ["/srv/retinue/agents/assistant:/agent:ro", "assistant-data:/data"], \
-        "settings read-only; the session transcript on its own volume"
+    assert assistant["volumes"] == ["/srv/retinue/agents/assistant:/agent:ro", "assistant-data:/data",
+                                    "/srv/retinue/memory/tree:/kb", "/srv/retinue/memory/policy.json:/memory-policy.json:ro"], \
+        "settings read-only; the session transcript on its own volume; the base's files, not its repository"
     assert "tmpfs" not in assistant
     assert "CLAUDE_CONFIG_DIR" not in assistant["environment"] and "ANTHROPIC_API_KEY" not in assistant["environment"]
     router_mounts = " ".join(SERVICES["router"]["volumes"])
@@ -311,3 +317,87 @@ def test_setup_with_travel(tmp_path, monkeypatch):
     plain, printed = setup(tmp_path / "other", TELEGRAM_OWNER_ID="42")
     assert not (plain / "travel").exists() and "travel" not in (plain / "router.yaml").read_text()
     assert printed["RETINUE_TRAVEL_URL"] == "", "no server for the assistant either"
+
+
+def test_the_base_is_mounted_for_both_and_its_repository_for_the_router_only():
+    router, assistant = " ".join(SERVICES["router"]["volumes"]), " ".join(SERVICES["assistant"]["volumes"])
+    assert "/srv/retinue/memory/tree:/kb " in router + " " and "/srv/retinue/memory/hub.git:/hub" in router
+    assert "/srv/retinue/memory/git:/kb-git" in router and "memory/git" not in assistant and "hub" not in assistant
+    assert SERVICES["assistant"]["environment"]["RETINUE_MEMORY"] == "${RETINUE_MEMORY:-}"
+    assert "apt-get install -y --no-install-recommends git" in (ROOT / "Dockerfile").read_text(), "the router commits"
+    assert "str(ROOT)]" in (ROOT / "deploy/backup/retinue-backup.py").read_text(), \
+        "the hub and the working copy live under /srv/retinue: the nightly backup takes them with it"
+
+
+def test_memory_is_off_until_asked_and_its_folders_are_there_anyway(tmp_path, monkeypatch):
+    target, printed = setup(tmp_path, TELEGRAM_OWNER_ID="42")
+    memory = target / "memory"
+    assert (memory / "tree").is_dir() and (memory / "git").is_dir(), "the mounts exist whether it is on or not"
+    assert (memory / "policy.json").read_text() == (ROOT / "deploy/memory/policy.example.json").read_text()
+    assert not (memory / "hub.git").exists() and printed["RETINUE_MEMORY"] == ""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    assert RouterConfig.load(target / "router.yaml").memory is None
+
+
+def test_setup_with_memory_makes_the_hub_and_installs_its_checks(tmp_path, monkeypatch):
+    import json
+
+    from retinue import kbcheck
+
+    target, printed = setup(tmp_path, TELEGRAM_OWNER_ID="42", MEMORY="1")
+    hub, memory = target / "memory" / "hub.git", target / "memory"
+    assert printed["RETINUE_MEMORY"] == "/kb" and (hub / "HEAD").is_file()
+    assert (hub / "hooks" / "pre-receive").read_text() == (ROOT / "retinue" / "kbcheck.py").read_text()
+    assert os.access(hub / "hooks" / "pre-receive", os.X_OK)
+    settings = subprocess.run(["git", "-C", str(hub), "config", "--list"], capture_output=True, text=True).stdout
+    for setting in ("receive.denynonfastforwards=true", "receive.denydeletes=true", "core.sharedrepository=group"):
+        assert setting in settings, setting
+    policy = kbcheck.Policy.load(str(hub / "hooks" / "kb-policy.json"))
+    assert policy.writer_uid == 10001 and policy.check == ["python3", "-I", "scripts/lint.py"], "-I: nothing in the tree on its path"
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    cfg = RouterConfig.load(target / "router.yaml").memory
+    assert cfg.hub == "/hub" and cfg.checkout == ["/*", "!/.*/", "!/scripts/"] and cfg.tree == "/kb"
+    raw = json.loads((memory / "policy.json").read_text())
+    (memory / "policy.json").write_text(json.dumps({**raw, "writable": ["notes/**/*.md"]}))
+    (memory / "checkout.txt").write_text("/*.md\n/notes/\n")
+    again, printed = setup(tmp_path, TELEGRAM_OWNER_ID="42")
+    assert printed["RETINUE_MEMORY"] == "/kb", "the hub exists: on for good"
+    assert json.loads((hub / "hooks" / "kb-policy.json").read_text())["writable"] == ["notes/**/*.md"], \
+        "the owner's rules, copied to the hub on every run"
+    assert RouterConfig.load(target / "router.yaml").memory.checkout == ["/*.md", "/notes/"]
+
+
+def test_the_hub_takes_pushes_but_its_config_and_hooks_stay_roots(tmp_path):
+    """The containers' user writes objects and refs through the group and nothing else: not the config (hooksPath,
+    receive.*), not hooks/, not the hub's own folder (it could rename hooks/ away). No gc after a push: it would
+    write in the hub's folder. Modes as setup.sh sets them; owners (the owner's hub and config, root's hooks/) are set
+    on the host only (HOST_SETUP=1) and checked live."""
+    import stat
+
+    target, _ = setup(tmp_path, TELEGRAM_OWNER_ID="42", MEMORY="1")
+    hub = target / "memory" / "hub.git"
+
+    def mode(path):
+        return stat.S_IMODE(path.stat().st_mode)
+
+    assert mode(hub) == 0o755 and mode(hub / "hooks") == 0o755 and mode(hub / "config") == 0o644
+    for path in [hub / "HEAD", *(hub / "hooks").iterdir()]:
+        assert not mode(path) & 0o022, path
+    for folder in ("objects", "refs"):
+        assert mode(hub / folder) & 0o2070 == 0o2070, f"{folder}: group-writable, setgid"
+    assert not (hub / "kbcheck").exists(), "the lint's copies live elsewhere, one fresh folder per check"
+    settings = subprocess.run(["git", "-C", str(hub), "config", "--list"], capture_output=True, text=True).stdout
+    assert "receive.autogc=false" in settings and "core.logallrefupdates=false" in settings
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(clone)], check=True)
+    (clone / "a.md").write_text("x\n")
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t"}
+    subprocess.run(["git", "-C", str(clone), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(clone), "commit", "-q", "-m", "x"], check=True, env=env)
+    (hub / "hooks" / "pre-receive").unlink()  # the policy's lint needs a base; here only the modes are checked
+    push = subprocess.run(["git", "-C", str(clone), "push", "-q", str(hub), "main"], capture_output=True, text=True)
+    assert push.returncode == 0, push.stderr
+    fresh = [d for d in (hub / "objects").iterdir() if d.is_dir() and len(d.name) == 2]
+    assert fresh and all(mode(d) & 0o2070 == 0o2070 for d in fresh), "what a push writes stays the group's"
+    assert mode(hub) == 0o755 and not (hub / "packed-refs").exists()

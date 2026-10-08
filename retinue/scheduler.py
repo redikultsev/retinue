@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 from . import clock
 
-REMINDER, SUMMARY, RETRY, PRICE = "reminder", "summary", "retry", "price"
+REMINDER, SUMMARY, RETRY, PRICE, DIGEST = "reminder", "summary", "retry", "price", "digest"
 ACTIVE, RUNNING, SENT, CANCELLED = "active", "running", "sent", "cancelled"
 MAX_TEXT = 500
 SUMMARY_AT = "09:00"  # the morning summary, the owner's wall time
@@ -48,7 +48,7 @@ class Scheduler:
             """
             CREATE TABLE IF NOT EXISTS jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT NOT NULL,                 -- reminder | summary | retry | price
+                kind TEXT NOT NULL,                 -- reminder | summary | retry | price | digest
                 text TEXT NOT NULL,                 -- a reminder's words, written in advance and sent as they are
                 local TEXT NOT NULL,                -- the owner's wall time: 2026-10-09T18:00
                 tz TEXT NOT NULL,                   -- IANA zone of `local`
@@ -60,6 +60,7 @@ class Scheduler:
             );
             CREATE INDEX IF NOT EXISTS jobs_due ON jobs (status, due);
             CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_summary_a_day ON jobs (local) WHERE kind = 'summary';
+            CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_digest_a_day ON jobs (local) WHERE kind = 'digest';
             """
         )
         # A summary or a retry the previous process was running when it stopped: run it again. Better a second
@@ -152,13 +153,20 @@ class Scheduler:
     def ensure_summary(self, now: float) -> None:
         """There is always a next morning summary in the table. One row per local day (a unique index), so the
         loop and a restart add nothing twice; a summary missed while the router was down stays due and goes late."""
-        moment = clock.next_at(SUMMARY_AT, now, self.tz)
+        self._ensure_daily(SUMMARY, SUMMARY_AT, now)
+
+    def ensure_digest(self, now: float, at: str) -> None:
+        """The evening list of the assistant's commits to the knowledge base: the same one-a-day row as the summary."""
+        self._ensure_daily(DIGEST, at, now)
+
+    def _ensure_daily(self, kind: str, at: str, now: float) -> None:
+        moment = clock.next_at(at, now, self.tz)
         local = f"{moment:%Y-%m-%dT%H:%M}"
         # Checked before the insert: a refused insert would still spend an id, and the loop asks every 30 s.
         self.db.execute("INSERT OR IGNORE INTO jobs (kind, text, local, tz, due, status, created)"
                         " SELECT ?, '', ?, ?, ?, ?, ? WHERE NOT EXISTS"
                         " (SELECT 1 FROM jobs WHERE kind = ? AND local = ?)",
-                        (SUMMARY, local, self.tz, moment.timestamp(), ACTIVE, now, SUMMARY, local))
+                        (kind, local, self.tz, moment.timestamp(), ACTIVE, now, kind, local))
         self.db.commit()
 
     def add_retry(self, data: dict, due: float, now: float) -> int:
@@ -201,6 +209,11 @@ class Scheduler:
                                  (RUNNING, now, job.id, ACTIVE, job.due))
         self.db.commit()
         return cursor.rowcount == 1
+
+    def postpone(self, job: Job, due: float) -> None:
+        """A running job that could not finish: active again, due later. The next pass takes it."""
+        self.db.execute("UPDATE jobs SET status = ?, due = ? WHERE id = ? AND status = ?", (ACTIVE, due, job.id, RUNNING))
+        self.db.commit()
 
     def done(self, job: Job) -> None:
         self.db.execute("UPDATE jobs SET status = ? WHERE id = ? AND status = ?", (SENT, job.id, RUNNING))

@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol
 
@@ -27,7 +27,7 @@ from .attachments import Unreadable, Upload, prepare
 from .bus import MAX_PARALLEL, MAX_TEXT, Denied, Turns, check
 from .config import RouterAgent
 from .protocol import Store
-from .scheduler import PRICE, REMINDER, RETRY, SUMMARY, Job, Scheduler
+from .scheduler import DIGEST, PRICE, REMINDER, RETRY, SUMMARY, Job, Scheduler
 
 log = logging.getLogger("retinue.core")
 
@@ -62,6 +62,11 @@ LIMITED = "Ответ задержался: был исчерпан лимит �
 LIMIT_MARGIN_S = 60     # a retry waits this long after the limit window resets
 LIMIT_RETRY_S = 3600    # when the CLI did not say when the window resets, the retry comes this much later
 BACKUP_STALE_S = 26 * 3600  # a nightly backup older than this is missing: a day plus the timer's slack
+DIGEST_STATUS = {"A": "новая", "D": "удалена", "R": "перенесена"}  # how the evening list names a file's change
+FOREIGN = {"forwarded": "пересланное", "attachment": "вложение", "travel": "выдача travel-ops", "archive": "архив"}
+DIGEST_BUTTONS = 10     # «Откатить» buttons in one evening list; the rest are named, the Mac takes them back
+DIGEST_RETRY_S = 1800   # an evening list no channel took is tried again after this
+DIGEST_UNTIL = "memory.digest_until"  # where the last evening list ended: the next one starts there
 SUMMARY_EVENTS = 60     # the morning summary reads at most this many events of the last day
 SUMMARY_PROMPT = (
     "[Утренняя сводка. Это отдельный запуск вне разговора с Владельцем: твой ответ Роутер отправит ему сообщением.]\n"
@@ -86,11 +91,16 @@ class AgentFile:
     data: bytes
 
 
+class Undelivered(Exception):
+    """A message that had to reach the owner reached no channel."""
+
+
 @dataclass
 class Button:
     label: str
     action: str     # a key of Core.actions: what the router does when the owner presses the button
     value: str = ""
+    alone: bool = False  # pressing it spends only this button; the card's others stay alive
 
 
 @dataclass
@@ -98,6 +108,7 @@ class Pressed:
     ok: bool
     toast: str      # shown to the owner at once
     card: str = ""  # the card's text after the press (Markdown); empty when the press changed nothing
+    keep: list[tuple[str, str]] = field(default_factory=list)  # (label, button id) still alive on the card
 
 
 class Channel(Protocol):
@@ -256,7 +267,8 @@ def history_line(event: Event, tz: str = clock.DEFAULT_TZ) -> str:
 class Core:
     def __init__(self, agents: list[RouterAgent], store: Store, owner: str, ask=ask_agent,
                  archive: Archive | None = None, default_agent: str | None = None,
-                 tz: str = clock.DEFAULT_TZ, backup_status: str | None = None, scribe=None, travel=None) -> None:
+                 tz: str = clock.DEFAULT_TZ, backup_status: str | None = None, scribe=None, travel=None,
+                 memory=None) -> None:
         self.agents = {a.id: a for a in agents}
         self.backup_status = backup_status  # the host's backup writes it; None: this core says nothing of backups
         self.tz = tz  # the owner's zone: every time the model and the owner see is local time there
@@ -267,6 +279,10 @@ class Core:
         self.archive = archive or Archive(":memory:")  # the router passes the file; tests may live in memory
         self.scribe = scribe  # speech to text (`speech.Scribe`); without it voice and video are refused aloud
         self.travel = travel  # travel-ops (`travel.TravelOps`), for price alerts; None: no watches are collected
+        self.memory = memory  # the knowledge base (`memory.Memory`): her turns are committed there; None: no base
+        self.writer: str | None = None  # the turn that holds the queue now: the only one whose writes are confirmed
+        # Always: a button from an evening list outlives a router that came up without the base.
+        self.actions["revert"] = self._revert_pressed
         self.prices_seen = 0.0  # when the router last looked for price drops
         self.collecting: asyncio.Task | None = None  # the look for price drops in flight
         self.jobs = Scheduler(store.db, tz)  # reminders and the other timed work, in the router's own file
@@ -487,7 +503,7 @@ class Core:
 
     async def tell_owner(self, text: str, *, buttons: Sequence[Button] = (), ttl_s: float = BUTTON_TTL_S,
                          origin: Channel | None = None, agent_id: str | None = None, ref: str | None = None,
-                         conversation_id: str | None = None, meta: dict | None = None) -> str:
+                         conversation_id: str | None = None, meta: dict | None = None, strict: bool = False) -> str:
         """The system itself writes to the owner: a notice, a refusal, a card with buttons, a message nobody
         asked for. On record first, then shown. Without `origin` it goes to every channel. Returns the archive id.
         """
@@ -495,10 +511,12 @@ class Core:
         event, _ = self.archive.append(SYSTEM, text, channel=origin.name if origin else "system", ref=ref, meta=meta,
                                        conversation_id=conversation_id or self.store.conversation(agent_id))
         # The decision and its lifetime stay in our table; a channel gets the label and the button id only.
-        keys = [(b.label, self.store.add_button(event.id, b.label, b.action, b.value, time.time() + ttl_s))
+        keys = [(b.label, self.store.add_button(event.id, b.label, b.action, b.value, time.time() + ttl_s, b.alone))
                 for b in buttons]
-        await self._each(self._audience(origin) if origin else self.channels, "notice", agent_id, text, keys,
-                         event.id)
+        shown = await self._each(self._audience(origin) if origin else self.channels, "notice", agent_id, text, keys,
+                                 event.id)
+        if strict and not shown:
+            raise Undelivered("no channel took the message")
         return event.id
 
     async def press(self, origin: Channel, button_id: str) -> Pressed:
@@ -508,11 +526,14 @@ class Core:
         card = self.archive.get(spent[0]) if spent else None
         if card is None:
             return Pressed(False, "Кнопка уже нажата или устарела.")
-        _, label, action, value = spent
+        _, label, action, value, alone = spent
         self.archive.append(OWNER, f"[кнопка] {label}", conversation_id=card.conversation_id, channel=origin.name,
                             ref=card.id)
         handler = self.actions.get(action)
         toast = await handler(value) if handler else label
+        if alone:
+            keep, pressed = self.store.card_buttons(card.id, time.time())
+            return Pressed(True, toast, f"{card.text}\n\n_Нажато: {', '.join(pressed)}_", keep)
         return Pressed(True, toast, f"{card.text}\n\n_Выбрано: {label}_")
 
     async def _checked(self, value: str) -> str:
@@ -554,6 +575,8 @@ class Core:
             self.collecting = asyncio.create_task(self._collect())
         try:
             self.jobs.ensure_summary(now)
+            if self.memory:
+                self.jobs.ensure_digest(now, self.memory.cfg.digest_at)
             await self.tick(now)
         except Exception:
             log.exception("scheduler tick failed")
@@ -593,6 +616,8 @@ class Core:
                 asyncio.create_task(self.summary(job, now))
             elif job.kind == PRICE:
                 asyncio.create_task(self.price(job, now))
+            elif job.kind == DIGEST:
+                asyncio.create_task(self.digest(job, now))
         for jobs in retries.values():
             asyncio.create_task(self.retry(jobs))
 
@@ -677,6 +702,66 @@ class Core:
         if now - job.due > LATE_S:
             text += f"\n\n_Сводка опоздала на {clock.ago(now - job.due)}: Роутер не работал._"
         await self.tell_owner(text, meta={"job": job.key})
+
+    async def digest(self, job: Job, now: float) -> None:
+        """The evening list of what the assistant committed to the base in a day: written by code, with a button to
+        take each commit back. Nothing to list — nothing is sent. Changes to the owner's own records and deletions
+        are named first in each line: that is what he looks for."""
+        if not self.memory:
+            self.jobs.done(job)
+            return
+        # From where the last list ended: a late list does not make the next one repeat it.
+        since = float(self.store.get(DIGEST_UNTIL) or job.due - 24 * 3600)
+        try:
+            commits = [c for c in self.memory.since(since) if since < c["ts"] <= now]
+            if commits:
+                lines = [f"База за день: коммитов ассистентки — {len(commits)}.", ""]
+                buttons = []
+                for number, commit in enumerate(commits, 1):
+                    lines.append(f"{number}. {clock.local(commit['ts'], self.tz):%H:%M} · " + ", ".join(
+                        path + (f" ({DIGEST_STATUS[status]})" if status in DIGEST_STATUS else "")
+                        for status, path in commit["files"]))
+                    if commit["owner_records"]:
+                        lines.append(f"   **Записи Владельца:** {', '.join(commit['owner_records'])}")
+                    if commit["deleted"]:
+                        lines.append(f"   **удалено:** {', '.join(commit['deleted'])}")
+                    if commit["foreign"]:
+                        lines.append("   чужой текст на входе: " + ", ".join(FOREIGN.get(f, f) for f in commit["foreign"]))
+                    if commit["reverted"]:
+                        lines.append("   _откачен_")
+                    elif len(buttons) < DIGEST_BUTTONS:
+                        buttons.append(Button(f"Откатить {number}", "revert", commit["sha"], alone=True))
+                lines += ["", "Кнопки живут сутки; позже — `git revert <коммит>` на Mac."]
+                await self.tell_owner("\n".join(lines), buttons=buttons, meta={"job": job.key}, strict=True)
+            self.store.set(DIGEST_UNTIL, str(now))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Not shown to the owner (Telegram refused it, the base failed): kept, and tried again later.
+            log.exception("the evening list of commits failed; trying again in %s s", DIGEST_RETRY_S)
+            self.jobs.postpone(job, now + DIGEST_RETRY_S)
+            return
+        self.jobs.done(job)
+
+    async def _revert_pressed(self, sha: str) -> str:
+        """«Откатить»: in the queue, like a turn — never while she writes. The answer comes as a message."""
+        if not self.memory:
+            return f"База знаний сейчас не подключена — не откатила. На Mac: git revert {sha[:12]}"
+        asyncio.create_task(self._revert(sha))
+        return "Откатываю…"
+
+    async def _revert(self, sha: str) -> None:
+        async with self.queue:
+            subject, text = self.memory.lookup(sha)
+            try:
+                if subject:
+                    ok, text, commit = await asyncio.to_thread(self.memory.take_back, sha, subject)
+                    if ok:
+                        self.memory.reverted(sha, commit)
+            except Exception as exc:
+                log.exception("revert %s failed", sha)
+                text = f"Не откатилось: сбой ({type(exc).__name__})."
+        await self.tell_owner(text)
 
     async def retry(self, jobs: list[Job]) -> None:
         """The limit window has reset: the owner messages it refused run again, as one turn, with a note."""
@@ -788,7 +873,11 @@ class Core:
         """One run of the conversation's session that is not an answer to the owner. The caller holds the queue.
         What the run reports is handled as after a turn: the account, «now», the limit."""
         turn = self.turns.open_root(agent.id)
+        self.writer = turn.id  # the caller holds the queue: this run's writes are the only ones confirmed
+        if kind == "price":
+            turn.tree.foreign.add("travel")  # the alert is travel-ops' text
         status, answer, meta = "error", "", {}
+        await self._fresh_base()
         try:
             reply = await self.ask(agent.url, prompt, context_id, None, turn.id)
             (status, answer, _), meta = reply, meta_of(reply)
@@ -797,6 +886,8 @@ class Core:
             self._want_now(context_id)  # the run may have compacted the session before it failed
         finally:
             self.turns.close(turn)
+            self.writer = None
+        await self._commit_base(turn, kind, context_id, None, meta)
         self._account(agent, context_id, kind, status, meta)
         if fresh and status == "done":
             self.store.set(f"now.{context_id}", "0")
@@ -906,9 +997,15 @@ class Core:
         where = origin.name if origin else "system"
         typing = asyncio.create_task(self._keep_typing(near, agent.id))
         turn = self.turns.open_root(agent.id)
+        self.writer = turn.id  # the caller holds the queue: this run's writes are the only ones confirmed
         self.inbound[turn.tree.id] = last.id
+        if any(event.meta.get("forwarded_from") for event in batch):
+            turn.tree.foreign.add("forwarded")
+        if any(self.archive.attachments_of(event.id) for event in batch):
+            turn.tree.foreign.add("attachment")
         now = self._needs_now(context_id)
         status, answer, files, meta = "error", "", [], {}
+        await self._fresh_base()
         try:
             # Composed when the turn comes, not when the message arrived: the previous answer is in it. The files
             # are read from the archive too, so a turn after a restart or the limit gets them again.
@@ -923,6 +1020,7 @@ class Core:
             self._want_now(context_id)  # the run may have compacted the session before it failed
         finally:
             self.turns.close(turn)
+            self.writer = None
             self.inbound.pop(turn.tree.id, None)
             typing.cancel()
             await self._each(near, "typing", agent.id, False)
@@ -934,6 +1032,7 @@ class Core:
         if meta.get("compacted") or (meta.get("new_session") and not now):
             self._want_now(context_id)
         if meta.get("limit"):
+            await self._commit_base(turn, kind, context_id, origin, meta)  # what she wrote before the limit
             await self._limited(agent, batch, meta, origin)
             return
         # The reply goes on record before it is shown. A failure is the system's words, not the assistant's.
@@ -943,12 +1042,54 @@ class Core:
                                              conversation_id=context_id, channel=where)
         await self._each(self._audience(origin) if origin else self.channels, "send", agent.id, answer, files,
                          reply_event.id)
+        await self._commit_base(turn, kind, context_id, origin, meta)
         said = sum(len(e.text) for e in batch)
         self.store.log(conversation_id=context_id, source=self.owner, target=agent.id, status=status,
                        input_chars=said, output_chars=len(answer), channel=where)
         line = (f"{where}: {self.owner} → {agent.name}: {status}, {said} → {len(answer)} знаков"
                 + (f", реплик: {len(batch)}" if len(batch) > 1 else "") + (f", файлов: {len(files)}" if files else ""))
         await self._each(self.channels, "protocol", line)
+
+    async def _fresh_base(self) -> None:
+        """Before a run that may write: the base is the hub's, whatever the last turn left. The caller holds the
+        queue, so no other run writes meanwhile."""
+        if self.memory:
+            try:
+                await asyncio.to_thread(self.memory.sync)
+            except Exception:
+                log.exception("the knowledge base was not synced with the hub")
+
+    async def _commit_base(self, turn, kind: str, context_id: str, origin: Channel | None = None,
+                           meta: dict | None = None) -> None:
+        """After the run: what she wrote becomes one commit in the hub, or is undone. A refusal is told in the
+        conversation — the owner sees it, and her next request carries it as something that happened without her.
+        Someone else's text stays in the session after the turn that read it: the mark is the session's, until a
+        new conversation or a session that started over or was compacted."""
+        if not self.memory:
+            return
+        key = f"memory.foreign.{context_id}"
+        fresh = bool(meta and (meta.get("compacted") or meta.get("new_session")))
+        earlier = set() if fresh else {f for f in (self.store.get(key) or "").split(",") if f}
+        foreign = sorted(turn.tree.foreign | earlier)
+        self.store.set(key, ",".join(foreign))
+        try:
+            settled = await asyncio.to_thread(self.memory.settle, turn.id, kind, foreign)
+        except Exception as exc:
+            log.exception("the knowledge base was not committed")
+            refusals = [f"сбой записи ({type(exc).__name__})"]
+            try:
+                await asyncio.to_thread(self.memory.sync)
+            except Exception:
+                log.exception("the knowledge base was not put back to the hub")
+        else:
+            refusals = settled.refusals
+            try:
+                self.memory.record(settled)
+            except Exception:  # in the hub already: the next start reads it back from the hub's log
+                log.exception("commit %s is in the hub but not in the evening table", settled.commit)
+        if refusals:
+            await self.tell_owner("База не приняла правку этого хода, она откачена: " + "; ".join(refusals)
+                                  + ". Написанное сохранено на сервере.", origin=origin, conversation_id=context_id)
 
     async def bus_call(self, caller: RouterAgent, turn_id: str, target_id: str, text: str) -> tuple[bool, str]:
         """An agent asks another agent. The caller is authenticated by its bus token; the rest is checked here."""
@@ -998,6 +1139,7 @@ class Core:
             return False, "Нет активного запроса: искать в архиве можно только во время ответа."
         if not caller.archive:
             return False, "Отказано: этому агенту поиск по архиву не выдан."
+        turn.tree.foreign.add("archive")  # earlier messages: forwards and the system's words among them
         query = query.strip()[:MAX_QUERY]
         # The owner message being answered is left out: the question is not its own answer.
         asked = self.archive.get(self.inbound.get(turn.tree.id, ""))
@@ -1050,6 +1192,7 @@ class Core:
         if attachment is None or event is None or event.kind != OWNER \
                 or not self.store.belongs(event.conversation_id, caller.id):
             return False, f"Вложения #{number} нет.", []
+        turn.tree.foreign.add("attachment")
         stored = self.archive.read(attachment)
         images = [(media_type, data) for media_type, data in stored if media_type.startswith("image/")]
         lines = [f"{attachment.mark()} — из сообщения {clock.stamp(event.ts, self.tz)}"]
@@ -1104,12 +1247,34 @@ class Core:
             return False
         tool = re.sub(r"[^A-Za-z_]", "", tool)[:40]
         status = "allowed" if decision == "allow" else "denied"
+        if status == "allowed":
+            turn.tree.foreign.add("travel")  # what travel-ops answers is the sites' text
         self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target=f"travel/{tool}",
                        status=status, input_chars=chars if type(chars) is int else 0, output_chars=0, channel="bus")
         reason = " ".join(reason.split())[:300]
         await self._each(self.channels, "protocol",
                          f"travel: {caller.name} → {tool}: {status}" + (f" — {reason}" if reason else ""))
         return True
+
+    async def kb_log(self, caller: RouterAgent, turn_id: str, tool: str, decision: str, path: str,
+                     reason: str = "") -> bool:
+        """The engine's guard decided on a file tool call in the knowledge base: a protocol line `kb/<tool>` with the
+        path, and the reason of a refusal. Only during the agent's own turn; a record, not a command."""
+        turn = self.turns.turns.get(turn_id)
+        if turn is None or turn.agent_id != caller.id:
+            return False
+        tool = re.sub(r"[^A-Za-z_]", "", tool)[:20]
+        status = "allowed" if decision == "allow" else "denied"
+        ok = True
+        if status == "allowed" and tool in ("Edit", "Write") and self.writer != turn.id:
+            # A write is the turn's only while it holds the queue: after the router has moved on, it is refused.
+            status, reason, ok = "denied", "ход не держит очередь записи", False
+        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target=f"kb/{tool}", status=status,
+                       input_chars=0, output_chars=0, channel="bus")
+        path, reason = " ".join(path.split())[:200], " ".join(reason.split())[:300]
+        await self._each(self.channels, "protocol",
+                         f"kb: {caller.name} → {tool} {path}: {status}" + (f" — {reason}" if reason else ""))
+        return ok
 
     async def _trace(self, tree, text: str, target_id: str | None = None) -> None:
         """Show agents talking in the owner's room and in the room of the agent being asked."""
@@ -1127,11 +1292,14 @@ class Core:
             await asyncio.sleep(min(c.typing_refresh_s for c in channels))
 
     @staticmethod
-    async def _each(channels: list[Channel], method: str, *args) -> None:
-        # One broken channel must not stop the reply from reaching the others.
+    async def _each(channels: list[Channel], method: str, *args) -> int:
+        """One broken channel must not stop the reply from reaching the others. Returns how many took it."""
+        took = 0
         for channel in channels:
             try:
                 await getattr(channel, method)(*args)
+                took += 1
             except Exception:
                 log.exception("channel %s: %s failed", channel.name, method)
+        return took
 

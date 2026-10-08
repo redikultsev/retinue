@@ -42,6 +42,17 @@ class TelegramError(Exception):
     pass
 
 
+BUTTONS_PER_ROW = 4  # Telegram takes at most 8 in a row; four labels like «Откатить 10» still read
+
+
+def keyboard_of(buttons) -> dict | None:
+    """(label, button id) pairs as an inline keyboard, in rows. callback_data is the button id and nothing else:
+    Telegram allows 64 bytes, and the meaning stays with the router."""
+    keys = [{"text": label, "callback_data": button_id} for label, button_id in buttons]
+    return {"inline_keyboard": [keys[i:i + BUTTONS_PER_ROW] for i in range(0, len(keys), BUTTONS_PER_ROW)]} \
+        if keys else None
+
+
 class TelegramChannel:
     name = "telegram"
     is_record = False
@@ -140,8 +151,9 @@ class TelegramChannel:
         pressed = await self.core.press(self, str(query.get("data") or ""))
         await self.call("answerCallbackQuery", callback_query_id=query["id"], text=pressed.toast)
         if pressed.card and "message_id" in message:
-            # The card is rewritten without a keyboard: the buttons are gone, the choice stays visible.
-            await self._message(render_telegram(pressed.card)[0], edit=message["message_id"])
+            # The card is rewritten: the choice stays visible; the buttons are gone, or those still alive stay.
+            await self._message(render_telegram(pressed.card)[0], edit=message["message_id"],
+                                keyboard=keyboard_of(pressed.keep))
 
     async def on_message(self, message: dict | None) -> None:
         if not message or not self.core:
@@ -277,8 +289,7 @@ class TelegramChannel:
                      ref: str | None = None) -> None:
         parts = render_telegram(text, self.link_hosts)
         # callback_data is the button id and nothing else: Telegram allows 64 bytes, and the meaning stays with us.
-        keyboard = {"inline_keyboard": [[{"text": label, "callback_data": button_id} for label, button_id in buttons]]} \
-            if buttons else None
+        keyboard = keyboard_of(buttons or [])
         for i, html in enumerate(parts):
             await self._message(html, ref=ref, keyboard=keyboard if i == len(parts) - 1 else None)
 

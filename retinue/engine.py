@@ -20,7 +20,7 @@ import httpx
 from claude_agent_sdk import (ClaudeAgentOptions, HookMatcher, RateLimitEvent, RateLimitInfo, ResultError,
                               ResultMessage, StreamEvent, SystemMessage, create_sdk_mcp_server, query, tool)
 
-from . import travel
+from . import kbcheck, travel
 from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
@@ -206,20 +206,23 @@ def _deny(reason: str) -> dict:
                                    "permissionDecisionReason": reason}}
 
 
-async def _record(bus_url: str, bus_token: str, turn_id: str, tool: str, decision: str, reason: str, args) -> None:
-    """Tell the router's protocol about a decision. Never raises: the decision is made before, and stands."""
+async def _record(bus_url: str, bus_token: str, turn_id: str, tool: str, decision: str, reason: str, args,
+                  where: str = "travel", path: str = "") -> None:
+    """Tell the router's protocol about a decision (`/travel/log`, `/kb/log`). Never raises: the decision is made
+    before, and stands."""
     try:
         try:
             chars = len(json.dumps(args, ensure_ascii=True, default=str))
         except Exception:
             chars = 0
-        body = json.dumps({"turn": turn_id, "tool": tool, "decision": decision, "reason": reason, "chars": chars},
+        body = json.dumps({"turn": turn_id, "tool": tool, "decision": decision, "reason": reason, "chars": chars,
+                           "path": path},
                           ensure_ascii=True)  # a lone surrogate in a key is \\ud800 here, not an encoder error
         async with httpx.AsyncClient(timeout=5, trust_env=False) as http:
-            await http.post(f"{bus_url}/travel/log", content=body.encode("ascii"),
+            await http.post(f"{bus_url}/{where}/log", content=body.encode("ascii"),
                             headers={"Authorization": f"Bearer {bus_token}", "Content-Type": "application/json"})
     except Exception as exc:
-        log.warning("travel-ops call %s (%s) not recorded at the router: %s", tool, decision, type(exc).__name__)
+        log.warning("%s call %s (%s) not recorded at the router: %s", where, tool, decision, type(exc).__name__)
 
 
 def travel_guard(bus_url: str, bus_token: str, turn_id: str):
@@ -261,6 +264,126 @@ def travel_guard(bus_url: str, bus_token: str, turn_id: str):
     return guard
 
 
+# The knowledge base: Claude Code's own file tools, each call checked by `memory_guard` before it runs.
+MEMORY_TOOLS = ["Read", "Grep", "Glob", "Edit", "Write"]
+PATH_FIELD = {"Read": "file_path", "Edit": "file_path", "Write": "file_path", "Grep": "path", "Glob": "path"}
+WRITES = {"Edit", "Write"}
+MEMORY_HINT = ("Записи — только *.md в <Пространство>/{knowledge,profile,journal,artifacts}/; строки Витрины — в "
+               "<Пространство>/AGENTS.md ниже маркера.")
+
+
+NO_WORD = "Не записано: Роутер не подтвердил, что этот ход ещё идёт и пишет он один — правка не сохранилась бы."
+
+
+async def _ack(bus_url: str, bus_token: str, turn_id: str | None, tool: str, path: str) -> bool:
+    """Ask the router, synchronously, whether this run may write now: its turn is open and holds the queue. Any
+    failure — no bus, no answer, a refusal — is a no: a run the router gave up on must not keep writing."""
+    if not (bus_url and turn_id):
+        return False
+    try:
+        body = json.dumps({"turn": turn_id, "tool": tool, "decision": "allow", "reason": "", "path": path},
+                          ensure_ascii=True)
+        async with httpx.AsyncClient(timeout=5, trust_env=False) as http:
+            response = await http.post(f"{bus_url}/kb/log", content=body.encode("ascii"),
+                                       headers={"Authorization": f"Bearer {bus_token}",
+                                                "Content-Type": "application/json"})
+        return response.status_code == 200 and response.json().get("ok") is True
+    except Exception:
+        return False
+
+
+def memory_guard(root: str, policy: kbcheck.Policy, writable: bool, bus_url: str = "", bus_token: str = "",
+                 turn_id: str | None = None):
+    """PreToolUse for Claude Code's file tools. Reading stays inside the base (`root`), path by path after symlinks
+    are resolved: the container holds the subscription token in /proc and the session's transcripts. Writing goes
+    only where the policy lets her (`kbcheck`, the same rules the router and the hub check after the turn): records
+    and showcase lines below the marker; nothing code would run. A run outside a turn (the morning summary) only
+    reads. Fails closed, like the travel guard: an error inside the check is a refusal. Every decision on a file
+    tool is a protocol line `kb/<tool>` at the router, as for travel-ops — when the run has a turn to file it under."""
+    base = os.path.realpath(root)
+
+    async def guard(hook_input, tool_use_id, context) -> dict:
+        out = await decide(hook_input)
+        try:
+            name = str(hook_input.get("tool_name", ""))
+            args = hook_input.get("tool_input")
+            path = str(args.get(PATH_FIELD[name]) or "")[:300] if name in PATH_FIELD and isinstance(args, dict) else ""
+            if name in WRITES and not out:
+                # The router's word, every time: this turn is open and the one holding the queue. Its answer is the
+                # protocol line too.
+                if not await _ack(bus_url, bus_token, turn_id, name, path):
+                    out = _deny(NO_WORD)
+                    await _record(bus_url, bus_token, turn_id, name, "deny", NO_WORD, args, "kb", path)
+            elif name in PATH_FIELD and bus_url and turn_id:
+                reason = out.get("hookSpecificOutput", {}).get("permissionDecisionReason", "") if out else ""
+                await _record(bus_url, bus_token, turn_id, name, "deny" if out else "allow", reason, args, "kb", path)
+        except Exception as exc:
+            log.warning("a decision on the base was not recorded: %s", type(exc).__name__)
+            if str(hook_input.get("tool_name", "")) in WRITES:
+                out = _deny(NO_WORD)
+        return out
+
+    async def decide(hook_input) -> dict:
+        try:
+            name = str(hook_input.get("tool_name", ""))
+            if name not in PATH_FIELD:
+                return {}
+            args = hook_input.get("tool_input")
+            if not isinstance(args, dict):
+                return _deny("Не выполнено: вызов не прочитан.")
+            raw = args.get(PATH_FIELD[name])
+            if not raw:
+                return _deny(f"Не выполнено: укажи {PATH_FIELD[name]} — абсолютный путь в базе, от {root}/.")
+            raw = str(raw)
+            if not raw.startswith("/"):
+                return _deny(f"Не выполнено: путь — абсолютный, от {root}/.")
+            path = os.path.realpath(raw)
+            if path != base and not path.startswith(base + "/"):
+                return _deny(f"Не выполнено: вне базы. Читать и писать можно только в {root}/.")
+            rel = os.path.relpath(path, base)
+            if kbcheck.hidden(rel) or kbcheck.hidden(os.path.relpath(os.path.normpath(raw), root)):
+                # .git/ inside the base is storage git never sees or cleans; .claude/ is settings: not notes.
+                return _deny(f"Не выполнено: {rel} — имя с точки, скрытое; в базе таких нет.")
+            for field_name in ("pattern", "glob") if name in ("Glob", "Grep") else ():
+                pattern = str(args.get(field_name) or "")
+                if name == "Glob" or field_name == "glob":
+                    if pattern.startswith("/") or ".." in pattern.split("/") or kbcheck.hidden(pattern):
+                        return _deny(f"Не выполнено: {field_name} — относительный, без «..» и скрытых имён; папку "
+                                     "задаёт path.")
+            if name not in WRITES:
+                return {}
+            if not writable:
+                return _deny("Не записано: вне хода разговора база только для чтения.")
+            if os.path.islink(raw) or os.path.isdir(path):
+                return _deny(f"Не записано: {rel} — не файл.")
+            if kbcheck.any_match(rel, policy.lines_below):
+                return _showcase_edit(name, args, path, rel, policy.marker)
+            if kbcheck.any_match(rel, policy.never) or not kbcheck.any_match(rel, policy.writable):
+                return _deny(f"Не записано: {rel} — сюда писать нельзя. {MEMORY_HINT}")
+            return {}
+        except Exception as exc:
+            return _deny(f"Не выполнено: проверка пути не удалась ({type(exc).__name__}).")
+    return guard
+
+
+def _showcase_edit(name: str, args: dict, path: str, rel: str, marker: str) -> dict:
+    """A showcase changes only below its marker: above it are the Space's rules."""
+    text = Path(path).read_text() if os.path.isfile(path) else ""
+    if not marker or text.count(marker) != 1:
+        return _deny(f"Не записано: в {rel} нет маркера Витрины — такую Витрину правит только Владелец.")
+    lines_start = text.index(marker) + len(marker)
+    if name == "Write":
+        content = str(args.get("content", ""))
+        if not content.startswith(text[:lines_start]) or content.count(marker) != 1:
+            return _deny(f"Не записано: {rel} — выше маркера Витрины правила; меняй только строки ниже него.")
+        return {}
+    old, new = str(args.get("old_string", "")), str(args.get("new_string", ""))
+    first = text.find(old) if old else -1
+    if first < lines_start or marker in new:
+        return _deny(f"Не записано: {rel} — выше маркера Витрины правила; меняй только строки ниже него.")
+    return {}
+
+
 # Set in code for every run, so that no compose file can forget them.
 RUN_ENV = {
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",  # no auto-update, telemetry, error reports, feature flags
@@ -289,12 +412,14 @@ class ClaudeEngine:
     """
 
     def __init__(self, cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "",
-                 travel_url: str = "") -> None:
+                 travel_url: str = "", memory: str = "", memory_policy: str = "") -> None:
         self.cfg = cfg
         self.workspace = workspace
         self.bus_url = bus_url
         self.bus_token = bus_token
         self.travel_url = travel_url  # travel-ops' MCP over HTTP, on the internal network `travel`
+        self.memory = memory  # the knowledge base's folder: her file tools work there and nowhere else
+        self.memory_policy = kbcheck.Policy.load(memory_policy) if memory else None
         instructions = Path(cfg.instructions)
         if not instructions.is_file():
             raise SystemExit(f"engine: instructions file {instructions} not found")
@@ -319,6 +444,7 @@ class ClaudeEngine:
         """Everything one run is allowed, in one place."""
         allowed, servers = list(self.cfg.allowed_tools), {}
         denied, hooks = list(self.cfg.disallowed_tools), {}
+        builtin, dirs = self.cfg.tools, []
         if self.bus_url and self.bus_token and turn_id and self.cfg.bus_tools:
             tools = bus_tools(self.bus_url, self.bus_token, turn_id)
             servers["retinue"] = create_sdk_mcp_server("retinue", tools=[tools[name] for name in self.cfg.bus_tools])
@@ -330,11 +456,21 @@ class ClaudeEngine:
             denied += [travel.PREFIX + tool for tool in travel.NOT_HERS]
             hooks["PreToolUse"] = [HookMatcher(matcher=None, hooks=[travel_guard(self.bus_url, self.bus_token,
                                                                                   turn_id)])]
+        if self.memory:
+            # The base is a working directory of the run (so the CLI lets the tools reach it), never a source of
+            # settings: `setting_sources=[]` stands. Writing only in a turn the router runs under its queue.
+            builtin = [*(builtin or []), *[t for t in MEMORY_TOOLS if t not in (builtin or [])]]
+            allowed += [t for t in MEMORY_TOOLS if t not in allowed]
+            dirs = [self.memory]
+            hooks.setdefault("PreToolUse", []).append(
+                HookMatcher(matcher=None, hooks=[memory_guard(self.memory, self.memory_policy, turn_id is not None,
+                                                              self.bus_url, self.bus_token, turn_id)]))
         return ClaudeAgentOptions(
             cwd=self.workspace,
             system_prompt=self.instructions,
             setting_sources=[],
-            tools=self.cfg.tools,
+            tools=builtin,
+            add_dirs=dirs,
             allowed_tools=allowed,
             disallowed_tools=denied,
             mcp_servers=servers,
@@ -490,9 +626,9 @@ class EchoEngine:
 
 
 def make_engine(cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "",
-                travel_url: str = "") -> Engine:
+                travel_url: str = "", memory: str = "", memory_policy: str = "") -> Engine:
     if cfg.type == "echo":
         return EchoEngine()
     if cfg.type == "claude":
-        return ClaudeEngine(cfg, workspace, bus_url, bus_token, travel_url)
+        return ClaudeEngine(cfg, workspace, bus_url, bus_token, travel_url, memory, memory_policy)
     raise SystemExit(f"unknown engine type {cfg.type!r}")

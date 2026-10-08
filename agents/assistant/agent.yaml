@@ -10,7 +10,8 @@ skills:
 engine:
   instructions: /agent/CLAUDE.md    # this folder is mounted read-only
   config_dir: /data/claude          # the session transcript: the assistant's own volume, nobody else mounts it
-  tools: []                         # no built-in tool at all: no Bash, no files, no WebSearch, no WebFetch
+  tools: []                         # no built-in tool at all: no Bash, no files, no WebSearch, no WebFetch.
+  # With a knowledge base (RETINUE_MEMORY) the engine adds Read, Grep, Glob, Edit, Write, every call path-checked.
   disallowed_tools: [Bash, WebSearch, WebFetch]   # said twice on purpose: these three never, whatever `tools` says
   # The archive, the owner's reminders and what he sent; ask_agent is not given at this stage. travel-ops is an
   # MCP server of its own (RETINUE_TRAVEL_URL), every call checked by the engine's guard.

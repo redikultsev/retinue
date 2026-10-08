@@ -503,3 +503,192 @@ def test_a_travel_ops_that_does_not_answer_costs_a_turn_seconds():
 
     assert RUN_ENV["MCP_TIMEOUT"] == "5000" and RUN_ENV["MCP_CONNECT_TIMEOUT_MS"] == "5000"
     assert "MCP_TOOL_TIMEOUT" not in RUN_ENV, "a search's minutes are the server's own `timeout`"
+
+
+MARKER = "<!-- Витрина: выше — правила, ниже — строки. -->"
+
+
+@pytest.fixture
+def kb(tmp_path):
+    """A base as her container sees it, and the policy next to it."""
+    import json
+
+    root = tmp_path / "kb"
+    (root / "notes" / "knowledge").mkdir(parents=True)
+    (root / "notes" / "AGENTS.md").write_text(f"# Заметки\n\n- правило\n\n{MARKER}\n\n- [a](knowledge/a.md)\n")
+    (root / "notes" / "knowledge" / "a.md").write_text("---\nid: a\n---\n\nФакт.\n")
+    (root / "notes" / "knowledge" / "out.md").symlink_to("/etc/hosts")
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"marker": MARKER, "writable": ["notes/knowledge/**/*.md"],
+                                  "lines_below": ["*/AGENTS.md"], "never": ["**/CLAUDE.md", "**/AGENTS.md", ".*/**"]},
+                                 ensure_ascii=False))
+    return str(root), str(policy)
+
+
+def test_the_base_is_hers_through_her_file_tools_and_a_guard(instructions, kb):
+    root, policy = kb
+    cfg = EngineConfig(instructions=instructions, tools=[], disallowed_tools=["Bash", "WebSearch", "WebFetch"])
+    options = ClaudeEngine(cfg, "/workspace", "http://router:9100", "token", "", root, policy).options("turn-1", False)
+    assert options.tools == ["Read", "Grep", "Glob", "Edit", "Write"] and options.add_dirs == [root]
+    assert {"Read", "Grep", "Glob", "Edit", "Write"} <= set(options.allowed_tools) and "Bash" in options.disallowed_tools
+    assert options.setting_sources == [] and options.cwd == "/workspace", "the base is a folder, never settings"
+    (matcher,) = options.hooks["PreToolUse"]
+    assert matcher.matcher is None and len(matcher.hooks) == 1
+    plain = ClaudeEngine(cfg, "/workspace", "http://router:9100", "token").options("turn-1", False)
+    assert plain.tools == [] and plain.add_dirs == [] and "PreToolUse" not in (plain.hooks or {}), "no base, no files"
+
+
+def test_the_guard_keeps_reading_in_the_base_and_writing_in_records(kb, monkeypatch):
+    from retinue import kbcheck
+    from retinue.engine import memory_guard
+
+    root, policy = kb
+
+    async def ack(*args):  # the router says the turn is open and holds the queue; its own test is below
+        return True
+
+    monkeypatch.setattr("retinue.engine._ack", ack)
+    guard = memory_guard(root, kbcheck.Policy.load(policy), writable=True)
+    summary = memory_guard(root, kbcheck.Policy.load(policy), writable=False)
+
+    def call(tool, which=guard, **args):
+        out = asyncio.run(which({"tool_name": tool, "tool_input": args}, "t", {"signal": None}))
+        return out.get("hookSpecificOutput", {}).get("permissionDecisionReason", "ok")
+
+    showcase = f"{root}/notes/AGENTS.md"
+    allowed = [call("Read", file_path=f"{root}/notes/knowledge/a.md"), call("Grep", pattern="Факт", path=root),
+               call("Glob", pattern="**/*.md", path=f"{root}/notes"),
+               call("Write", file_path=f"{root}/notes/knowledge/b.md", content="---\nid: b\n---\n"),
+               call("Edit", file_path=showcase, old_string="- [a](knowledge/a.md)", new_string="- [a]\n- [b]"),
+               call("Write", file_path=showcase, content=open(showcase).read() + "- [b](knowledge/b.md)\n"),
+               call("mcp__retinue__search_archive", query="паспорт"), call("Read", which=summary,
+                                                                            file_path=f"{root}/notes/AGENTS.md")]
+    assert allowed == ["ok"] * 8
+    assert call("Read", file_path="/proc/self/environ") == f"Не выполнено: вне базы. Читать и писать можно только в {root}/."
+    assert call("Read", file_path=f"{root}/notes/knowledge/out.md").startswith("Не выполнено: вне базы"), "a symlink out"
+    assert call("Read", file_path=f"{root}/../agent/CLAUDE.md").startswith("Не выполнено: вне базы")
+    assert call("Read", file_path="notes/knowledge/a.md") == f"Не выполнено: путь — абсолютный, от {root}/."
+    assert call("Grep", pattern="токен") == f"Не выполнено: укажи path — абсолютный путь в базе, от {root}/."
+    assert call("Glob", pattern="../../proc/*", path=root).startswith("Не выполнено: pattern — относительный")
+    assert call("Write", file_path=f"{root}/notes/knowledge/CLAUDE.md", content="x").startswith(
+        "Не записано: notes/knowledge/CLAUDE.md — сюда писать нельзя.")
+    assert call("Write", file_path=f"{root}/scripts/lint.py", content="x").startswith("Не записано: scripts/lint.py")
+    assert call("Edit", file_path=showcase, old_string="- правило", new_string="- другое").endswith(
+        "выше маркера Витрины правила; меняй только строки ниже него.")
+    assert call("Write", file_path=showcase, content="# Заметки\n").endswith("меняй только строки ниже него.")
+    assert call("Write", which=summary, file_path=f"{root}/notes/knowledge/b.md", content="x") == \
+        "Не записано: вне хода разговора база только для чтения."
+    assert call("Write", file_path=None) == f"Не выполнено: укажи file_path — абсолютный путь в базе, от {root}/."
+    out = asyncio.run(guard({"tool_name": "Edit", "tool_input": "notes"}, "t", {"signal": None}))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny", "fails closed"
+
+
+def test_every_guard_decision_on_the_base_is_on_record(kb, tmp_path):
+    """Like travel-ops: each file tool call she makes is a protocol line `kb/<tool>` with the path and, for a
+    refusal, the reason."""
+    from retinue import kbcheck
+    from retinue.engine import memory_guard
+
+    root, policy = kb
+
+    async def run():
+        agent = RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private")
+        core = Core([agent], Store(str(tmp_path / "r.sqlite")), "owner")
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        turn = core.turns.open_root("assistant")
+        server = TestServer(BusServer(core, "secret", 0).app)
+        await server.start_server()
+        try:
+            guard = memory_guard(root, kbcheck.Policy.load(policy), True, str(server.make_url("")).rstrip("/"),
+                                 bus_token("secret", "assistant"), turn.id)
+
+            async def call(tool, **args):
+                return await guard({"tool_name": tool, "tool_input": args}, "t", {"signal": None})
+
+            await call("Read", file_path=f"{root}/notes/knowledge/a.md")
+            await call("Write", file_path=f"{root}/notes/knowledge/CLAUDE.md", content="x")
+            await call("mcp__retinue__search_archive", query="паспорт")
+            return core, telegram
+        finally:
+            await server.close()
+
+    core, telegram = asyncio.run(run())
+    rows = core.store.db.execute("SELECT target, status FROM protocol WHERE channel = 'bus' ORDER BY id").fetchall()
+    assert rows == [("kb/Read", "allowed"), ("kb/Write", "denied")], "the archive search is not the base's"
+    lines = [e[1] for e in telegram.events if e[0] == "protocol"]
+    assert lines[0] == f"kb: Ассистентка → Read {root}/notes/knowledge/a.md: allowed"
+    assert lines[1].startswith(f"kb: Ассистентка → Write {root}/notes/knowledge/CLAUDE.md: denied — Не записано:")
+
+
+def test_the_guard_refuses_hidden_names_and_case_tricks(kb, monkeypatch):
+    """`claude.md` is CLAUDE.md on the owner's Mac; `.git/` inside the base is storage git never sees and never
+    cleans; `.claude/` is settings. None of them is hers, in any case or form."""
+    from retinue import kbcheck
+    from retinue.engine import memory_guard
+
+    root, policy = kb
+
+    async def ack(*args):
+        return True
+
+    monkeypatch.setattr("retinue.engine._ack", ack)
+    guard = memory_guard(root, kbcheck.Policy.load(policy), writable=True)
+
+    def call(tool, **args):
+        out = asyncio.run(guard({"tool_name": tool, "tool_input": args}, "t", {"signal": None}))
+        return out.get("hookSpecificOutput", {}).get("permissionDecisionReason", "ok")
+
+    for name in ("claude.md", "Claude.md", "agents.md"):
+        assert call("Write", file_path=f"{root}/notes/knowledge/{name}", content="x").startswith(
+            f"Не записано: notes/knowledge/{name} — сюда писать нельзя."), name
+    for path in ("notes/knowledge/.git/x.md", "notes/knowledge/.claude/settings.json", "notes/.hidden.md"):
+        assert call("Write", file_path=f"{root}/{path}", content="x") == \
+            f"Не выполнено: {path} — имя с точки, скрытое; в базе таких нет.", path
+        assert call("Read", file_path=f"{root}/{path}").startswith("Не выполнено:"), path
+    assert call("Glob", pattern="**/.git/*", path=root).startswith("Не выполнено: pattern")
+
+
+def test_a_write_needs_the_routers_word_that_the_turn_is_still_running(kb, tmp_path):
+    """A run the router has given up on (timed out, restarted) must not keep writing: its changes would land in
+    the next turn's commit, or be wiped under it. Before each Edit or Write the router confirms this turn is open
+    and is the one holding the queue; no answer is a no."""
+    from retinue import kbcheck
+    from retinue.engine import memory_guard
+
+    root, policy = kb
+    record = {"file_path": f"{root}/notes/knowledge/b.md", "content": "x"}
+
+    async def run():
+        agent = RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private")
+        core = Core([agent], Store(str(tmp_path / "r.sqlite")), "owner")
+        await core.start([FakeChannel("telegram", False)])
+        turn = core.turns.open_root("assistant")
+        server = TestServer(BusServer(core, "secret", 0).app)
+        await server.start_server()
+        url = str(server.make_url("")).rstrip("/")
+        try:
+            guard = memory_guard(root, kbcheck.Policy.load(policy), True, url, bus_token("secret", "assistant"), turn.id)
+
+            async def write():
+                out = await guard({"tool_name": "Write", "tool_input": record}, "t", {"signal": None})
+                return out.get("hookSpecificOutput", {}).get("permissionDecisionReason", "ok")
+
+            out = [await write()]                    # open, but another run holds the queue
+            core.writer = turn.id
+            out.append(await write())                # open and holding it
+            core.turns.close(turn)
+            out.append(await write())                # given up on
+        finally:
+            await server.close()
+        dead = memory_guard(root, kbcheck.Policy.load(policy), True, "http://127.0.0.1:9", "t", "turn-1")
+        out.append((await dead({"tool_name": "Write", "tool_input": record}, "t", {"signal": None}))
+                   ["hookSpecificOutput"]["permissionDecisionReason"])
+        out.append(await dead({"tool_name": "Read", "tool_input": {"file_path": f"{root}/notes/AGENTS.md"}}, "t",
+                              {"signal": None}))
+        return out
+
+    refused, allowed, closed, unreachable, read = asyncio.run(run())
+    no = "Не записано: Роутер не подтвердил, что этот ход ещё идёт и пишет он один — правка не сохранилась бы."
+    assert allowed == "ok" and refused == closed == unreachable == no
+    assert read == {}, "reading needs no word from the router"

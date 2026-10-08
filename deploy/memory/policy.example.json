@@ -1,0 +1,14 @@
+{
+  "branch": "main",
+  "writer_uid": 10001,
+  "marker": "<!-- Витрина: выше — правила Пространства, ниже — строки. Ассистентка пишет только ниже. -->",
+  "writable": ["*/knowledge/**/*.md", "*/profile/**/*.md", "*/journal/**/*.md", "*/artifacts/**/*.md"],
+  "lines_below": ["*/AGENTS.md", "MAP.md"],
+  "never": ["**/CLAUDE.md", "**/CLAUDE.local.md", "**/AGENTS.md", "**/SKILL.md", "**/build/**",
+            "**/node_modules/**", ".*/**", "scripts/**"],
+  "excluded": [],
+  "keep": "id",
+  "owner_mark": "Владелец",
+  "check": ["python3", "-I", "scripts/lint.py"],
+  "check_timeout": 120
+}

@@ -151,3 +151,34 @@ def test_the_travel_sites_whose_links_are_clickable(tmp_path, monkeypatch):
 
     (channel,) = build_channels(cfg, None, None)
     assert channel.link_hosts == ("kiwi.com", "www.trivago.*")
+
+
+def test_the_knowledge_base_comes_from_the_environment(tmp_path, monkeypatch):
+    path = tmp_path / "agent.yaml"
+    path.write_text("id: a\nname: A\ndescription: d\ntrust_class: private\nskills: []\n")
+    assert AgentConfig.load(path).memory == "", "off unless the stack says so"
+    monkeypatch.setenv("RETINUE_MEMORY", "/kb")
+    with pytest.raises(SystemExit, match="RETINUE_MEMORY_POLICY"):
+        AgentConfig.load(path)
+    monkeypatch.setenv("RETINUE_MEMORY_POLICY", "/memory-policy.json")
+    cfg = AgentConfig.load(path)
+    assert (cfg.memory, cfg.memory_policy) == ("/kb", "/memory-policy.json")
+
+
+def test_the_router_holds_the_knowledge_base_when_the_config_says_so(tmp_path, monkeypatch):
+    import sqlite3
+
+    from retinue.router import build_memory
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    assert load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n").memory is None, "off unless the config says so"
+    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nmemory:\n  hub: /srv/hub\n  checkout: ['/*.md', '/notes/']\n")
+    assert (cfg.memory.tree, cfg.memory.git_dir, cfg.memory.hub, cfg.memory.digest_at) == ("/kb", "/kb-git", "/srv/hub",
+                                                                                          "21:00")
+    assert cfg.memory.checkout == ["/*.md", "/notes/"] and cfg.memory.policy == "/config/memory-policy.json"
+    policy = tmp_path / "policy.json"
+    policy.write_text("{}")
+    cfg.memory.policy, cfg.memory.tree, cfg.memory.git_dir = str(policy), str(tmp_path / "t"), str(tmp_path / "g")
+    memory, error = build_memory(cfg, sqlite3.connect(":memory:"))
+    assert memory is None and error.startswith("База знаний не подключена: хаб /srv/hub не ответил"), \
+        "a hub that is not there: the router runs on and says why"

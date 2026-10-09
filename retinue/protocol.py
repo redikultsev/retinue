@@ -13,6 +13,11 @@ import uuid
 from pathlib import Path
 
 
+WINDOWS = ("five_hour", "seven_day")
+WINDOW_COLUMNS = [(f"{w}_{part}", kind) for w in WINDOWS for part, kind in (("utilization", "REAL"),
+                                                                           ("resets_at", "INTEGER"))]
+
+
 class Store:
     def __init__(self, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +98,11 @@ class Store:
         )
         if "channel" not in {row[1] for row in self.db.execute("PRAGMA table_info(protocol)")}:
             self.db.execute("ALTER TABLE protocol ADD COLUMN channel TEXT")
+        # Both windows of the subscription limit, as the CLI reports them on every event (engine.rate_of).
+        runs = {row[1] for row in self.db.execute("PRAGMA table_info(runs)")}
+        for column, kind in WINDOW_COLUMNS:
+            if column not in runs:
+                self.db.execute(f"ALTER TABLE runs ADD COLUMN {column} {kind}")
         if "alone" not in {row[1] for row in self.db.execute("PRAGMA table_info(buttons)")}:
             # 1: pressing it spends this button only, the card's others stay alive (the evening list's «Откатить»)
             self.db.execute("ALTER TABLE buttons ADD COLUMN alone INTEGER NOT NULL DEFAULT 0")
@@ -117,21 +127,39 @@ class Store:
         """Account for one model run from what the host reported (`Reply.meta`). Numbers come through A2A as
         floats; counts are stored as integers."""
         usage, rate = meta.get("usage") or {}, meta.get("rate_limit") or {}
+        windows = rate.get("windows") or {}
 
         def whole(value) -> int | None:
             return None if value is None else int(value)
 
+        def window(name: str, part: str):
+            value = (windows.get(name) or {}).get(part)
+            return whole(value) if part == "resets_at" else value
+
         self.db.execute(
             "INSERT INTO runs (ts, agent_id, conversation_id, kind, status, num_turns, duration_ms, cost_usd,"
             " input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, rate_status, rate_type,"
-            " rate_utilization, rate_resets_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " rate_utilization, rate_resets_at, " + ", ".join(c for c, _ in WINDOW_COLUMNS) + ")"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (time.time() if ts is None else ts, agent_id, conversation_id, kind, status,
              whole(meta.get("num_turns")), whole(meta.get("duration_ms")), meta.get("cost_usd"),
              whole(usage.get("input_tokens")), whole(usage.get("output_tokens")),
              whole(usage.get("cache_read_tokens")), whole(usage.get("cache_write_tokens")),
-             rate.get("status"), rate.get("rate_limit_type"), rate.get("utilization"), whole(rate.get("resets_at"))),
+             rate.get("status"), rate.get("rate_limit_type"), rate.get("utilization"), whole(rate.get("resets_at")),
+             *(window(w, part) for w in WINDOWS for part in ("utilization", "resets_at"))),
         )
         self.db.commit()
+
+    def windows(self) -> dict[str, dict]:
+        """Each window of the subscription limit as last reported, with when: {"five_hour": {"utilization": 0.23,
+        "resets_at": …, "seen": …}}. A window never reported is absent."""
+        known = {}
+        for name in WINDOWS:
+            row = self.db.execute(f"SELECT {name}_utilization, {name}_resets_at, ts FROM runs WHERE"
+                                  f" {name}_utilization IS NOT NULL ORDER BY ts DESC, id DESC LIMIT 1").fetchone()
+            if row:
+                known[name] = dict(zip(("utilization", "resets_at", "seen"), row))
+        return known
 
     def runs_since(self, ts: float) -> dict[str, int]:
         """How many runs ended how, since `ts`: {"done": 12, "limit": 1, ...}."""
@@ -142,6 +170,21 @@ class Store:
         row = self.db.execute("SELECT rate_status, rate_type, rate_utilization, rate_resets_at, ts FROM runs"
                               " WHERE rate_status IS NOT NULL ORDER BY id DESC LIMIT 1").fetchone()
         return dict(zip(("status", "type", "utilization", "resets_at", "seen"), row)) if row else None
+
+    def tokens(self, since: float) -> list[dict]:
+        """Model runs since `since` by kind: how many, the four kinds of tokens, the CLI's cost estimate — the largest
+        first. Cache reads are most of it: every turn reads the session again."""
+        rows = self.db.execute("SELECT kind, COUNT(*), SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),"
+                               " SUM(cache_write_tokens), SUM(cost_usd) FROM runs WHERE ts >= ? GROUP BY kind",
+                               (since,)).fetchall()
+        out = [{"kind": kind, "runs": runs, "input": a or 0, "output": b or 0, "cache_read": c or 0,
+                "cache_write": d or 0, "cost_usd": round(cost or 0.0, 2)} for kind, runs, a, b, c, d, cost in rows]
+        return sorted(out, key=lambda r: -(r["input"] + r["output"] + r["cache_read"] + r["cache_write"]))
+
+    def run_times(self, since: float) -> list[tuple[float, str]]:
+        """(when, status) of every model run since `since`."""
+        return [tuple(row) for row in self.db.execute("SELECT ts, status FROM runs WHERE ts >= ? ORDER BY ts",
+                                                      (since,))]
 
     def conversation(self, agent_id: str) -> str:
         """The agent's current conversation id, created on first use."""

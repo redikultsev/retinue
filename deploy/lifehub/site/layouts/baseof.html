@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>{{ .Title }} · Хаб</title>
+<link rel="stylesheet" href="/css/lifehub.css">
+</head>
+<body>
+<nav>
+<a href="/">Сейчас</a>
+<a href="/trips/">Поездки</a>
+<a href="/status/">Статус</a>
+<a href="/work/">Работа</a>
+<a href="/finance/">Финансы</a>
+<a href="/health/">Здоровье</a>
+</nav>
+<main>
+{{ block "main" . }}{{ end }}
+</main>
+<footer>Хаб жизни · только твои устройства</footer>
+</body>
+</html>

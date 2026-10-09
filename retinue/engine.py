@@ -20,7 +20,7 @@ import httpx
 from claude_agent_sdk import (ClaudeAgentOptions, HookMatcher, RateLimitEvent, RateLimitInfo, ResultError,
                               ResultMessage, StreamEvent, SystemMessage, create_sdk_mcp_server, query, tool)
 
-from . import kbcheck, travel
+from . import kbcheck, lifehub, travel
 from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
@@ -190,8 +190,21 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
                   for image in data.get("images", [])]
         return {"content": [*images, {"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
+    @tool("publish_trip",
+          "Опубликовать страницу поездки в хабе Владельца: все варианты, которые ты нашла, с ценами, временем, "
+          "отзывами и фото. Варианты называй ссылкой (link.url) и search_id из ответов travel-ops: цены, продавца и "
+          "время Роутер возьмёт из travel-ops сам. Ответ — адрес страницы; дай его Владельцу в конце ответа ссылкой "
+          "«подробнее». Отказ называет поле — исправь и повтори.",
+          lifehub.TRIP_SCHEMA)
+    async def publish_trip(args):
+        async with client(120) as http:
+            response = await http.post(f"{bus_url}/trips/publish", headers=headers,
+                                       json={"turn": turn_id, "trip": args})
+        data = response.json()
+        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
+
     return {t.name: t for t in (ask_agent, list_agents, search_archive, set_reminder, list_reminders,
-                                cancel_reminder, move_reminder, get_attachment)}
+                                cancel_reminder, move_reminder, get_attachment, publish_trip)}
 
 
 TRAVEL = "travel"  # the MCP server's name: its tools are mcp__travel__<tool>
@@ -614,12 +627,27 @@ class ClaudeEngine:
         )
 
 
+LIMIT_WINDOWS = ("five_hour", "seven_day")  # the subscription's two windows, as the CLI names them
+
+
 def rate_of(info: RateLimitInfo | None) -> dict:
-    """The subscription limit state as the CLI last reported it: status, window, share used, when it resets."""
+    """The subscription limit state as the CLI last reported it: status, window, share used, when it resets — and
+    both windows, which CLI 2.1.286 sends with every event as `unifiedWindows` (in `raw`: the SDK does not model
+    them). The top-level share is only the limiting window's, and only near the limit."""
     if info is None:
         return {}
     fields = {"status": info.status, "rate_limit_type": info.rate_limit_type, "utilization": info.utilization,
               "resets_at": info.resets_at}
+    windows = {}
+    raw = info.raw.get("unifiedWindows") if isinstance(info.raw, dict) else None
+    for name in LIMIT_WINDOWS:
+        window = raw.get(name) if isinstance(raw, dict) else None
+        share = window.get("utilization") if isinstance(window, dict) else None
+        if isinstance(share, (int, float)) and not isinstance(share, bool):
+            resets = window.get("resetsAt")
+            windows[name] = {"utilization": float(share),
+                             "resets_at": int(resets) if isinstance(resets, (int, float)) else None}
+    fields["windows"] = windows or None
     return {key: value for key, value in fields.items() if value is not None}
 
 

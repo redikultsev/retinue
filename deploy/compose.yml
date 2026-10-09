@@ -57,6 +57,9 @@ services:
       - /srv/retinue/memory/git:/kb-git
       - /srv/retinue/memory/hub.git:/hub
       - /srv/retinue/memory/policy.json:/config/memory-policy.json:ro
+      # The life hub (setup.sh LIFEHUB=1): the pages' data, which the router alone writes; how the last build went.
+      - /srv/retinue/lifehub/data:/lifehub
+      - /srv/retinue/lifehub/site:/lifehub-site:ro
     environment:
       RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN:-}         # these two only with a `matrix:` section in router.yaml
       RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN:-}
@@ -173,6 +176,53 @@ services:
       - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
       - /srv/retinue/egress/mail-hosts.txt:/etc/squid/allowed-hosts.txt:ro
     networks: [mail-out, outside]
+
+  # The life hub: pages about the owner's life, for his devices only. The router writes the data; the builder turns it
+  # into pages with Hugo, with no network, checks them and switches `current`; nginx serves `current` to Traefik,
+  # which lets through the owner's devices only and adds the key nginx checks. Off until the owner turns it on
+  # (setup.sh LIFEHUB=1).
+  lifehub-build:
+    profiles: ["lifehub"]
+    build: { context: ./lifehub }
+    image: retinue-lifehub:local
+    restart: unless-stopped
+    user: "10001:10001"
+    network_mode: none                          # Hugo is in the image; a build reaches nothing
+    read_only: true
+    tmpfs: ["/tmp:size=256m,uid=10001,gid=10001"]  # a copy of the site and the data per build, Hugo's cache
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 64
+    volumes:
+      - /srv/retinue/lifehub/data:/data:ro
+      - /srv/retinue/lifehub/site:/site
+
+  lifehub:
+    profiles: ["lifehub"]
+    image: nginxinc/nginx-unprivileged:1.30.5-alpine-slim@sha256:3af0c10d960cc2502427fe1219c52989d309e7d65596869c60a34fd2fa2406f0
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]                    # nginx's pid and temporary files
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    pids_limit: 64
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    volumes:
+      - /srv/retinue/lifehub/site:/site:ro
+      - /srv/retinue/lifehub/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [dokploy-network]                 # Traefik's; nothing of Retinue is on it
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.retinue-lifehub.rule=Host(`${LIFEHUB_HOST:-}`)
+      - traefik.http.routers.retinue-lifehub.entrypoints=websecure
+      - traefik.http.routers.retinue-lifehub.tls.certresolver=letsencrypt
+      - traefik.http.routers.retinue-lifehub.middlewares=lifehub-owner@file,lifehub-headers@file
+      - traefik.http.services.retinue-lifehub.loadbalancer.server.port=8080
+    depends_on: [lifehub-build]
 
   egress:
     image: ubuntu/squid:6.6-24.04_beta            # Squid, GPL-2.0; pin a digest after first deploy

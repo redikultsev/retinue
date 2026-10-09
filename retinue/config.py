@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -32,6 +33,7 @@ class RouterAgent:
     archive: bool = False                 # may search the raw archive through the bus
     reminders: bool = False               # may set, list, move and cancel the owner's reminders through the bus
     attachments: bool = False             # may fetch what the owner sent (#N) again through the bus
+    trips: bool = False                   # may publish a trip page in the life hub through the bus
 
 
 @dataclass
@@ -90,6 +92,9 @@ class RouterConfig:
     memory: MemoryConfig | None = None  # the knowledge base she writes; without the section she has no base
     collector_url: str = ""             # the mail collector: the owner's mail and calendar; empty = no mail
     collector_token: str = ""           # from RETINUE_COLLECTOR_TOKEN: the router signs its calls to the collector
+    lifehub_url: str = ""               # the life hub's address, https://<host>; empty = no pages
+    lifehub_data: str = "/lifehub"      # where the router writes the pages' data; the build container reads it
+    lifehub_build: str = "/lifehub-site/build.json"  # how the builder's last build went (read-only for the router)
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -113,6 +118,8 @@ class RouterConfig:
         cfg.stt_key = os.environ.get("ELEVENLABS_API_KEY", "")
         if cfg.collector_url:
             cfg.collector_token = _env("RETINUE_COLLECTOR_TOKEN")
+        if cfg.lifehub_url and not re.fullmatch(r"https://[a-z0-9.-]+", cfg.lifehub_url):
+            raise SystemExit(f"router config: lifehub_url {cfg.lifehub_url!r} is not https://<host>")
         try:
             ZoneInfo(cfg.owner_tz)
         except (ZoneInfoNotFoundError, ValueError):
@@ -147,7 +154,7 @@ class CollectorConfig:
 
 # What an agent can be given through the router.
 BUS_TOOLS = ("ask_agent", "list_agents", "search_archive",
-             "set_reminder", "list_reminders", "cancel_reminder", "move_reminder", "get_attachment")
+             "set_reminder", "list_reminders", "cancel_reminder", "move_reminder", "get_attachment", "publish_trip")
 
 
 @dataclass

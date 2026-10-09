@@ -342,6 +342,11 @@ class TravelOps:
 
     async def call(self, tool: str, arguments: dict, timeout: float = 60.0) -> dict:
         """travel-ops' structured answer. Raises Refused when travel-ops refused the call, Unavailable otherwise."""
+        structured = (await self.result(tool, arguments, timeout)).get("structuredContent")
+        return structured if isinstance(structured, dict) else {}
+
+    async def result(self, tool: str, arguments: dict, timeout: float = 60.0) -> dict:
+        """The whole MCP result of a call: its `content` blocks too — the pictures of `stay_photos`."""
         body = {"jsonrpc": "2.0", "id": next(self.ids), "method": "tools/call",
                 "params": {"name": tool, "arguments": arguments}}
         headers = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": PROTOCOL}
@@ -355,11 +360,12 @@ class TravelOps:
             result = response.json()["result"]
         except (ValueError, KeyError, TypeError):
             raise Unavailable("travel-ops ответил не по протоколу.") from None
+        if not isinstance(result, dict):
+            raise Unavailable("travel-ops ответил не по протоколу.")
         if result.get("isError"):
             said = " ".join(c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict))
             raise Refused(f"travel-ops отказал: {words(said, 300) or 'без причины'}")
-        structured = result.get("structuredContent")
-        return structured if isinstance(structured, dict) else {}
+        return result
 
     async def alerts(self) -> list[dict]:
         """Price drops not yet collected, looked at without taking them: the router keeps them first."""

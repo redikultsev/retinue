@@ -1,0 +1,9 @@
+{{- /* A page per trip the router published: data/trips/<id>.json. The id is random and checked again here: a
+     page's path is only ever 16 hex digits. */ -}}
+{{- range resources.Match "trips/*.json" -}}
+  {{- $trip := . | transform.Unmarshal -}}
+  {{- if findRE "^[0-9a-f]{16}$" $trip.id -}}
+    {{- $.AddPage (dict "path" $trip.id "title" $trip.title "kind" "page" "params" (dict "trip" $trip)
+        "content" (dict "mediaType" "text/markdown" "value" "")) -}}
+  {{- end -}}
+{{- end -}}

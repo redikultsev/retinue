@@ -1,0 +1,22 @@
+{{ define "main" }}
+{{ with .Params.trip }}
+<h1>{{ .title }}</h1>
+<p class="muted">{{ .start }} — {{ .end }} · опубликовано {{ .published }}</p>
+{{ range split .summary "\n" }}{{ with . }}<p>{{ . }}</p>{{ end }}{{ end }}
+{{ range .options }}
+<article class="option{{ if .pick }} pick{{ end }}">
+<h2>{{ .what }}{{ if .pick }} <span class="tag">советую</span>{{ end }}</h2>
+<p class="price">{{ .price }}{{ with .converted }} <span class="muted">≈ {{ . }}</span>{{ end }}{{ with .seller }} · {{ . }}{{ end }}</p>
+{{ range .lines }}{{ with . }}<p>{{ . }}</p>{{ end }}{{ end }}
+{{ with .note }}<p class="note">{{ . }}</p>{{ end }}
+{{ range .photos }}{{ with resources.Get . }}<img src="{{ .RelPermalink }}" alt="фото варианта" loading="lazy">{{ end }}{{ end }}
+<p class="muted">{{ .seen }}: перед покупкой повтори поиск.</p>
+<p>{{ partial "link.html" (dict "url" .link "ok" .linkable) }}</p>
+</article>
+{{ end }}
+{{ else }}
+<h1>{{ .Title }}</h1>
+{{ if .Params.soon }}<p class="muted">Скоро.</p>{{ end }}
+{{ .Content }}
+{{ end }}
+{{ end }}

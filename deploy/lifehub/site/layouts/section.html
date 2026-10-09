@@ -1,0 +1,9 @@
+{{ define "main" }}
+<h1>{{ .Title }}</h1>
+{{ with .Pages.ByParam "trip.start" }}
+<ul>
+{{ range .Reverse }}<li><a href="{{ .RelPermalink }}">{{ .Title }}</a> <span class="muted">{{ .Params.trip.start }} — {{ .Params.trip.end }}</span></li>
+{{ end }}
+</ul>
+{{ else }}<p class="muted">Страниц поездок ещё нет: ассистентка публикует их, когда подобрала варианты.</p>{{ end }}
+{{ end }}

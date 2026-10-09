@@ -780,3 +780,62 @@ def test_a_schema_reaches_the_engine_through_the_host(tmp_path):
                      ("события", None, "turn-y", {"schema": SCHEMA}), ("сводка", None, None, {})], \
         "a bare run never gets a turn: no bus tool could be bound to it"
     assert kept_bare is None and kept_shaped is None, "background runs keep no session"
+
+
+def test_both_limit_windows_are_kept_from_what_the_cli_reports(instructions, tmp_path, monkeypatch):
+    """The CLI reports the five-hour and the weekly window on every event (`unifiedWindows`, beyond the fields the
+    SDK models): kept as numbers, so that the status page shows the share of the subscription even while allowed."""
+    def cli(windows):
+        async def run(prompt, options):
+            yield RateLimitEvent(rate_limit_info=RateLimitInfo(status="allowed", raw={
+                "status": "allowed", "unifiedWindows": windows}), uuid="u", session_id="s-1")
+            yield ResultMessage(subtype="success", duration_ms=10, duration_api_ms=5, is_error=False, num_turns=1,
+                                session_id="s-1", result="ответ")
+        return run
+
+    engine = ClaudeEngine(EngineConfig(instructions=instructions, config_dir=str(tmp_path / "c")), str(tmp_path))
+    monkeypatch.setattr("retinue.engine.query", cli({"five_hour": {"utilization": 0.23, "resetsAt": 1760010000},
+                                                      "seven_day": {"utilization": 0.63, "resetsAt": 1760500000},
+                                                      "seven_day_overage_included": {"utilization": 0.1}}))
+    seen = asyncio.run(engine.run("привет", "s-1")).rate_limit
+    assert seen == {"status": "allowed", "windows": {"five_hour": {"utilization": 0.23, "resets_at": 1760010000},
+                                                     "seven_day": {"utilization": 0.63, "resets_at": 1760500000}}}
+    monkeypatch.setattr("retinue.engine.query", cli({"five_hour": {"utilization": "много"}, "seven_day": None}))
+    assert asyncio.run(engine.run("привет", "s-1")).rate_limit == {"status": "allowed"}, "nothing that is not a number"
+
+
+def test_publish_trip_reaches_the_router_and_answers_with_the_page_address(tmp_path):
+    """Her tool sends the trip to the router's bus; only during her own turn and with the grant."""
+    from retinue import lifehub
+
+    from test_lifehub import FLIGHT, FLIGHTS, trip_with
+    from test_travel import travel_ops
+
+    async def run():
+        agent = RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private", trips=True)
+        plain = RouterAgent(id="other", name="Другой", url="o", trust_class="private")
+        hub = lifehub.Lifehub(lifehub.Data(str(tmp_path / "data")), "https://hub.in.example.com",
+                              ["www.kupibilet.ru"])
+        core = Core([agent, plain], Store(str(tmp_path / "r.sqlite")), "owner", lifehub=hub,
+                    travel=travel_ops([FLIGHTS], []))
+        await core.start([FakeChannel("telegram", False)])
+        turn, other = core.turns.open_root("assistant"), core.turns.open_root("other")
+        server = TestServer(BusServer(core, "secret", 0).app)
+        await server.start_server()
+        try:
+            url = str(server.make_url("")).rstrip("/")
+            publish = bus_tools(url, bus_token("secret", "assistant"), turn.id)["publish_trip"]
+            done = await publish.handler(trip_with(FLIGHT))
+            refused = await bus_tools(url, bus_token("secret", "other"), other.id)["publish_trip"].handler(
+                trip_with(FLIGHT))
+            core.turns.close(turn)
+            late = await publish.handler(trip_with(FLIGHT))
+            return publish, done, refused, late
+        finally:
+            await server.close()
+
+    publish, done, refused, late = asyncio.run(run())
+    assert publish.input_schema is lifehub.TRIP_SCHEMA, "she sees the very schema code checks"
+    assert not done["is_error"] and done["content"][0]["text"].startswith("Опубликовано: https://hub.in.example.com/trips/")
+    assert refused["is_error"] and "публикация поездок не выдана" in refused["content"][0]["text"]
+    assert late["is_error"] and "Нет активного запроса" in late["content"][0]["text"]

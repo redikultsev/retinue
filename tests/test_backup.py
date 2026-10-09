@@ -93,6 +93,9 @@ def test_a_night_backup_copies_databases_consistently_and_leaves_secrets_out(tmp
         "stack.env holds the subscription token; backup.env the backup's own keys"
     assert f"{srv}/mail" in excluded, "the owner's Google tokens never leave the host"
     assert f"{srv}/tuwunel/appservices" in excluded, "the Matrix registration carries tokens too"
+    assert f"{srv}/lifehub/nginx.conf" in excluded and f"{srv}/lifehub/traefik.yml" in excluded, \
+        "the life hub's key, rendered from secrets.env; setup.sh renders it again"
+    assert f"{srv}/lifehub/site" in excluded, "the built pages: the builder makes them again from the data"
     assert (tmp_path / "restic.log.cache").read_text() == "/var/cache/restic", \
         "systemd gives the service no HOME, and restic finds no cache without one"
 

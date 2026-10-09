@@ -46,7 +46,8 @@ only, no volume, config mounted read-only) and `egress` (Squid: the only way out
 
 Optional parts, each turned on by `setup.sh` with its own switch and its own guide: `TRAVEL=1` — trip search and
 price watches; `MEMORY=1` — the knowledge base she writes ([memory.md](memory.md)); `MAIL=1` — your Gmail and
-Google Calendar, read-only ([mail.md](mail.md)).
+Google Calendar, read-only ([mail.md](mail.md)); `LIFEHUB=1` — pages for your devices only: now, trips, status
+([lifehub.md](lifehub.md)).
 
 ## 4. Check
 

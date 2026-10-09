@@ -12,12 +12,14 @@ import asyncio
 import logging
 import sqlite3
 import subprocess
+from urllib.parse import urlsplit
 
 from .archive import Archive
 from .bus import BusServer, bus_token
 from .channels.telegram import TelegramChannel
 from .config import RouterConfig
 from .core import Core, ask_agent
+from .lifehub import Data, Lifehub
 from .mail import Collector, MailStore
 from .mailroom import Mailroom
 from .memory import Memory
@@ -33,7 +35,9 @@ def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventL
         from .channels.matrix import MatrixChannel
         channels.append(MatrixChannel(cfg.matrix, cfg.agents, store, loop, f"{cfg.state_db}.mx-state.json"))
     if cfg.telegram:
-        channels.append(TelegramChannel(cfg.telegram, store, cfg.link_hosts))
+        # A trip page of the life hub is clickable too, and nothing else of it: the path is under /trips/.
+        hub = [f"{urlsplit(cfg.lifehub_url).hostname}/trips/"] if cfg.lifehub_url else []
+        channels.append(TelegramChannel(cfg.telegram, store, [*cfg.link_hosts, *hub]))
     return channels
 
 
@@ -78,10 +82,13 @@ def main() -> None:
     memory, memory_error = build_memory(cfg, store.db)
     mail = Mailroom(Collector(cfg.collector_url, cfg.collector_token), MailStore(store.db)) if cfg.collector_url \
         else None
+    lifehub = Lifehub(Data(cfg.lifehub_data), cfg.lifehub_url, cfg.link_hosts, kb=cfg.memory.tree if memory else "",
+                      build_status=cfg.lifehub_build) if cfg.lifehub_url else None
     core = Core(cfg.agents, store, cfg.owner, ask=signed(tokens), archive=Archive(cfg.archive_db),
                 default_agent=cfg.default_agent,
                 tz=cfg.owner_tz, backup_status=cfg.backup_status, scribe=Scribe(cfg.stt_key, store=store),
-                travel=TravelOps(cfg.travel_url) if cfg.travel_url else None, memory=memory, mail=mail)
+                travel=TravelOps(cfg.travel_url) if cfg.travel_url else None, memory=memory, mail=mail,
+                lifehub=lifehub)
     loop.run_until_complete(core.start(build_channels(cfg, store, loop)))
     if memory_error:
         loop.run_until_complete(core.tell_owner(memory_error))

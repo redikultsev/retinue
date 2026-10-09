@@ -454,6 +454,13 @@ class MailStore:
                               (sender, since)).fetchone()
         return row[0]
 
+    def needing(self, since: float) -> list[dict]:
+        """Items she judged since `since` that ask something of the owner, the longest waiting first: the «now» page."""
+        rows = self.db.execute(f"SELECT {self._COLUMNS} FROM mail_items WHERE state IN ('later', 'told', 'held', "
+                               "'done') AND at >= ? AND COALESCE(json_extract(card, '$.needs_now'), 'nothing') "
+                               "!= 'nothing' ORDER BY at LIMIT 30", (since,)).fetchall()
+        return [self._item(row) for row in rows]
+
     def urgent_since(self, since: float) -> int:
         return self.db.execute("SELECT COUNT(*) FROM mail_items WHERE state = 'told' AND at >= ?",
                                (since,)).fetchone()[0]

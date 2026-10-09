@@ -262,6 +262,20 @@ def price_text(alert: dict) -> str:
     return "\n".join(lines + [f"_Цена на момент проверки{seen}: перед покупкой повтори поиск._"])
 
 
+def limit_windows(windows: dict, now: float, tz: str = clock.DEFAULT_TZ) -> str:
+    """«лимит подписки: 5 ч — 23 %, неделя — 63 % (на …)» from `Store.windows()`. A window that has reset since it
+    was seen says so instead of an old share."""
+    said = []
+    for name, label in (("five_hour", "5 ч"), ("seven_day", "неделя")):
+        if window := windows.get(name):
+            if window["resets_at"] and window["resets_at"] <= now:
+                said.append(f"{label} — окно сброшено в {clock.until(window['resets_at'], now, tz)}")
+            else:
+                said.append(f"{label} — {round(window['utilization'] * 100)} %")
+    seen = max(window["seen"] for window in windows.values())
+    return f"лимит подписки: {', '.join(said)} (на {clock.stamp(seen, tz)})"
+
+
 def history_line(event: Event, tz: str = clock.DEFAULT_TZ) -> str:
     limit = HISTORY_CHARS[event.kind]
     text = event.text if len(event.text) <= limit else event.text[:limit] + " …(обрезано)"
@@ -275,7 +289,7 @@ class Core:
     def __init__(self, agents: list[RouterAgent], store: Store, owner: str, ask=ask_agent,
                  archive: Archive | None = None, default_agent: str | None = None,
                  tz: str = clock.DEFAULT_TZ, backup_status: str | None = None, scribe=None, travel=None,
-                 memory=None, mail=None) -> None:
+                 memory=None, mail=None, lifehub=None) -> None:
         self.agents = {a.id: a for a in agents}
         self.backup_status = backup_status  # the host's backup writes it; None: this core says nothing of backups
         self.tz = tz  # the owner's zone: every time the model and the owner see is local time there
@@ -307,6 +321,10 @@ class Core:
         self.mail = mail  # the owner's mail and calendar (`mailroom.Mailroom`); None: no collector
         if mail:
             mail.attach(self)
+        self.travel_state: tuple[float, str] | None = None  # the last look at travel-ops: when, what went wrong
+        self.lifehub = lifehub  # the life hub's data (`lifehub.Lifehub`); None: no pages
+        if lifehub:
+            lifehub.attach(self)
 
     async def start(self, channels: list[Channel]) -> None:
         for agent_id in self.agents:
@@ -589,6 +607,8 @@ class Core:
             self.collecting = asyncio.create_task(self._collect())
         if self.mail:
             self.mail.step(now)  # one piece of mail work at a time, in a task of its own
+        if self.lifehub:
+            self.lifehub.step(now)  # the pages' data, in a task of its own
         try:
             self.jobs.ensure_summary(now)
             if self.memory:
@@ -600,10 +620,12 @@ class Core:
     async def _collect(self) -> None:
         try:
             await self.collect_prices()
+            self.travel_state = (time.time(), "")
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # travel-ops down: the alerts wait there, the next look takes them
             log.warning("price alerts not collected: %s", exc)
+            self.travel_state = (time.time(), str(exc)[:200] or type(exc).__name__)
 
     async def collect_prices(self, now: float | None = None) -> int:
         """Price drops travel-ops' watches found: looked at, kept as `price` jobs, then confirmed to travel-ops —
@@ -646,8 +668,10 @@ class Core:
                  f"сбоев — {failed}"]
         if runs.get("limit"):
             parts.append(f"упиралась в лимит — {runs['limit']}")
-        rate = self.store.last_rate_limit()
-        if rate and rate["utilization"] is not None:
+        rate, windows = self.store.last_rate_limit(), self.store.windows()
+        if windows:
+            parts.append(limit_windows(windows, now, self.tz))
+        elif rate and rate["utilization"] is not None:
             parts.append(f"лимит подписки израсходован на {round(rate['utilization'] * 100)} % "
                          f"({WINDOWS.get(rate['type'], rate['type'] or 'окно не названо')}, "
                          f"на {clock.stamp(rate['seen'], self.tz)})")
@@ -657,6 +681,8 @@ class Core:
             parts.append(self.backup(now))
         if self.mail:
             parts += self.mail.health(now)
+        if self.lifehub and (built := self.lifehub.health(now)):
+            parts.append(built)
         return "Здоровье за сутки: " + ", ".join(parts) + "."
 
     def backup(self, now: float) -> str:
@@ -928,6 +954,8 @@ class Core:
         """One model run in the `runs` table: tokens, cost estimate, the subscription limit state."""
         self.store.run(agent_id=agent.id, conversation_id=conversation_id, kind=kind,
                        status="limit" if meta.get("limit") else status, meta=meta)
+        if self.lifehub:
+            self.lifehub.poke(time.time())
 
     def unseen(self, event: Event) -> list[Event]:
         """Events of the conversation after the assistant's last answer: its session has not seen them."""
@@ -1269,6 +1297,24 @@ class Core:
         self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target=f"reminders/{action}",
                        status="done" if ok else "rejected", input_chars=len(str(args.get("text", ""))),
                        output_chars=len(text), channel="bus")
+        return ok, text
+
+    async def publish_trip(self, caller: RouterAgent, turn_id: str, trip) -> tuple[bool, str]:
+        """An agent publishes a trip page in the life hub: only during its own turn and with the `trips` grant. What
+        she sends is checked and looked up in travel-ops by code (`Lifehub.publish`); the answer has the address."""
+        turn = self.turns.turns.get(turn_id)
+        if turn is None or turn.agent_id != caller.id:
+            return False, "Нет активного запроса: страница публикуется только во время ответа."
+        if not caller.trips:
+            return False, "Отказано: этому агенту публикация поездок не выдана."
+        if not self.lifehub:
+            return False, "Хаб не подключён: страницы не будет. Ответь Владельцу без ссылки."
+        ok, text = await self.lifehub.publish(trip, self.travel, time.time())
+        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="trips/publish",
+                       status="done" if ok else "rejected", input_chars=len(json.dumps(trip, ensure_ascii=False)),
+                       output_chars=len(text), channel="bus")
+        await self._each(self.channels, "protocol",
+                         f"lifehub: {caller.name} → страница поездки: {'опубликована' if ok else 'отказ'}")
         return ok, text
 
     async def travel_log(self, caller: RouterAgent, turn_id: str, tool: str, decision: str, chars,

@@ -193,3 +193,30 @@ def test_the_router_reaches_the_mail_collector_with_its_token(tmp_path, monkeypa
     monkeypatch.setenv("RETINUE_COLLECTOR_TOKEN", "c")
     cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\ncollector_url: http://collector:9200\n")
     assert (cfg.collector_url, cfg.collector_token) == ("http://collector:9200", "c")
+
+
+def test_the_life_hub_is_on_when_the_config_names_its_address(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    plain = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n")
+    assert plain.lifehub_url == "" and plain.lifehub_data == "/lifehub", "off unless the config says so"
+    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nlifehub_url: https://hub.in.example.com\n")
+    assert cfg.lifehub_url == "https://hub.in.example.com"
+    for wrong in ("http://hub.in.example.com", "https://hub.in.example.com/x", "hub.in.example.com"):
+        with pytest.raises(SystemExit, match="lifehub_url"):
+            load(tmp_path, AGENT + f"telegram:\n  owner_id: 42\nlifehub_url: {wrong}\n")
+
+
+def test_a_link_to_a_trip_page_is_clickable_in_telegram_and_nothing_else_of_the_hub(tmp_path, monkeypatch):
+    from retinue.render import render_telegram
+    from retinue.router import build_channels
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nlink_hosts: [kiwi.com]\n"
+                                 "lifehub_url: https://hub.in.example.com\n")
+    (channel,) = build_channels(cfg, None, None)
+    assert channel.link_hosts == ("kiwi.com", "hub.in.example.com/trips/")
+    (html,) = render_telegram("Нашла.\n\n[подробнее](https://hub.in.example.com/trips/0123456789abcdef/)",
+                              channel.link_hosts)
+    assert '<a href="https://hub.in.example.com/trips/0123456789abcdef/">подробнее</a>' in html
+    (other,) = render_telegram("[статус](https://hub.in.example.com/status/)", channel.link_hosts)
+    assert "<a " not in other, "only a trip page: the model chooses the path under /trips/, nothing else"

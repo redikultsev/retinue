@@ -1,0 +1,34 @@
+# The life hub's site. Built by deploy/lifehub/build.py in a container with no network; the data comes from the
+# router as JSON (assets/, copied in for each build). Every value is escaped by Hugo's templates; nothing here runs
+# code, reads the environment or fetches anything. The page policy has no 'unsafe-inline': no style="" and no
+# inline script anywhere — classes of /css/lifehub.css only.
+baseURL = "/"
+locale = "ru"
+title = "Хаб жизни"
+disableHugoGeneratorInject = true
+disableKinds = ["taxonomy", "term", "rss", "sitemap", "robotstxt", "404"]
+enableRobotsTXT = false
+
+[markup.goldmark.renderer]
+  unsafe = false                    # raw HTML in markdown is never written out
+
+[module.hugoVersion]
+  min = "0.167.0"
+
+[security]
+  enableInlineShortcodes = false
+  allowcontent = ["! ^text/html$", "! ^text/org$"]
+  [security.exec]
+    allow = ["none"]
+    osEnv = ["none"]
+  [security.funcs]
+    getenv = ["none"]
+  [security.http]
+    methods = ["none"]
+    urls = ["none"]
+    mediaTypes = ["none"]
+  [security.node.permissions]
+    allowAddons = ["none"]
+    allowChildProcess = ["none"]
+    allowRead = ["none"]
+    allowWorker = ["none"]

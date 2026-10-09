@@ -1,0 +1,64 @@
+{{ define "main" }}
+{{ $s := partial "data.html" "status.json" }}
+<h1>Статус</h1>
+{{ if not $s.updated }}<p class="muted">Данных ещё нет: Роутер пишет их раз в пять минут.</p>{{ else }}
+
+<section>
+<h2>За сутки</h2>
+<table>
+<tr><th>Владелец написал</th><td>{{ $s.day.owner }}</td></tr>
+<tr><th>Ответов ассистентки</th><td>{{ $s.day.answers }}</td></tr>
+<tr><th>Сообщений системы</th><td>{{ $s.day.notices }}</td></tr>
+<tr><th>Напоминаний</th><td>{{ $s.day.reminders }}</td></tr>
+<tr><th>Писем оставлено / отсеяно</th><td>{{ $s.day.letters.kept }} / {{ $s.day.letters.dropped }}</td></tr>
+{{ range $s.day.runs }}<tr><th>Запусков модели: {{ index . 0 }}</th><td>{{ index . 1 }}</td></tr>{{ end }}
+</table>
+</section>
+
+<section>
+<h2>Лимит подписки</h2>
+{{ with $s.limit }}
+<table>
+<tr><th>Окно</th><th>Израсходовано</th><th>Сброс</th><th>Известно на</th></tr>
+{{ range . }}<tr><td>{{ .window }}</td><td>{{ .share }} %</td><td>{{ .resets }}</td><td>{{ .seen }}</td></tr>
+{{ end }}
+</table>
+<p class="muted">Доля окна — весь аккаунт, с Mac тоже; токены ниже — только сервер.</p>
+{{ else }}<p class="muted">Доля лимита неизвестна: CLI ещё не сообщал окна.</p>{{ end }}
+</section>
+
+<section>
+<h2>Токены за 7 дней по видам запусков</h2>
+{{ range $s.charts }}{{ with resources.Get . }}<img src="{{ .RelPermalink }}" alt="график">{{ end }}{{ end }}
+<table>
+<tr><th>Вид</th><th>Запусков</th><th>Вход</th><th>Выход</th><th>Кеш: чтение</th><th>Кеш: запись</th><th>Оценка, $</th></tr>
+{{ range $s.tokens }}<tr>{{ range .cells }}<td>{{ . }}</td>{{ end }}</tr>
+{{ end }}
+</table>
+<p class="muted">Доллары — оценка CLI по ценам API, не счёт: подписка платится помесячно.</p>
+</section>
+
+<section>
+<h2>Подключения</h2>
+<ul>
+{{ range $s.connectors }}<li class="{{ if .ok }}ok{{ else }}bad{{ end }}">{{ .name }}: {{ .state }}</li>
+{{ end }}
+</ul>
+</section>
+
+{{ with $s.mail }}
+<section>
+<h2>Почта</h2>
+{{ range $period, $label := dict "day" "За сутки" "week" "За 7 дней" }}{{ with index $s.mail $period }}
+<h3>{{ $label }}</h3>
+<p>Оставлено: {{ range $i, $k := .kept }}{{ if $i }}, {{ end }}{{ index $k 0 }} — {{ index $k 1 }}{{ else }}ничего{{ end }}.</p>
+<p>Отсеяно: {{ range $i, $k := .dropped }}{{ if $i }}, {{ end }}{{ index $k 0 }} — {{ index $k 1 }}{{ else }}ничего{{ end }}.</p>
+{{ with .blocked }}<p>По твоему списку: {{ range $i, $k := . }}{{ if $i }}, {{ end }}{{ index $k 0 }} — {{ index $k 1 }}{{ end }}.</p>{{ end }}
+{{ end }}{{ end }}
+<h3>Твои правила</h3>
+{{ with .rules }}<ul>{{ range . }}<li>{{ . }}</li>{{ end }}</ul>{{ else }}<p class="muted">Правил нет: их ставят кнопки под письмами.</p>{{ end }}
+</section>
+{{ end }}
+{{ partial "updated.html" $s }}
+{{ end }}
+{{ end }}

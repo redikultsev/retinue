@@ -1,0 +1,9 @@
+{{- /* A link from travel-ops: clickable only when the router found it linkable AND its host is one of the sites
+     travel-ops links to (site.json); shown as the full address either way. Anything else is text. */ -}}
+{{- $site := partial "data.html" "site.json" -}}
+{{- $u := urls.Parse .url -}}
+{{- if and .ok (eq $u.Scheme "https") (in ($site.link_hosts | default slice) $u.Host) -}}
+<a href="{{ .url }}" rel="noopener noreferrer">{{ .url }}</a>
+{{- else -}}
+<code>{{ .url }}</code>
+{{- end -}}

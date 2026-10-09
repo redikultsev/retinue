@@ -90,6 +90,7 @@ def travel_ops(answers, seen):
             return httpx.Response(answer)
         body = json.loads(request.content)
         result = ({"content": [{"type": "text", "text": answer["error"]}], "isError": True} if "error" in answer
+                  else {"content": answer["content"], "isError": False} if "content" in answer  # a list answer
                   else {"content": [{"type": "text", "text": json.dumps(answer)}], "structuredContent": answer,
                         "isError": False})
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})

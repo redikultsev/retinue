@@ -40,7 +40,8 @@ def test_one_assistant_and_nothing_else():
     assert engine.tools == [] and engine.allowed_tools == [], "no built-in tool is offered or allowed"
     assert {"Bash", "WebSearch", "WebFetch"} <= set(engine.disallowed_tools)
     assert engine.bus_tools == ["search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-                                "move_reminder", "get_attachment"], "the archive, reminders, attachments; no ask_agent"
+                                "move_reminder", "get_attachment", "publish_trip"], \
+        "the archive, reminders, attachments, trip pages; no ask_agent"
     assert engine.model == "claude-opus-5-5", "Opus, pinned by id"
     instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
     assert all(f"`{name}`" in instructions for name in engine.bus_tools), "she is told about every tool she has"
@@ -66,8 +67,14 @@ def test_one_assistant_and_nothing_else():
     guide = (ROOT / "docs" / "mail.md").read_text()
     assert "MAIL=1" in guide and "deploy/mail/login.py" in guide and "In production" in guide
     assert "Only if\nthe sender is known" in guide and "MAIL=1" in (ROOT / "docs" / "install.md").read_text()
-    assert sorted(SERVICES) == ["assistant", "collector", "egress", "mail-egress", "router", "travel-ops",
-                                "travel-watch", "tuwunel"]
+    trips = instructions.split("## Поездки")[1].split("\n## ")[0]
+    assert "`publish_trip`" in trips and "[подробнее](" in trips and "trip_id" in trips and "Не опубликовано" in trips
+    assert "Хаб не подключён" in trips and "вне VPN" in trips, "the answer stays whole; the page only adds to it"
+    hub = (ROOT / "docs" / "lifehub.md").read_text()
+    assert "LIFEHUB=1" in hub and "LIFEHUB_DEVICES" in hub and "10.8.0.1" in hub and "dig" in hub
+    assert "LIFEHUB=1" in (ROOT / "docs" / "install.md").read_text() and "lifehub.md" in (ROOT / "docs" / "install.md").read_text()
+    assert sorted(SERVICES) == ["assistant", "collector", "egress", "lifehub", "lifehub-build", "mail-egress",
+                                "router", "travel-ops", "travel-watch", "tuwunel"]
     assert sorted(COMPOSE["volumes"]) == ["assistant-data", "router-data", "travel-data", "tuwunel-db"]
 
 
@@ -124,8 +131,8 @@ def test_setup_without_matrix(tmp_path, monkeypatch):
     monkeypatch.delenv("RETINUE_AS_TOKEN", raising=False)
     cfg = RouterConfig.load(target / "router.yaml")
     assert cfg.matrix is None and cfg.telegram.owner_id == 42 and cfg.default_agent == "assistant"
-    assert [(a.id, a.archive, a.reminders, a.attachments, a.can_call) for a in cfg.agents] == [
-        ("assistant", True, True, True, [])]
+    assert [(a.id, a.archive, a.reminders, a.attachments, a.trips, a.can_call) for a in cfg.agents] == [
+        ("assistant", True, True, True, True, [])], "trip pages: the router refuses them while there is no hub"
     assert cfg.owner_tz == "Europe/Moscow"
     assert (target / "agents" / "assistant" / "CLAUDE.md").read_text() == (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
     assert "${RETINUE_BUS_TOKEN_ASSISTANT:-}" in (ROOT / "deploy" / "compose.yml").read_text()
@@ -464,3 +471,83 @@ def test_setup_with_mail(tmp_path, monkeypatch):
     plain, printed = setup(tmp_path / "other", TELEGRAM_OWNER_ID="42")
     assert not (plain / "mail").exists() and "collector_url" not in (plain / "router.yaml").read_text()
     assert "RETINUE_COLLECTOR_TOKEN" not in printed and not (plain / "egress" / "mail-hosts.txt").exists()
+
+
+def test_the_lifehub_is_built_with_no_network_and_served_read_only_to_traefik_alone():
+    """The builder has no network and its own scratch space; nginx reads the live release and nothing else, on
+    Traefik's network only, and answers only with the key Traefik adds after its check of the owner's devices. The
+    router writes the data; the assistant sees none of it."""
+    build, serve = SERVICES["lifehub-build"], SERVICES["lifehub"]
+    assert build["profiles"] == serve["profiles"] == ["lifehub"], "off until the owner turns it on"
+    assert build["network_mode"] == "none" and "networks" not in build and "ports" not in build
+    assert build["user"] == "10001:10001" and build["read_only"] is True and build["cap_drop"] == ["ALL"]
+    assert build["security_opt"] == ["no-new-privileges:true"] and build["tmpfs"][0].startswith("/tmp:")
+    assert build["volumes"] == ["/srv/retinue/lifehub/data:/data:ro", "/srv/retinue/lifehub/site:/site"]
+    assert build["build"] == {"context": "./lifehub"} and build["image"] == "retinue-lifehub:local"
+    assert serve["image"].startswith("nginxinc/nginx-unprivileged:") and "@sha256:" in serve["image"], "pinned"
+    assert serve["networks"] == ["dokploy-network"] and "ports" not in serve and serve["read_only"] is True
+    assert serve["cap_drop"] == ["ALL"] and serve["volumes"] == [
+        "/srv/retinue/lifehub/site:/site:ro", "/srv/retinue/lifehub/nginx.conf:/etc/nginx/conf.d/default.conf:ro"]
+    labels = dict(label.split("=", 1) for label in serve["labels"])
+    assert labels["traefik.http.routers.retinue-lifehub.rule"] == "Host(`${LIFEHUB_HOST:-}`)"
+    assert labels["traefik.http.routers.retinue-lifehub.entrypoints"] == "websecure"
+    assert labels["traefik.http.routers.retinue-lifehub.tls.certresolver"] == "letsencrypt"
+    assert labels["traefik.http.routers.retinue-lifehub.middlewares"] == "lifehub-owner@file,lifehub-headers@file"
+    assert labels["traefik.http.services.retinue-lifehub.loadbalancer.server.port"] == "8080"
+    assert "/srv/retinue/lifehub/data:/lifehub" in SERVICES["router"]["volumes"]
+    assert "/srv/retinue/lifehub/site:/lifehub-site:ro" in SERVICES["router"]["volumes"], "build.json, read only"
+    assert "lifehub" not in str(SERVICES["assistant"]), "she publishes through the router's bus, never a file"
+    docker = (ROOT / "deploy" / "lifehub" / "Dockerfile").read_text()
+    assert "HUGO_VERSION=0.167.0" in docker and \
+        "HUGO_SHA256=4d84519b9f619e6d4c3fb45a50157abeabeb724f859c60605f44c23def6e1169" in docker
+    assert "hashlib.sha256" in docker and "USER 10001" in docker and 'CMD ["python3", "-I", "/app/build.py"]' in docker
+    assert "COPY build.py /app/build.py" in docker and "COPY site /app/site" in docker
+    nginx = (ROOT / "deploy" / "lifehub" / "nginx.conf.template").read_text()
+    assert "root /site/current;" in nginx and 'if ($http_x_lifehub_key != "${LIFEHUB_KEY}") { return 404; }' in nginx
+    for header in ("Content-Security-Policy \"default-src 'self'; form-action 'self'; base-uri 'none'; "
+                   "frame-ancestors 'none'; object-src 'none'\" always", 'Referrer-Policy "no-referrer" always',
+                   'X-Content-Type-Options "nosniff" always', 'X-Frame-Options "DENY" always'):
+        assert f"add_header {header};" in nginx, header
+
+
+def test_setup_with_lifehub(tmp_path, monkeypatch):
+    def run(target, **env):
+        return subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(target), "RETINUE_HOST_SETUP": "0",
+                                   "TELEGRAM_OWNER_ID": "42", **env})
+
+    refused = run(tmp_path / "srv", LIFEHUB="1")
+    assert refused.returncode == 1 and "LIFEHUB_HOST" in refused.stderr
+    wrong = run(tmp_path / "srv", LIFEHUB="1", LIFEHUB_HOST="hub.in.example.com/x", LIFEHUB_DEVICES="10.8.0.2/32")
+    assert wrong.returncode == 1 and "LIFEHUB_HOST" in wrong.stderr
+    target, printed = setup(tmp_path, LIFEHUB="1", LIFEHUB_HOST="hub.in.example.com", TELEGRAM_OWNER_ID="42",
+                            LIFEHUB_DEVICES="10.8.0.2/32, 10.8.0.3/32")
+    hub = target / "lifehub"
+    assert printed["COMPOSE_PROFILES"] == "lifehub" and printed["LIFEHUB_HOST"] == "hub.in.example.com"
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    cfg = RouterConfig.load(target / "router.yaml")
+    assert cfg.lifehub_url == "https://hub.in.example.com" and cfg.lifehub_data == "/lifehub"
+    assert (hub / "data").is_dir() and (hub / "site").is_dir()
+    key = dict(line.split("=", 1) for line in (target / "secrets.env").read_text().splitlines())["LIFEHUB_KEY"]
+    assert len(key) == 64
+    nginx = (hub / "nginx.conf").read_text()
+    assert f'if ($http_x_lifehub_key != "{key}")' in nginx and oct((hub / "nginx.conf").stat().st_mode & 0o777) == "0o640"
+    traefik = yaml.safe_load((hub / "traefik.yml").read_text())
+    middlewares = traefik["http"]["middlewares"]
+    assert middlewares["lifehub-owner"]["ipAllowList"] == {"sourceRange": ["10.8.0.2/32", "10.8.0.3/32"],
+                                                           "rejectStatusCode": 404}
+    assert middlewares["lifehub-headers"]["headers"]["customRequestHeaders"] == {"X-Lifehub-Key": key}
+    assert middlewares["lifehub-headers"]["headers"]["contentSecurityPolicy"].startswith("default-src 'self';")
+    assert oct((hub / "traefik.yml").stat().st_mode & 0o777) == "0o600"
+    assert (hub / "devices.txt").read_text() == "10.8.0.2/32\n10.8.0.3/32\n" and (hub / "host").read_text() == \
+        "hub.in.example.com\n"
+    again = run(target)
+    assert again.returncode == 0 and key not in again.stdout + again.stderr, "on for good; the key is never printed"
+    assert "lifehub_url: https://hub.in.example.com" in (target / "router.yaml").read_text()
+    assert "Lifehub: on — https://hub.in.example.com" in again.stdout
+    plain, printed = setup(tmp_path / "other", TELEGRAM_OWNER_ID="42")
+    assert "lifehub_url" not in (plain / "router.yaml").read_text() and "LIFEHUB_HOST" not in printed
+    assert (plain / "lifehub" / "data").is_dir(), "the router's mounts exist whether it is on or not"
+    bad = run(tmp_path / "third", LIFEHUB="1", LIFEHUB_HOST="hub.in.example.com", LIFEHUB_DEVICES="0.0.0.0/0")
+    assert bad.returncode == 1 and "LIFEHUB_DEVICES" in bad.stderr, "one address per device, not a network"
+    assert not (tmp_path / "third" / "lifehub" / "host").exists(), "nothing kept from a refused run"

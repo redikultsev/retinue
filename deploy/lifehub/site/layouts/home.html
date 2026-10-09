@@ -1,0 +1,54 @@
+{{ define "main" }}
+{{ $now := partial "data.html" "now.json" }}
+<h1>Сейчас</h1>
+{{ if not $now.updated }}<p class="muted">Данных ещё нет: Роутер пишет их раз в пять минут.</p>{{ end }}
+
+<section>
+<h2>Поездки</h2>
+{{ with $now.trips }}
+<ul>
+{{ range . }}{{ $page := site.GetPage (printf "/trips/%s" (path.Base .url)) }}
+<li>{{ with $page }}<a href="{{ .RelPermalink }}">{{ .Title }}</a>{{ else }}{{ .title }}{{ end }} <span class="muted">{{ .start }} — {{ .end }}</span></li>
+{{ end }}
+</ul>
+{{ else }}<p class="muted">Ближайших поездок нет.</p>{{ end }}
+</section>
+
+<section>
+<h2>Сегодня</h2>
+{{ with $now.today }}<ul>{{ range . }}<li>{{ . }}</li>{{ end }}</ul>{{ else }}<p class="muted">Календарь не подключён.</p>{{ end }}
+<h2>Завтра</h2>
+{{ with $now.tomorrow }}<ul>{{ range . }}<li>{{ . }}</li>{{ end }}</ul>{{ else }}<p class="muted">Календарь не подключён.</p>{{ end }}
+</section>
+
+<section>
+<h2>Напоминания</h2>
+{{ with $now.reminders }}<ul>{{ range . }}<li>{{ . }}</li>{{ end }}</ul>{{ else }}<p class="muted">Напоминаний нет.</p>{{ end }}
+</section>
+
+<section>
+<h2>Почта ждёт тебя</h2>
+{{ with $now.mail }}
+<ul>
+{{ range . }}<li>{{ .text }}{{ with .needs }} <span class="tag">{{ . }}</span>{{ end }}{{ with .deadline }} <span class="muted">срок: {{ . }}</span>{{ end }}{{ with .from }} <span class="muted">— {{ . }}</span>{{ end }}</li>
+{{ end }}
+</ul>
+{{ else }}<p class="muted">Ничего не ждёт.</p>{{ end }}
+</section>
+
+<section>
+<h2>Сроки документов</h2>
+{{ with $now.deadlines }}
+<ul>
+{{ range . }}<li><strong>{{ .date }}</strong> {{ .what }}: {{ .title }} <code>{{ .path }}</code></li>
+{{ end }}
+</ul>
+{{ else }}<p class="muted">без срока</p>{{ end }}
+</section>
+
+<section>
+<h2>Здоровье системы</h2>
+<p>{{ $now.health | default "нет данных" }}</p>
+</section>
+{{ partial "updated.html" $now }}
+{{ end }}

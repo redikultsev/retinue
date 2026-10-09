@@ -114,8 +114,8 @@ def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
 
 class BusServer:
     """HTTP endpoint on the agents network: GET /agents, POST /call, POST /archive/search,
-    POST /reminders/{add,list,cancel,move}, POST /attachments/get, POST /travel/log, POST /kb/log. Authenticated by
-    per-agent token."""
+    POST /reminders/{add,list,cancel,move}, POST /attachments/get, POST /travel/log, POST /kb/log,
+    POST /trips/publish. Authenticated by per-agent token."""
 
     def __init__(self, core, secret: str, port: int) -> None:
         self.core = core
@@ -127,7 +127,8 @@ class BusServer:
                              web.post("/reminders/{action}", self.reminders),
                              web.post("/attachments/get", self.attachment),
                              web.post("/travel/log", self.travel_log),
-                             web.post("/kb/log", self.kb_log)])
+                             web.post("/kb/log", self.kb_log),
+                             web.post("/trips/publish", self.publish_trip)])
 
     async def start(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
@@ -193,3 +194,9 @@ class BusServer:
         ok = await self.core.travel_log(caller, str(body.get("turn", "")), str(body.get("tool", "")),
                                         str(body.get("decision", "")), body.get("chars"), str(body.get("reason", "")))
         return web.json_response({"ok": ok, "text": "" if ok else "Нет активного запроса."})
+
+    async def publish_trip(self, request: web.Request) -> web.Response:
+        caller = self.caller(request)
+        body = await request.json()
+        ok, text = await self.core.publish_trip(caller, str(body.get("turn", "")), body.get("trip"))
+        return web.json_response({"ok": ok, "text": text})

@@ -480,7 +480,9 @@ def test_a_reminder_is_written_by_the_assistant_and_by_code_when_she_cannot(tmp_
         await drain()
         await restarted.tick(moscow(9, 21, 5))  # the server was down at 18:00, and now the model fails
         await drain()
-        restarted.limit_until = moscow(9, 23)  # the subscription limit is known: no model at all
+        # The subscription limit is known: no model at all. `_remind` checks it against the real clock, so the limit
+        # lies ahead of the moment the test runs — a fixed date would expire one evening and the model would run.
+        restarted.limit_until = time.time() + 3600
         await restarted.tick(moscow(9, 21, 31))
         await drain()
         return telegram
@@ -1163,3 +1165,16 @@ def test_an_old_revert_button_answers_honestly_without_the_base(tmp_path):
     pressed = asyncio.run(run())
     assert pressed.ok and pressed.toast == ("База знаний сейчас не подключена — не откатила. На Mac: "
                                             "git revert aaaaaaaaaaaa")
+
+
+def test_the_health_line_names_both_limit_windows(tmp_path):
+    core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", archive=Archive(":memory:"))
+    now = WEDNESDAY
+    core.store.run(agent_id="assistant", conversation_id="c", kind="conversation", status="done", ts=now - 600,
+                   meta={"rate_limit": {"status": "allowed", "windows": {
+                       "five_hour": {"utilization": 0.234, "resets_at": now + 3 * 3600},
+                       "seven_day": {"utilization": 0.63, "resets_at": now + 4 * 86400}}}})
+    assert "лимит подписки: 5 ч — 23 %, неделя — 63 % (на 2026-10-07 13:55 МСК, среда)" in core.health(now)
+    later = now + 4 * 3600
+    assert "лимит подписки: 5 ч — окно сброшено в 17:05 МСК, неделя — 63 %" in core.health(later), \
+        "a share from before the reset is not the share now"

@@ -9,6 +9,8 @@
 #   sudo TELEGRAM_OWNER_ID=123456789 TRAVEL=1 bash deploy/setup.sh   # travel-ops: trip search and price watches
 #   sudo TELEGRAM_OWNER_ID=123456789 MEMORY=1 bash deploy/setup.sh   # the knowledge base she writes, and its hub
 #   sudo TELEGRAM_OWNER_ID=123456789 MAIL=1 bash deploy/setup.sh     # the mail collector: Gmail and Google Calendar
+#   sudo TELEGRAM_OWNER_ID=123456789 LIFEHUB=1 LIFEHUB_HOST=hub.in.example.com LIFEHUB_DEVICES=10.8.0.2/32,10.8.0.3/32 \
+#     bash deploy/setup.sh                                            # the life hub: pages for your devices only
 #
 # The stack's environment goes to /srv/retinue/stack.env (mode 600). The script prints names, never values:
 # a terminal ends up in logs and transcripts.
@@ -49,12 +51,35 @@ MAIL_DIR=$ROOT/mail
 MAIL_ON=0
 [[ $MAIL == 1 || -d $MAIL_DIR ]] && MAIL_ON=1
 MAIL_UID=10002                          # the collector's own user: the owner's tokens are its alone
+LIFEHUB=${LIFEHUB:-0}                   # 1: the life hub; on for good once its address is written
+LIFEHUB_DIR=$ROOT/lifehub
+LIFEHUB_ON=0
+[[ $LIFEHUB == 1 || -f $LIFEHUB_DIR/host ]] && LIFEHUB_ON=1
+NGINX_UID=101                           # nginx-unprivileged's user: it reads the rendered nginx.conf
 COLLECTOR_URL=http://collector:9200
 AGENTS=(assistant)
 token() { openssl rand -hex 32; }
 upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
 
 install -d -m 755 "$ROOT"
+# The life hub's address and the owner's devices: given once, checked, then kept here (the owner's to edit).
+if [[ $LIFEHUB_ON == 1 ]]; then
+  LIFEHUB_HOST=${LIFEHUB_HOST:-$(cat "$LIFEHUB_DIR/host" 2>/dev/null || true)}
+  LIFEHUB_DEVICES=${LIFEHUB_DEVICES:-$(paste -sd, "$LIFEHUB_DIR/devices.txt" 2>/dev/null || true)}
+  [[ -n $LIFEHUB_HOST ]] || { echo "LIFEHUB=1 needs LIFEHUB_HOST: the hub's name, e.g. hub.in.example.com" >&2; exit 1; }
+  [[ $LIFEHUB_HOST =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || {
+    echo "LIFEHUB_HOST: a host name, e.g. hub.in.example.com" >&2; exit 1; }
+  DEVICES=$(tr ', ' '\n\n' <<< "$LIFEHUB_DEVICES" | sed '/^$/d')
+  [[ -n $DEVICES ]] || {
+    echo "LIFEHUB=1 needs LIFEHUB_DEVICES: your devices' WireGuard addresses, e.g. 10.8.0.2/32,10.8.0.3/32" >&2; exit 1; }
+  while read -r device; do
+    [[ $device =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] || {
+      echo "LIFEHUB_DEVICES: one address per device, a.b.c.d/32 — not $device" >&2; exit 1; }
+  done <<< "$DEVICES"
+  install -d -m 755 "$LIFEHUB_DIR"
+  printf '%s\n' "$LIFEHUB_HOST" > "$LIFEHUB_DIR/host"
+  printf '%s\n' "$DEVICES" > "$LIFEHUB_DIR/devices.txt"
+fi
 # The knowledge base. The mounts exist whether it is on or not, so the folders and the policy always do; what she
 # may write and see is the owner's (written once from the examples, then edited by hand).
 install -d -m 755 "$MEMORY_DIR" "$MEMORY_DIR/tree" "$MEMORY_DIR/git"
@@ -67,6 +92,7 @@ drop() { local rest; rest=$(grep -v "^$1=" "$2" || true); printf '%s\n' "$rest" 
 [[ $ROTATE_BUS_SECRET == 1 ]] && drop RETINUE_BUS_SECRET "$SECRETS"   # the agents' tokens follow from it
 secret RETINUE_BUS_SECRET
 [[ $MAIL_ON == 1 ]] && secret RETINUE_COLLECTOR_TOKEN   # the router signs its calls to the collector with it
+[[ $LIFEHUB_ON == 1 ]] && secret LIFEHUB_KEY   # Traefik adds it to the hub's requests; nginx refuses any without it
 if [[ -n $MATRIX_SERVER_NAME ]]; then
   secret RETINUE_AS_TOKEN
   secret RETINUE_HS_TOKEN
@@ -89,6 +115,7 @@ agents:
     archive: true     # may search the raw archive through the bus
     reminders: true   # may set, list, move and cancel the owner's reminders through the bus
     attachments: true # may fetch what the owner sent (#N) again through the bus
+    trips: true       # may publish a trip page in the life hub (refused while there is no hub)
     can_call: []      # no other agents at this stage
 YAML
   if [[ $TRAVEL_ON == 1 ]]; then
@@ -99,6 +126,9 @@ YAML
   fi
   if [[ $MAIL_ON == 1 ]]; then
     printf 'collector_url: %s\n' "$COLLECTOR_URL"   # what the collector found, the router takes there
+  fi
+  if [[ $LIFEHUB_ON == 1 ]]; then
+    printf 'lifehub_url: https://%s\n' "$LIFEHUB_HOST"   # the pages' address; the data goes to /lifehub
   fi
   if [[ $MEMORY_ON == 1 ]]; then
     printf 'memory:\n  hub: /hub\n  checkout:\n'   # the rest: defaults in config.py (MemoryConfig)
@@ -171,6 +201,23 @@ if [[ $HOST_SETUP == 1 ]]; then
   fi
 fi
 
+# The life hub: the router writes the data, the builder the pages; both as the containers' user. The router mounts
+# both folders whether the hub is on or not.
+install -d -m 755 "$LIFEHUB_DIR" "$LIFEHUB_DIR/data" "$LIFEHUB_DIR/site"
+[[ $HOST_SETUP == 1 ]] && chown "$MEMORY_UID:$MEMORY_UID" "$LIFEHUB_DIR/data" "$LIFEHUB_DIR/site"
+if [[ $LIFEHUB_ON == 1 ]]; then
+  RANGES=$(sed 's/.*/"&"/' "$LIFEHUB_DIR/devices.txt" | paste -sd, - | sed 's/,/, /g')
+  (umask 077; sed -e "s|\${LIFEHUB_KEY}|$LIFEHUB_KEY|" -e "s|\${LIFEHUB_RANGES}|$RANGES|" \
+    "$REPO/deploy/lifehub/traefik.yml.template" > "$LIFEHUB_DIR/traefik.yml")
+  chmod 600 "$LIFEHUB_DIR/traefik.yml"
+  (umask 027; sed "s|\${LIFEHUB_KEY}|$LIFEHUB_KEY|" "$REPO/deploy/lifehub/nginx.conf.template" > "$LIFEHUB_DIR/nginx.conf")
+  chmod 640 "$LIFEHUB_DIR/nginx.conf"
+  if [[ $HOST_SETUP == 1 ]]; then
+    chown "root:$NGINX_UID" "$LIFEHUB_DIR/nginx.conf"
+    install -m 600 "$LIFEHUB_DIR/traefik.yml" /etc/dokploy/traefik/dynamic/lifehub.yml   # Traefik runs as root
+  fi
+fi
+
 install -d -m 755 "$ROOT/egress"
 install -m 644 "$REPO/deploy/egress/squid.conf" "$ROOT/egress/squid.conf"
 if [[ $MAIL_ON == 1 ]]; then
@@ -228,6 +275,7 @@ PROFILES=()
 [[ -n $MATRIX_SERVER_NAME ]] && PROFILES+=(matrix)
 [[ $TRAVEL_ON == 1 ]] && PROFILES+=(travel)
 [[ $MAIL_ON == 1 ]] && PROFILES+=(mail)
+[[ $LIFEHUB_ON == 1 ]] && PROFILES+=(lifehub)
 if (( ${#PROFILES[@]} )); then
   put COMPOSE_PROFILES "$(IFS=,; echo "${PROFILES[*]}")"
 else
@@ -236,6 +284,7 @@ fi
 if [[ $TRAVEL_ON == 1 ]]; then put RETINUE_TRAVEL_URL "$TRAVEL_URL"; else put RETINUE_TRAVEL_URL ""; fi
 if [[ $MEMORY_ON == 1 ]]; then put RETINUE_MEMORY /kb; else put RETINUE_MEMORY ""; fi
 if [[ $MAIL_ON == 1 ]]; then put RETINUE_COLLECTOR_TOKEN "$RETINUE_COLLECTOR_TOKEN"; else drop RETINUE_COLLECTOR_TOKEN "$STACK"; fi
+if [[ $LIFEHUB_ON == 1 ]]; then put LIFEHUB_HOST "$LIFEHUB_HOST"; else drop LIFEHUB_HOST "$STACK"; fi
 if [[ $TRAVEL_ON == 1 ]] && ! grep -q '^home_airports:' "$PROFILE"; then
   MISSING+=("$PROFILE: home_airports (your airports, IATA)")
 fi
@@ -304,6 +353,10 @@ done
 if [[ $MAIL_ON == 1 ]]; then
   echo "Mail: on — keys: $(find "$MAIL_DIR/keys" -name '*.json' 2>/dev/null | wc -l | tr -d ' ') files in $MAIL_DIR/keys" \
        "(put there by deploy/mail/login.py on your Mac; see docs/mail.md)"
+fi
+if [[ $LIFEHUB_ON == 1 ]]; then
+  echo "Lifehub: on — https://$LIFEHUB_HOST for $(paste -sd' ' "$LIFEHUB_DIR/devices.txt");" \
+       "check the DNS record and your devices' DNS (docs/lifehub.md)"
 fi
 case $BACKUP_STATE in
   on) echo "Backup: on, every night at 03:30 Europe/Moscow; the result goes to $ROOT/status/backup.json" ;;

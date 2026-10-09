@@ -30,6 +30,7 @@ dependencies = [
 retinue-router = "retinue.router:main"
 retinue-agent = "retinue.agent_host:main"
 retinue-admin = "retinue.admin:main"
+retinue-collector = "retinue.collector:main"
 
 [build-system]
 requires = ["hatchling"]

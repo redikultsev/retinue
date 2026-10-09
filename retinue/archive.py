@@ -24,7 +24,10 @@ from pathlib import Path
 log = logging.getLogger("retinue.archive")
 
 OWNER, ASSISTANT, SYSTEM = "owner", "assistant", "system"  # who wrote the text
-KINDS = (OWNER, ASSISTANT, SYSTEM)
+# The owner's mail and calendar: a letter, his or someone else's, and a calendar change — each with its own
+# conversation id (mail:<account>, calendar:<account>), so none of them is ever a turn of the owner's conversation.
+MAIL, CALENDAR = "mail", "calendar"
+KINDS = (OWNER, ASSISTANT, SYSTEM, MAIL, CALENDAR)
 
 _WORD = re.compile(r"\w+")
 
@@ -215,9 +218,12 @@ class Archive:
         ).fetchall()
         return [(self._event(row), row[8]) for row in rows]
 
-    def coverage(self) -> tuple[int, float | None, float | None]:
-        """(number of events, time of the first, time of the last): what an empty search result must name."""
-        return tuple(self.db.execute("SELECT COUNT(*), MIN(ts), MAX(ts) FROM events").fetchone())
+    def coverage(self, kinds: tuple[str, ...] = KINDS) -> tuple[int, float | None, float | None]:
+        """(number of events, time of the first, time of the last) of these kinds: what an empty search result must
+        name."""
+        marks = ", ".join("?" * len(kinds))
+        return tuple(self.db.execute(f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM events WHERE kind IN ({marks})",
+                                     kinds).fetchone())
 
     _ATTACHMENT = "id, event_id, kind, what, origin, text, files"
 

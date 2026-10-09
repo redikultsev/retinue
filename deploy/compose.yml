@@ -63,7 +63,9 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}   # only with a `telegram:` section in router.yaml
       RETINUE_BUS_SECRET: ${RETINUE_BUS_SECRET:-}   # agents ask each other through the router
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}   # speech to text; the router calls it, the assistant never
-    networks: [agents, outside, matrix, travel-router]   # `outside`: Telegram; `travel-router`: price alerts
+      RETINUE_COLLECTOR_TOKEN: ${RETINUE_COLLECTOR_TOKEN:-}   # only with `collector_url` in router.yaml
+    # `outside`: Telegram; `travel-router`: price alerts; `mail-router`: what the mail collector found
+    networks: [agents, outside, matrix, travel-router, mail-router]
 
   assistant:
     image: retinue:local
@@ -138,6 +140,40 @@ services:
     networks: [travel-out]
     depends_on: [travel-ops]      # its image is built there
 
+  # The mail collector: code, no model. It reads the owner's Gmail and Google Calendar with read-only tokens and
+  # hands what it found to the router by number. Its own user (not the containers' 10001), its own keys folder,
+  # its own way out: a proxy that lets through Google's three hosts. Off until the owner turns it on (setup.sh
+  # MAIL=1); the keys come from his Mac (deploy/mail/login.py).
+  collector:
+    profiles: ["mail"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10002:10002"
+    command: ["retinue-collector"]
+    volumes:
+      - /srv/retinue/mail/keys:/keys:ro         # client.json and one token per account and kind: the owner's
+      - /srv/retinue/mail/state:/state          # cursors and the items not yet confirmed; nobody else mounts it
+    environment:
+      RETINUE_COLLECTOR_TOKEN: ${RETINUE_COLLECTOR_TOKEN:-}
+      HTTPS_PROXY: http://mail-egress:3128      # Google, through the proxy only
+    cap_drop: [ALL]                             # it parses strangers' letters: nothing to gain, nothing to change
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+    mem_limit: 512m
+    pids_limit: 128
+    networks: [mail-router, mail-out]           # both internal: the router, and the proxy
+    depends_on: [mail-egress]
+
+  mail-egress:                    # the collector's only way out: CONNECT to Google's three hosts, nothing else
+    profiles: ["mail"]
+    image: ubuntu/squid:6.6-24.04_beta
+    restart: unless-stopped
+    volumes:
+      - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
+      - /srv/retinue/egress/mail-hosts.txt:/etc/squid/allowed-hosts.txt:ro
+    networks: [mail-out, outside]
+
   egress:
     image: ubuntu/squid:6.6-24.04_beta            # Squid, GPL-2.0; pin a digest after first deploy
     restart: unless-stopped
@@ -162,5 +198,9 @@ networks:
   travel-router:     # router <-> travel-ops only (price alerts). Internal: no route out
     internal: true
   travel-out:   # travel-ops' way to the travel sites; nobody else is on it
+  mail-router:  # router <-> collector only. Internal: no route out
+    internal: true
+  mail-out:     # collector <-> its proxy only. Internal: the proxy is its only way out
+    internal: true
   dokploy-network:
     external: true

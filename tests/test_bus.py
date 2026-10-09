@@ -132,7 +132,8 @@ def test_archive_search_through_the_bus(tmp_path):
             empty = await (await http.post("/archive/search", json={"turn": turn.id, "query": "зарплата"}, headers=mine)).json()
             assert empty["ok"] and "ничего не найдено" in empty["text"] and "событий — 3" in empty["text"]
             assert "этот и прошлые" in empty["text"]
-            assert "Почта, файлы и переписка с другими людьми не собираются" in empty["text"]
+            assert "почта и календарь не подключены" in empty["text"] and "файлы на Mac" in empty["text"], \
+                "an empty result names what is not collected"
 
             nobody = await http.post("/archive/search", json={"turn": turn.id, "query": "Ереван"},
                                      headers={"Authorization": "Bearer wrong"})

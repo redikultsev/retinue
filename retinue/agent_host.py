@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import base64
 import hmac
+import json
 import logging
 import mimetypes
 import sqlite3
@@ -30,7 +31,8 @@ from .engine import Engine, EngineResult, Prompt, make_engine
 log = logging.getLogger("retinue.agent")
 
 TURN_KEY = "retinue/turn"  # set by the router; passed back when the agent uses the bus
-CONTROL_KEY = "retinue/control"  # set by the router for its own requests: "compact", "oneshot"
+CONTROL_KEY = "retinue/control"  # set by the router for its own requests: "compact", "oneshot", "bare"
+SCHEMA_KEY = "retinue/schema"    # set by the router: the JSON schema the answer must follow
 
 OUTBOX = "out"  # files the agent writes here during a turn go to the owner as attachments
 MAX_FILES = 10
@@ -146,16 +148,21 @@ class EngineExecutor(AgentExecutor):
             turn_id = str(metadata[TURN_KEY]) if TURN_KEY in metadata else None
             session_id = self.sessions.get(task.context_id)
             control = metadata[CONTROL_KEY] if CONTROL_KEY in metadata else None
+            # The answer's schema: the router's, never the message's text. Passed on only when there is one.
+            shaped = {"schema": json.loads(str(metadata[SCHEMA_KEY]))} if SCHEMA_KEY in metadata else {}
             if control == "compact":
                 result = await self.engine.compact(session_id)
+            elif control == "bare":
+                # Somebody else's letter, one per run: a fresh session with no tool at all, never kept.
+                result = await self.engine.run(prompt, None, on_text, None, bare=True, **shaped)
             elif control == "oneshot":
-                # A background run outside the conversation (the morning summary): a fresh session, not kept.
-                result = await self.engine.run(prompt, None, on_text, turn_id)
+                # A background run outside the conversation (the morning summary, the mail): a fresh session.
+                result = await self.engine.run(prompt, None, on_text, turn_id, **shaped)
             else:
                 result = await self.engine.run(prompt, session_id, on_text, turn_id)
                 if session_id is None:  # nothing to resume (a new conversation, or the table was lost)
                     result.new_session = True
-            if result.session_id and control != "oneshot":
+            if result.session_id and control not in ("oneshot", "bare"):
                 self.sessions.set(task.context_id, result.session_id)
             files, skipped = self.outbox.changed(before) if self.outbox else ([], [])
         metadata = run_metadata(result)

@@ -1,0 +1,3 @@
+oauth2.googleapis.com
+gmail.googleapis.com
+www.googleapis.com

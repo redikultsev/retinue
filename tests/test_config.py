@@ -182,3 +182,14 @@ def test_the_router_holds_the_knowledge_base_when_the_config_says_so(tmp_path, m
     memory, error = build_memory(cfg, sqlite3.connect(":memory:"))
     assert memory is None and error.startswith("База знаний не подключена: хаб /srv/hub не ответил"), \
         "a hub that is not there: the router runs on and says why"
+
+
+def test_the_router_reaches_the_mail_collector_with_its_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.delenv("RETINUE_COLLECTOR_TOKEN", raising=False)
+    assert load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n").collector_url == "", "off unless the config says so"
+    with pytest.raises(SystemExit):
+        load(tmp_path, AGENT + "telegram:\n  owner_id: 42\ncollector_url: http://collector:9200\n")
+    monkeypatch.setenv("RETINUE_COLLECTOR_TOKEN", "c")
+    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\ncollector_url: http://collector:9200\n")
+    assert (cfg.collector_url, cfg.collector_token) == ("http://collector:9200", "c")

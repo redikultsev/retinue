@@ -44,6 +44,10 @@ key instead of the subscription. Deploy.
 Three containers start: `router` (Telegram, the archive, the bus), `assistant` (the model; internal network
 only, no volume, config mounted read-only) and `egress` (Squid: the only way out of the internal network).
 
+Optional parts, each turned on by `setup.sh` with its own switch and its own guide: `TRAVEL=1` — trip search and
+price watches; `MEMORY=1` — the knowledge base she writes ([memory.md](memory.md)); `MAIL=1` — your Gmail and
+Google Calendar, read-only ([mail.md](mail.md)).
+
 ## 4. Check
 
 Send the bot `/check`: a message written by the system arrives with two buttons; press one — the buttons

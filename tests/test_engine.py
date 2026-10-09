@@ -692,3 +692,91 @@ def test_a_write_needs_the_routers_word_that_the_turn_is_still_running(kb, tmp_p
     no = "Не записано: Роутер не подтвердил, что этот ход ещё идёт и пишет он один — правка не сохранилась бы."
     assert allowed == "ok" and refused == closed == unreachable == no
     assert read == {}, "reading needs no word from the router"
+
+
+SCHEMA = {"type": "object", "properties": {"keep": {"type": "boolean"}}, "required": ["keep"]}
+
+
+def test_a_bare_run_reads_a_letter_with_no_tool_and_answers_by_the_schema(instructions, kb, monkeypatch):
+    """The mail's triage: somebody else's letter, one per run — no bus, no travel-ops, no base, no hook, no folder;
+    only the CLI's own tool that carries the answer. A run with a schema and tools keeps its tools."""
+    root, policy = kb
+    cfg = EngineConfig(instructions=instructions, tools=[], disallowed_tools=["Bash", "WebSearch", "WebFetch"],
+                       bus_tools=["search_archive"], max_turns=20, model="claude-opus-5-5")
+    engine = ClaudeEngine(cfg, "/workspace", "http://router:9100", "token", "http://travel-ops:8765/mcp", root, policy)
+    bare = engine.options(None, False, None, SCHEMA, bare=True)
+    assert bare.tools == [] and bare.allowed_tools == ["StructuredOutput"] and bare.mcp_servers == {}
+    assert not bare.hooks and bare.add_dirs == [] and bare.resume is None and bare.setting_sources == []
+    assert bare.output_format == {"type": "json_schema", "schema": SCHEMA} and bare.max_turns == 4
+    assert bare.permission_mode == "dontAsk" and bare.verbatim_prompts and bare.model == "claude-opus-5-5"
+    assert "Bash" in bare.disallowed_tools and bare.system_prompt == "Ты — ассистентка."
+    shaped = engine.options("turn-1", False, None, SCHEMA)
+    assert shaped.output_format == {"type": "json_schema", "schema": SCHEMA} and "StructuredOutput" in shaped.allowed_tools
+    assert "retinue" in shaped.mcp_servers and shaped.add_dirs == [root], "an event run keeps its tools"
+    assert engine.options("turn-1", False).output_format is None, "a turn of the conversation answers in words"
+    seen = []
+
+    async def cli(prompt, options):
+        seen.append(options)
+        yield ResultMessage(subtype="success", duration_ms=10, duration_api_ms=5, is_error=False, num_turns=1,
+                            session_id="s-x", result="", structured_output={"keep": False, "kind": "реклама"})
+
+    monkeypatch.setattr("retinue.engine.query", cli)
+    result = asyncio.run(engine.run("[Разбор письма]", None, None, None, schema=SCHEMA, bare=True))
+    assert result.text == '{"keep": false, "kind": "реклама"}' and seen[0].mcp_servers == {}, "the answer as JSON"
+
+
+def test_a_schema_reaches_the_engine_through_the_host(tmp_path):
+    """The router names the schema in the message's metadata; `bare` is a fresh session with no turn, never kept."""
+    import socket
+
+    import uvicorn
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+    from a2a.server.tasks import InMemoryTaskStore
+    from starlette.applications import Starlette
+
+    from retinue.agent_host import EngineExecutor, SessionMap, build_card
+    from retinue.config import AgentConfig, Skill
+    from retinue.core import ask_agent
+    from retinue.engine import EngineResult
+
+    calls = []
+
+    class Engine:
+        async def run(self, prompt, session_id, on_text=None, turn_id=None, **shaped):
+            calls.append((prompt, session_id, turn_id, shaped))
+            return EngineResult(text='{"keep": true}', is_error=False, session_id="s-1")
+
+    async def run():
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        cfg = AgentConfig(id="t", name="T", description="d", trust_class="private",
+                          skills=[Skill(id="c", name="c", description="d")], engine=EngineConfig(),
+                          public_url=f"http://127.0.0.1:{port}")
+        card = build_card(cfg)
+        sessions = SessionMap(str(tmp_path / "agent.sqlite"))
+        handler = DefaultRequestHandler(agent_executor=EngineExecutor(Engine(), sessions), task_store=InMemoryTaskStore(),
+                                        agent_card=card)
+        app = Starlette(routes=[*create_agent_card_routes(card), *create_jsonrpc_routes(handler, "/")])
+        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+        serve = asyncio.create_task(server.serve())
+        while not server.started:
+            await asyncio.sleep(0.05)
+        try:
+            url = f"http://127.0.0.1:{port}"
+            bare = await ask_agent(url, "письмо", "triage-1", None, "turn-x", control="bare", schema=SCHEMA)
+            shaped = await ask_agent(url, "события", "mail-1", None, "turn-y", control="oneshot", schema=SCHEMA)
+            plain = await ask_agent(url, "сводка", "summary-1", None, None, control="oneshot")
+            return bare, shaped, plain, sessions.get("triage-1"), sessions.get("mail-1")
+        finally:
+            server.should_exit = True
+            await serve
+
+    bare, shaped, plain, kept_bare, kept_shaped = asyncio.run(run())
+    assert bare == ("done", '{"keep": true}', [])
+    assert calls == [("письмо", None, None, {"schema": SCHEMA, "bare": True}),
+                     ("события", None, "turn-y", {"schema": SCHEMA}), ("сводка", None, None, {})], \
+        "a bare run never gets a turn: no bus tool could be bound to it"
+    assert kept_bare is None and kept_shaped is None, "background runs keep no session"

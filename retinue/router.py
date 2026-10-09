@@ -18,6 +18,8 @@ from .bus import BusServer, bus_token
 from .channels.telegram import TelegramChannel
 from .config import RouterConfig
 from .core import Core, ask_agent
+from .mail import Collector, MailStore
+from .mailroom import Mailroom
 from .memory import Memory
 from .protocol import Store
 from .speech import Scribe
@@ -74,10 +76,12 @@ def main() -> None:
     store = Store(cfg.state_db)
     tokens = {a.url: bus_token(cfg.bus_secret, a.id) for a in cfg.agents} if cfg.bus_secret else {}
     memory, memory_error = build_memory(cfg, store.db)
+    mail = Mailroom(Collector(cfg.collector_url, cfg.collector_token), MailStore(store.db)) if cfg.collector_url \
+        else None
     core = Core(cfg.agents, store, cfg.owner, ask=signed(tokens), archive=Archive(cfg.archive_db),
                 default_agent=cfg.default_agent,
                 tz=cfg.owner_tz, backup_status=cfg.backup_status, scribe=Scribe(cfg.stt_key, store=store),
-                travel=TravelOps(cfg.travel_url) if cfg.travel_url else None, memory=memory)
+                travel=TravelOps(cfg.travel_url) if cfg.travel_url else None, memory=memory, mail=mail)
     loop.run_until_complete(core.start(build_channels(cfg, store, loop)))
     if memory_error:
         loop.run_until_complete(core.tell_owner(memory_error))

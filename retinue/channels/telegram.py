@@ -26,7 +26,7 @@ log = logging.getLogger("retinue.telegram")
 API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 50
 NO_PREVIEW = {"is_disabled": True}
-SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/check": "!check"}
+SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/check": "!check", "/mail": "!mail"}
 # Files a message may carry; the core reads them. A GIF (animation) also carries `document`: it is checked first.
 MEDIA = ("photo", "document", "voice", "audio", "video", "video_note")
 # What is still refused aloud: the value finishes the phrase «Пока не умею принимать …».
@@ -35,7 +35,7 @@ LOST = "Сообщение не обработано: ошибка на стор
 POISON = ("Сообщение с файлом не обработано: пока Роутер его разбирал, он перезапустился. Пришли файл ещё раз — "
           "лучше в другом формате.")
 START = ("Пиши сюда — ответит ассистентка. Команды: /new — новый разговор, /compact — сжать разговор, "
-         "/check — проверка канала, /help — справка.")
+         "/check — проверка канала, /mail — почта: ящики и твои правила, /help — справка.")
 
 
 class TelegramError(Exception):
@@ -85,6 +85,7 @@ class TelegramChannel:
             {"command": "new", "description": "новый разговор"},
             {"command": "compact", "description": "сжать разговор"},
             {"command": "check", "description": "проверка канала"},
+            {"command": "mail", "description": "почта: ящики и правила"},
             {"command": "help", "description": "справка"},
         ])
         asyncio.create_task(self.poll())

@@ -88,6 +88,8 @@ class RouterConfig:
     travel_url: str = ""                # travel-ops' MCP over HTTP: the router collects price alerts there
     link_hosts: list[str] = field(default_factory=list)  # travel-ops' sites: a link there is clickable in Telegram
     memory: MemoryConfig | None = None  # the knowledge base she writes; without the section she has no base
+    collector_url: str = ""             # the mail collector: the owner's mail and calendar; empty = no mail
+    collector_token: str = ""           # from RETINUE_COLLECTOR_TOKEN: the router signs its calls to the collector
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -109,6 +111,8 @@ class RouterConfig:
             cfg.telegram.bot_token = _env("TELEGRAM_BOT_TOKEN")
         cfg.bus_secret = os.environ.get("RETINUE_BUS_SECRET", "")
         cfg.stt_key = os.environ.get("ELEVENLABS_API_KEY", "")
+        if cfg.collector_url:
+            cfg.collector_token = _env("RETINUE_COLLECTOR_TOKEN")
         try:
             ZoneInfo(cfg.owner_tz)
         except (ZoneInfoNotFoundError, ValueError):
@@ -124,6 +128,21 @@ class RouterConfig:
         if cfg.telegram and cfg.default_agent is None:
             raise SystemExit("router config: Telegram is one chat without addresses — set `default_agent`")
         return cfg
+
+
+@dataclass
+class CollectorConfig:
+    """The mail collector (`retinue-collector`): the owner's tokens, its own state, the token the router signs with.
+    Everything from the environment: the container has no config file of its own."""
+    keys: str = "/keys"                     # client.json and <account>.<gmail|calendar>.json, read-only
+    state: str = "/state/collector.sqlite"  # cursors and items: its own folder, nobody else mounts it
+    listen_port: int = 9200
+    token: str = ""                         # from RETINUE_COLLECTOR_TOKEN
+
+    @classmethod
+    def load(cls) -> CollectorConfig:
+        return cls(keys=os.environ.get("RETINUE_MAIL_KEYS", cls.keys),
+                   state=os.environ.get("RETINUE_MAIL_STATE", cls.state), token=_env("RETINUE_COLLECTOR_TOKEN"))
 
 
 # What an agent can be given through the router.

@@ -91,6 +91,7 @@ def test_a_night_backup_copies_databases_consistently_and_leaves_secrets_out(tmp
     assert ".credentials.json" in excluded, "the Claude login never leaves the host"
     assert f"{srv}/*.env" in excluded and f"{srv}/*.env.*" in excluded, \
         "stack.env holds the subscription token; backup.env the backup's own keys"
+    assert f"{srv}/mail" in excluded, "the owner's Google tokens never leave the host"
     assert f"{srv}/tuwunel/appservices" in excluded, "the Matrix registration carries tokens too"
     assert (tmp_path / "restic.log.cache").read_text() == "/var/cache/restic", \
         "systemd gives the service no HOME, and restic finds no cache without one"

@@ -8,6 +8,7 @@
 #   sudo TELEGRAM_OWNER_ID=123456789 ROTATE_BUS_SECRET=1 bash deploy/setup.sh   # a new bus secret and agent tokens
 #   sudo TELEGRAM_OWNER_ID=123456789 TRAVEL=1 bash deploy/setup.sh   # travel-ops: trip search and price watches
 #   sudo TELEGRAM_OWNER_ID=123456789 MEMORY=1 bash deploy/setup.sh   # the knowledge base she writes, and its hub
+#   sudo TELEGRAM_OWNER_ID=123456789 MAIL=1 bash deploy/setup.sh     # the mail collector: Gmail and Google Calendar
 #
 # The stack's environment goes to /srv/retinue/stack.env (mode 600). The script prints names, never values:
 # a terminal ends up in logs and transcripts.
@@ -43,6 +44,12 @@ MEMORY_DIR=$ROOT/memory
 HUB=$MEMORY_DIR/hub.git
 [[ $MEMORY == 1 || -d $HUB ]] && MEMORY_ON=1
 MEMORY_UID=10001                        # the containers' user (Dockerfile): the router writes the hub as it
+MAIL=${MAIL:-0}                         # 1: the mail collector; on for good once its folder exists
+MAIL_DIR=$ROOT/mail
+MAIL_ON=0
+[[ $MAIL == 1 || -d $MAIL_DIR ]] && MAIL_ON=1
+MAIL_UID=10002                          # the collector's own user: the owner's tokens are its alone
+COLLECTOR_URL=http://collector:9200
 AGENTS=(assistant)
 token() { openssl rand -hex 32; }
 upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
@@ -59,6 +66,7 @@ secret() { grep -q "^$1=" "$SECRETS" || echo "$1=$(token)" >> "$SECRETS"; }   # 
 drop() { local rest; rest=$(grep -v "^$1=" "$2" || true); printf '%s\n' "$rest" | sed '/^$/d' > "$2"; }
 [[ $ROTATE_BUS_SECRET == 1 ]] && drop RETINUE_BUS_SECRET "$SECRETS"   # the agents' tokens follow from it
 secret RETINUE_BUS_SECRET
+[[ $MAIL_ON == 1 ]] && secret RETINUE_COLLECTOR_TOKEN   # the router signs its calls to the collector with it
 if [[ -n $MATRIX_SERVER_NAME ]]; then
   secret RETINUE_AS_TOKEN
   secret RETINUE_HS_TOKEN
@@ -88,6 +96,9 @@ YAML
     printf 'link_hosts:\n'                       # travel-ops' sites: a link there is clickable in Telegram
     sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e "s/^[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/  - '\1'/" \
       "$REPO/deploy/travel/link-hosts.txt"
+  fi
+  if [[ $MAIL_ON == 1 ]]; then
+    printf 'collector_url: %s\n' "$COLLECTOR_URL"   # what the collector found, the router takes there
   fi
   if [[ $MEMORY_ON == 1 ]]; then
     printf 'memory:\n  hub: /hub\n  checkout:\n'   # the rest: defaults in config.py (MemoryConfig)
@@ -162,6 +173,13 @@ fi
 
 install -d -m 755 "$ROOT/egress"
 install -m 644 "$REPO/deploy/egress/squid.conf" "$ROOT/egress/squid.conf"
+if [[ $MAIL_ON == 1 ]]; then
+  # The owner's tokens (deploy/mail/login.py puts them here) and the collector's own state: its user's alone.
+  install -d -m 700 "$MAIL_DIR" "$MAIL_DIR/keys" "$MAIL_DIR/state"
+  [[ $HOST_SETUP == 1 ]] && chown -R "$MAIL_UID:$MAIL_UID" "$MAIL_DIR"
+  # The collector's way out, like the assistant's list: written once, then the owner's.
+  [[ -f $ROOT/egress/mail-hosts.txt ]] || install -m 644 "$REPO/deploy/egress/mail-hosts.txt" "$ROOT/egress/mail-hosts.txt"
+fi
 # The list of allowed hosts belongs to the owner: written once, then edited only by hand.
 [[ -f $ROOT/egress/allowed-hosts.txt ]] || install -m 644 "$REPO/deploy/egress/allowed-hosts.txt" "$ROOT/egress/allowed-hosts.txt"
 
@@ -209,6 +227,7 @@ fill ELEVENLABS_API_KEY "elevenlabs.io: a key with speech_to_text only and a cre
 PROFILES=()
 [[ -n $MATRIX_SERVER_NAME ]] && PROFILES+=(matrix)
 [[ $TRAVEL_ON == 1 ]] && PROFILES+=(travel)
+[[ $MAIL_ON == 1 ]] && PROFILES+=(mail)
 if (( ${#PROFILES[@]} )); then
   put COMPOSE_PROFILES "$(IFS=,; echo "${PROFILES[*]}")"
 else
@@ -216,6 +235,7 @@ else
 fi
 if [[ $TRAVEL_ON == 1 ]]; then put RETINUE_TRAVEL_URL "$TRAVEL_URL"; else put RETINUE_TRAVEL_URL ""; fi
 if [[ $MEMORY_ON == 1 ]]; then put RETINUE_MEMORY /kb; else put RETINUE_MEMORY ""; fi
+if [[ $MAIL_ON == 1 ]]; then put RETINUE_COLLECTOR_TOKEN "$RETINUE_COLLECTOR_TOKEN"; else drop RETINUE_COLLECTOR_TOKEN "$STACK"; fi
 if [[ $TRAVEL_ON == 1 ]] && ! grep -q '^home_airports:' "$PROFILE"; then
   MISSING+=("$PROFILE: home_airports (your airports, IATA)")
 fi
@@ -281,6 +301,10 @@ for missing in ${MISSING[@]+"${MISSING[@]}"}; do
 done
 [[ $TRAVEL_ON == 1 ]] && echo "Travel: on — the travel-ops image (about 5 GB) is built from GitHub by \`up -d --build\`"
 [[ $MEMORY_ON == 1 ]] && echo "Memory: on — hub $HUB; rules $MEMORY_DIR/policy.json and checkout.txt (see docs/memory.md)"
+if [[ $MAIL_ON == 1 ]]; then
+  echo "Mail: on — keys: $(find "$MAIL_DIR/keys" -name '*.json' 2>/dev/null | wc -l | tr -d ' ') files in $MAIL_DIR/keys" \
+       "(put there by deploy/mail/login.py on your Mac; see docs/mail.md)"
+fi
 case $BACKUP_STATE in
   on) echo "Backup: on, every night at 03:30 Europe/Moscow; the result goes to $ROOT/status/backup.json" ;;
   unfilled) echo "Backup: off until $BACKUP_ENV is filled; then run this script again, and see docs/backup.md" ;;

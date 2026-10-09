@@ -39,6 +39,8 @@ TOO_LARGE_NOTE = ("[Справка от Роутера: с файлами раз
 ABOUT_FILES = re.compile(r"image|document|pdf|media", re.IGNORECASE)
 FILE_SESSIONS = "retinue-file-sessions.json"  # in the config dir: sessions that hold files, across restarts
 COMPACT = "/compact"  # Claude Code's own command; the only prompt that is not delivered verbatim
+STRUCTURED = "StructuredOutput"  # the CLI's own tool that carries an answer by a JSON schema (`--json-schema`)
+BARE_TURNS = 4  # a bare run answers by the schema at once; a few steps leave room for one retry on a mismatch
 LIMIT = "Лимит подписки исчерпан."  # the router words it for the owner; this text is for logs
 # Tokens of a run as the API reports them -> the names the router keeps.
 USAGE = {"input_tokens": "input_tokens", "output_tokens": "output_tokens",
@@ -92,10 +94,11 @@ def as_prompt(prompt: Prompt):
 
 class Engine(Protocol):
     """One conversation is one session: a call continues `session_id` (None starts a new one) and returns the
-    session to continue next time. The host keeps the mapping; the engine keeps the transcript."""
+    session to continue next time. The host keeps the mapping; the engine keeps the transcript. With `schema` the
+    answer is JSON by that schema; `bare` runs it with no tool at all — the mail's triage, one letter per run."""
 
     async def run(self, prompt: Prompt, session_id: str | None, on_text: OnText | None = None,
-                  turn_id: str | None = None) -> EngineResult: ...
+                  turn_id: str | None = None, schema: dict | None = None, bare: bool = False) -> EngineResult: ...
 
     async def compact(self, session_id: str | None) -> EngineResult: ...
 
@@ -440,11 +443,22 @@ class ClaudeEngine:
             if self.sessions_file:
                 self.sessions_file.write_text(json.dumps(sorted(self.with_files)))
 
-    def options(self, turn_id: str | None, streaming: bool, session_id: str | None = None) -> ClaudeAgentOptions:
-        """Everything one run is allowed, in one place."""
+    def options(self, turn_id: str | None, streaming: bool, session_id: str | None = None,
+                schema: dict | None = None, bare: bool = False) -> ClaudeAgentOptions:
+        """Everything one run is allowed, in one place. A `bare` run has no tool, no server, no hook and no folder:
+        it reads somebody else's letter and can only answer by the schema."""
+        if bare:
+            return ClaudeAgentOptions(
+                cwd=self.workspace, system_prompt=self.instructions, setting_sources=[], tools=[],
+                allowed_tools=[STRUCTURED] if schema else [], disallowed_tools=list(self.cfg.disallowed_tools),
+                mcp_servers={}, strict_mcp_config=True, permission_mode="dontAsk", verbatim_prompts=True,
+                env=dict(self.env), max_turns=BARE_TURNS, max_budget_usd=self.cfg.max_budget_usd, model=self.cfg.model,
+                output_format={"type": "json_schema", "schema": schema} if schema else None)
         allowed, servers = list(self.cfg.allowed_tools), {}
         denied, hooks = list(self.cfg.disallowed_tools), {}
         builtin, dirs = self.cfg.tools, []
+        if schema:
+            allowed.append(STRUCTURED)
         if self.bus_url and self.bus_token and turn_id and self.cfg.bus_tools:
             tools = bus_tools(self.bus_url, self.bus_token, turn_id)
             servers["retinue"] = create_sdk_mcp_server("retinue", tools=[tools[name] for name in self.cfg.bus_tools])
@@ -485,19 +499,23 @@ class ClaudeEngine:
             max_budget_usd=self.cfg.max_budget_usd,
             model=self.cfg.model,
             include_partial_messages=streaming,
+            output_format={"type": "json_schema", "schema": schema} if schema else None,
         )
 
     async def run(self, prompt: Prompt, session_id: str | None, on_text: OnText | None = None,
-                  turn_id: str | None = None) -> EngineResult:
+                  turn_id: str | None = None, schema: dict | None = None, bare: bool = False) -> EngineResult:
+        def options(session: str | None = None) -> ClaudeAgentOptions:
+            return self.options(turn_id, on_text is not None, session, schema, bare)
+
         try:
             try:
-                return await self._run(prompt, self.options(turn_id, on_text is not None, session_id), on_text)
+                return await self._run(prompt, options(session_id), on_text)
             except ResultError as exc:
                 # The transcript is gone (e.g. the volume was recreated): start over instead of failing every turn.
                 if not session_id or "No conversation found" not in str(exc):
                     raise
                 log.warning("session %s not found, starting a new one", session_id)
-                result = await self._run(prompt, self.options(turn_id, on_text is not None), on_text)
+                result = await self._run(prompt, options(), on_text)
                 result.text = SESSION_LOST + result.text
                 result.new_session = True
                 return result
@@ -509,7 +527,7 @@ class ClaudeEngine:
             note = UNREADABLE_NOTE if status == 400 else TOO_LARGE_NOTE
             text = f"{note}\n\n{prompt}" if isinstance(prompt, str) else \
                 [{"type": "text", "text": note}] + [b for b in prompt if b.get("type") == "text"]
-            result = await self._run(text, self.options(turn_id, on_text is not None), on_text)
+            result = await self._run(text, options(), on_text)
             result.text = (UNREADABLE if status == 400 else TOO_LARGE) + result.text
             result.new_session = True
             return result
@@ -579,6 +597,9 @@ class ClaudeEngine:
             return EngineResult(text="Агент не вернул результат.", is_error=True, session_id=options.resume,
                                 compacted=compacted)
         text = result.result or ("; ".join(result.errors or []) or "Пустой ответ.")
+        if isinstance(result.structured_output, dict) and not result.is_error:
+            # The answer by the schema, as the text the router reads: one JSON object.
+            text = json.dumps(result.structured_output, ensure_ascii=False)
         return EngineResult(
             text=text,
             is_error=result.is_error,
@@ -613,7 +634,7 @@ class EchoEngine:
     """No-model engine for smoke tests: answers with the prompt."""
 
     async def run(self, prompt: Prompt, session_id: str | None, on_text: OnText | None = None,
-                  turn_id: str | None = None) -> EngineResult:
+                  turn_id: str | None = None, schema: dict | None = None, bare: bool = False) -> EngineResult:
         if on_text:
             await on_text("echo: ")
         if isinstance(prompt, list):  # the text, and how many files came with it

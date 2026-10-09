@@ -32,7 +32,7 @@ SCOPES = {"gmail": ["https://www.googleapis.com/auth/gmail.readonly"],
           "calendar": ["https://www.googleapis.com/auth/calendar.events.readonly",
                        "https://www.googleapis.com/auth/calendar.calendarlist.readonly"]}
 WHO = {"gmail": ("https://gmail.googleapis.com/gmail/v1/users/me/profile", "emailAddress"),
-       "calendar": ("https://www.googleapis.com/calendar/v3/calendars/primary", "id")}
+       "calendar": ("https://www.googleapis.com/calendar/v3/users/me/calendarList/primary", "id")}
 KEYS = "/srv/retinue/mail/keys"     # the collector's keys folder (setup.sh MAIL=1)
 COLLECTOR_UID = 10002               # the collector's own user (deploy/compose.yml)
 CLIENT = Path("~/.config/retinue/google-client.json").expanduser()

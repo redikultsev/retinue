@@ -52,7 +52,7 @@ def test_the_account_is_checked_by_what_the_token_reads():
     assert login.who("gmail", "at", opener) == "owner@example.org"
     assert login.who("calendar", "at", opener) == "other@example.org"
     assert asked == [("https://gmail.googleapis.com/gmail/v1/users/me/profile", "Bearer at"),
-                     ("https://www.googleapis.com/calendar/v3/calendars/primary", "Bearer at")]
+                     ("https://www.googleapis.com/calendar/v3/users/me/calendarList/primary", "Bearer at")]
 
 
 def test_a_token_goes_to_the_server_through_stdin_and_only_names_are_printed(capsys, monkeypatch, tmp_path):

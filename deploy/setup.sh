@@ -11,6 +11,8 @@
 #   sudo TELEGRAM_OWNER_ID=123456789 MAIL=1 bash deploy/setup.sh     # the mail collector: Gmail and Google Calendar
 #   sudo TELEGRAM_OWNER_ID=123456789 LIFEHUB=1 LIFEHUB_HOST=hub.in.example.com LIFEHUB_DEVICES=10.8.0.2/32,10.8.0.3/32 \
 #     bash deploy/setup.sh                                            # the life hub: pages for your devices only
+#   sudo TELEGRAM_OWNER_ID=123456789 TGBUSINESS=1 bash deploy/setup.sh   # your chosen Telegram chats, replies by card
+#   sudo TELEGRAM_OWNER_ID=123456789 SEND=1 bash deploy/setup.sh     # replies by mail (needs MAIL=1), by card
 #
 # The stack's environment goes to /srv/retinue/stack.env (mode 600). The script prints names, never values:
 # a terminal ends up in logs and transcripts.
@@ -56,6 +58,26 @@ LIFEHUB_DIR=$ROOT/lifehub
 LIFEHUB_ON=0
 [[ $LIFEHUB == 1 || -f $LIFEHUB_DIR/host ]] && LIFEHUB_ON=1
 NGINX_UID=101                           # nginx-unprivileged's user: it reads the rendered nginx.conf
+TGBUSINESS=${TGBUSINESS:-0}             # 1: the Telegram Business gateway; on for good once its folder exists
+TG_DIR=$ROOT/telegram
+TG_ON=0
+[[ $TGBUSINESS == 1 || -d $TG_DIR ]] && TG_ON=1
+TG_UID=10003                            # the gateway's own user: the Business bot's state is its alone
+GATEWAY_URL=http://tg-business:9300
+SEND=${SEND:-0}                         # 1: the mail sender; on for good once its folder exists
+SEND_DIR=$ROOT/send
+SEND_ON=0
+[[ $SEND == 1 || -d $SEND_DIR ]] && SEND_ON=1
+SEND_UID=10004                          # the sender's own user: the gmail.send tokens are its alone
+SENDER_URL=http://mail-send:9400
+if [[ $TG_ON == 1 && -z $TELEGRAM_OWNER_ID ]]; then
+  echo "TGBUSINESS=1 needs TELEGRAM_OWNER_ID: only your own account's connection counts" >&2
+  exit 1
+fi
+if [[ $SEND_ON == 1 && $MAIL_ON == 0 ]]; then
+  echo "SEND=1 needs MAIL=1: a reply's address and thread come from the letters the collector kept" >&2
+  exit 1
+fi
 COLLECTOR_URL=http://collector:9200
 AGENTS=(assistant)
 token() { openssl rand -hex 32; }
@@ -93,6 +115,8 @@ drop() { local rest; rest=$(grep -v "^$1=" "$2" || true); printf '%s\n' "$rest" 
 secret RETINUE_BUS_SECRET
 [[ $MAIL_ON == 1 ]] && secret RETINUE_COLLECTOR_TOKEN   # the router signs its calls to the collector with it
 [[ $LIFEHUB_ON == 1 ]] && secret LIFEHUB_KEY   # Traefik adds it to the hub's requests; nginx refuses any without it
+[[ $TG_ON == 1 ]] && secret RETINUE_GATEWAY_TOKEN   # the router signs its calls to the Telegram Business gateway
+[[ $SEND_ON == 1 ]] && secret RETINUE_SENDER_TOKEN  # the router signs its calls to the mail sender
 if [[ -n $MATRIX_SERVER_NAME ]]; then
   secret RETINUE_AS_TOKEN
   secret RETINUE_HS_TOKEN
@@ -116,6 +140,7 @@ agents:
     reminders: true   # may set, list, move and cancel the owner's reminders through the bus
     attachments: true # may fetch what the owner sent (#N) again through the bus
     trips: true       # may publish a trip page in the life hub (refused while there is no hub)
+    drafts: true      # may propose a reply to a person; it leaves only by your «Отправить» (refused with no sender)
     can_call: []      # no other agents at this stage
 YAML
   if [[ $TRAVEL_ON == 1 ]]; then
@@ -129,6 +154,12 @@ YAML
   fi
   if [[ $LIFEHUB_ON == 1 ]]; then
     printf 'lifehub_url: https://%s\n' "$LIFEHUB_HOST"   # the pages' address; the data goes to /lifehub
+  fi
+  if [[ $TG_ON == 1 ]]; then
+    printf 'gateway_url: %s\n' "$GATEWAY_URL"      # your chosen Telegram chats; replies sent by your card
+  fi
+  if [[ $SEND_ON == 1 ]]; then
+    printf 'sender_url: %s\n' "$SENDER_URL"        # letters sent by your card
   fi
   if [[ $MEMORY_ON == 1 ]]; then
     printf 'memory:\n  hub: /hub\n  checkout:\n'   # the rest: defaults in config.py (MemoryConfig)
@@ -227,6 +258,15 @@ if [[ $MAIL_ON == 1 ]]; then
   # The collector's way out, like the assistant's list: written once, then the owner's.
   [[ -f $ROOT/egress/mail-hosts.txt ]] || install -m 644 "$REPO/deploy/egress/mail-hosts.txt" "$ROOT/egress/mail-hosts.txt"
 fi
+if [[ $SEND_ON == 1 ]]; then
+  # The owner's gmail.send tokens (deploy/mail/login.py --kind send puts them here) and the sender's ledger.
+  install -d -m 700 "$SEND_DIR" "$SEND_DIR/keys" "$SEND_DIR/state"
+  [[ $HOST_SETUP == 1 ]] && chown -R "$SEND_UID:$SEND_UID" "$SEND_DIR"
+fi
+if [[ $TG_ON == 1 ]]; then
+  install -d -m 700 "$TG_DIR" "$TG_DIR/state"   # the gateway's state: its user's alone
+  [[ $HOST_SETUP == 1 ]] && chown -R "$TG_UID:$TG_UID" "$TG_DIR"
+fi
 # The list of allowed hosts belongs to the owner: written once, then edited only by hand.
 [[ -f $ROOT/egress/allowed-hosts.txt ]] || install -m 644 "$REPO/deploy/egress/allowed-hosts.txt" "$ROOT/egress/allowed-hosts.txt"
 
@@ -276,6 +316,8 @@ PROFILES=()
 [[ $TRAVEL_ON == 1 ]] && PROFILES+=(travel)
 [[ $MAIL_ON == 1 ]] && PROFILES+=(mail)
 [[ $LIFEHUB_ON == 1 ]] && PROFILES+=(lifehub)
+[[ $TG_ON == 1 ]] && PROFILES+=(tgbusiness)
+[[ $SEND_ON == 1 ]] && PROFILES+=(send)
 if (( ${#PROFILES[@]} )); then
   put COMPOSE_PROFILES "$(IFS=,; echo "${PROFILES[*]}")"
 else
@@ -285,6 +327,14 @@ if [[ $TRAVEL_ON == 1 ]]; then put RETINUE_TRAVEL_URL "$TRAVEL_URL"; else put RE
 if [[ $MEMORY_ON == 1 ]]; then put RETINUE_MEMORY /kb; else put RETINUE_MEMORY ""; fi
 if [[ $MAIL_ON == 1 ]]; then put RETINUE_COLLECTOR_TOKEN "$RETINUE_COLLECTOR_TOKEN"; else drop RETINUE_COLLECTOR_TOKEN "$STACK"; fi
 if [[ $LIFEHUB_ON == 1 ]]; then put LIFEHUB_HOST "$LIFEHUB_HOST"; else drop LIFEHUB_HOST "$STACK"; fi
+if [[ $TG_ON == 1 ]]; then
+  put RETINUE_GATEWAY_TOKEN "$RETINUE_GATEWAY_TOKEN"
+  put TELEGRAM_OWNER_ID "$TELEGRAM_OWNER_ID"      # the gateway serves this account's connection and no other
+  fill TELEGRAM_BUSINESS_TOKEN "@BotFather: a new bot of its own with Secretary Mode on — not TELEGRAM_BOT_TOKEN"
+else
+  drop RETINUE_GATEWAY_TOKEN "$STACK"
+fi
+if [[ $SEND_ON == 1 ]]; then put RETINUE_SENDER_TOKEN "$RETINUE_SENDER_TOKEN"; else drop RETINUE_SENDER_TOKEN "$STACK"; fi
 if [[ $TRAVEL_ON == 1 ]] && ! grep -q '^home_airports:' "$PROFILE"; then
   MISSING+=("$PROFILE: home_airports (your airports, IATA)")
 fi
@@ -357,6 +407,12 @@ fi
 if [[ $LIFEHUB_ON == 1 ]]; then
   echo "Lifehub: on — https://$LIFEHUB_HOST for $(paste -sd' ' "$LIFEHUB_DIR/devices.txt");" \
        "check the DNS record and your devices' DNS (docs/lifehub.md)"
+fi
+[[ $TG_ON == 1 ]] && echo "Telegram Business: on — connect the bot in Telegram → Settings → Chat Automation, only" \
+  "the chats you choose, only «reply on your behalf» (docs/courier.md)"
+if [[ $SEND_ON == 1 ]]; then
+  echo "Send: on — keys: $(find "$SEND_DIR/keys" -name '*.send.json' 2>/dev/null | wc -l | tr -d ' ') in $SEND_DIR/keys" \
+       "(deploy/mail/login.py --kind send on your Mac; docs/courier.md)"
 fi
 case $BACKUP_STATE in
   on) echo "Backup: on, every night at 03:30 Europe/Moscow; the result goes to $ROOT/status/backup.json" ;;

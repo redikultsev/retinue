@@ -309,7 +309,8 @@ class Lifehub:
                 out.append({"text": "Поиск работы — подробности в Telegram.", "from": "",
                             "needs": NEEDS.get(card.get("needs_now"), ""), "deadline": ""})
             else:
-                out.append({"text": card.get("text") or card.get("summary") or "", "from": item["sender"] or "",
+                where = "Telegram" if str(item["sender"] or "").startswith("tg:") else item["sender"] or ""
+                out.append({"text": card.get("text") or card.get("summary") or "", "from": where,
                             "needs": NEEDS.get(card.get("needs_now"), ""), "deadline": card.get("deadline_now") or ""})
         return out
 
@@ -365,6 +366,8 @@ class Lifehub:
                             "runs", "input", "output", "cache_read", "cache_write")), f"{row['cost_usd']:.2f}"]}
                        for row in core.store.tokens(now - WEEK)],
             "connectors": self.connectors(now),
+            "sent": [[name, core.outbox.store.sent(now - DAY, channel), core.outbox.store.sent(now - WEEK, channel)]
+                     for channel, name in (("mail", "почта"), ("telegram", "Telegram"))] if core.outbox else None,
             "mail": None,
             "charts": CHARTS,
         }
@@ -415,6 +418,15 @@ class Lifehub:
                 out.append({"name": f"{what} {row['account']}", "ok": ok, "state": state})
         else:
             out.append({"name": "почта и календарь", "ok": False, "state": "не подключены"})
+        if core.mail and core.mail.gateway:
+            seen, said = core.mail.chats or (0.0, "ещё не опрошен")
+            ok = isinstance(said, dict) and bool(said.get("connected"))
+            out.append({"name": "Telegram Business", "ok": ok, "state": said if isinstance(said, str) else
+                        ("бот подключён" if ok else "бот не подключён") + (
+                            f", права: {', '.join(said.get('rights') or []) or 'нет'}" if isinstance(said, dict) else "")})
+        if core.outbox:
+            out.append({"name": "отправка почты", "ok": bool(core.outbox.sender),
+                        "state": "подключена" if core.outbox.sender else "не подключена"})
         out.append({"name": "база знаний", "ok": bool(core.memory),
                     "state": "подключена" if core.memory else "не подключена"})
         if core.backup_status:

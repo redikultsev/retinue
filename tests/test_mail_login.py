@@ -1,6 +1,7 @@
 """The owner's login script for the mail collector (deploy/mail/login.py), without Google and without a server:
 read-only scopes, the account checked, the files as the collector reads them, names printed and never values."""
 
+import base64
 import importlib.util
 import io
 import json
@@ -19,7 +20,9 @@ spec.loader.exec_module(login)
 
 def test_the_script_asks_for_read_only_scopes_and_writes_what_the_collector_reads(tmp_path):
     assert login.SCOPES == google.SCOPES, "the script and the collector ask for the same"
-    assert all(scope.endswith("readonly") for scopes in login.SCOPES.values() for scope in scopes)
+    assert all(scope.endswith("readonly") for kind in google.READ for scope in login.SCOPES[kind])
+    assert login.SCOPES["send"] == ["https://www.googleapis.com/auth/gmail.send", "openid",
+                                    "https://www.googleapis.com/auth/userinfo.email"], "sends, reads nothing"
     client = tmp_path / "client.json"
     client.write_text(json.dumps({"installed": {"client_id": "cid", "client_secret": "cs",
                                                 "redirect_uris": ["http://localhost"]}}))
@@ -77,7 +80,7 @@ def test_a_token_goes_to_the_server_through_stdin_and_only_names_are_printed(cap
     credentials = SimpleNamespace(token="at", refresh_token="secret-rt")
     monkeypatch.setattr(login, "consent", lambda config, kind, account: credentials)
     monkeypatch.setattr(login, "who", lambda kind, token: "someone@else.org")
-    monkeypatch.setattr(login, "put", lambda *a: ran.append(a))
+    monkeypatch.setattr(login, "put", lambda *a, **kw: ran.append(a))
     assert login.main(["--account", "owner@example.org", "--kind", "gmail", "--client", str(client),
                        "--host", "netcup"]) == 1
     out = capsys.readouterr()
@@ -90,3 +93,39 @@ def test_a_token_goes_to_the_server_through_stdin_and_only_names_are_printed(cap
     out = capsys.readouterr()
     assert "secret-rt" not in out.out + out.err and out.out.endswith("Готово: owner@example.org, gmail. Сборщик возьмёт "
                                                                      "ключ при следующем опросе (до 10 минут).\n")
+
+
+def id_token(**claims) -> str:
+    def part(data):
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+    return f"{part({'alg': 'RS256'})}.{part(claims)}.signature"
+
+
+def test_a_send_token_is_checked_by_its_id_token_and_kept_apart_from_the_collectors(capsys, monkeypatch, tmp_path):
+    """`gmail.send` cannot read the profile (research 60 §1): the account is the verified e-mail of the ID token. The
+    token goes to the sender's own folder as the sender's own user — the collector, which parses strangers' letters,
+    never holds a key that sends."""
+    assert login.email_of(id_token(email="Owner@Example.org", email_verified=True)) == "owner@example.org"
+    assert login.email_of(id_token(email="owner@example.org", email_verified=False)) == ""
+    assert login.email_of("not a token") == "" and login.email_of(None) == ""
+    command = login.remote("owner@example.org.send.json", "send")
+    assert "-o 10004 -g 10004 /srv/retinue/send/keys" in command and "/srv/retinue/mail" not in command
+    client = tmp_path / "client.json"
+    client.write_text(json.dumps({"installed": {"client_id": "cid", "client_secret": "cs"}}))
+    put = []
+    monkeypatch.setattr(login, "consent", lambda config, kind, account: SimpleNamespace(
+        token="at", refresh_token="secret-rt", id_token=id_token(email="owner@example.org", email_verified=True)))
+    monkeypatch.setattr(login, "who", lambda *a: pytest.fail("a send token reads no profile"))
+    monkeypatch.setattr(login, "put", lambda host, name, data, **kw: put.append((name, kw)))
+    assert login.main(["--account", "owner@example.org", "--kind", "send", "--client", str(client),
+                       "--host", "netcup"]) == 0
+    assert put == [("client.json", {"kind": "send"}), ("owner@example.org.send.json", {"kind": "send"})]
+    assert capsys.readouterr().out.endswith("Готово: owner@example.org, send. Отправка возьмёт ключ при следующем письме.\n")
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    (keys / "client.json").write_text(json.dumps({"client_id": "cid", "client_secret": "cs"}))
+    for kind in ("gmail", "send"):
+        (keys / login.key_of("owner@example.org", kind, f"rt-{kind}")[0]).write_bytes(
+            login.key_of("owner@example.org", kind, f"rt-{kind}")[1])
+    assert [k.kind for k in google.keys(keys)] == ["gmail"], "the collector never takes a send key"
+    assert [k.kind for k in google.keys(keys, ("send",))] == ["send"]

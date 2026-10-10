@@ -16,7 +16,8 @@ router (archive, Telegram) ────────────── mail-route
 ```
 
 What it never does: send mail, answer an invitation, change or delete anything in your mailbox (the scopes are
-read-only), read Spam or drafts, keep a dropped letter. The assistant never gets the tokens, the collector never
+read-only), read Spam or drafts, keep a dropped letter. Sending is another process with another token and your
+button under every letter — [courier.md](courier.md). The assistant never gets the tokens, the collector never
 gets a model, the archive file or the knowledge base.
 
 ## Turn it on

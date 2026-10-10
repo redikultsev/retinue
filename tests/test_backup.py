@@ -92,6 +92,7 @@ def test_a_night_backup_copies_databases_consistently_and_leaves_secrets_out(tmp
     assert f"{srv}/*.env" in excluded and f"{srv}/*.env.*" in excluded, \
         "stack.env holds the subscription token; backup.env the backup's own keys"
     assert f"{srv}/mail" in excluded, "the owner's Google tokens never leave the host"
+    assert f"{srv}/send" in excluded, "nor his gmail.send tokens"
     assert f"{srv}/tuwunel/appservices" in excluded, "the Matrix registration carries tokens too"
     assert f"{srv}/lifehub/nginx.conf" in excluded and f"{srv}/lifehub/traefik.yml" in excluded, \
         "the life hub's key, rendered from secrets.env; setup.sh renders it again"

@@ -237,6 +237,18 @@ def _tg_blocks(tokens, hosts: Collection[str] = ()) -> list[str]:
     return blocks
 
 
+def tg_card(view) -> str:
+    """A courier's card (`courier.CardView`) as Telegram HTML, built from code's parts and never through Markdown: the
+    header lines escaped with every address in <code>, the text to be sent verbatim in one <pre>, the status in
+    italics, and a t.me link only if code made one (a deep link to a chat)."""
+    parts = ["\n".join(_tg_text(line) for line in view.head), f"<pre>{_tg_escape(view.body)}</pre>"]
+    if view.status:
+        parts.append(f"<i>{_tg_text(view.status)}</i>")
+    if view.link and linkable(view.link[1], ("t.me",)):
+        parts.append(_tg_link(view.link[1], view.link[0]))
+    return "\n\n".join(parts)
+
+
 def tg_plain(html: str) -> str:
     """Telegram HTML -> the same text with no markup except <code> around addresses. The way out when Telegram
     refuses our markup: still valid HTML, and still no clickable address."""

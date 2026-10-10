@@ -67,8 +67,11 @@ services:
       RETINUE_BUS_SECRET: ${RETINUE_BUS_SECRET:-}   # agents ask each other through the router
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}   # speech to text; the router calls it, the assistant never
       RETINUE_COLLECTOR_TOKEN: ${RETINUE_COLLECTOR_TOKEN:-}   # only with `collector_url` in router.yaml
-    # `outside`: Telegram; `travel-router`: price alerts; `mail-router`: what the mail collector found
-    networks: [agents, outside, matrix, travel-router, mail-router]
+      RETINUE_GATEWAY_TOKEN: ${RETINUE_GATEWAY_TOKEN:-}       # only with `gateway_url`
+      RETINUE_SENDER_TOKEN: ${RETINUE_SENDER_TOKEN:-}         # only with `sender_url`
+    # `outside`: Telegram; `travel-router`: price alerts; `mail-router`: what the mail collector found;
+    # `tg-router`: the owner's chosen Telegram chats and replies in them; `send-router`: letters he confirmed
+    networks: [agents, outside, matrix, travel-router, mail-router, tg-router, send-router]
 
   assistant:
     image: retinue:local
@@ -168,14 +171,63 @@ services:
     networks: [mail-router, mail-out]           # both internal: the router, and the proxy
     depends_on: [mail-egress]
 
-  mail-egress:                    # the collector's only way out: CONNECT to Google's three hosts, nothing else
+  mail-egress:                    # the collector's and the sender's only way out: CONNECT to Google's hosts, nothing else
     profiles: ["mail"]
     image: ubuntu/squid:6.6-24.04_beta
     restart: unless-stopped
     volumes:
       - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
       - /srv/retinue/egress/mail-hosts.txt:/etc/squid/allowed-hosts.txt:ro
-    networks: [mail-out, outside]
+    networks: [mail-out, send-out, outside]
+
+  # The mail sender: code, no model, the only holder of the owner's `gmail.send` tokens. It sends one letter when
+  # the router asks with the key, the envelope and the digest of a card the owner pressed «Отправить» under — each
+  # key once — and reads nothing. Its own user and keys, apart from the collector, which parses strangers' letters.
+  # Off until the owner turns it on (setup.sh SEND=1, which needs MAIL=1); the keys come from his Mac (--kind send).
+  mail-send:
+    profiles: ["send"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10004:10004"
+    command: ["retinue-mail-send"]
+    volumes:
+      - /srv/retinue/send/keys:/keys:ro         # client.json and one gmail.send token per mailbox: the owner's
+      - /srv/retinue/send/state:/state          # every key it was asked to send; nobody else mounts it
+    environment:
+      RETINUE_SENDER_TOKEN: ${RETINUE_SENDER_TOKEN:-}
+      HTTPS_PROXY: http://mail-egress:3128      # Google, through the proxy only
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    mem_limit: 256m
+    pids_limit: 64
+    networks: [send-router, send-out]           # both internal: the router, and the proxy
+    depends_on: [mail-egress]
+
+  # The Telegram Business gateway: code, no model, the only holder of the Business bot's token — which both reads
+  # the owner's chosen chats and replies in them (research 49). The router takes the messages by number and asks it
+  # to send a reply the owner confirmed, each key once. A bot of its own, not the router's. Off until the owner turns
+  # it on (setup.sh TGBUSINESS=1).
+  tg-business:
+    profiles: ["tgbusiness"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10003:10003"
+    command: ["retinue-tg-business"]
+    volumes:
+      - /srv/retinue/telegram/state:/state      # the offset, the connection, the items, each chat's window, its ledger
+    environment:
+      RETINUE_GATEWAY_TOKEN: ${RETINUE_GATEWAY_TOKEN:-}
+      TELEGRAM_BUSINESS_TOKEN: ${TELEGRAM_BUSINESS_TOKEN:-}
+      TELEGRAM_OWNER_ID: ${TELEGRAM_OWNER_ID:-}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    mem_limit: 256m
+    pids_limit: 64
+    networks: [tg-router, outside]              # the router, and Telegram
 
   # The life hub: pages about the owner's life, for his devices only. The router writes the data; the builder turns it
   # into pages with Hugo, with no network, checks them and switches `current`; nginx serves `current` to Traefik,
@@ -251,6 +303,12 @@ networks:
   mail-router:  # router <-> collector only. Internal: no route out
     internal: true
   mail-out:     # collector <-> its proxy only. Internal: the proxy is its only way out
+    internal: true
+  send-router:  # router <-> mail sender only. Internal: no route out
+    internal: true
+  send-out:     # mail sender <-> the mail proxy only. Internal: the proxy is its only way out
+    internal: true
+  tg-router:    # router <-> Telegram Business gateway only. Internal: no route out
     internal: true
   dokploy-network:
     external: true

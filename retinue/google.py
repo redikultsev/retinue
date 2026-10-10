@@ -1,9 +1,10 @@
-"""Google's APIs as the mail collector reaches them: plain httpx and our own token refresh, no Google client library.
-Read-only scopes only: `gmail.readonly` for a mailbox, `calendar.events.readonly` with `calendar.calendarlist.readonly`
-for its calendars — two refresh tokens per account from the same Desktop client, because a password change kills
-every token that holds a Gmail scope (research 44, 57).
+"""Google's APIs as the mail collector and the mail sender reach them: plain httpx and our own token refresh, no Google
+client library. The collector's scopes are read-only: `gmail.readonly` for a mailbox, `calendar.events.readonly` with
+`calendar.calendarlist.readonly` for its calendars — two refresh tokens per account from the same Desktop client,
+because a password change kills every token that holds a Gmail scope (research 44, 57). The sender's token is a third
+one, `gmail.send` alone (with `openid email` to know whose it is): it sends and reads nothing (research 60).
 
-Three hosts and nothing else; the collector's proxy lets through exactly these (`HOSTS`).
+Three hosts and nothing else; the proxy lets through exactly these (`HOSTS`).
 """
 
 from __future__ import annotations
@@ -28,7 +29,10 @@ CALENDAR = "https://www.googleapis.com/calendar/v3"
 HOSTS = ("oauth2.googleapis.com", "gmail.googleapis.com", "www.googleapis.com")
 SCOPES = {"gmail": ["https://www.googleapis.com/auth/gmail.readonly"],
           "calendar": ["https://www.googleapis.com/auth/calendar.events.readonly",
-                       "https://www.googleapis.com/auth/calendar.calendarlist.readonly"]}
+                       "https://www.googleapis.com/auth/calendar.calendarlist.readonly"],
+          "send": ["https://www.googleapis.com/auth/gmail.send", "openid",
+                   "https://www.googleapis.com/auth/userinfo.email"]}
+READ = ("gmail", "calendar")  # the collector's kinds; `send` lives in the sender's own folder
 PAGE = 500          # history.list and messages.list: the most Gmail gives in one page
 EVENTS_PAGE = 250   # events.list: the default; the same in the first request and every one after (syncToken)
 MAX_PAGES = 200     # a listing longer than this is cut: the next poll continues from the cursor
@@ -53,6 +57,11 @@ class Gone(GoogleError):
     """The message is no longer in the mailbox (404)."""
 
 
+class Ambiguous(GoogleError):
+    """The request may have reached Google — a timeout after it left, a 5xx: whether the letter went is unknown. It is
+    never sent again; Sent tells (research 60 §2)."""
+
+
 @dataclass
 class Key:
     account: str        # the address Google confirmed at consent
@@ -62,9 +71,10 @@ class Key:
     client_secret: str
 
 
-def keys(folder: str | Path) -> list[Key]:
+def keys(folder: str | Path, kinds: tuple[str, ...] = READ) -> list[Key]:
     """The tokens the owner put on the server (deploy/mail/login.py): `client.json` and one `<account>.<kind>.json`
-    per consent. Read on every poll, so a new login works without a restart. A broken file is skipped by name."""
+    per consent, of `kinds` only. Read on every poll, so a new login works without a restart. A broken file is
+    skipped by name."""
     folder = Path(folder)
     try:
         client = json.loads((folder / "client.json").read_text())
@@ -80,7 +90,7 @@ def keys(folder: str | Path) -> list[Key]:
                              str(client["client_id"]), str(client["client_secret"])))
         except (OSError, ValueError, KeyError, TypeError):
             log.warning("key file %s is not readable; skipped", path.name)
-    return [key for key in found if key.kind in SCOPES]
+    return [key for key in found if key.kind in kinds]
 
 
 def rfc3339(ts: float) -> str:
@@ -181,6 +191,33 @@ class Google:
         return {"raw": base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)), "labels": data.get("labelIds") or [],
                 "thread": str(data.get("threadId") or ""), "ts": int(data.get("internalDate") or 0) / 1000,
                 "size": int(data.get("sizeEstimate") or 0)}
+
+    async def send(self, raw: bytes, thread: str = "") -> dict:
+        """messages.send: the letter as it is, in `thread` when it answers one. {id, threadId, labelIds}. Refused before
+        it left (no connection, the token, a 4xx) — GoogleError; may have left — Ambiguous, never tried again."""
+        body = {"raw": base64.urlsafe_b64encode(raw).decode(), **({"threadId": thread} if thread else {})}
+        for attempt in (1, 2):
+            token = await self._token()
+            try:
+                response = await self.http.post(f"{GMAIL}/messages/send", json=body, timeout=TIMEOUT,
+                                                 headers={"Authorization": f"Bearer {token}"})
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                raise GoogleError(f"сеть: {type(exc).__name__}") from None
+            except httpx.HTTPError as exc:
+                raise Ambiguous(f"сеть после отправки запроса: {type(exc).__name__}") from None
+            if response.status_code == 401 and attempt == 1:  # refused before anything was sent: a fresh token, once
+                self.access = ""
+                continue
+            break
+        if response.status_code == 200:
+            return response.json()
+        if response.status_code >= 500:
+            raise Ambiguous(f"Gmail: HTTP {response.status_code}")
+        try:
+            said = str((response.json().get("error") or {}).get("message") or "")[:200]
+        except (ValueError, AttributeError):
+            said = ""
+        raise GoogleError(f"Gmail: HTTP {response.status_code}" + (f": {said}" if said else ""))
 
     # --- Calendar ---------------------------------------------------------------------------------------------
 

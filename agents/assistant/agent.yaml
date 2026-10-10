@@ -13,10 +13,11 @@ engine:
   tools: []                         # no built-in tool at all: no Bash, no files, no WebSearch, no WebFetch.
   # With a knowledge base (RETINUE_MEMORY) the engine adds Read, Grep, Glob, Edit, Write, every call path-checked.
   disallowed_tools: [Bash, WebSearch, WebFetch]   # said twice on purpose: these three never, whatever `tools` says
-  # The archive, the owner's reminders, what he sent, a trip page in the life hub; ask_agent is not given at this
-  # stage. travel-ops is an MCP server of its own (RETINUE_TRAVEL_URL), every call checked by the engine's guard.
+  # The archive, the owner's reminders, what he sent, a trip page in the life hub, a draft reply to a person (it
+  # leaves only by his button under the card); ask_agent is not given at this stage. travel-ops is an MCP server of
+  # its own (RETINUE_TRAVEL_URL), every call checked by the engine's guard.
   bus_tools: [search_archive, set_reminder, list_reminders, cancel_reminder, move_reminder, get_attachment,
-              publish_trip]
+              publish_trip, draft_reply]
   # Steps of one run. A trip is a search, a page or two, photos, a refinement, the answer — and a fix after a
   # refused argument: 8 cut it short. A cap against a loop, not a target; every step spends the subscription.
   max_turns: 20

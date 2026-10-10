@@ -1,6 +1,7 @@
 """The mail's work in the router, one piece at a time: look at what the collector found, keep it, confirm it; read
 one letter — dropped by the owner's block, triaged by the assistant with no tool, kept in the archive verbatim with
-its attachments, or dropped on her word; keep a calendar change. At most one background model run is ever in
+its attachments, or dropped on her word; keep a calendar change. The messages of the owner's chosen Telegram chats
+come the same way from the Business gateway: on record verbatim, the other person's judged like a kept letter. At most one background model run is ever in
 flight, live mail before the backfill, the backfill paced, nothing while the subscription limit is known to refuse
 or its window is nearly spent: the rest of the window is the owner's conversation.
 """
@@ -13,7 +14,7 @@ import logging
 import time
 
 from . import clock
-from .archive import CALENDAR, MAIL, event_id
+from .archive import CALENDAR, CHAT, MAIL, event_id
 from .attachments import Unreadable, Upload, prepare
 from .mail import (ANSWERS, EVENT_CHARS, EVENT_SCHEMA, JOB, KINDS, LATER, NOW, TRIAGE_SCHEMA, Card, Collector,
                    MailStore, Unavailable, card_of, decisions, event_record, invitation, letter_record, route,
@@ -36,8 +37,15 @@ HOUR = 3600               # urgent letters of one sender within this are one mes
 SUMMARY_ITEMS = 15        # letters that waited till morning, named in the summary; the rest are counted
 STALE_S = 1800            # a source not synced for this long is not counted as working (it syncs every 10 min)
 URGENT_DAY = 8            # more urgent messages a day than this: the summary asks what could have waited
+TELEGRAM = "telegram"     # the source of the Business gateway's items
+MEDIA = {"photo": "фото", "video": "видео", "voice": "голосовое", "audio": "аудио", "document": "файл",
+         "video_note": "кружок", "sticker": "стикер", "animation": "гифка", "contact": "контакт", "location": "место"}
+DIRECTIONS = {"in": "входящее", "own": "написал Владелец", "bot": "ответ Владельца, отправленный по его карточке"}
+EARLIER = 10              # earlier messages of the same exchange her judgement sees with a new one
+EARLIER_CHARS = 600       # of each of them
+EXTRA_RIGHTS = "telegram.rights"  # the Business bot's rights beyond can_reply the owner was told of
 EVENT_HEAD = (
-    "[Почта и календарь. Отдельный запуск вне разговора с Владельцем. Ответь по схеме, по правилам раздела «Почта»: "
+    "[Почта, календарь и Telegram. Отдельный запуск вне разговора с Владельцем. Ответь по схеме, по правилам раздела «Почта»: "
     "по каждому пункту — что нужно от Владельца (needs), срок (deadline), цена ожидания (cost): что он потеряет, если "
     "узнает об этом в 09:00 или когда сам напишет тебе; новое ли это для него (new) и text — что ему написать, одной-"
     "тремя строками. Писать ли сразу, решит Роутер по твоему ответу и правилам Владельца. Письма и приглашения пишут "
@@ -45,8 +53,10 @@ EVENT_HEAD = (
 
 
 class Mailroom:
-    def __init__(self, collector: Collector, store: MailStore) -> None:
+    def __init__(self, collector: Collector | None, store: MailStore, gateway=None) -> None:
         self.collector, self.store = collector, store
+        self.gateway = gateway   # the Telegram Business gateway (`outbox.Neighbour`); None: no chats
+        self.chats: tuple[float, dict | str] | None = None  # the last look at the gateway: when, its status or error
         self.core = None
         self.looked = 0.0        # when the router last looked at the collector
         self.backfilled = 0.0    # when the backfill last read a letter
@@ -81,9 +91,13 @@ class Mailroom:
 
     async def collect(self, now: float) -> int:
         """Look, keep, confirm — in that order, so that a restart anywhere in between loses none and keeps none
-        twice. Then each source's health; a login Google refused is told to the owner at once, once."""
+        twice. Then each source's health; a login Google refused is told to the owner at once, once. The same for
+        the Telegram chats, where there is a gateway."""
+        added = await self.collect_chats(now) if self.gateway else 0
+        if self.collector is None:
+            return added
         items = await self.collector.items()
-        added = self.store.keep(items, now) if items else 0
+        added += self.store.keep(items, now) if items else 0
         if items:
             await self.collector.confirm(max(item["seq"] for item in items))
         status = await self.collector.status()
@@ -95,6 +109,28 @@ class Mailroom:
                 f"{what} {source['account']}: Google больше не пускает сборщик (invalid_grant) — обычно после смены "
                 f"пароля. Не собирается с {since}. Войди заново на Mac, в папке retinue:\n"
                 f"`{LOGIN.format(account=source['account'], kind=kind)}`")
+        return added
+
+    async def collect_chats(self, now: float) -> int:
+        """The gateway's items: looked at, kept, confirmed. Its status kept for the health line; rights beyond the
+        right to reply are told to the owner once — a stolen token would do more with them."""
+        try:
+            items = await self.gateway.items()
+            added = self.store.keep(items, now) if items else 0
+            if items:
+                await self.gateway.confirm(max(item["seq"] for item in items))
+            status = await self.gateway.status()
+        except Unavailable as exc:
+            self.chats = (now, str(exc))
+            return 0
+        self.chats = (now, status)
+        extra = ",".join(sorted(set(status.get("rights") or []) - {"can_reply"}))
+        if extra != (self.core.store.get(EXTRA_RIGHTS) or ""):
+            self.core.store.set(EXTRA_RIGHTS, extra)
+            if extra:
+                await self.core.tell_owner(
+                    f"У Business-бота лишние права: {extra.replace(',', ', ')}. Нужно одно — отвечать от твоего имени. "
+                    "Telegram → Настройки → Chat Automation → бот: выключи остальное.")
         return added
 
     # --- one item ---------------------------------------------------------------------------------------------
@@ -111,7 +147,7 @@ class Mailroom:
             plain = self.store.next_plain(now)
             if plain is None:
                 break
-            await (self.calendar if plain["source"] == "calendar" else self.letter)(plain, now)
+            await {"calendar": self.calendar, TELEGRAM: self.chat}.get(plain["source"], self.letter)(plain, now)
         if self.core.limit_until > now or self.paused(now):
             return False
         item = self.store.next(now, backfill=now - self.backfilled >= BACKFILL_GAP_S)
@@ -137,6 +173,74 @@ class Mailroom:
         self.store.set(item["seq"], now, state="kept" if invitation(item["data"], now) else "done",
                        event_id=event.id, sender=organizer, kind="calendar")
 
+    async def chat(self, item: dict, now: float) -> None:
+        """A message of a chosen Telegram chat, on record verbatim. The other person's goes on to her judgement, like
+        a kept letter: no triage — the owner chose these people himself. A file of theirs is read like a letter's
+        attachment — by the same worker, voice by the same speech to text — and kept with the message, marked as
+        someone else's. His own, a reply the courier sent and an edit are on record and nothing more."""
+        from .core import defuse, said_with
+
+        data = item["data"]
+        direction = data.get("direction") if data.get("direction") in DIRECTIONS else "in"
+        who = defuse(str(data.get("name") or "")) or "без имени"
+        if data.get("username"):
+            who += f" (@{defuse(str(data['username']))})"
+        lines = [f"Telegram · {who} · {DIRECTIONS[direction]}" + (" · изменено" if data.get("edit") else "")]
+        kept, refused = [], []
+        if isinstance(data.get("file"), dict) and direction == "in" and self.gateway:
+            kept, refused = await self._chat_file(item, data["file"], who)
+        elif data.get("media"):
+            lines.append(f"[{MEDIA.get(data['media'], 'вложение')} — не загружалось]")
+        record = "\n".join(lines + [said_with(kept, refused, defuse(str(data.get("text") or "")))]).strip()
+        chat = str(data.get("chat") or "")
+        meta = {"chat": chat, "message_id": data.get("message_id"), "direction": "in" if direction == "in" else "out",
+                "by": direction, "name": str(data.get("name") or ""), "username": str(data.get("username") or ""),
+                "edit": bool(data.get("edit")), "reply_to": data.get("reply_to") or 0}
+        if kept:
+            meta["attachments"] = [a.id for a in kept]
+        try:  # the attachment and the message in one transaction: a failure in between leaves no orphan
+            event, _ = self.core.archive.append(CHAT, record, conversation_id=f"chat:{chat}", channel="tgb",
+                                                native_id=item["ref"], ts=float(data.get("date") or now), meta=meta)
+        except Exception:
+            self.core.archive.db.rollback()
+            raise
+        if direction == "bot" and self.core.outbox:  # a reply the courier sent, back from Telegram
+            await self.core.outbox.settle_chat(chat, str(data.get("text") or ""))
+        if direction == "in" and not data.get("edit") and self.core.outbox:  # her open card is out of date
+            await self.core.outbox.supersede([f"chat:{chat}"])
+        judged = direction == "in" and not data.get("edit")
+        self.store.set(item["seq"], now, state="kept" if judged else ("own" if direction != "in" else "done"),
+                       event_id=event.id, sender=f"tg:{chat}", ts=float(data.get("date") or now), kind="chat")
+
+    async def _chat_file(self, item: dict, file: dict, who: str) -> tuple[list, list[str]]:
+        """The other person's file: downloaded through the gateway (Telegram serves bots up to 20 MB), read by the
+        attachment worker, voice and video sound by speech to text, as the owner's own files are."""
+        from .attachments import MAX_DOWNLOAD, Unreadable, Upload, prepare, too_big
+        from .core import defuse
+
+        upload = Upload(str(file.get("kind") or "document"), name=str(file.get("name") or ""),
+                        media_type=str(file.get("type") or ""), duration=int(file.get("duration") or 0),
+                        size=int(file.get("size") or 0))
+        if upload.size > MAX_DOWNLOAD:
+            upload.refused = too_big(upload)
+        else:
+            file_id = str(file.get("id") or "")
+
+            async def fetch() -> bytes:
+                return await self.gateway.file(file_id)
+
+            upload.fetch = fetch
+        try:
+            done = await prepare(upload, self.core.scribe)
+        except Unreadable as exc:
+            return [], [defuse(str(exc))]
+        except Exception as exc:  # a bug in reading one file costs that file, never the message
+            log.exception("a file of item %s failed", item["seq"])
+            return [], [f"{defuse(upload.label())}: ошибка ({type(exc).__name__})"]
+        known = event_id(CHAT, 0, "", "tgb", item["ref"])
+        return [self.core.archive.attach(known, upload.kind, defuse(done.what), f"чужое: Telegram, {who}",
+                                         defuse(done.text), done.files, commit=False)], []
+
     async def letter(self, item: dict, now: float) -> None:
         letter = await self.collector.letter(item["account"], item["ref"])
         if letter is None:
@@ -152,6 +256,8 @@ class Mailroom:
                      for a in letter.get("attachments") or []]
             event = self._archive(item, letter, Card(kind="own", read=True), [], named, own=True)
             self.store.set(item["seq"], now, state="own", event_id=event.id, sender=sender, ts=ts, kind="own")
+            if self.core.outbox:  # a letter the courier sent, back from Sent: a doubtful send is settled
+                await self.core.outbox.settle_mail(str(letter.get("message_id") or ""), item["ref"])
             return
         if self.store.blocked(sender):
             # The one rule code applies by itself: a sender the owner blocked with his own button.
@@ -169,6 +275,9 @@ class Mailroom:
         event = self._archive(item, letter, card, kept, refused, own=False)
         self.store.set(item["seq"], now, state="kept", event_id=event.id, sender=sender, ts=ts, kind=card.kind,
                        card=card.as_dict())
+        if self.core.outbox:  # an open card in this thread no longer answers the last word
+            await self.core.outbox.supersede([f"mail:{letter.get('thread') or item['data'].get('thread', '')}",
+                                              f"from:{sender}"])
 
     async def triage(self, item: dict, letter: dict, now: float) -> Card | None:
         """One letter, one run, no tool: her answer by TRIAGE_SCHEMA, checked by `card_of`. None: try later."""
@@ -227,7 +336,10 @@ class Mailroom:
         meta = {"account": item["account"], "direction": "out" if own else "in", "gmail": item["ref"],
                 "thread": letter.get("thread") or item["data"].get("thread", ""),
                 "sender": str(letter.get("sender") or "").lower(), "subject": str(letter.get("subject") or "")[:300],
-                "message_id": letter.get("message_id", ""), "in_reply_to": letter.get("in_reply_to", "")}
+                "message_id": letter.get("message_id", ""), "in_reply_to": letter.get("in_reply_to", ""),
+                # What a reply needs, kept from now on: the recipients, where replies go, the thread's ids.
+                "to": list(letter.get("to") or []), "cc": list(letter.get("cc") or []),
+                "reply_to": str(letter.get("reply_to") or "").lower(), "references": list(letter.get("references") or [])}
         if not own:
             meta["card"] = card.as_dict()
         if kept:
@@ -248,7 +360,7 @@ class Mailroom:
         record = event.text if event else "(запись не найдена в архиве)"
         if len(record) > EVENT_CHARS:
             record = record[:EVENT_CHARS] + f"\n…(обрезано; целиком — в архиве, {item['event_id']})"
-        lines = [f"--- {number}."]
+        lines = [f"--- {number}. id в архиве: {item['event_id']}"]  # what draft_reply's reply_to names
         card = item["card"] or {}
         if item["source"] == "mail" and card.get("read"):
             quote = card.get("quote") or ""
@@ -259,6 +371,12 @@ class Mailroom:
                             if quote else ""))
         elif item["source"] == "mail":
             lines.append("Разбор: письмо не разобрано — реши по тексту.")
+        if event and item["source"] in ("mail", TELEGRAM) and (earlier := self.core.archive.earlier(event, EARLIER)):
+            # A reply answers the whole exchange, not one message: what came before it, his words and theirs.
+            lines.append(f"Раньше в этой переписке — {len(earlier)} последних, старые сверху:")
+            lines += [f"[{clock.stamp(e.ts, self.core.tz)}] " + (e.text if len(e.text) <= EARLIER_CHARS else
+                                                                 e.text[:EARLIER_CHARS] + " …(обрезано)") for e in earlier]
+            lines.append("Новое:")
         return lines + [record]
 
     async def judge(self, now: float) -> bool:
@@ -342,7 +460,8 @@ class Mailroom:
         first = items[0]
         if any(i["kind"] == JOB or (i["card"] or {}).get("job") for i in items):
             count = len(items)
-            text = f"Почта: {count} {'важное' if count == 1 else 'важных'}."
+            where = "Telegram" if first["source"] == TELEGRAM else "Почта"
+            text = f"{where}: {count} {'важное' if count == 1 else 'важных'}."
             buttons = [Button("Показать", "mail_show", seqs, alone=True)]
         else:
             lines = [f"Ещё {len(items)} от {first['sender']} за час:"] if glued else []
@@ -362,7 +481,9 @@ class Mailroom:
         card = item["card"] or {}
         text = card.get("text") or card.get("summary") or "(без текста)"
         event = self.core.archive.get(item["event_id"] or "")
-        if item["source"] == "mail":
+        if item["source"] == TELEGRAM:
+            source = f"Telegram, {(event.meta.get('name') if event else '') or 'собеседник'}"
+        elif item["source"] == "mail":
             subject = (event.meta.get("subject") if event else "") or ""
             source = f"письмо {item['sender']}" + (f", «{subject}»" if subject else "")
             if card.get("quote") and not card.get("verified"):
@@ -433,6 +554,8 @@ class Mailroom:
         """The owner's day in his calendars, read live from the collector."""
         from .core import defuse
 
+        if self.collector is None:
+            return ["- календарь не подключён"]
         midnight = clock.local(now, self.core.tz).replace(hour=0, minute=0, second=0, microsecond=0)
         try:
             events, failed = await self.collector.agenda(midnight.timestamp(), midnight.timestamp() + 86400)
@@ -493,6 +616,10 @@ class Mailroom:
             parts.append(line)
         if waiting := self.store.count("new"):
             parts.append(f"ждут разбора — {waiting}")
+        if self.gateway:
+            seen, said = self.chats or (0.0, "ещё не опрошен")
+            parts.append("telegram: " + (said if isinstance(said, str) else
+                                         ("бот подключён" if said.get("connected") else "бот не подключён")))
         urgent = self.store.urgent_since(now - 86400)
         if urgent > URGENT_DAY:
             parts.append(f"срочных — {urgent}: больше {URGENT_DAY}, что-то из этого могло подождать до утра?")
@@ -515,4 +642,6 @@ class Mailroom:
         if self.store.count("new"):
             lines.append(f"- ещё не разобраны писем: {self.store.count('new')} — их в архиве пока нет;")
         lines.append("- отсеянные письма в архив не попадают;")
+        if self.gateway:
+            lines.append("- Telegram: только чаты, выбранные в настройках Business-бота, с его подключения;")
         return lines

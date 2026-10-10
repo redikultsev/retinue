@@ -22,7 +22,7 @@ from a2a.types import Role, SendMessageRequest
 from google.protobuf.json_format import MessageToDict
 
 from . import clock
-from .archive import ASSISTANT, CALENDAR, MAIL, OWNER, SYSTEM, Archive, Attachment, Event, event_id
+from .archive import ASSISTANT, CALENDAR, CHAT, MAIL, OWNER, SYSTEM, Archive, Attachment, Event, event_id
 from .attachments import Unreadable, Upload, prepare
 from .bus import MAX_PARALLEL, MAX_TEXT, Denied, Turns, check
 from .config import RouterAgent
@@ -37,8 +37,9 @@ AGENT_TIMEOUT = httpx.Timeout(900, connect=10)
 # The assistant's session remembers the conversation. What happened in it without the assistant (the system's own
 # notices, pressed buttons, refused photos, a message whose run failed) the router tells once, in the next request.
 UNSEEN_EVENTS = 12
-HISTORY_CHARS = {OWNER: 2000, ASSISTANT: 1200, SYSTEM: 300, MAIL: 1500, CALENDAR: 600}
-SPEAKER = {OWNER: "Владелец", ASSISTANT: "Ассистентка", SYSTEM: "Система", MAIL: "Письмо", CALENDAR: "Календарь"}
+HISTORY_CHARS = {OWNER: 2000, ASSISTANT: 1200, SYSTEM: 300, MAIL: 1500, CALENDAR: 600, CHAT: 1500}
+SPEAKER = {OWNER: "Владелец", ASSISTANT: "Ассистентка", SYSTEM: "Система", MAIL: "Письмо", CALENDAR: "Календарь",
+           CHAT: "Telegram"}
 MAX_QUERY = 200          # an archive search query
 SEARCH_TEXT_CHARS = 1500  # a found event is returned whole up to this size, otherwise as a snippet
 BUTTON_TTL_S = 24 * 3600
@@ -64,7 +65,7 @@ LIMIT_RETRY_S = 3600    # when the CLI did not say when the window resets, the r
 BACKUP_STALE_S = 26 * 3600  # a nightly backup older than this is missing: a day plus the timer's slack
 DIGEST_STATUS = {"A": "новая", "D": "удалена", "R": "перенесена"}  # how the evening list names a file's change
 FOREIGN = {"forwarded": "пересланное", "attachment": "вложение", "travel": "выдача travel-ops", "archive": "архив",
-           "mail": "почта", "calendar": "календарь"}
+           "mail": "почта", "calendar": "календарь", "telegram": "Telegram"}
 DIGEST_BUTTONS = 10     # «Откатить» buttons in one evening list; the rest are named, the Mac takes them back
 DIGEST_RETRY_S = 1800   # an evening list no channel took is tried again after this
 DIGEST_UNTIL = "memory.digest_until"  # where the last evening list ended: the next one starts there
@@ -113,6 +114,7 @@ class Pressed:
     toast: str      # shown to the owner at once
     card: str = ""  # the card's text after the press (Markdown); empty when the press changed nothing
     keep: list[tuple[str, str]] = field(default_factory=list)  # (label, button id) still alive on the card
+    view: object = None  # a courier's card after the press (`courier.CardView`): rewritten as a card, not Markdown
 
 
 class Channel(Protocol):
@@ -289,7 +291,7 @@ class Core:
     def __init__(self, agents: list[RouterAgent], store: Store, owner: str, ask=ask_agent,
                  archive: Archive | None = None, default_agent: str | None = None,
                  tz: str = clock.DEFAULT_TZ, backup_status: str | None = None, scribe=None, travel=None,
-                 memory=None, mail=None, lifehub=None) -> None:
+                 memory=None, mail=None, lifehub=None, outbox=None) -> None:
         self.agents = {a.id: a for a in agents}
         self.backup_status = backup_status  # the host's backup writes it; None: this core says nothing of backups
         self.tz = tz  # the owner's zone: every time the model and the owner see is local time there
@@ -325,6 +327,9 @@ class Core:
         self.lifehub = lifehub  # the life hub's data (`lifehub.Lifehub`); None: no pages
         if lifehub:
             lifehub.attach(self)
+        self.outbox = outbox  # replies to people (`outbox.Outbox`): drafts, cards, the senders; None: no sending
+        if outbox:
+            outbox.attach(self)
 
     async def start(self, channels: list[Channel]) -> None:
         for agent_id in self.agents:
@@ -345,6 +350,8 @@ class Core:
         log.info("router ready: %d agents, channels: %s", len(self.agents), ", ".join(c.name for c in self.channels))
         if hasattr(self.scribe, "sweep"):  # transcripts an earlier run could not delete at ElevenLabs
             asyncio.create_task(self.scribe.sweep())
+        if self.outbox:
+            await self.outbox.recover()  # a hold or a send the previous process left unfinished
         if left:
             asyncio.create_task(self.recover(left))
 
@@ -551,6 +558,35 @@ class Core:
             raise Undelivered("no channel took the message")
         return event.id
 
+    async def tell_card(self, view, *, buttons: Sequence[Button] = (), ttl_s: float = BUTTON_TTL_S,
+                        meta: dict | None = None) -> str:
+        """A card the courier's code built (`courier.CardView`): on record as plain text, shown with its text verbatim
+        — never as Markdown — and one button per row. A channel without cards gets a notice with the text fenced."""
+        agent_id = self.default_agent
+        event, _ = self.archive.append(SYSTEM, view.plain(), channel="system", meta=meta,
+                                       conversation_id=self.store.conversation(agent_id))
+        keys = [(b.label, self.store.add_button(event.id, b.label, b.action, b.value, time.time() + ttl_s, b.alone))
+                for b in buttons]
+        for channel in self.channels:
+            try:
+                if hasattr(channel, "card"):
+                    await channel.card(agent_id, view, keys, event.id)
+                else:
+                    await channel.notice(agent_id, "\n".join(view.head) + f"\n\n````\n{view.body}\n````"
+                                         + (f"\n\n_{view.status}_" if view.status else ""), keys, event.id)
+            except Exception:
+                log.exception("channel %s: card failed", channel.name)
+        return event.id
+
+    async def update_card(self, event_id: str, view, keep: list[tuple[str, str]] | tuple = ()) -> None:
+        """The same card rewritten where it was shown: its status line, the buttons still alive."""
+        for channel in self.channels:
+            if hasattr(channel, "card"):
+                try:
+                    await channel.card(self.default_agent, view, list(keep), event_id, edit=True)
+                except Exception:
+                    log.exception("channel %s: card update failed", channel.name)
+
     async def press(self, origin: Channel, button_id: str) -> Pressed:
         """The owner pressed a button. The adapter has checked who pressed; everything else is read from our
         own tables by the button id, and the card is spent whatever happens next."""
@@ -563,6 +599,8 @@ class Core:
                             ref=card.id)
         handler = self.actions.get(action)
         toast = await handler(value) if handler else label
+        if isinstance(toast, Pressed):  # the handler rewrote its card itself (the courier's)
+            return toast
         if alone:
             keep, pressed = self.store.card_buttons(card.id, time.time())
             return Pressed(True, toast, f"{card.text}\n\n_Нажато: {', '.join(pressed)}_", keep)
@@ -610,6 +648,8 @@ class Core:
         if self.lifehub:
             self.lifehub.step(now)  # the pages' data, in a task of its own
         try:
+            if self.outbox:
+                await self.outbox.step(now)  # cards past their time: «устарел»
             self.jobs.ensure_summary(now)
             if self.memory:
                 self.jobs.ensure_digest(now, self.memory.cfg.digest_at)
@@ -1220,8 +1260,8 @@ class Core:
 
             # Which conversation a hit is from: after !new the session does not hold the old one.
             def where(e: Event) -> str:
-                if e.kind in (MAIL, CALENDAR):
-                    return "почта" if e.kind == MAIL else "календарь"
+                if e.kind in (MAIL, CALENDAR, CHAT):
+                    return {MAIL: "почта", CALENDAR: "календарь", CHAT: "Telegram"}[e.kind]
                 return "этот разговор" if e.conversation_id == current else "прошлый разговор"
 
             text = f"Найдено: {len(hits)}, сначала самые близкие.\n\n" + "\n\n".join(
@@ -1232,7 +1272,7 @@ class Core:
                      f"- разговоры с Владельцем, этот и прошлые: событий — {count}"
                      + (f", с {clock.stamp(first, self.tz)} по {clock.stamp(last, self.tz)}" if count else "") + ";"]
             lines += self.mail.coverage(time.time()) if self.mail else ["- почта и календарь не подключены;"]
-            lines.append("- переписка в мессенджерах, файлы на Mac и другие ящики не собираются.")
+            lines.append("- другие мессенджеры и чаты Telegram вне выбранных, файлы на Mac и другие ящики не собираются.")
             text = "\n".join(lines)
         self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="archive", status="done",
                        input_chars=len(query), output_chars=len(text), channel="bus")
@@ -1315,6 +1355,24 @@ class Core:
                        output_chars=len(text), channel="bus")
         await self._each(self.channels, "protocol",
                          f"lifehub: {caller.name} → страница поездки: {'опубликована' if ok else 'отказ'}")
+        return ok, text
+
+    async def draft_reply(self, caller: RouterAgent, turn_id: str, args) -> tuple[bool, str]:
+        """An agent proposes a reply to a person: only during its own turn and with the `drafts` grant. Code builds the
+        envelope from the archive and shows the owner the card (`Outbox.propose`); nothing leaves without his press.
+        Whether someone else's words started the run, the router knows — not her: the turn's mark of foreign text."""
+        turn = self.turns.turns.get(turn_id)
+        if turn is None or turn.agent_id != caller.id:
+            return False, "Нет активного запроса: черновик предлагается только во время ответа."
+        if not caller.drafts:
+            return False, "Отказано: этому агенту черновики не выданы."
+        if not self.outbox:
+            return False, "Отправка людям не подключена: черновика не будет. Дай Владельцу текст в ответе."
+        ok, text = await self.outbox.propose(args, set(turn.tree.foreign), self.outbox.clock())
+        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="courier/draft",
+                       status="done" if ok else "rejected", input_chars=len(json.dumps(args, ensure_ascii=False)),
+                       output_chars=len(text), channel="bus")
+        await self._each(self.channels, "protocol", f"courier: {caller.name} → черновик: {'карточка' if ok else 'отказ'}")
         return ok, text
 
     async def travel_log(self, caller: RouterAgent, turn_id: str, tool: str, decision: str, chars,

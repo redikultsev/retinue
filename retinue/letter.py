@@ -35,6 +35,8 @@ class Letter:
     date: str = ""            # the Date header as written; the mailbox's own time comes with the item
     message_id: str = ""
     in_reply_to: str = ""
+    reply_to: str = ""        # the address in Reply-To, lower case: where the writer asks replies to go
+    references: list[str] = field(default_factory=list)  # the thread's Message-IDs, oldest first, the last 30
     text: str = ""            # what a person sees: the plain part, else the visible text of the HTML
     hidden: int = 0           # characters of HTML text a person does not see; never in `text`
     unsubscribe: bool = False  # List-Unsubscribe: the sender says itself that this is a mailing
@@ -133,6 +135,18 @@ def _addresses(message, name: str) -> list[tuple[str, str]]:
         return []
 
 
+REFERENCE = re.compile(r"<[^<>\s\"]{1,250}>")
+REFERENCES = 30
+
+
+def _references(message) -> list[str]:
+    """The ids in References as they are, the newest REFERENCES of them: a reply carries them on (RFC 5322 §3.6.4)."""
+    try:
+        return REFERENCE.findall(str(message.get("References", "")))[-REFERENCES:]
+    except Exception:
+        return []
+
+
 def _content(part) -> str:
     try:
         return str(part.get_content())
@@ -160,6 +174,9 @@ def parse(raw: bytes) -> Letter:
         letter.name, letter.sender = sender[0]
     letter.to = [address for _, address in _addresses(message, "To")]
     letter.cc = [address for _, address in _addresses(message, "Cc")]
+    reply_to = _addresses(message, "Reply-To")
+    letter.reply_to = reply_to[0][1] if reply_to else ""
+    letter.references = _references(message)
     letter.unsubscribe = bool(_header(message, "List-Unsubscribe"))
     auto = _header(message, "Auto-Submitted").lower()
     letter.auto = "" if auto in ("", "no") else auto

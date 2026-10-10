@@ -74,3 +74,14 @@ def test_a_broken_letter_reads_what_it_can():
     assert read.subject == "Привет" and "Hello" in read.text
     assert letter.parse(b"").as_dict()["text"] == "", "nothing at all is an empty letter, not an error"
     assert letter.parse(b"<<<garbage>>>\x00\x01").attachments == []
+
+
+def test_where_a_reply_goes_and_the_threads_ids_are_read():
+    """A reply needs them: Reply-To (often not From — and that is a phishing trick too) and References."""
+    ids = " ".join(f"<r{n}@example.com>" for n in range(40))
+    read = letter.parse(mail(Reply_To="Jobs <Jobs@Other.example>", References=f"{ids} junk",
+                             In_Reply_To="<r39@example.com>").as_bytes())
+    assert read.reply_to == "jobs@other.example" and read.sender == "anna@example.com"
+    assert read.references == [f"<r{n}@example.com>" for n in range(10, 40)], "the newest thirty, in order"
+    plain = letter.parse(mail().as_bytes())
+    assert plain.reply_to == "" and plain.references == []

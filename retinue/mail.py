@@ -405,7 +405,8 @@ class MailStore:
         """The next item no model reads — his own letter, a calendar change — whatever its age: on record before her
         judgement of what came with it, so she sees whether he has answered."""
         row = self.db.execute(f"SELECT {self._COLUMNS} FROM mail_items WHERE state = 'new' AND retry_at <= ? AND "
-                              "(source = 'calendar' OR json_extract(data, '$.box') = 'SENT') ORDER BY seq LIMIT 1",
+                              "(source IN ('calendar', 'telegram') OR json_extract(data, '$.box') = 'SENT') "
+                              "ORDER BY seq LIMIT 1",
                               (now,)).fetchone()
         return self._item(row) if row else None
 

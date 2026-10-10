@@ -34,6 +34,7 @@ class RouterAgent:
     reminders: bool = False               # may set, list, move and cancel the owner's reminders through the bus
     attachments: bool = False             # may fetch what the owner sent (#N) again through the bus
     trips: bool = False                   # may publish a trip page in the life hub through the bus
+    drafts: bool = False                  # may propose a reply to a person; the owner sends it with his button
 
 
 @dataclass
@@ -95,6 +96,10 @@ class RouterConfig:
     lifehub_url: str = ""               # the life hub's address, https://<host>; empty = no pages
     lifehub_data: str = "/lifehub"      # where the router writes the pages' data; the build container reads it
     lifehub_build: str = "/lifehub-site/build.json"  # how the builder's last build went (read-only for the router)
+    gateway_url: str = ""               # the Telegram Business gateway: the owner's chosen chats; empty = none
+    gateway_token: str = ""             # from RETINUE_GATEWAY_TOKEN
+    sender_url: str = ""                # the mail sender: replies and letters the owner confirmed; empty = none
+    sender_token: str = ""              # from RETINUE_SENDER_TOKEN
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -118,6 +123,10 @@ class RouterConfig:
         cfg.stt_key = os.environ.get("ELEVENLABS_API_KEY", "")
         if cfg.collector_url:
             cfg.collector_token = _env("RETINUE_COLLECTOR_TOKEN")
+        if cfg.gateway_url:
+            cfg.gateway_token = _env("RETINUE_GATEWAY_TOKEN")
+        if cfg.sender_url:
+            cfg.sender_token = _env("RETINUE_SENDER_TOKEN")
         if cfg.lifehub_url and not re.fullmatch(r"https://[a-z0-9.-]+", cfg.lifehub_url):
             raise SystemExit(f"router config: lifehub_url {cfg.lifehub_url!r} is not https://<host>")
         try:
@@ -152,9 +161,43 @@ class CollectorConfig:
                    state=os.environ.get("RETINUE_MAIL_STATE", cls.state), token=_env("RETINUE_COLLECTOR_TOKEN"))
 
 
+@dataclass
+class SenderConfig:
+    """The mail sender (`retinue-mail-send`): the owner's `gmail.send` tokens, its own ledger, the router's token. From
+    the environment, like the collector's."""
+    keys: str = "/keys"                     # client.json and <account>.send.json, read-only
+    state: str = "/state/sender.sqlite"     # every key it was asked to send; nobody else mounts it
+    listen_port: int = 9400
+    token: str = ""                         # from RETINUE_SENDER_TOKEN
+
+    @classmethod
+    def load(cls) -> SenderConfig:
+        return cls(keys=os.environ.get("RETINUE_SEND_KEYS", cls.keys),
+                   state=os.environ.get("RETINUE_SEND_STATE", cls.state), token=_env("RETINUE_SENDER_TOKEN"))
+
+
+@dataclass
+class GatewayConfig:
+    """The Telegram Business gateway (`retinue-tg-business`): the Business bot's token, the owner's user id, its own
+    state and ledger, the router's token. From the environment."""
+    state: str = "/state/gateway.sqlite"    # the offset, the connection, the items, each chat's window
+    ledger: str = "/state/sends.sqlite"     # every key it was asked to send
+    listen_port: int = 9300
+    token: str = ""                         # from RETINUE_GATEWAY_TOKEN
+    bot_token: str = ""                     # from TELEGRAM_BUSINESS_TOKEN: a bot of its own, not the router's
+    owner_id: int = 0                       # from TELEGRAM_OWNER_ID: the only account whose connection counts
+
+    @classmethod
+    def load(cls) -> GatewayConfig:
+        owner = _env("TELEGRAM_OWNER_ID")
+        if not owner.isdigit():
+            raise SystemExit("TELEGRAM_OWNER_ID: the owner's numeric Telegram id")
+        return cls(token=_env("RETINUE_GATEWAY_TOKEN"), bot_token=_env("TELEGRAM_BUSINESS_TOKEN"), owner_id=int(owner))
+
+
 # What an agent can be given through the router.
-BUS_TOOLS = ("ask_agent", "list_agents", "search_archive",
-             "set_reminder", "list_reminders", "cancel_reminder", "move_reminder", "get_attachment", "publish_trip")
+BUS_TOOLS = ("ask_agent", "list_agents", "search_archive", "set_reminder", "list_reminders", "cancel_reminder",
+             "move_reminder", "get_attachment", "publish_trip", "draft_reply")
 
 
 @dataclass

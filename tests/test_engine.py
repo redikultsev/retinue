@@ -839,3 +839,42 @@ def test_publish_trip_reaches_the_router_and_answers_with_the_page_address(tmp_p
     assert not done["is_error"] and done["content"][0]["text"].startswith("Опубликовано: https://hub.in.example.com/trips/")
     assert refused["is_error"] and "публикация поездок не выдана" in refused["content"][0]["text"]
     assert late["is_error"] and "Нет активного запроса" in late["content"][0]["text"]
+
+
+def test_draft_reply_reaches_the_router_and_answers_what_the_owner_will_see(tmp_path):
+    """Her tool sends the draft to the router's bus; only during her own turn and with the grant. The schema she sees
+    is the one code checks; the answer never says «sent»."""
+    from retinue import courier
+    from retinue.outbox import Outbox, OutboxStore
+
+    from test_outbox import NOW, CardChannel, FakeNeighbour, letter
+
+    async def run():
+        agent = RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private", drafts=True)
+        plain = RouterAgent(id="other", name="Другой", url="o", trust_class="private")
+        store = Store(str(tmp_path / "r.sqlite"))
+        outbox = Outbox(OutboxStore(store.db), sender=FakeNeighbour(), owner_tg=42)
+        outbox.clock = lambda: NOW
+        core = Core([agent, plain], store, "owner", archive=Archive(str(tmp_path / "a.sqlite")), outbox=outbox)
+        await core.start([CardChannel()])
+        event = letter(core.archive)
+        turn, other = core.turns.open_root("assistant"), core.turns.open_root("other")
+        server = TestServer(BusServer(core, "secret", 0).app)
+        await server.start_server()
+        try:
+            url = str(server.make_url("")).rstrip("/")
+            draft = bus_tools(url, bus_token("secret", "assistant"), turn.id)["draft_reply"]
+            done = await draft.handler({"reply_to": event.id, "text": "Да, четверг подходит."})
+            refused = await bus_tools(url, bus_token("secret", "other"), other.id)["draft_reply"].handler(
+                {"reply_to": event.id, "text": "Да."})
+            core.turns.close(turn)
+            late = await draft.handler({"reply_to": event.id, "text": "Да."})
+            return draft, done, refused, late
+        finally:
+            await server.close()
+
+    draft, done, refused, late = asyncio.run(run())
+    assert draft.input_schema is courier.DRAFT_SCHEMA, "she sees the very schema code checks"
+    assert not done["is_error"] and "Уйдёт, только если он нажмёт «Отправить»" in done["content"][0]["text"]
+    assert refused["is_error"] and "черновики не выданы" in refused["content"][0]["text"]
+    assert late["is_error"] and "Нет активного запроса" in late["content"][0]["text"]

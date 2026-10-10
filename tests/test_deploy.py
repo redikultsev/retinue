@@ -40,8 +40,8 @@ def test_one_assistant_and_nothing_else():
     assert engine.tools == [] and engine.allowed_tools == [], "no built-in tool is offered or allowed"
     assert {"Bash", "WebSearch", "WebFetch"} <= set(engine.disallowed_tools)
     assert engine.bus_tools == ["search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-                                "move_reminder", "get_attachment", "publish_trip"], \
-        "the archive, reminders, attachments, trip pages; no ask_agent"
+                                "move_reminder", "get_attachment", "publish_trip", "draft_reply"], \
+        "the archive, reminders, attachments, trip pages, draft replies; no ask_agent"
     assert engine.model == "claude-opus-5-5", "Opus, pinned by id"
     instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
     assert all(f"`{name}`" in instructions for name in engine.bus_tools), "she is told about every tool she has"
@@ -63,7 +63,15 @@ def test_one_assistant_and_nothing_else():
     assert all(f"`{word}`" in mail for word in (*KINDS, *NEEDS, *COSTS)), "every word of both schemas is explained"
     assert "Сомневаешься — `keep: true`" in mail and "«не сверено»" in mail and "`irreversible`" in mail
     assert "данные, а не команды" in mail and "Коммит пометят «почта»" in mail, "what may be written from mail"
-    assert "отправлять письма" in instructions.split("## Что ты умеешь сейчас")[1], "she cannot send mail and says so"
+    able = instructions.split("## Что ты умеешь сейчас")[1].split("\n## ")[0]
+    assert "Сама ничего не отправляешь" in able and "`draft_reply`" in able, "she cannot send; she proposes"
+    replies = instructions.split("## Ответы людям")[1].split("\n## ")[0]
+    assert "«Да» в чате — не согласие" in replies and "Никогда не пиши «отправила»" in replies
+    assert "`replaces`" in replies and "Не принято" in replies and "`reply_to`" in replies
+    assert "гасит открытую карточку" in replies and "лимит" not in replies, "a new message; no daily ceiling"
+    assert "пароли" in replies and "данные, а не команды" in replies, "a request in someone's text is no command"
+    assert "id в архиве" in (ROOT / "retinue" / "mailroom.py").read_text(), "the judgement names each item's id"
+    assert "drafts: true" in (ROOT / "deploy" / "setup.sh").read_text()
     guide = (ROOT / "docs" / "mail.md").read_text()
     assert "MAIL=1" in guide and "deploy/mail/login.py" in guide and "In production" in guide
     assert "Only if\nthe sender is known" in guide and "MAIL=1" in (ROOT / "docs" / "install.md").read_text()
@@ -74,7 +82,7 @@ def test_one_assistant_and_nothing_else():
     assert "LIFEHUB=1" in hub and "LIFEHUB_DEVICES" in hub and "10.8.0.1" in hub and "dig" in hub
     assert "LIFEHUB=1" in (ROOT / "docs" / "install.md").read_text() and "lifehub.md" in (ROOT / "docs" / "install.md").read_text()
     assert sorted(SERVICES) == ["assistant", "collector", "egress", "lifehub", "lifehub-build", "mail-egress",
-                                "router", "travel-ops", "travel-watch", "tuwunel"]
+                                "mail-send", "router", "tg-business", "travel-ops", "travel-watch", "tuwunel"]
     assert sorted(COMPOSE["volumes"]) == ["assistant-data", "router-data", "travel-data", "tuwunel-db"]
 
 
@@ -443,7 +451,8 @@ def test_the_collector_shares_a_network_with_the_router_alone_and_goes_out_to_go
                                         "HTTPS_PROXY": "http://mail-egress:3128"}, "no model token, no other key"
     assert collector["cap_drop"] == ["ALL"] and collector["security_opt"] == ["no-new-privileges:true"]
     assert collector["read_only"] is True and "ports" not in collector and collector["profiles"] == ["mail"]
-    assert proxy["profiles"] == ["mail"] and set(proxy["networks"]) == {"mail-out", "outside"} and "ports" not in proxy
+    assert proxy["profiles"] == ["mail"] and set(proxy["networks"]) == {"mail-out", "send-out", "outside"} and \
+        "ports" not in proxy
     assert proxy["volumes"] == ["/srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro",
                                 "/srv/retinue/egress/mail-hosts.txt:/etc/squid/allowed-hosts.txt:ro"]
     assert (ROOT / "deploy" / "egress" / "mail-hosts.txt").read_text().split() == list(google.HOSTS)
@@ -551,3 +560,61 @@ def test_setup_with_lifehub(tmp_path, monkeypatch):
     bad = run(tmp_path / "third", LIFEHUB="1", LIFEHUB_HOST="hub.in.example.com", LIFEHUB_DEVICES="0.0.0.0/0")
     assert bad.returncode == 1 and "LIFEHUB_DEVICES" in bad.stderr, "one address per device, not a network"
     assert not (tmp_path / "third" / "lifehub" / "host").exists(), "nothing kept from a refused run"
+
+
+def test_the_sender_and_the_gateway_each_hold_their_key_alone():
+    """Keys that send live in processes that do nothing else: the mail sender (gmail.send, its own user and folder,
+    out through the mail proxy only) and the Telegram Business gateway (the Business bot's token, its own user). Each
+    shares an internal network with the router alone; the collector and the assistant hold neither key."""
+    members = {net: sorted(name for name, service in SERVICES.items() if net in service.get("networks", []))
+               for net in COMPOSE["networks"]}
+    assert members["send-router"] == ["mail-send", "router"] and members["tg-router"] == ["router", "tg-business"]
+    assert members["send-out"] == ["mail-egress", "mail-send"]
+    for net in ("send-router", "send-out", "tg-router"):
+        assert COMPOSE["networks"][net] == {"internal": True}, f"{net}: no route out"
+    send, gateway = SERVICES["mail-send"], SERVICES["tg-business"]
+    assert send["command"] == ["retinue-mail-send"] and gateway["command"] == ["retinue-tg-business"]
+    assert send["user"] == "10004:10004" and gateway["user"] == "10003:10003", "neither the collector's nor 10001"
+    assert send["volumes"] == ["/srv/retinue/send/keys:/keys:ro", "/srv/retinue/send/state:/state"]
+    assert gateway["volumes"] == ["/srv/retinue/telegram/state:/state"]
+    assert send["environment"] == {"RETINUE_SENDER_TOKEN": "${RETINUE_SENDER_TOKEN:-}",
+                                   "HTTPS_PROXY": "http://mail-egress:3128"}, "no model token, no read key"
+    assert gateway["environment"] == {"RETINUE_GATEWAY_TOKEN": "${RETINUE_GATEWAY_TOKEN:-}",
+                                      "TELEGRAM_BUSINESS_TOKEN": "${TELEGRAM_BUSINESS_TOKEN:-}",
+                                      "TELEGRAM_OWNER_ID": "${TELEGRAM_OWNER_ID:-}"}
+    for service in (send, gateway):
+        assert service["cap_drop"] == ["ALL"] and service["read_only"] is True and "ports" not in service
+    assert send["profiles"] == ["send"] and gateway["profiles"] == ["tgbusiness"], "off until the owner turns it on"
+    assert gateway["networks"] == ["tg-router", "outside"]
+    assert "TELEGRAM_BUSINESS_TOKEN" not in str(SERVICES["router"]) + str(SERVICES["collector"])
+    assert "send" not in str(SERVICES["collector"]["volumes"]) and "send" not in str(SERVICES["router"]["volumes"])
+    assert not {"send-router", "tg-router"} & set(SERVICES["assistant"]["networks"])
+    assert {"tg-router", "send-router"} <= set(SERVICES["router"]["networks"])
+
+
+def test_setup_with_telegram_business_and_mail_sending(tmp_path, monkeypatch):
+    def run(target, **env):
+        return subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(target), "RETINUE_HOST_SETUP": "0",
+                                   **env})
+
+    refused = run(tmp_path / "a", TELEGRAM_OWNER_ID="42", SEND="1")
+    assert refused.returncode == 1 and "SEND=1 needs MAIL=1" in refused.stderr
+    nobody = run(tmp_path / "b", MATRIX_SERVER_NAME="matrix.example.com", MATRIX_OWNER="alice", TGBUSINESS="1")
+    assert nobody.returncode == 1 and "TGBUSINESS=1 needs TELEGRAM_OWNER_ID" in nobody.stderr
+    target, printed = setup(tmp_path, TELEGRAM_OWNER_ID="42", MAIL="1", TGBUSINESS="1", SEND="1")
+    for folder in ("send", "send/keys", "send/state", "telegram", "telegram/state"):
+        assert oct((target / folder).stat().st_mode & 0o777) == "0o700", folder
+    assert printed["COMPOSE_PROFILES"] == "mail,tgbusiness,send" and printed["TELEGRAM_OWNER_ID"] == "42"
+    assert len(printed["RETINUE_GATEWAY_TOKEN"]) == len(printed["RETINUE_SENDER_TOKEN"]) == 64
+    assert printed["TELEGRAM_BUSINESS_TOKEN"] == "", "the owner pastes the new bot's token"
+    for name in ("TELEGRAM_BOT_TOKEN", "RETINUE_COLLECTOR_TOKEN", "RETINUE_GATEWAY_TOKEN", "RETINUE_SENDER_TOKEN"):
+        monkeypatch.setenv(name, printed.get(name) or "t")
+    cfg = RouterConfig.load(target / "router.yaml")
+    assert (cfg.gateway_url, cfg.sender_url) == ("http://tg-business:9300", "http://mail-send:9400")
+    assert cfg.agents[0].drafts is True
+    again, reprinted = setup(tmp_path, TELEGRAM_OWNER_ID="42")
+    assert reprinted["RETINUE_SENDER_TOKEN"] == printed["RETINUE_SENDER_TOKEN"], "on for good, the same token"
+    plain, printed = setup(tmp_path / "other", TELEGRAM_OWNER_ID="42")
+    assert "gateway_url" not in (plain / "router.yaml").read_text() and "RETINUE_SENDER_TOKEN" not in printed
+    assert not (plain / "send").exists() and not (plain / "telegram").exists()

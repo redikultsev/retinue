@@ -275,13 +275,13 @@ class Accounts:
     """The owner's tokens as Google clients, read from the keys folder on every call: a new login works without a
     restart, and an access token is reused while its refresh token stays the same."""
 
-    def __init__(self, folder: str, http: httpx.AsyncClient) -> None:
-        self.folder, self.http = folder, http
+    def __init__(self, folder: str, http: httpx.AsyncClient, kinds: tuple[str, ...] = google.READ) -> None:
+        self.folder, self.http, self.kinds = folder, http, kinds
         self.known: dict[tuple[str, str, str], google.Google] = {}
 
     def __call__(self) -> list[google.Google]:
         found = []
-        for key in google.keys(self.folder):
+        for key in google.keys(self.folder, self.kinds):
             found.append(self.known.setdefault((key.account, key.kind, key.refresh_token), google.Google(key, self.http)))
         return found
 

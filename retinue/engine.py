@@ -20,7 +20,7 @@ import httpx
 from claude_agent_sdk import (ClaudeAgentOptions, HookMatcher, RateLimitEvent, RateLimitInfo, ResultError,
                               ResultMessage, StreamEvent, SystemMessage, create_sdk_mcp_server, query, tool)
 
-from . import kbcheck, lifehub, travel
+from . import courier, kbcheck, lifehub, travel
 from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
@@ -203,8 +203,22 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         data = response.json()
         return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
+    @tool("draft_reply",
+          "Предложить Владельцу ответ человеку — на письмо или сообщение в Telegram, — когда ответа правда ждут. "
+          "reply_to — id входящего из архива (mail:… или tgb:…): адрес, тему и тред Роутер возьмёт оттуда. Новое "
+          "письмо — to и subject, только на адрес, с которым Владелец уже переписывался. text — весь текст, как он "
+          "уйдёт. Роутер покажет Владельцу карточку; уйдёт, только если он нажмёт «Отправить». Отказ называет, что "
+          "исправить; «поправь» от Владельца — новый вызов с replaces.",
+          courier.DRAFT_SCHEMA)
+    async def draft_reply(args):
+        async with client(120) as http:
+            response = await http.post(f"{bus_url}/courier/draft", headers=headers,
+                                       json={"turn": turn_id, "draft": args})
+        data = response.json()
+        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
+
     return {t.name: t for t in (ask_agent, list_agents, search_archive, set_reminder, list_reminders,
-                                cancel_reminder, move_reminder, get_attachment, publish_trip)}
+                                cancel_reminder, move_reminder, get_attachment, publish_trip, draft_reply)}
 
 
 TRAVEL = "travel"  # the MCP server's name: its tools are mcp__travel__<tool>

@@ -15,6 +15,18 @@
 </table>
 </section>
 
+{{ with $s.sent }}
+<section>
+<h2>Отправлено людям</h2>
+<table>
+<tr><th>Канал</th><th>За сутки</th><th>За 7 дней</th></tr>
+{{ range . }}<tr><td>{{ index . 0 }}</td><td>{{ index . 1 }}</td><td>{{ index . 2 }}</td></tr>
+{{ end }}
+</table>
+<p class="muted">Только то, что ушло по твоей кнопке «Отправить»; что ты отправил сам, здесь не считается.</p>
+</section>
+{{ end }}
+
 <section>
 <h2>Лимит подписки</h2>
 {{ with $s.limit }}

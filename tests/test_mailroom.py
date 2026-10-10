@@ -617,3 +617,145 @@ def test_an_empty_search_names_every_source_and_its_gaps(tmp_path):
     assert "- почта owner@example.org: с 2025-09-09 11:53 МСК, вторник, последняя синхронизация " in text
     assert "пробел: не собирается с 2025-10-09 11:51 МСК, четверг (нужен вход заново)" in text
     assert "отсеянные письма в архив не попадают" in text and "файлы на Mac" in text
+
+
+def test_a_kept_letter_keeps_what_a_reply_needs(tmp_path):
+    """From now on the archive keeps the recipients, Reply-To and References of every letter: the courier takes the
+    address and the thread from there, never from the model."""
+    fake, asked = FakeCollector(), []
+    fake.letter_in(1, "m1", "hr@acme.example", "Интервью", "Удобно в четверг?")
+    fake.letters["m1"].update({"cc": ["boss@acme.example"], "reply_to": "Jobs@Acme.example",
+                               "references": ["<m0@x>"], "in_reply_to": "<m0@x>"})
+
+    async def run():
+        core, room = mailroom_with(tmp_path, fake, asked, {"hr@acme.example": verdict("job", True)})
+        await core.start([FakeChannel("telegram", False)])
+        await room.work(NOW)
+        return core
+
+    core = asyncio.run(run())
+    meta = core.archive.get(f"mail:{ACCOUNT}/m1").meta
+    assert (meta["to"], meta["cc"], meta["reply_to"]) == ([ACCOUNT], ["boss@acme.example"], "jobs@acme.example")
+    assert meta["references"] == ["<m0@x>"] and meta["message_id"] == "<m1@x>" and meta["thread"] == "t"
+
+
+class FakeGateway:
+    """The Telegram Business gateway's answers from memory: items of the owner's chosen chats, its status."""
+
+    def __init__(self):
+        self.found, self.confirmed, self.rights = [], [], ["can_reply"]
+        self.files, self.fetched = {}, []
+
+    async def file(self, file_id):
+        self.fetched.append(file_id)
+        return self.files[file_id]
+
+    def message(self, seq, mid, text, direction="in", chat="777", edit=0, **extra):
+        self.found.append({"seq": seq, "account": "telegram", "source": "telegram",
+                           "ref": f"{chat}/{mid}" + (f"/e{edit}" if edit else ""),
+                           "data": {"chat": chat, "message_id": mid, "date": int(NOW) - 60, "edit": edit,
+                                    "direction": direction, "username": "anna_x", "name": "Анна", "text": text,
+                                    "media": "", "reply_to": 0, "offline": False, **extra}})
+
+    async def items(self):
+        return [i for i in self.found if i["seq"] > (max(self.confirmed) if self.confirmed else 0)]
+
+    async def confirm(self, upto):
+        self.confirmed.append(upto)
+
+    async def status(self):
+        return {"connected": True, "rights": self.rights, "seen": NOW, "day": 0}
+
+
+def chat_room(tmp_path, gateway, asked, judged):
+    store = Store(str(tmp_path / "r.sqlite"))
+    room, holder = Mailroom(None, MailStore(store.db), gateway=gateway), {}
+    core = Core([AGENT], store, "owner", ask=judging_ask(asked, {}, judged, lambda: holder["core"]),
+                archive=Archive(str(tmp_path / "a.sqlite")), mail=room, memory=FakeMemory())
+    holder["core"] = core
+    return core, room
+
+
+def test_the_owners_chosen_chats_are_kept_like_mail_and_the_other_persons_words_are_judged(tmp_path):
+    """Every message of a chosen chat is on record verbatim; his own and a reply the courier sent are his; the other
+    person's is judged like a kept letter, with no triage, and code decides when to tell — about the job search, no
+    more than «Telegram: 1 важное». Extra rights of the bot are told once."""
+    gateway, asked = FakeGateway(), []
+    gateway.rights = ["can_delete_all_messages", "can_reply"]
+    gateway.message(1, 10, "Добрый день! Готовы обсудить оффер завтра?")
+    gateway.message(2, 11, "Да, давайте в 11.", direction="own")
+    gateway.message(3, 12, "[текст ответа]", direction="bot")
+    gateway.message(4, 10, "Добрый день! Готовы обсудить оффер завтра в 11?", edit=int(NOW))
+    gateway.message(5, 13, "", media="voice")
+
+    async def run():
+        core, room = chat_room(tmp_path, gateway, asked, decided(("reply", "high", "Рекрутёр ждёт ответа.", True),
+                                                                 ("read", "low", "Голосовое.")))
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+        await room.work(NOW)
+        await room.work(NOW + 200)
+        gateway.found.clear()
+        await room.work(NOW + 300)
+        return core, room, telegram
+
+    core, room, telegram = asyncio.run(run())
+    assert gateway.confirmed == [5]
+    events = core.archive.db.execute("SELECT id, kind, conversation_id, text FROM events WHERE kind = 'chat' "
+                                     "ORDER BY seq").fetchall()
+    assert [e[0] for e in events] == ["tgb:777/10", "tgb:777/11", "tgb:777/12", f"tgb:777/10/e{int(NOW)}",
+                                      "tgb:777/13"] and {e[2] for e in events} == {"chat:777"}
+    assert events[0][3] == "Telegram · Анна (@anna_x) · входящее\nДобрый день! Готовы обсудить оффер завтра?"
+    assert events[2][3].startswith("Telegram · Анна (@anna_x) · ответ Владельца, отправленный по его карточке")
+    assert events[3][3].startswith("Telegram · Анна (@anna_x) · входящее · изменено")
+    assert events[4][3] == "Telegram · Анна (@anna_x) · входящее\n[голосовое — не загружалось]"
+    assert [room.store.get(n)["state"] for n in range(1, 6)] == ["told", "own", "own", "done", "later"]
+    judge = asked[-1]
+    assert judge["control"] == "oneshot" and "Добрый день! Готовы обсудить оффер завтра?" in judge["text"]
+    assert judge["text"].startswith("[Почта, календарь и Telegram.") and "--- 2." in judge["text"]
+    rights, told = telegram.cards[0][0], telegram.cards[1][0]
+    assert rights.startswith("У Business-бота лишние права: can_delete_all_messages.") and len(telegram.cards) == 2
+    assert told == "Telegram: 1 важное.", "the job search is secret in Telegram too"
+    meta = core.archive.get("tgb:777/10").meta
+    assert (meta["chat"], meta["message_id"], meta["direction"], meta["username"]) == ("777", 10, "in", "anna_x")
+    assert any("Telegram: только чаты" in line for line in room.coverage(NOW))
+    assert "telegram: бот подключён" in core.health(NOW)
+
+
+def test_the_other_persons_files_are_read_like_attachments_and_her_judgement_sees_the_exchange(tmp_path):
+    """A photo, a voice note, a document from the other person: downloaded through the gateway, read by the same
+    worker and speech to text as the owner's own files, kept with the message as someone else's — her judgement gets
+    them as it gets a letter's. Over 20 MB: said, not downloaded. His own files: named only. Each new message comes
+    with the earlier ones of the same chat."""
+    from test_attachments import FakeScribe, picture
+
+    gateway, asked = FakeGateway(), []
+    gateway.files = {"p1": picture(64, 48), "v1": b"OggS-voice"}
+    gateway.message(1, 10, "Вот фото квартиры.", file={"kind": "photo", "id": "p1", "name": "", "type": "",
+                                                        "size": 900, "duration": 0})
+    gateway.message(2, 11, "", file={"kind": "voice", "id": "v1", "name": "", "type": "audio/ogg", "size": 10,
+                                     "duration": 7})
+    gateway.message(3, 12, "И договор.", file={"kind": "document", "id": "d1", "name": "dogovor.pdf",
+                                               "type": "application/pdf", "size": 25 * 2**20, "duration": 0})
+    gateway.message(4, 13, "Моё фото", direction="own", media="photo")
+
+    async def run():
+        core, room = chat_room(tmp_path, gateway, asked, decided(*[("read", "low", "Анна прислала квартиру.")] * 3))
+        core.scribe = FakeScribe("Перезвоню вечером, обсудим цену.")
+        await core.start([FakeChannel("telegram", False)])
+        await room.work(NOW)
+        await room.work(NOW + 200)
+        return core
+
+    core = asyncio.run(run())
+    photo, voice, contract, mine = (core.archive.get(f"tgb:777/{m}") for m in (10, 11, 12, 13))
+    marks = [a.mark() for e in (photo, voice) for a in core.archive.attachments_of(e.id)]
+    assert marks == ["[вложение #1: фото 64×48 · чужое: Telegram, Анна (@anna_x)]",
+                     "[вложение #2: голосовое 0:07 · чужое: Telegram, Анна (@anna_x)]"]
+    assert photo.text.endswith("Вот фото квартиры.") and photo.meta["attachments"] == [1]
+    assert "Перезвоню вечером, обсудим цену." in voice.text, "voice: the transcript, as the owner's own"
+    assert "Telegram отдаёт ботам файлы до 20 МБ" in contract.text and "[не прочитано:" in contract.text
+    assert "[фото — не загружалось]" in mine.text and gateway.fetched == ["p1", "v1"], "too big and his own: no"
+    judge = asked[-1]
+    assert judge["files"] == ["вложение #1: фото 64×48 · чужое: Telegram, Анна (@anna_x)"], "she sees the photo"
+    assert "Раньше в этой переписке — 1 последних, старые сверху:" in judge["text"] and "Новое:" in judge["text"]

@@ -220,3 +220,23 @@ def test_a_link_to_a_trip_page_is_clickable_in_telegram_and_nothing_else_of_the_
     assert '<a href="https://hub.in.example.com/trips/0123456789abcdef/">подробнее</a>' in html
     (other,) = render_telegram("[статус](https://hub.in.example.com/status/)", channel.link_hosts)
     assert "<a " not in other, "only a trip page: the model chooses the path under /trips/, nothing else"
+
+
+def test_the_router_reaches_the_gateway_and_the_sender_with_their_tokens(tmp_path, monkeypatch):
+    from retinue.config import BUS_TOOLS, RouterAgent
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    for name in ("RETINUE_GATEWAY_TOKEN", "RETINUE_SENDER_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    plain = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n")
+    assert plain.gateway_url == plain.sender_url == "", "off unless the config says so"
+    for line, name in (("gateway_url: http://tg-business:9300", "RETINUE_GATEWAY_TOKEN"),
+                       ("sender_url: http://mail-send:9400", "RETINUE_SENDER_TOKEN")):
+        with pytest.raises(SystemExit, match=name):
+            load(tmp_path, AGENT + f"telegram:\n  owner_id: 42\n{line}\n")
+        monkeypatch.setenv(name, "x")
+    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\ngateway_url: http://tg-business:9300\n"
+                                 "sender_url: http://mail-send:9400\n")
+    assert (cfg.gateway_token, cfg.sender_token) == ("x", "x")
+    assert RouterAgent(id="a", name="A", url="u").drafts is False, "no agent drafts unless granted"
+    assert "draft_reply" in BUS_TOOLS

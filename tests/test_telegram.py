@@ -331,3 +331,46 @@ def test_many_buttons_go_in_rows_and_a_press_can_leave_the_others(tmp_path):
     edit = ch.sent[2][1]
     kept = [(b["text"], b["callback_data"]) for row in edit["reply_markup"]["inline_keyboard"] for b in row]
     assert kept == [b for b in buttons if b[1] != "b2"] and edit["text"].endswith("<i>Нажато: Откатить 2</i>")
+
+
+def test_a_courier_card_shows_the_text_verbatim_and_one_button_per_row(tmp_path):
+    """The text that will be sent is one <pre>: no Markdown, no link, no split. Addresses in the header are <code>;
+    the only link is a t.me one code made. Each button on its own row. A press rewrites it as a card."""
+    from retinue.courier import CardView
+
+    ch = make(tmp_path)
+    text = "*не жирный* <b>x</b> [ссылка](https://evil.example) https://evil.example/?q=1"
+    view = CardView(["Черновик ab12cd34 · Gmail · owner@example.org", "Кому: <hr@acme.example>"], text)
+    later = CardView(view.head, text, "Отправлю через 10 с — можно отменить.")
+    linked = CardView(view.head, text, "Окно закрыто.", ("Открыть чат", "https://t.me/anna_x?text=%D0%94"))
+    evil = CardView(view.head, text, "", ("Открыть", "https://evil.example/x"))
+
+    async def press(channel, button_id):
+        return Pressed(True, "Отправлю через 10 с", view=later, keep=[("Отменить", "c1")])
+
+    ch.core.press = press
+
+    async def run():
+        await ch.card("assistant", view, [("Отправить", "s1"), ("Поправить", "f1"), ("Не отвечать", "d1")], "ev-1")
+        await ch.on_update({"callback_query": {"id": "q", "from": {"id": OWNER}, "data": "s1",
+                                               "message": {"message_id": 900, "chat": {"id": OWNER}}}})
+        await ch.card("assistant", linked, [], "ev-1", edit=True)
+        await ch.card("assistant", evil, [], "ev-2")
+
+    asyncio.run(run())
+    shown, toast, edited, rewritten, other = ch.sent
+    html = shown[1]["text"]
+    assert html == ("Черновик ab12cd34 · Gmail · <code>owner@example.org</code>\nКому: &lt;<code>hr@acme.example</code>&gt;"
+                    "\n\n<pre>*не жирный* &lt;b&gt;x&lt;/b&gt; [ссылка](https://evil.example) "
+                    "https://evil.example/?q=1</pre>")
+    assert shown[1]["link_preview_options"] == {"is_disabled": True} and shown[1]["parse_mode"] == "HTML"
+    assert shown[1]["reply_markup"] == {"inline_keyboard": [[{"text": "Отправить", "callback_data": "s1"}],
+                                                            [{"text": "Поправить", "callback_data": "f1"}],
+                                                            [{"text": "Не отвечать", "callback_data": "d1"}]]}
+    assert edited[0] == "editMessageText" and edited[1]["message_id"] == 900
+    assert edited[1]["text"].endswith("</pre>\n\n<i>Отправлю через 10 с — можно отменить.</i>")
+    assert edited[1]["reply_markup"] == {"inline_keyboard": [[{"text": "Отменить", "callback_data": "c1"}]]}
+    assert rewritten[0] == "editMessageText" and rewritten[1]["message_id"] == 900, "found by the card's archive id"
+    assert rewritten[1]["text"].endswith('<a href="https://t.me/anna_x?text=%D0%94">Открыть чат</a>')
+    assert "reply_markup" not in rewritten[1], "a rewrite without buttons takes them away"
+    assert "<a " not in other[1]["text"], "no link but t.me, whatever a view carries"

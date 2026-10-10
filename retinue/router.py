@@ -22,6 +22,7 @@ from .core import Core, ask_agent
 from .lifehub import Data, Lifehub
 from .mail import Collector, MailStore
 from .mailroom import Mailroom
+from .outbox import Neighbour, Outbox, OutboxStore
 from .memory import Memory
 from .protocol import Store
 from .speech import Scribe
@@ -80,15 +81,20 @@ def main() -> None:
     store = Store(cfg.state_db)
     tokens = {a.url: bus_token(cfg.bus_secret, a.id) for a in cfg.agents} if cfg.bus_secret else {}
     memory, memory_error = build_memory(cfg, store.db)
-    mail = Mailroom(Collector(cfg.collector_url, cfg.collector_token), MailStore(store.db)) if cfg.collector_url \
-        else None
+    gateway = Neighbour(cfg.gateway_url, cfg.gateway_token, "шлюз Telegram") if cfg.gateway_url else None
+    mail = Mailroom(Collector(cfg.collector_url, cfg.collector_token) if cfg.collector_url else None, MailStore(store.db),
+                    gateway=gateway) if cfg.collector_url or gateway else None
+    sender = Neighbour(cfg.sender_url, cfg.sender_token, "отправка почты") if cfg.sender_url else None
+    # Replies to people: the mail sender and the gateway hold the keys; the router holds the drafts and the «да».
+    outbox = Outbox(OutboxStore(store.db), sender=sender, gateway=gateway,
+                    owner_tg=cfg.telegram.owner_id if cfg.telegram else None) if sender or gateway else None
     lifehub = Lifehub(Data(cfg.lifehub_data), cfg.lifehub_url, cfg.link_hosts, kb=cfg.memory.tree if memory else "",
                       build_status=cfg.lifehub_build) if cfg.lifehub_url else None
     core = Core(cfg.agents, store, cfg.owner, ask=signed(tokens), archive=Archive(cfg.archive_db),
                 default_agent=cfg.default_agent,
                 tz=cfg.owner_tz, backup_status=cfg.backup_status, scribe=Scribe(cfg.stt_key, store=store),
                 travel=TravelOps(cfg.travel_url) if cfg.travel_url else None, memory=memory, mail=mail,
-                lifehub=lifehub)
+                lifehub=lifehub, outbox=outbox)
     loop.run_until_complete(core.start(build_channels(cfg, store, loop)))
     if memory_error:
         loop.run_until_complete(core.tell_owner(memory_error))

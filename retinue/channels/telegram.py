@@ -19,7 +19,7 @@ from ..attachments import MAX_DOWNLOAD, Upload, too_big
 from ..config import TelegramConfig
 from ..core import AgentFile, Core
 from ..protocol import Store
-from ..render import render_telegram, tg_plain
+from ..render import render_telegram, tg_card, tg_plain
 
 log = logging.getLogger("retinue.telegram")
 
@@ -51,6 +51,12 @@ def keyboard_of(buttons) -> dict | None:
     keys = [{"text": label, "callback_data": button_id} for label, button_id in buttons]
     return {"inline_keyboard": [keys[i:i + BUTTONS_PER_ROW] for i in range(0, len(keys), BUTTONS_PER_ROW)]} \
         if keys else None
+
+
+def rows_of(buttons) -> dict | None:
+    """A courier's card: one button per row — «Отправить» never sits next to «Поправить» under a thumb."""
+    return {"inline_keyboard": [[{"text": label, "callback_data": button_id}] for label, button_id in buttons]} \
+        if buttons else None
 
 
 class TelegramChannel:
@@ -151,7 +157,9 @@ class TelegramChannel:
             return
         pressed = await self.core.press(self, str(query.get("data") or ""))
         await self.call("answerCallbackQuery", callback_query_id=query["id"], text=pressed.toast)
-        if pressed.card and "message_id" in message:
+        if pressed.view is not None and "message_id" in message:
+            await self._message(tg_card(pressed.view), edit=message["message_id"], keyboard=rows_of(pressed.keep))
+        elif pressed.card and "message_id" in message:
             # The card is rewritten: the choice stays visible; the buttons are gone, or those still alive stay.
             await self._message(render_telegram(pressed.card)[0], edit=message["message_id"],
                                 keyboard=keyboard_of(pressed.keep))
@@ -293,6 +301,16 @@ class TelegramChannel:
         keyboard = keyboard_of(buttons or [])
         for i, html in enumerate(parts):
             await self._message(html, ref=ref, keyboard=keyboard if i == len(parts) - 1 else None)
+
+    async def card(self, agent_id: str, view, buttons: list[tuple[str, str]] | None = None, ref: str | None = None,
+                   edit: bool = False) -> None:
+        """A courier's card: shown, or with `edit` rewritten in every message that showed it."""
+        html, keyboard = tg_card(view), rows_of(buttons or [])
+        if not edit:
+            await self._message(html, ref=ref, keyboard=keyboard)
+            return
+        for native_id in self.store.sent_native(self.name, ref or ""):
+            await self._message(html, edit=int(native_id), keyboard=keyboard)
 
     async def protocol(self, line: str) -> None:
         pass  # the protocol lives in the Store

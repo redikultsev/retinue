@@ -418,3 +418,30 @@ def test_stay_photos_come_from_travel_ops_and_are_re_encoded_by_code(tmp_path):
     down = travel_ops([503], [])
     asyncio.run(hub.photos(page_id, down, NOW + 10))
     assert hub.data.read(name)["options"][1]["photos"] == [f"photos/{page_id}/2-1.jpg"], "a failed look keeps what was"
+
+
+def test_the_status_page_counts_what_was_sent_to_people_by_channel(tmp_path):
+    """Decision 9 of stage 13: sent by the owner's «Отправить», by channel, for a day and a week — counted from the
+    drafts' table; a doubt is not counted as sent. The gateway and the sender among the connectors."""
+    from retinue.outbox import Outbox, OutboxStore
+
+    from test_mailroom import NOW, FakeGateway
+
+    core, hub, _ = hub_core(tmp_path)
+    core.outbox = Outbox(OutboxStore(core.store.db))
+    core.mail.gateway, core.mail.chats = FakeGateway(), (NOW, {"connected": True, "rights": ["can_reply"]})
+    for n, (channel, state, at) in enumerate((("mail", "sent", NOW - 60), ("mail", "sent", NOW - 3 * 86400),
+                                             ("telegram", "sent", NOW - 120), ("telegram", "unknown", NOW - 60),
+                                             ("mail", "dropped", NOW - 60), ("mail", "sent", NOW - 9 * 86400))):
+        core.outbox.store.db.execute("INSERT INTO drafts (id, created, state, channel, envelope, digest, head, expires,"
+                                     " at) VALUES (?, ?, ?, ?, '{}', '', '[]', 0, ?)", (f"{n:08x}", at, state, channel, at))
+    status = hub.status(NOW)
+    assert status["sent"] == [["почта", 1, 2], ["Telegram", 1, 1]]
+    connectors = {c["name"]: c for c in status["connectors"]}
+    assert connectors["Telegram Business"] == {"name": "Telegram Business", "ok": True,
+                                               "state": "бот подключён, права: can_reply"}
+    assert connectors["отправка почты"] == {"name": "отправка почты", "ok": False, "state": "не подключена"}
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "deploy" / "lifehub" / "site" / "layouts" / "status.html").read_text()
+    assert "{{ with $s.sent }}" in page and "Отправлено людям" in page

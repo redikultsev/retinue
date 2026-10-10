@@ -241,6 +241,11 @@ class Store:
         self.db.execute("INSERT OR REPLACE INTO sent VALUES (?, ?, ?)", (channel, native_id, event_id))
         self.db.commit()
 
+    def sent_native(self, channel: str, event_id: str) -> list[str]:
+        """The messenger's ids of the messages that showed this archive event: a card is rewritten where it is."""
+        return [row[0] for row in self.db.execute("SELECT native_id FROM sent WHERE channel = ? AND event_id = ?",
+                                                  (channel, event_id))]
+
     def sent_event(self, channel: str, native_id: str) -> str | None:
         row = self.db.execute("SELECT event_id FROM sent WHERE channel = ? AND native_id = ?",
                               (channel, native_id)).fetchone()
@@ -269,6 +274,11 @@ class Store:
             self.db.execute("UPDATE buttons SET used = ? WHERE event_id = ?", (now, row[0]))
         self.db.commit()
         return (*row[:4], bool(row[4]))
+
+    def spend_card(self, event_id: str, now: float) -> None:
+        """Every button of a card dead at once: a card replaced, expired, or sent."""
+        self.db.execute("UPDATE buttons SET used = ? WHERE event_id = ? AND used IS NULL", (now, event_id))
+        self.db.commit()
 
     def card_buttons(self, event_id: str, now: float) -> tuple[list[tuple[str, str]], list[str]]:
         """The card's buttons still alive, (label, id) in their order, and the labels already pressed."""

@@ -3,12 +3,14 @@
 # requires-python = ">=3.12"
 # dependencies = ["google-auth-oauthlib>=1.2,<2"]
 # ///
-"""One consent of the owner, on his Mac: a refresh token for one account and one kind — `gmail` (read mail) or
-`calendar` (read calendars) — checked to be that very account, and put on the server for the mail collector.
+"""One consent of the owner, on his Mac: a refresh token for one account and one kind — `gmail` (read mail),
+`calendar` (read calendars) or `send` (send mail, nothing else) — checked to be that very account, and put on the
+server: the read kinds for the mail collector, `send` for the mail sender, each in its own folder as its own user.
 Prints names, never values: a terminal ends up in logs and transcripts.
 
     uv run deploy/mail/login.py --account you@gmail.com --kind gmail
     uv run deploy/mail/login.py --account you@gmail.com --kind calendar
+    uv run deploy/mail/login.py --account you@gmail.com --kind send
 
 A browser opens on Google's consent screen (the unverified-app warning is expected: the app is yours — docs/mail.md).
 The Desktop client's JSON from Google Cloud console is read from ~/.config/retinue/google-client.json (or --client);
@@ -19,6 +21,7 @@ change kills every token that holds a Gmail scope, and the calendar should outli
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -27,14 +30,18 @@ import sys
 import urllib.request
 from pathlib import Path
 
-# The same as retinue.google.SCOPES (a test keeps them equal): read-only, nothing that sends or changes.
+# The same as retinue.google.SCOPES (a test keeps them equal): the read kinds change nothing; `send` reads nothing.
 SCOPES = {"gmail": ["https://www.googleapis.com/auth/gmail.readonly"],
           "calendar": ["https://www.googleapis.com/auth/calendar.events.readonly",
-                       "https://www.googleapis.com/auth/calendar.calendarlist.readonly"]}
+                       "https://www.googleapis.com/auth/calendar.calendarlist.readonly"],
+          "send": ["https://www.googleapis.com/auth/gmail.send", "openid",
+                   "https://www.googleapis.com/auth/userinfo.email"]}
 WHO = {"gmail": ("https://gmail.googleapis.com/gmail/v1/users/me/profile", "emailAddress"),
        "calendar": ("https://www.googleapis.com/calendar/v3/users/me/calendarList/primary", "id")}
-KEYS = "/srv/retinue/mail/keys"     # the collector's keys folder (setup.sh MAIL=1)
-COLLECTOR_UID = 10002               # the collector's own user (deploy/compose.yml)
+# Where each kind's token goes, and whose it is there (setup.sh MAIL=1, SEND=1; deploy/compose.yml).
+FOLDERS = {"gmail": ("/srv/retinue/mail/keys", 10002), "calendar": ("/srv/retinue/mail/keys", 10002),
+           "send": ("/srv/retinue/send/keys", 10004)}
+KEYS, COLLECTOR_UID = FOLDERS["gmail"]
 CLIENT = Path("~/.config/retinue/google-client.json").expanduser()
 ACCOUNT = re.compile(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}")
 
@@ -69,6 +76,19 @@ def key_of(account: str, kind: str, refresh_token: str) -> tuple[str, bytes]:
                                                  "refresh_token": refresh_token}).encode()
 
 
+def email_of(id_token: str) -> str:
+    """Whose a `send` token is — it can read neither the profile nor a calendar: the verified `email` of the ID token
+    Google returned with it. That token came straight from Google's token endpoint over TLS, so its payload is read
+    without checking the signature (Google's OpenID Connect guide)."""
+    try:
+        payload = str(id_token or "").split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (IndexError, ValueError):
+        return ""
+    return str(claims.get("email") or "").lower() if isinstance(claims, dict) and claims.get("email_verified") is True \
+        else ""
+
+
 def who(kind: str, access_token: str, opener=urllib.request.urlopen) -> str:
     """Which account the token really reads: Gmail's profile, or the primary calendar's id."""
     url, field = WHO[kind]
@@ -77,22 +97,24 @@ def who(kind: str, access_token: str, opener=urllib.request.urlopen) -> str:
         return str(json.loads(response.read()).get(field) or "").lower()
 
 
-def remote(name: str) -> str:
-    """The server's side of one file: the folder, the file written from stdin as the collector's user, mode 600,
+def remote(name: str, kind: str = "gmail") -> str:
+    """The server's side of one file: the folder, the file written from stdin as its kind's user, mode 600,
     replaced at once (a half-written token is never read)."""
     if not re.fullmatch(r"[a-z0-9._%+@-]+\.json", name):
         raise Refused(f"имя файла «{name}»")
-    path = f"{KEYS}/{name}"
-    return (f"sudo install -d -m 700 -o {COLLECTOR_UID} -g {COLLECTOR_UID} {KEYS} && "
-            f"sudo sh -c 'umask 077; cat > {path}.new' && sudo chown {COLLECTOR_UID}:{COLLECTOR_UID} {path}.new && "
+    keys, uid = FOLDERS[kind]
+    path = f"{keys}/{name}"
+    return (f"sudo install -d -m 700 -o {uid} -g {uid} {keys} && "
+            f"sudo sh -c 'umask 077; cat > {path}.new' && sudo chown {uid}:{uid} {path}.new && "
             f"sudo chmod 600 {path}.new && sudo mv {path}.new {path}")
 
 
-def put(host: str, name: str, data: bytes, run=subprocess.run) -> None:
-    done = run(["ssh", host, remote(name)], input=data, capture_output=True)
+def put(host: str, name: str, data: bytes, run=subprocess.run, kind: str = "gmail") -> None:
+    done = run(["ssh", host, remote(name, kind)], input=data, capture_output=True)
     if done.returncode != 0:
         raise Refused(f"{host}: не записано {name} (ssh: код {done.returncode})")
-    print(f"Сервер {host}: {KEYS}/{name} (600, uid {COLLECTOR_UID})")
+    keys, uid = FOLDERS[kind]
+    print(f"Сервер {host}: {keys}/{name} (600, uid {uid})")
 
 
 def consent(config: dict, kind: str, account: str):
@@ -112,7 +134,7 @@ def consent(config: dict, kind: str, account: str):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="A read-only Google token for the mail collector, put on the server.")
+    parser = argparse.ArgumentParser(description="A Google token for the mail collector or the sender, put on the server.")
     parser.add_argument("--account", required=True)
     parser.add_argument("--kind", required=True, choices=sorted(SCOPES))
     parser.add_argument("--client", type=Path, default=CLIENT)
@@ -124,16 +146,17 @@ def main(argv: list[str] | None = None) -> int:
         account = account_of(args.account)
         config, client = client_of(args.client)
         credentials = consent(config, args.kind, account)
-        seen = who(args.kind, credentials.token)
+        seen = email_of(getattr(credentials, "id_token", "")) if args.kind == "send" else who(args.kind, credentials.token)
         if seen != account:
             raise Refused(f"вход выполнен в {seen or 'неизвестный аккаунт'}, а не в {account}: токен не записан. "
                           "Повтори и выбери нужный аккаунт")
-        put(args.host, "client.json", client)
-        put(args.host, *key_of(account, args.kind, credentials.refresh_token))
+        put(args.host, "client.json", client, kind=args.kind)
+        put(args.host, *key_of(account, args.kind, credentials.refresh_token), kind=args.kind)
     except Refused as exc:
         print(f"Не сделано: {exc}", file=sys.stderr)
         return 1
-    print(f"Готово: {account}, {args.kind}. Сборщик возьмёт ключ при следующем опросе (до 10 минут).")
+    print(f"Готово: {account}, {args.kind}. " + ("Отправка возьмёт ключ при следующем письме." if args.kind == "send"
+                                                else "Сборщик возьмёт ключ при следующем опросе (до 10 минут)."))
     return 0
 
 

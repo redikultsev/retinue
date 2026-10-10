@@ -27,7 +27,10 @@ OWNER, ASSISTANT, SYSTEM = "owner", "assistant", "system"  # who wrote the text
 # The owner's mail and calendar: a letter, his or someone else's, and a calendar change — each with its own
 # conversation id (mail:<account>, calendar:<account>), so none of them is ever a turn of the owner's conversation.
 MAIL, CALENDAR = "mail", "calendar"
-KINDS = (OWNER, ASSISTANT, SYSTEM, MAIL, CALENDAR)
+# A message of the owner's chosen Telegram chats (the Business bot): his, the other person's, or a reply the courier
+# sent — conversation id chat:<chat id>, so none of them is ever a turn of the owner's conversation either.
+CHAT = "chat"
+KINDS = (OWNER, ASSISTANT, SYSTEM, MAIL, CALENDAR, CHAT)
 
 _WORD = re.compile(r"\w+")
 
@@ -189,6 +192,20 @@ class Archive:
         rows = self.db.execute(
             f"SELECT {self._COLUMNS} FROM events WHERE conversation_id = ? AND ts >= ? ORDER BY seq DESC LIMIT ?",
             (conversation_id, ts, limit)).fetchall()
+        return [self._event(row) for row in reversed(rows)]
+
+    def earlier(self, event: Event, limit: int) -> list[Event]:
+        """What came before this event in its own exchange, oldest first: the same Telegram chat, or the same mail
+        thread — his letters and theirs. A letter with no thread has none."""
+        if event.kind == MAIL:
+            if not event.meta.get("thread"):
+                return []
+            where, key = "kind = 'mail' AND json_extract(meta, '$.thread') = ?1", event.meta["thread"]
+        else:
+            where, key = "conversation_id = ?1", event.conversation_id
+        rows = self.db.execute(f"SELECT {self._COLUMNS} FROM events WHERE {where} AND (ts < ?2 OR (ts = ?2 AND seq <"
+                               " (SELECT seq FROM events WHERE id = ?3))) ORDER BY ts DESC, seq DESC LIMIT ?4",
+                               (key, event.ts, event.id, limit)).fetchall()
         return [self._event(row) for row in reversed(rows)]
 
     def count(self, kind: str, since: float) -> int:

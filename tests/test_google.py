@@ -209,3 +209,34 @@ def test_keys_are_read_from_the_owners_folder(tmp_path):
     assert [(k.account, k.kind, k.refresh_token, k.client_id) for k in found] == [
         ("a@x.org", "calendar", "r2", "cid"), ("a@x.org", "gmail", "r1", "cid")]
     assert google.keys(tmp_path / "nothing") == [], "no client, no keys"
+
+
+def test_a_letter_is_sent_once_and_a_doubtful_result_is_never_called_a_failure():
+    """messages.send with the thread: a refusal before anything left is a failure; a timeout after the request left
+    or a 5xx is Ambiguous — the sender never tries it again."""
+    sent, answers = [], []
+
+    def handle(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at", "expires_in": 3599})
+        sent.append(json.loads(request.content))
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    account = google.Google(google.Key("owner@example.org", "send", "rt", "cid", "cs"),
+                            httpx.AsyncClient(transport=httpx.MockTransport(handle)))
+    answers[:] = [httpx.Response(200, json={"id": "g1", "threadId": "t1", "labelIds": ["SENT"]})]
+    assert asyncio.run(account.send(b"letter", "t1")) == {"id": "g1", "threadId": "t1", "labelIds": ["SENT"]}
+    assert sent == [{"raw": base64.urlsafe_b64encode(b"letter").decode(), "threadId": "t1"}]
+    for answer, error in ((httpx.Response(400, json={"error": {"message": "Invalid To header"}}), google.GoogleError),
+                          (httpx.ConnectError("no route"), google.GoogleError),
+                          (httpx.ReadTimeout("slow"), google.Ambiguous), (httpx.Response(503), google.Ambiguous)):
+        answers[:] = [answer]
+        with pytest.raises(error) as caught:
+            asyncio.run(account.send(b"letter"))
+        assert type(caught.value) is error, answer
+        if isinstance(answer, httpx.Response) and answer.status_code == 400:
+            assert str(caught.value) == "Gmail: HTTP 400: Invalid To header"
+    assert "threadId" not in sent[-1], "a new letter starts its own thread"

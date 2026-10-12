@@ -104,6 +104,18 @@ class Engine(Protocol):
 
 
 BUS_PREFIX = "mcp__retinue__"  # how the model sees the tools below
+SEARCH_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["query"],
+    "properties": {
+        "query": {"type": "string", "maxLength": 200,
+                  "description": "одно-три ключевых слова, лучше существительные: окончания подбираются сами"},
+        "scope": {"type": "string", "enum": ["chat", "owner", "mail", "all"],
+                  "description": "где искать: chat — эта переписка (в суждении о чужом сообщении — по умолчанию), "
+                                 "owner — разговоры с Владельцем, mail — его письма и календарь, all — всё"},
+        "since": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "с этого дня, 2026-10-09"},
+        "until": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "по этот день включительно"},
+    },
+}
 
 
 def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
@@ -134,14 +146,17 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return {"content": [{"type": "text", "text": json.dumps(agents, ensure_ascii=False)}]}
 
     @tool("search_archive",
-          "Найти в архиве то, что говорилось раньше: реплики Владельца, твои прошлые ответы, сообщения системы. "
-          "query — одно-три ключевых слова, лучше существительные: окончания подбираются сами. Возвращает "
-          "найденные реплики с датой, автором и пометкой «этот разговор» или «прошлый разговор». Если пусто — назовёт, что архив покрывает; попробуй другие слова.",
-          {"query": str})
+          "Найти в архиве то, что говорилось раньше: реплики Владельца, твои прошлые ответы, письма, календарь, "
+          "переписки Telegram и твои подписи к чужим фото. query — одно-три ключевых слова, лучше существительные: "
+          "окончания подбираются сами. scope — где искать; since и until — дни. Возвращает находки с id, датой, "
+          "автором и пометкой, откуда они. Если пусто — назовёт, где искала и что архив покрывает; попробуй другие "
+          "слова или шире.",
+          SEARCH_SCHEMA)
     async def search_archive(args):
         async with client(30) as http:
             response = await http.post(f"{bus_url}/archive/search", headers=headers,
-                                       json={"turn": turn_id, "query": args["query"]})
+                                       json={"turn": turn_id, "query": args["query"], "scope": args.get("scope", ""),
+                                             "since": args.get("since", ""), "until": args.get("until", "")})
         data = response.json()
         return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 

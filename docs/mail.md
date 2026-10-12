@@ -89,6 +89,13 @@ it as for live mail.
   kept and dropped by kind, your blocks' counts, and what is still waiting.
 - **A login Google refused** (`invalid_grant`, usually after a password change) is told at once, with the command
   to log in again.
+- **The memory of an exchange.** Her judgement of a new message sees the exchange above it in a frame of code's
+  words: the last 72 hours of the chat or the thread (at least 20 messages, at most 12,000 characters), an album
+  as one line, her captions under the photos, a message written to her as one folded line. For a chat, code first
+  looks up the new message's words in that chat alone, no model run. A chat is judged on its own: no other person's
+  words in that run. She answers each photo of the other person with a caption (`media`); code keeps it as a record
+  tied to the file, found by the search, never rewritten. A message written to her rather than to you
+  (`to_assistant`) is counted in your morning summary: «Писали ассистентке, а не тебе, за сутки: …».
 - Dropped letters leave their sender and subject in a technical log for 30 days (the router's database, not the
   archive, not the base; the assistant never sees it), so a drop can be checked:
 

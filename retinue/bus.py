@@ -53,6 +53,13 @@ class Tree:
     tainted: bool = False  # the chain has read text written by an agent with the web
     private: bool = False  # the chain has read text written by an agent with the base
     foreign: set[str] = field(default_factory=set)  # someone else's text the turn read: forwarded, attachment, travel
+    # The exchanges whose new messages started this run (`archive.exchange_of`): a chat, a mail thread. Empty for the
+    # owner's own turn. «This conversation» for the search and the files is these; the rest is somebody else's.
+    exchanges: set[str] = field(default_factory=set)
+    asked: set[str] = field(default_factory=set)  # the archive ids of the new messages the run answers
+    # What the run read, as code saw it: each search find, each file fetched, each read in the base, the other items
+    # of a judgement — {id, exchange, source, job, private}. A draft's card names what lies outside its exchange.
+    reads: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -162,7 +169,9 @@ class BusServer:
     async def archive_search(self, request: web.Request) -> web.Response:
         caller = self.caller(request)
         body = await request.json()
-        ok, text = await self.core.archive_search(caller, str(body.get("turn", "")), str(body.get("query", "")))
+        ok, text = await self.core.archive_search(caller, str(body.get("turn", "")), str(body.get("query", "")),
+                                                  str(body.get("scope") or ""), str(body.get("since") or ""),
+                                                  str(body.get("until") or ""))
         return web.json_response({"ok": ok, "text": text})
 
     async def reminders(self, request: web.Request) -> web.Response:

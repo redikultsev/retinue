@@ -146,6 +146,7 @@ def item_of(message: dict, owner: int) -> tuple[str, dict] | None:
                  "text": str(message.get("text") or message.get("caption") or "")[:TEXT_CHARS],
                  "media": next((key for key in MEDIA if key in message), ""),
                  "reply_to": int((message.get("reply_to_message") or {}).get("message_id") or 0),
+                 "group": str(message.get("media_group_id") or "")[:64],  # an album: its parts share it
                  "offline": bool(message.get("is_from_offline"))}
 
 

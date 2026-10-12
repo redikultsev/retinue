@@ -30,6 +30,9 @@ This makes the hub, installs its checks and writes two files that are yours from
   `setup.sh` again: the hub gets a copy.
 - `/srv/retinue/memory/checkout.txt` — what of the base her folder holds (git sparse-checkout patterns). Leave
   scripts and hidden folders out: what is not there she cannot read.
+- `/srv/retinue/memory/sensitive.txt` — the closed Spaces, one per line: a draft to a person written by a run that
+  read one of them gets a louder line on its card (see [courier.md](courier.md)). `*`, the default, closes every
+  Space; a file at the top of the base is always closed. Run `setup.sh` again after editing it.
 
 Then push your repository into the empty hub from your computer (you are in the hub's group after a new login):
 

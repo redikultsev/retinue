@@ -878,3 +878,31 @@ def test_draft_reply_reaches_the_router_and_answers_what_the_owner_will_see(tmp_
     assert not done["is_error"] and "Уйдёт, только если он нажмёт «Отправить»" in done["content"][0]["text"]
     assert refused["is_error"] and "черновики не выданы" in refused["content"][0]["text"]
     assert late["is_error"] and "Нет активного запроса" in late["content"][0]["text"]
+
+
+def test_the_search_tool_takes_a_scope_and_dates_and_the_router_gets_them(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake(self, caller, turn_id, query, scope="", since="", until=""):
+        seen.update(turn=turn_id, query=query, scope=scope, since=since, until=until)
+        return True, "Найдено: 0"
+
+    monkeypatch.setattr(Core, "archive_search", fake)
+
+    async def run():
+        agent = RouterAgent(id="assistant", name="Ассистентка", url="a", trust_class="private", archive=True)
+        core = Core([agent], Store(str(tmp_path / "r.sqlite")), "owner")
+        server = TestServer(BusServer(core, "secret", 0).app)
+        await server.start_server()
+        try:
+            tool = bus_tools(str(server.make_url("")).rstrip("/"), bus_token("secret", "assistant"), "turn-1")[
+                "search_archive"]
+            await tool.handler({"query": "Сараево", "scope": "mail", "since": "2026-10-01", "until": "2026-10-12"})
+            return tool
+        finally:
+            await server.close()
+
+    tool = asyncio.run(run())
+    assert seen == {"turn": "turn-1", "query": "Сараево", "scope": "mail", "since": "2026-10-01", "until": "2026-10-12"}
+    assert tool.input_schema["required"] == ["query"]
+    assert tool.input_schema["properties"]["scope"]["enum"] == ["chat", "owner", "mail", "all"]

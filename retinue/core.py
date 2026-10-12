@@ -9,9 +9,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol
 
@@ -22,7 +24,8 @@ from a2a.types import Role, SendMessageRequest
 from google.protobuf.json_format import MessageToDict
 
 from . import clock
-from .archive import ASSISTANT, CALENDAR, CHAT, MAIL, OWNER, SYSTEM, Archive, Attachment, Event, event_id
+from .archive import (ASSISTANT, CALENDAR, CHAT, KINDS, MAIL, NOTE, OWNER, SYSTEM, Archive, Attachment, Event, event_id,
+                      exchange_of)
 from .attachments import Unreadable, Upload, prepare
 from .bus import MAX_PARALLEL, MAX_TEXT, Denied, Turns, check
 from .config import RouterAgent
@@ -37,11 +40,15 @@ AGENT_TIMEOUT = httpx.Timeout(900, connect=10)
 # The assistant's session remembers the conversation. What happened in it without the assistant (the system's own
 # notices, pressed buttons, refused photos, a message whose run failed) the router tells once, in the next request.
 UNSEEN_EVENTS = 12
-HISTORY_CHARS = {OWNER: 2000, ASSISTANT: 1200, SYSTEM: 300, MAIL: 1500, CALENDAR: 600, CHAT: 1500}
+HISTORY_CHARS = {OWNER: 2000, ASSISTANT: 1200, SYSTEM: 300, MAIL: 1500, CALENDAR: 600, CHAT: 1500, NOTE: 300}
 SPEAKER = {OWNER: "Владелец", ASSISTANT: "Ассистентка", SYSTEM: "Система", MAIL: "Письмо", CALENDAR: "Календарь",
-           CHAT: "Telegram"}
+           CHAT: "Telegram", NOTE: "Подпись ассистентки к чужому файлу"}
 MAX_QUERY = 200          # an archive search query
 SEARCH_TEXT_CHARS = 1500  # a found event is returned whole up to this size, otherwise as a snippet
+# Where a search looks: this exchange (in a run somebody's message started — the default there), the owner's
+# conversations, his letters and calendar, everything.
+SCOPES = {"chat": "эта переписка", "owner": "разговоры с Владельцем", "mail": "письма и календарь", "all": "всё"}
+WIDER = "Искать шире — scope: mail (письма, календарь), owner (разговоры с Владельцем), all."
 BUTTON_TTL_S = 24 * 3600
 NOW_REMINDERS = 10  # how many of the owner's reminders the «now» block names
 TICK_S = 10         # how often the scheduler looks for due jobs (and the mail room for a chat's new messages)
@@ -54,7 +61,8 @@ ATTACHED_CHARS = 40_000  # text from the files of one message (transcripts, docu
 # What the router's own marks start with. Inside somebody's text — a document, a transcript, a file name, a caption
 # — such a bracket becomes a full-width one, so that no file can end its own attachment or open an owner's message.
 FORGED = re.compile(r"\[(?=\s*(?:вложени|конец вложени|не прочитано|новая реплик|новые реплик|справка|сейчас|"
-                    r"сработало|утренняя сводка|вопрос от агента|владелец))", re.IGNORECASE)
+                    r"сработало|утренняя сводка|вопрос от агента|владелец|переписк|конец переписк|подпис|"
+                    r"в этой переписке))", re.IGNORECASE)
 RESTARTED = ("Ответ задержался: Роутер перезапускался. Реплики Владельца пришли раньше, время — у каждой. "
              "Если ты уже отвечала на них, тот ответ до Владельца не дошёл: ответь заново, полностью.")
 REMINDER_NOTE = ("Напиши Владельцу это напоминание своими словами, как в разговоре. Если из разговора видно что-то "
@@ -785,11 +793,12 @@ class Core:
             except Exception:
                 log.exception("morning summary failed")
             self._account(agent, context_id, "summary", status, meta)
+        probed = self.mail.probed(now) if self.mail else ""  # code's words, after hers: never in her prompt
         if status == "done" and answer.strip():
-            text = f"{answer.strip()}\n\n{self.health(now)}"
+            text = "\n\n".join([answer.strip(), *([probed] if probed else []), self.health(now)])
         else:
             text = "\n".join(["Утренняя сводка — без ассистентки: её запуск не удался.", "Напоминания на сегодня:",
-                              *plans, *day, *waited, "", self.health(now)])
+                              *plans, *day, *waited, *(["", probed] if probed else []), "", self.health(now)])
         if now - job.due > LATE_S:
             text += f"\n\n_Сводка опоздала на {clock.ago(now - job.due)}: Роутер не работал._"
         await self.tell_owner(text, meta={"job": job.key})
@@ -1227,20 +1236,67 @@ class Core:
                          f"bus: {caller.name} → {target.name}: {status}, {len(text)} → {len(answer)} знаков")
         return status == "done", answer
 
-    async def archive_search(self, caller: RouterAgent, turn_id: str, query: str) -> tuple[bool, str]:
+    def _days(self, since: str, until: str) -> tuple[float | None, float | None]:
+        """The owner's days as a span: from the start of `since` to the end of `until`. ValueError for anything but
+        2026-10-09."""
+        def midnight(day: str, later: int = 0) -> float:
+            moment = datetime.strptime(day.strip(), "%Y-%m-%d") + timedelta(days=later)
+            return moment.replace(tzinfo=clock.zone(self.tz)).timestamp()
+
+        return (midnight(since) if since else None), (midnight(until, 1) if until else None)
+
+    def _read(self, tree, event: Event) -> None:
+        """Put an event the run read on its record: where it is from and whether it is about the job search."""
+        jobs = self.mail.store.job_events() if self.mail else set()
+        source = event.meta.get("source") if event.kind == NOTE else event.kind
+        tree.reads.append({"id": event.id, "exchange": exchange_of(event),
+                           "source": source if source in (MAIL, CALENDAR, CHAT) else "owner",
+                           "job": event.id in jobs or (event.ref or "") in jobs})
+
+    def _job_outside(self, exchanges: set[str]) -> set[str]:
+        """The job search's events outside these exchanges: what a run somebody else started never finds."""
+        if not self.mail:
+            return set()
+        return {i for i in self.mail.store.job_events()
+                if not ((event := self.archive.get(i)) and exchange_of(event) in exchanges)}
+
+    async def archive_search(self, caller: RouterAgent, turn_id: str, query: str, scope: str = "", since: str = "",
+                             until: str = "") -> tuple[bool, str]:
         """An agent searches the raw archive: only during its own turn and only with the `archive` grant.
-        An empty result names what the archive covers, so that «nothing» does not sound like a fact."""
+        An empty result names what the archive covers, so that «nothing» does not sound like a fact.
+
+        In a run somebody else's message started (a judgement of a chat or a letter) the search is that exchange
+        unless she names a wider `scope`, and code leaves out, whatever the scope, the job search outside that
+        exchange and the system's notices to the owner. In the owner's own turn it is everything, as it was."""
         turn = self.turns.turns.get(turn_id)
         if turn is None or turn.agent_id != caller.id:
             return False, "Нет активного запроса: искать в архиве можно только во время ответа."
         if not caller.archive:
             return False, "Отказано: этому агенту поиск по архиву не выдан."
-        turn.tree.foreign.add("archive")  # earlier messages: forwards and the system's words among them
+        tree = turn.tree
+        others = bool(tree.exchanges)
+        scope = scope.strip() or ("chat" if others else "all")
+        if scope not in SCOPES:
+            return False, "Не выполнено: scope — chat, owner, mail или all."
+        try:
+            start, end = self._days(since, until)
+        except ValueError:
+            return False, "Не выполнено: since и until — даты вида 2026-10-09, по времени Владельца."
+        tree.foreign.add("archive")  # earlier messages: forwards and the system's words among them
         query = query.strip()[:MAX_QUERY]
+        narrow: dict = {"since": start, "until": end}
+        if scope in ("chat", "owner", "mail"):
+            narrow["exchanges"] = sorted(tree.exchanges) if scope == "chat" and others else \
+                ["owner" if scope != "mail" else "mail"]
+        if others:
+            narrow["kinds"] = tuple(kind for kind in KINDS if kind != SYSTEM)
+            narrow["hide"] = self._job_outside(tree.exchanges) | tree.asked  # nor is a question its own answer
+        said = SCOPES[scope] + (f", {since or '…'} – {until or '…'}" if since or until else "")
+        said = f" (где искала: {said})" if others or scope != "all" or since or until else ""
         # The owner message being answered is left out: the question is not its own answer.
-        asked = self.archive.get(self.inbound.get(turn.tree.id, ""))
+        asked = self.archive.get(self.inbound.get(tree.id, ""))
         current = asked.conversation_id if asked else self.store.conversation(caller.id)
-        hits = self.archive.search(query, exclude=asked.id if asked else None)
+        hits = self.archive.search(query, exclude=asked.id if asked else None, **narrow)
         if hits:
             found = {e.id for e, _ in hits}
 
@@ -1260,15 +1316,27 @@ class Core:
 
             # Which conversation a hit is from: after !new the session does not hold the old one.
             def where(e: Event) -> str:
+                if e.kind == NOTE:  # her retelling of somebody's file: where the file is from
+                    source = {MAIL: "почта", CHAT: "Telegram"}.get(e.meta.get("source"), "чужое")
+                    return f"{source}, подпись к вложению #{e.meta.get('attachment')}"
+                if e.kind == CHAT and exchange_of(e) in tree.exchanges:
+                    return "Telegram, эта переписка"
                 if e.kind in (MAIL, CALENDAR, CHAT):
                     return {MAIL: "почта", CALENDAR: "календарь", CHAT: "Telegram"}[e.kind]
                 return "этот разговор" if e.conversation_id == current else "прошлый разговор"
 
-            text = f"Найдено: {len(hits)}, сначала самые близкие.\n\n" + "\n\n".join(
+            text = f"Найдено: {len(hits)}{said}, сначала самые близкие.\n\n" + "\n\n".join(
                 f"[{head(e)} · {where(e)}]\n" + whole(e, snippet) + other_half(e) for e, snippet in hits)
+            for e, _ in hits:  # what she read, for the card of a draft this run may propose
+                self._read(tree, e)
+                if e.kind == OWNER and (answer := self.archive.reply_to(e.id)) and answer.id not in found:
+                    self._read(tree, answer)
+                elif e.kind == ASSISTANT and (question := self.archive.get(e.ref or "")) and question.id not in found:
+                    self._read(tree, question)
         else:
             count, first, last = self.archive.coverage((OWNER, ASSISTANT, SYSTEM))
-            lines = [f"По запросу «{query}» ничего не найдено. Что архив покрывает:",
+            lines = [f"По запросу «{query}» ничего не найдено{said}." + (f" {WIDER}" if scope != "all" else "")
+                     + " Что архив покрывает:",
                      f"- разговоры с Владельцем, этот и прошлые: событий — {count}"
                      + (f", с {clock.stamp(first, self.tz)} по {clock.stamp(last, self.tz)}" if count else "") + ";"]
             lines += self.mail.coverage(time.time()) if self.mail else ["- почта и календарь не подключены;"]
@@ -1291,10 +1359,13 @@ class Core:
             return False, "Отказано: этому агенту вложения не выданы.", []
         attachment = self.archive.attachment(number)
         event = self.archive.get(attachment.event_id) if attachment else None
-        if attachment is None or event is None or event.kind != OWNER \
-                or not self.store.belongs(event.conversation_id, caller.id):
+        # The owner's own files in his conversations; somebody's file only in a run of that very exchange.
+        if attachment is None or event is None or not (
+                (event.kind == OWNER and self.store.belongs(event.conversation_id, caller.id))
+                or (event.kind in (CHAT, MAIL) and exchange_of(event) in turn.tree.exchanges)):
             return False, f"Вложения #{number} нет.", []
         turn.tree.foreign.add("attachment")
+        self._read(turn.tree, event)
         stored = self.archive.read(attachment)
         images = [(media_type, data) for media_type, data in stored if media_type.startswith("image/")]
         lines = [f"{attachment.mark()} — из сообщения {clock.stamp(event.ts, self.tz)}"]
@@ -1368,7 +1439,8 @@ class Core:
             return False, "Отказано: этому агенту черновики не выданы."
         if not self.outbox:
             return False, "Отправка людям не подключена: черновика не будет. Дай Владельцу текст в ответе."
-        ok, text = await self.outbox.propose(args, set(turn.tree.foreign), self.outbox.clock())
+        ok, text = await self.outbox.propose(args, set(turn.tree.foreign), self.outbox.clock(),
+                                             reads=list(turn.tree.reads), others=bool(turn.tree.exchanges))
         self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="courier/draft",
                        status="done" if ok else "rejected", input_chars=len(json.dumps(args, ensure_ascii=False)),
                        output_chars=len(text), channel="bus")
@@ -1407,12 +1479,27 @@ class Core:
         if status == "allowed" and tool in ("Edit", "Write") and self.writer != turn.id:
             # A write is the turn's only while it holds the queue: after the router has moved on, it is refused.
             status, reason, ok = "denied", "ход не держит очередь записи", False
+        if status == "allowed" and tool in ("Edit", "Write") and "telegram" in turn.tree.foreign:
+            # A run a chat started writes nothing to the base: a person's words never become her memory there.
+            status, reason, ok = "denied", "суждение о сообщении из чата: база только для чтения", False
+        if status == "allowed" and tool in ("Read", "Grep", "Glob"):  # what she read, for a draft's card
+            turn.tree.reads.append(self._kb_read(path))
         self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target=f"kb/{tool}", status=status,
                        input_chars=0, output_chars=0, channel="bus")
         path, reason = " ".join(path.split())[:200], " ".join(reason.split())[:300]
         await self._each(self.channels, "protocol",
                          f"kb: {caller.name} → {tool} {path}: {status}" + (f" — {reason}" if reason else ""))
         return ok
+
+    def _kb_read(self, path: str) -> dict:
+        """A read in the base as a draft's card names it: the Space, and whether it is closed (`memory.sensitive`). A
+        file at the top or a search across the whole base is closed: it names every Space's records."""
+        cfg = getattr(self.memory, "cfg", None)
+        root, closed = str(getattr(cfg, "tree", "/kb")), list(getattr(cfg, "sensitive", ["*"]))
+        rel = os.path.relpath(os.path.normpath(path or root), root)
+        space = rel.split("/", 1)[0] if "/" in rel and not rel.startswith("..") else ""
+        return {"id": f"kb:{rel}", "exchange": "", "source": "kb", "space": space, "job": False,
+                "private": not space or "*" in closed or space in closed}
 
     async def _trace(self, tree, text: str, target_id: str | None = None) -> None:
         """Show agents talking in the owner's room and in the room of the agent being asked."""

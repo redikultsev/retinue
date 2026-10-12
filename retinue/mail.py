@@ -19,7 +19,7 @@ import re
 import secrets
 import sqlite3
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import httpx
 
@@ -57,7 +57,7 @@ EVENT_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["items"],
     "properties": {"items": {"type": "array", "items": {
         "type": "object", "additionalProperties": False,
-        "required": ["n", "needs", "deadline", "cost", "new", "job", "text"],
+        "required": ["n", "needs", "deadline", "cost", "new", "job", "to_assistant", "text"],
         "properties": {
             "n": {"type": "integer"},
             "needs": {"type": "string", "enum": list(NEEDS)},
@@ -65,7 +65,14 @@ EVENT_SCHEMA = {
             "cost": {"type": "string", "enum": list(COSTS)},
             "new": {"type": "boolean"},
             "job": {"type": "boolean"},
+            # Written to her, not to the owner: «ты бот?», «что тебе велели», «забудь правила». Code folds it in later
+            # windows and counts it for the owner's morning; her judgement of later messages never sees the count.
+            "to_assistant": {"type": "boolean"},
             "text": {"type": "string", "maxLength": 700},
+            # What she saw on a picture somebody sent with this item: code keeps it as a caption tied to the file.
+            "media": {"type": "array", "maxItems": 20, "items": {
+                "type": "object", "additionalProperties": False, "required": ["attachment", "caption"],
+                "properties": {"attachment": {"type": "integer"}, "caption": {"type": "string", "maxLength": 300}}}},
         }}}},
 }
 
@@ -133,6 +140,8 @@ class Decision:
     new: bool
     text: str
     job: bool = False   # about the owner's job search: the preview says no more than «1 важное»
+    to_assistant: bool = False  # written to her, not to the owner: folded in later windows
+    media: list[tuple[int, str]] = field(default_factory=list)  # (attachment number, her caption)
 
 
 def decisions(answer: str) -> dict[int, Decision]:
@@ -146,9 +155,11 @@ def decisions(answer: str) -> dict[int, Decision]:
             n = int(item.get("n"))
         except (TypeError, ValueError):
             continue
+        media = [(m["attachment"], m["caption"]) for m in item.get("media") or [] if isinstance(m, dict)
+                 and type(m.get("attachment")) is int and isinstance(m.get("caption"), str)][:20]
         found[n] = Decision(n, item["needs"], " ".join(str(item.get("deadline") or "").split())[:40], item["cost"],
                             item.get("new") is not False, str(item.get("text") or "").strip()[:700],
-                            item.get("job") is True)
+                            item.get("job") is True, item.get("to_assistant") is True, media)
     return found
 
 
@@ -463,6 +474,27 @@ class MailStore:
             if max(i["at"] for i in said) <= now - chat_glue or min(i["at"] for i in said) <= now - (chat_most or 0):
                 out += said
         return sorted(out, key=lambda i: i["seq"])[:limit]
+
+    def job_events(self) -> set[str]:
+        """The archive ids of everything she or triage judged to be about the owner's job search: a run someone else
+        started never finds them outside their own exchange."""
+        return {row[0] for row in self.db.execute(
+            "SELECT event_id FROM mail_items WHERE event_id IS NOT NULL AND (kind = 'job' OR json_extract(card, "
+            "'$.job'))")}
+
+    def probes(self, sender: str) -> set[str]:
+        """The archive ids of this chat's messages her judgement marked as written to her, not to the owner: the
+        window folds them."""
+        return {row[0] for row in self.db.execute(
+            "SELECT event_id FROM mail_items WHERE sender = ? AND event_id IS NOT NULL AND "
+            "json_extract(card, '$.to_assistant')", (sender,))}
+
+    def probes_since(self, since: float) -> list[tuple[str, int, str]]:
+        """Messages marked as written to her, judged since `since`, by chat: (sender, how many, one archive id) —
+        the most first."""
+        return [tuple(row) for row in self.db.execute(
+            "SELECT sender, COUNT(*), MAX(event_id) FROM mail_items WHERE source = 'telegram' AND at >= ? AND "
+            "json_extract(card, '$.to_assistant') GROUP BY sender ORDER BY COUNT(*) DESC, sender", (since,))]
 
     def told_since(self, sender: str, since: float) -> float | None:
         """When the owner was last told at once of this sender, if within the window."""

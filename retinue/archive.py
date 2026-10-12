@@ -7,6 +7,9 @@ an older one (`ref`), never an edit of a row.
 What the owner sent besides text is kept next to it: the `attachments` table says what the model got from each
 file (the number `#N` it sees, a transcript or a document's text), and the files it got as content blocks (a JPEG,
 a PDF) lie in the folder `attachments/` beside the database, one subfolder per owner message.
+
+A caption of somebody's photo is a record of its own (`note`): what her judgement saw on the file, tied to it and to its
+exchange, marked as someone else's text. The first caption of a file stands; nothing rewrites it.
 """
 
 from __future__ import annotations
@@ -30,7 +33,12 @@ MAIL, CALENDAR = "mail", "calendar"
 # A message of the owner's chosen Telegram chats (the Business bot): his, the other person's, or a reply the courier
 # sent — conversation id chat:<chat id>, so none of them is ever a turn of the owner's conversation either.
 CHAT = "chat"
-KINDS = (OWNER, ASSISTANT, SYSTEM, MAIL, CALENDAR, CHAT)
+# Her caption of a file somebody else sent (a photo in a chat or a letter): written by code from her judgement's schema
+# answer, tied to the file (`ref`, `meta.attachment`) and its exchange — so the window and the search find what the
+# picture shows. A retelling of someone else's text: data, never a rule; never rewritten.
+NOTE = "note"
+KINDS = (OWNER, ASSISTANT, SYSTEM, MAIL, CALENDAR, CHAT, NOTE)
+NOTE_CHARS = 300
 
 _WORD = re.compile(r"\w+")
 
@@ -69,6 +77,34 @@ def event_id(kind: str, ts: float, text: str, channel: str = "", native_id: str 
     if native_id:
         return f"{channel}:{native_id}"
     return hashlib.sha256(f"{kind}\n{ts!r}\n{text}".encode()).hexdigest()[:20]
+
+
+def exchange_of(event: Event) -> str:
+    """Which exchange an event belongs to — what «this conversation» means for a reply: a Telegram chat, a mail thread
+    (a letter with no thread is one alone), the calendar of one account, or the owner's conversation with her. A
+    caption belongs to the exchange of its file."""
+    if event.kind == MAIL:
+        thread = event.meta.get("thread")
+        return f"mail-thread:{thread}" if thread else f"letter:{event.id}"
+    if event.kind == NOTE:
+        return str(event.meta.get("exchange") or "")
+    if event.kind in (CHAT, CALENDAR):
+        return event.conversation_id
+    return "owner"
+
+
+def _exchange_sql(key: str) -> tuple[str, list]:
+    """The events of one exchange, as a condition on `e`: the messages and the captions of their files."""
+    note = "(e.kind = 'note' AND json_extract(e.meta, '$.exchange') = ?)"
+    if key.startswith("mail-thread:"):
+        return f"(e.kind = 'mail' AND json_extract(e.meta, '$.thread') = ?) OR {note}", [key.split(":", 1)[1], key]
+    if key.startswith("letter:"):
+        return f"e.id = ? OR {note}", [key.split(":", 1)[1], key]
+    if key == "owner":
+        return "e.kind IN ('owner', 'assistant', 'system')", []
+    if key == "mail":  # the owner's records: letters, the calendar, captions of the letters' files
+        return "e.kind IN ('mail', 'calendar') OR (e.kind = 'note' AND json_extract(e.meta, '$.source') = 'mail')", []
+    return "e.conversation_id = ?", [key]
 
 
 def fts_query(query: str) -> str:
@@ -201,8 +237,8 @@ class Archive:
             if not event.meta.get("thread"):
                 return []
             where, key = "kind = 'mail' AND json_extract(meta, '$.thread') = ?1", event.meta["thread"]
-        else:
-            where, key = "conversation_id = ?1", event.conversation_id
+        else:  # a caption is shown with its file, not on its own
+            where, key = "conversation_id = ?1 AND kind != 'note'", event.conversation_id
         rows = self.db.execute(f"SELECT {self._COLUMNS} FROM events WHERE {where} AND (ts < ?2 OR (ts = ?2 AND seq <"
                                " (SELECT seq FROM events WHERE id = ?3))) ORDER BY ts DESC, seq DESC LIMIT ?4",
                                (key, event.ts, event.id, limit)).fetchall()
@@ -221,19 +257,61 @@ class Archive:
         ).fetchall()
         return [self._event(row) for row in reversed(rows)]
 
-    def search(self, query: str, limit: int = 8, exclude: str | None = None) -> list[tuple[Event, str]]:
-        """Full-text search. Returns (event, snippet) pairs, best match first."""
+    def search(self, query: str, limit: int = 8, exclude: str | None = None, *, kinds: tuple[str, ...] | None = None,
+               exchanges: list[str] | None = None, since: float | None = None, until: float | None = None,
+               hide: set[str] | frozenset = frozenset()) -> list[tuple[Event, str]]:
+        """Full-text search. Returns (event, snippet) pairs, best match first. The router narrows it in code: these
+        kinds, these exchanges (`exchange_of`; an empty list finds nothing), from `since`, before `until`; `hide`
+        leaves out those events and every event that refers to one of them — a caption of a hidden letter's file."""
         match = fts_query(query)
         if not match:
             return []
+        where, params = ["events_fts MATCH ?", "e.id IS NOT ?"], [match, exclude]
+        if kinds is not None:
+            where.append(f"e.kind IN ({', '.join('?' * len(kinds))})")
+            params += list(kinds)
+        if exchanges is not None:
+            parts = [_exchange_sql(key) for key in exchanges]
+            where.append("(" + " OR ".join(f"({sql})" for sql, _ in parts) + ")" if parts else "0")
+            params += [value for _, values in parts for value in values]
+        if since is not None:
+            where.append("e.ts >= ?")
+            params.append(since)
+        if until is not None:
+            where.append("e.ts < ?")
+            params.append(until)
+        if hide:
+            where.append("e.id NOT IN (SELECT value FROM json_each(?)) AND COALESCE(e.ref, '') NOT IN"
+                         " (SELECT value FROM json_each(?))")
+            params += [json.dumps(sorted(hide))] * 2
         rows = self.db.execute(
             "SELECT e.id, e.ts, e.kind, e.text, e.conversation_id, e.channel, e.ref, e.meta,"
             " snippet(events_fts, 0, '', '', '…', 48)"
             " FROM events_fts JOIN events e ON e.seq = events_fts.rowid"
-            " WHERE events_fts MATCH ? AND e.id IS NOT ? ORDER BY bm25(events_fts), e.seq DESC LIMIT ?",
-            (match, exclude, limit),
+            f" WHERE {' AND '.join(where)} ORDER BY bm25(events_fts), e.seq DESC LIMIT ?",
+            (*params, limit),
         ).fetchall()
         return [(self._event(row), row[8]) for row in rows]
+
+    def note(self, attachment: Attachment, event: Event, caption: str, *, run: str,
+             ts: float | None = None) -> tuple[Event, bool]:
+        """Her caption of a file somebody else sent, as a record of its own: one per file — the first stands, a later
+        one changes nothing (`fresh` False). The caller has cleaned it; here it is cut to NOTE_CHARS."""
+        caption = caption.strip()[:NOTE_CHARS].strip()
+        if not caption:
+            raise ValueError("an empty caption")
+        return self.append(NOTE, caption, conversation_id=event.conversation_id, channel="note", ref=event.id,
+                           native_id=str(attachment.id), ts=ts,
+                           meta={"attachment": attachment.id, "by": "judgement", "foreign": True,
+                                 "exchange": exchange_of(event), "source": event.kind, "run": run})
+
+    def notes_of(self, numbers: list[int]) -> dict[int, Event]:
+        """The captions of these attachments, by attachment number."""
+        if not numbers:
+            return {}
+        rows = self.db.execute(f"SELECT {self._COLUMNS} FROM events WHERE kind = 'note' AND id IN"
+                               f" ({', '.join('?' * len(numbers))})", [f"note:{n}" for n in numbers]).fetchall()
+        return {int(event.meta["attachment"]): event for event in map(self._event, rows)}
 
     def coverage(self, kinds: tuple[str, ...] = KINDS) -> tuple[int, float | None, float | None]:
         """(number of events, time of the first, time of the last) of these kinds: what an empty search result must

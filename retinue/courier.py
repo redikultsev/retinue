@@ -340,9 +340,10 @@ class CardView:
         return "\n\n".join(parts)
 
 
-def head(draft_id: str, envelope: Envelope, about: str, flags: list[str], found: list[str]) -> list[str]:
+def head(draft_id: str, envelope: Envelope, about: str, flags: list[str], found: list[str], read: str = "") -> list[str]:
     """The card's header: the channel and the account, the recipient, the subject, what it answers, the flags that
-    fired, what was found in the text, and how long the text is. Every value is one cleaned line."""
+    fired, what the run read outside this conversation, what was found in the text, and how long the text is. Every
+    value is one cleaned line."""
     e = envelope
     if e.channel == MAIL:
         lines = [f"Черновик {draft_id} · {CHANNELS[MAIL]} · {e.account}",
@@ -353,6 +354,8 @@ def head(draft_id: str, envelope: Envelope, about: str, flags: list[str], found:
         lines.append(line(about, 160))
     if flags:
         lines.append("Внимание: " + "; ".join(flags))
+    if read:
+        lines.append(f"Писала, читая: {read}")
     if found:
         lines.append("В тексте найдено: " + "; ".join(found))
     lines.append(f"Текст, {len(e.text)} знаков:")

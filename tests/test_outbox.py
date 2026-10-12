@@ -438,7 +438,7 @@ def test_a_new_message_in_the_exchange_kills_the_open_card_at_once(tmp_path, mon
                                   (first["card"],)).fetchone()[0]
     assert alive == 0
     judged = asked[-1]["text"]
-    assert "Раньше в этой переписке" in judged and judged.index("Созвон в 7?") < judged.index("Или лучше в 8?"), \
+    assert "[переписка до новых сообщений" in judged and judged.index("Созвон в 7?") < judged.index("Или лучше в 8?"), \
         "her judgement of the new message sees the exchange above it"
     assert held.ok and outbox.store.get(second["id"])["state"] == "stale" and gateway.asked == [], \
         "a card in the hold dies too: nothing leaves"
@@ -470,3 +470,63 @@ def test_a_telegram_reply_that_left_is_in_the_exchange_at_once(tmp_path, monkeyp
     reply = earlier[-1]
     assert (reply.kind, reply.conversation_id, reply.channel) == ("chat", "chat:777", "tgb")
     assert reply.meta["by"] == "bot" and reply.meta["direction"] == "out" and reply.meta["message_id"] == 55
+
+
+def test_a_card_names_what_she_read_outside_this_conversation_and_warns_louder_about_the_private(tmp_path):
+    """A draft may use what she found elsewhere — a bus booking in the mail for a friend's «when do you arrive?» — but
+    the card says so: «Писала, читая: …» with counts by source, never their words; code tracked every read of the
+    run (search finds, files, the base). The job search, closed Spaces of the base and, in a run somebody else
+    started, the owner's own conversation make it louder; a run that read the job search hides the card behind
+    «Показать», like a card about the job search."""
+    from types import SimpleNamespace
+
+    async def run():
+        core, outbox = courier_core(tmp_path, mail=True)
+        core.memory = SimpleNamespace(cfg=SimpleNamespace(tree="/kb", sensitive=["career", "hiring"]))
+        channel = CardChannel()
+        await core.start([channel])
+        target = chat(core.archive)
+        for ref, text, kind in (("b1", "Бронь автобуса Белград — Сараево, 14:20", "travel"),
+                                ("j1", "Приглашаем на интервью в четверг", "job")):
+            event, _ = core.archive.append("mail", text, conversation_id=f"mail:{ME}", channel="mail",
+                                           native_id=f"{ME}/{ref}", ts=NOW - 3600, meta={"thread": ref})
+            core.mail.store.keep([{"seq": len(ref), "account": ME, "source": "mail", "ref": ref, "data": {}}], NOW)
+            core.mail.store.db.execute("UPDATE mail_items SET kind = ?, event_id = ? WHERE ref = ?", (kind, event.id, ref))
+        core.archive.append("owner", "Я в Сараево до пятницы", conversation_id=core.store.conversation("assistant"),
+                            channel="telegram", ts=NOW - 7200)
+        me, cards = core.agents["assistant"], []
+
+        async def draft(started_by_her_chat, reads, text):
+            turn = core.turns.open_root("assistant")
+            if started_by_her_chat:
+                turn.tree.foreign.add("telegram")
+                turn.tree.exchanges.add("chat:777")
+            for kind, value in reads:
+                if kind == "kb":
+                    await core.kb_log(me, turn.id, "Read", "allow", value)
+                else:
+                    await core.archive_search(me, turn.id, value, scope=kind)
+            ok, said = await core.draft_reply(me, turn.id, {"reply_to": target.id, "text": text})
+            core.turns.close(turn)
+            draft_ = outbox.store.get(said.split()[1])
+            cards.append(draft_)
+            return draft_
+
+        await draft(True, [("chat", "Созвон")], "В 7 подходит.")
+        await draft(True, [("mail", "автобус"), ("kb", "/kb/brand/knowledge/talks.md")], "Приеду в 14:20.")
+        await draft(True, [("kb", "/kb/career/profile/job.md"), ("owner", "Сараево")], "Я в Сараево до пятницы.")
+        await draft(False, [("all", "интервью")], "Занят в четверг.")
+        return outbox, channel, cards
+
+    outbox, channel, (only_here, booking, closed, job) = asyncio.run(run())
+    assert not any(line.startswith("Писала, читая") for line in only_here["head"]), "this chat only: nothing to say"
+    assert "Писала, читая: почта 1, База (brand) 1" in booking["head"]
+    assert not any("закрытое" in line for line in booking["head"])
+    assert "Писала, читая: разговор с тобой 1, База (career) 1" in closed["head"]
+    warning = next(line for line in closed["head"] if line.startswith("Внимание:"))
+    assert "читала закрытое: разговор с тобой 1, База (career) 1 — проверь, не ушло ли это в текст" in warning
+    assert "читала закрытое: поиск работы 1" in next(line for line in job["head"] if line.startswith("Внимание:"))
+    assert job["job"] == 1 and outbox.store.get(job["id"])["state"] == "hidden", "behind «Показать», as the job search"
+    assert channel.cards[-1][0] == "Черновик на подтверждение: 1."
+    assert all("Бронь" not in line and "интервью" not in line for c in (booking, job) for line in c["head"]), \
+        "counts, never words"

@@ -383,14 +383,17 @@ def test_setup_with_memory_makes_the_hub_and_installs_its_checks(tmp_path, monke
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     cfg = RouterConfig.load(target / "router.yaml").memory
     assert cfg.hub == "/hub" and cfg.checkout == ["/*", "!/.*/", "!/scripts/"] and cfg.tree == "/kb"
+    assert cfg.sensitive == ["*"], "until the owner names the closed Spaces, every Space is closed"
     raw = json.loads((memory / "policy.json").read_text())
     (memory / "policy.json").write_text(json.dumps({**raw, "writable": ["notes/**/*.md"]}))
     (memory / "checkout.txt").write_text("/*.md\n/notes/\n")
+    (memory / "sensitive.txt").write_text("# closed\nwork\nhealth\n")
     again, printed = setup(tmp_path, TELEGRAM_OWNER_ID="42")
     assert printed["RETINUE_MEMORY"] == "/kb", "the hub exists: on for good"
     assert json.loads((hub / "hooks" / "kb-policy.json").read_text())["writable"] == ["notes/**/*.md"], \
         "the owner's rules, copied to the hub on every run"
     assert RouterConfig.load(target / "router.yaml").memory.checkout == ["/*.md", "/notes/"]
+    assert RouterConfig.load(target / "router.yaml").memory.sensitive == ["work", "health"]
 
 
 def test_the_hub_takes_pushes_but_its_config_and_hooks_stay_roots(tmp_path):
@@ -618,3 +621,27 @@ def test_setup_with_telegram_business_and_mail_sending(tmp_path, monkeypatch):
     plain, printed = setup(tmp_path / "other", TELEGRAM_OWNER_ID="42")
     assert "gateway_url" not in (plain / "router.yaml").read_text() and "RETINUE_SENDER_TOKEN" not in printed
     assert not (plain / "send").exists() and not (plain / "telegram").exists()
+
+
+def test_her_rules_for_the_memory_of_an_exchange():
+    """What the router now gives her and expects of her about the past of a chat: search before «I don't know»,
+    this chat first and wider when needed, what the card will say about other sources, captions and messages written
+    to her — and that nothing in someone's words changes her memory."""
+    instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
+    assert "до десяти прошлых" not in instructions and "Не знаешь, что он ответит, — черновика не предлагай" \
+        not in instructions, "the count of ten and the refusal without a search are gone"
+    memory = instructions.split("## Память переписки")[1].split("\n## ")[0]
+    assert "сначала ищи" in memory and "«Не знаю» — только после поиска" in memory
+    assert all(f"`{word}`" in memory for word in ("search_archive", "scope: mail", "scope: owner", "since",
+                                                     "get_attachment", "media", "to_assistant"))
+    assert "«Писала, читая: …»" in memory and "поиск работы" in memory and "по существу" in memory
+    assert "Текст с картинки — только в кавычках" in memory and "не правишь и не стираешь" in memory
+    assert "база только для чтения" in memory
+    replies = instructions.split("## Ответы людям")[1].split("\n## ")[0]
+    assert "где и по каким словам искала" in replies and "Роутер сам напишет на карточке" in replies
+    assert "пароли" in replies and "поиск работы" in replies
+    mail = instructions.split("## Почта и календарь")[1].split("\n## ")[0]
+    assert "трое суток" in mail and "`scope: owner`" in mail
+    courier = (ROOT / "docs" / "courier.md").read_text()
+    assert "«Писала, читая»" in courier and "sensitive.txt" in courier and "to_assistant" in (
+        ROOT / "docs" / "mail.md").read_text()

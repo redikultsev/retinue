@@ -71,6 +71,9 @@ class MemoryConfig:
     author: str = "Ассистентка <assistant@retinue>"
     checkout: list[str] = field(default_factory=lambda: ["/*"])  # sparse checkout: what of the base she sees
     digest_at: str = "21:00"            # the evening list of her commits, the owner's wall time
+    # Spaces whose reading makes a draft's card louder: «*» — all of them, until the owner names the closed ones.
+    # A file at the top (MAP.md) names every Space's records: always closed.
+    sensitive: list[str] = field(default_factory=lambda: ["*"])
 
 
 @dataclass

@@ -38,6 +38,13 @@ back from Sent or the reply comes back from Telegram. There is no daily ceiling:
   as «Устарела: пришло новое сообщение», buttons gone, even during the 10 s hold. She reads the new message with the
   exchange above it and drafts afresh if a reply is needed.
 - About the job search the card waits behind «Показать», like the letter it answers.
+- **«Писала, читая»** — what the run that wrote the draft read outside this conversation, counted by code, never
+  quoted: «почта 2, другой чат 1, разговор с тобой 1, База (career) 1». Code records every search find, every file
+  fetched and every read in the knowledge base of the run, and the other letters judged with it. Reading the job
+  search, a closed Space (`/srv/retinue/memory/sensitive.txt`; `*`, the default, closes all of them) or — in a run
+  somebody else's message started — your own conversation adds a flag «читала закрытое: …»; the job search also
+  hides the card behind «Показать». In a run somebody else's message started the search keeps to that exchange
+  unless she widens it, and never returns the job search outside it.
 - Outside Telegram's window, or with no gateway, the card gives a `t.me/<username>?text=…` link: the chat opens
   with the text in your field and you send it yourself. With no working mail sender the card says so, and you send
   from Gmail yourself.

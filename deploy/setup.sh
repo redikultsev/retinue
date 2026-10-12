@@ -107,6 +107,7 @@ fi
 install -d -m 755 "$MEMORY_DIR" "$MEMORY_DIR/tree" "$MEMORY_DIR/git"
 [[ -f $MEMORY_DIR/policy.json ]] || install -m 644 "$REPO/deploy/memory/policy.example.json" "$MEMORY_DIR/policy.json"
 [[ -f $MEMORY_DIR/checkout.txt ]] || install -m 644 "$REPO/deploy/memory/checkout.example.txt" "$MEMORY_DIR/checkout.txt"
+[[ -f $MEMORY_DIR/sensitive.txt ]] || install -m 644 "$REPO/deploy/memory/sensitive.example.txt" "$MEMORY_DIR/sensitive.txt"
 SECRETS="$ROOT/secrets.env"
 [[ -f $SECRETS ]] || (umask 077; : > "$SECRETS")
 secret() { grep -q "^$1=" "$SECRETS" || echo "$1=$(token)" >> "$SECRETS"; }   # made once, then kept
@@ -165,6 +166,9 @@ YAML
     printf 'memory:\n  hub: /hub\n  checkout:\n'   # the rest: defaults in config.py (MemoryConfig)
     sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e "s/^[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/    - '\1'/" \
       "$MEMORY_DIR/checkout.txt"
+    printf '  sensitive:\n'                       # closed Spaces: a draft's card is louder when she read them
+    sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e "s/^[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/    - '\1'/" \
+      "$MEMORY_DIR/sensitive.txt"
   fi
   if [[ -n $TELEGRAM_OWNER_ID ]]; then
     printf 'telegram:\n  owner_id: %s\n' "$TELEGRAM_OWNER_ID"

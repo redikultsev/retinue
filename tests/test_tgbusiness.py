@@ -187,3 +187,19 @@ def test_the_other_persons_file_is_served_by_the_id_an_item_carried_and_nothing_
     assert mine_status == 400 and mine == {"error": "такого файла не было в сообщениях"}
     assert gone["error"].startswith("Telegram не отдал файл (404"), "the reason, never the address with the token"
     assert all(method == "getFile" for method, _ in calls[-2:])
+
+
+def test_an_album_keeps_its_group_so_the_router_can_fold_it():
+    """Telegram sends an album as messages that share `media_group_id`: the item keeps it, so that twenty photos are
+    one line of the exchange, not twenty."""
+    g, _ = gateway()
+    g._keep(CONNECTION)
+
+    async def run():
+        for mid in (30, 31):
+            await g.consume({"update_id": mid, "business_message": message("", mid=mid, media_group_id="13579",
+                                                                          photo=[{"file_id": f"p{mid}"}])})
+        await g.consume({"update_id": 32, "business_message": message("Где мы были?", mid=32)})
+
+    asyncio.run(run())
+    assert [item["data"]["group"] for item in g.state.look()] == ["13579", "13579", ""]

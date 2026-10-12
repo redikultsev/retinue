@@ -1178,3 +1178,139 @@ def test_the_health_line_names_both_limit_windows(tmp_path):
     later = now + 4 * 3600
     assert "лимит подписки: 5 ч — окно сброшено в 17:05 МСК, неделя — 63 %" in core.health(later), \
         "a share from before the reset is not the share now"
+
+
+def test_a_caption_found_by_the_search_is_named_a_retelling_of_someone_elses_file(tmp_path):
+    """A caption is her words about somebody's photo: the search shows it so, with the exchange it belongs to — never
+    as the owner's or her own words in the conversation."""
+    from retinue.archive import CHAT
+
+    archive, store = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite"))
+    core = Core([dataclasses.replace(AGENT, archive=True)], store, "owner", ask=None, archive=archive)
+    photo = archive.attach("tgb:777/10", "photo", "фото 1280×960", "чужое: Telegram, Марко", "", [("image/jpeg", b"j")])
+    event, _ = archive.append(CHAT, f"Telegram · Марко · входящее\n{photo.mark()}", conversation_id="chat:777",
+                              channel="tgb", native_id="777/10", ts=moscow(7, 14))
+    archive.note(photo, event, "Сараево, Башчаршия: фонтан Себиль", run="mail-1", ts=moscow(7, 15))
+    turn = core.turns.open_root("assistant")
+    ok, text = asyncio.run(core.archive_search(core.agents["assistant"], turn.id, "Сараево"))
+    assert ok and "note:1 · 2026-10-07 15:00 МСК, среда · Подпись ассистентки к чужому файлу" in text, text
+    assert "Telegram, подпись к вложению #1" in text and "Сараево, Башчаршия: фонтан Себиль" in text
+
+
+def test_a_run_a_chat_started_never_writes_to_the_base(tmp_path):
+    """A person in a chosen chat cannot make her remember anything: in a run their message started, the router says
+    no to every write in the base, whatever she was asked. A run a letter started may still write, as before."""
+    core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", ask=None)
+
+    async def write(foreign):
+        turn = core.turns.open_root("assistant")
+        turn.tree.foreign.add(foreign)
+        core.writer = turn.id
+        return await core.kb_log(core.agents["assistant"], turn.id, "Write", "allow", "/kb/notes/journal/x.md")
+
+    assert asyncio.run(write("telegram")) is False and asyncio.run(write("mail")) is True
+    rows = core.store.db.execute("SELECT target, status FROM protocol WHERE channel = 'bus' ORDER BY id").fetchall()
+    assert rows == [("kb/Write", "denied"), ("kb/Write", "allowed")]
+
+
+def memory_world(tmp_path):
+    """An archive with a chat, another chat, the owner's mail — one letter about the job search — and his
+    conversation, all naming Sarajevo; the router's mail table knows which letter is about the job."""
+    from retinue.archive import CALENDAR, CHAT, MAIL, OWNER, SYSTEM
+    from retinue.mail import MailStore
+    from retinue.mailroom import Mailroom
+
+    archive, store = Archive(str(tmp_path / "archive.sqlite")), Store(str(tmp_path / "r.sqlite"))
+    room = Mailroom(None, MailStore(store.db))
+    agent = dataclasses.replace(AGENT, archive=True, attachments=True)
+    core = Core([agent], store, "owner", ask=None, archive=archive, mail=room)
+
+    def chat(chat_id, mid, text, day, photo=False):
+        meta = {"chat": chat_id, "direction": "in", "by": "in", "name": "Марко"}
+        if photo:
+            attachment = archive.attach(f"tgb:{chat_id}/{mid}", "photo", "фото", "чужое: Telegram, Марко", "",
+                                        [("image/jpeg", b"j")], commit=False)
+            meta["attachments"], text = [attachment.id], attachment.mark()
+        return archive.append(CHAT, f"Telegram · Марко · входящее\n{text}", conversation_id=f"chat:{chat_id}",
+                              channel="tgb", native_id=f"{chat_id}/{mid}", ts=moscow(day, 12), meta=meta)[0]
+
+    def letter(ref, text, day, kind):
+        event, _ = archive.append(MAIL, text, conversation_id="mail:owner@example.org", channel="mail",
+                                  native_id=f"owner@example.org/{ref}", ts=moscow(day, 9), meta={"thread": ref})
+        room.store.keep([{"seq": len(ref), "account": "owner@example.org", "source": "mail", "ref": ref, "data": {}}],
+                        moscow(day, 9))
+        room.store.db.execute("UPDATE mail_items SET state = 'later', kind = ?, event_id = ? WHERE ref = ?",
+                              (kind, event.id, ref))
+        return event
+
+    world = {
+        "here": chat("777", 1, "Сараево было отличным", 5),
+        "photo": chat("777", 2, "", 5, photo=True),
+        "there": chat("888", 1, "Тоже был в Сараево", 6),
+        "bus": letter("b1", "Бронь автобуса Белград — Сараево, 14 ноября 14:20", 8, "travel"),
+        "job": letter("j1x", "Приглашаем на интервью; офис в Сараево", 9, "job"),
+        "other_photo": chat("888", 2, "", 6, photo=True),
+    }
+    scan = archive.attach(world["job"].id, "photo", "фото", "из письма hr@acme.example", "", [("image/jpeg", b"j")])
+    archive.note(scan, world["job"], "скан оффера: Сараево, зарплата", run="mail-1", ts=moscow(9, 10))
+    archive.append(OWNER, "Я лечу в Сараево", conversation_id=store.conversation("assistant"), channel="telegram",
+                   ts=moscow(10, 9))
+    archive.append(SYSTEM, "Почта: Сараево, интервью в четверг", conversation_id=store.conversation("assistant"),
+                   channel="system", ts=moscow(10, 10))
+    archive.append(CALENDAR, "Созвон: Сараево", conversation_id="calendar:owner@example.org", channel="calendar",
+                   native_id="owner@example.org/e1", ts=moscow(10, 11))
+    return core, agent, world
+
+
+def test_a_search_in_a_run_someone_else_started_keeps_to_this_chat_and_never_shows_the_job_search(tmp_path):
+    """In a run started by somebody's message the search is this exchange unless she widens it (`scope`), and dates
+    narrow it (`since`, `until`, the owner's days). Whatever the scope, code leaves out the job search — the letter and
+    every caption of its files — and the system's own notices to the owner. In his own conversation nothing is
+    hidden from him."""
+    core, agent, world = memory_world(tmp_path)
+    turn = core.turns.open_root("assistant")
+    turn.tree.foreign.add("telegram")
+    turn.tree.exchanges.add("chat:777")
+
+    def search(query, **narrow):
+        return asyncio.run(core.archive_search(agent, turn.id, query, **narrow))
+
+    ok, here = search("Сараево")
+    assert ok and here.startswith("Найдено: 1 (где искала: эта переписка), сначала самые близкие.")
+    assert "tgb:777/1" in here and "Тоже был" not in here
+    _, mail = search("Сараево", scope="mail")
+    assert "Бронь автобуса" in mail and "Созвон: Сараево" in mail and "интервью" not in mail and "оффера" not in mail
+    _, everything = search("Сараево", scope="all")
+    assert "Тоже был в Сараево" in everything and "Я лечу в Сараево" in everything and "Бронь" in everything
+    assert "интервью" not in everything and "оффера" not in everything, "the job search: never, in any scope"
+    _, owner = search("Сараево", scope="owner")
+    assert "Я лечу в Сараево" in owner and "Бронь" not in owner and "Почта: Сараево" not in owner
+    _, recent = search("Сараево", scope="all", since="2026-10-08", until="2026-10-08")
+    assert recent.startswith("Найдено: 1 (где искала: всё, 2026-10-08 – 2026-10-08)") and "Бронь" in recent
+    assert search("Сараево", scope="everywhere") == (False, "Не выполнено: scope — chat, owner, mail или all.")
+    assert search("Сараево", since="8 октября")[0] is False
+    _, nothing = search("Мостар")
+    assert nothing.startswith("По запросу «Мостар» ничего не найдено (где искала: эта переписка).")
+    assert "шире — scope: mail (письма, календарь), owner (разговоры с Владельцем), all" in nothing
+
+    own = core.turns.open_root("assistant")
+    _, his = asyncio.run(core.archive_search(agent, own.id, "Сараево"))
+    assert "интервью" in his and "Почта: Сараево" in his, "in his own conversation: everything, as before"
+
+
+def test_a_file_from_a_chat_is_fetched_only_in_a_run_of_that_chat(tmp_path):
+    core, agent, world = memory_world(tmp_path)
+    run = core.turns.open_root("assistant")
+    run.tree.foreign.add("telegram")
+    run.tree.exchanges.add("chat:777")
+    own = core.turns.open_root("assistant")
+    here, there = world["photo"].meta["attachments"][0], world["other_photo"].meta["attachments"][0]
+
+    async def get(turn, number):
+        return await core.get_attachment(agent, turn.id, number)
+
+    ok, text, images = asyncio.run(get(run, here))
+    assert ok and images == [("image/jpeg", b"j")] and "чужое: Telegram, Марко" in text
+    assert asyncio.run(get(run, there))[:2] == (False, f"Вложения #{there} нет."), "another person's chat: no"
+    assert asyncio.run(get(own, here))[0] is False, "not in the owner's conversation either: it is not his file"
+    assert "attachment" in run.tree.foreign

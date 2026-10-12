@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from . import clock, courier, lifehub
-from .archive import CHAT, MAIL
+from .archive import CHAT, MAIL, exchange_of
 from .courier import MAIL as BY_MAIL, TELEGRAM as BY_TELEGRAM, CardView, Envelope, Refused
 from .mail import JOB, Unavailable, safe_label
 
@@ -39,6 +39,8 @@ STALE = "Устарела: пришло новое сообщение."  # a car
 WINDOW_MARGIN_S = 600     # a Telegram reply is offered only while the 24-hour window has this much left
 DAY = 86400
 LIVE = ("shown", "hidden", "link")   # a card whose buttons still mean something
+# How a card names what the run read outside this conversation, in this order: counts, never words.
+SOURCES = {"mail": "почта", "calendar": "календарь", "chat": "другой чат", "owner": "разговор с тобой"}
 HOW = {"link": "Открой чат по ссылке внизу: текст подставится, отправишь сам.",
        "copy": "У собеседника нет username: открой чат с ним и вставь текст — нажми на него, он скопируется.",
        "mailto": "Отправь сам из Gmail: адрес и тема выше, текст копируется нажатием."}
@@ -190,9 +192,11 @@ class Outbox:
 
     # --- a draft ------------------------------------------------------------------------------------------------
 
-    async def propose(self, args, foreign: set[str], now: float) -> tuple[bool, str]:
+    async def propose(self, args, foreign: set[str], now: float, reads: list[dict] = (),
+                      others: bool = False) -> tuple[bool, str]:
         """Her draft, checked by code, made into an envelope from the archive and shown to the owner as a card. The
-        answer tells her what happened — never that anything was sent."""
+        answer tells her what happened — never that anything was sent. `reads` — what the run read (code's record);
+        `others` — somebody else's message started the run."""
         try:
             args = lifehub.check(courier.DRAFT_SCHEMA, args)
             if bool(args.get("reply_to")) == bool(args.get("to")):
@@ -206,6 +210,10 @@ class Outbox:
         except (Refused, lifehub.Refused) as exc:
             return False, f"Не принято: {exc}"
         flags = list(built.flags) + (["по просьбе собеседника"] if foreign & {"mail", "telegram"} else [])
+        read, closed, job = self._read_outside(built, reads, others)
+        if closed:
+            flags.append(f"читала закрытое: {closed} — проверь, не ушло ли это в текст")
+        built.job = built.job or job
         draft_id = secrets.token_hex(4)
         while self.store.get(draft_id):
             draft_id = secrets.token_hex(4)
@@ -218,7 +226,7 @@ class Outbox:
         draft = {"id": draft_id, "created": now, "state": "shown" if built.mode == "send" else "link",
                  "channel": envelope.channel, "envelope": envelope.as_dict(), "digest": courier.digest(envelope),
                  "reply_to": built.reply_to, "thread": built.thread, "job": int(built.job),
-                 "head": courier.head(draft_id, envelope, built.about, flags, courier.findings(text, built.known)),
+                 "head": courier.head(draft_id, envelope, built.about, flags, courier.findings(text, built.known), read),
                  "card": "", "expires": expires, "send_after": None, "at": now}
         if built.mode != "send":
             draft["head"].insert(1, f"{built.why} {HOW[built.mode]}")
@@ -232,6 +240,36 @@ class Outbox:
                           f"нажмёт «Отправить» (до {until}); слово «да» в чате — не согласие. Не пиши, что отправлено.")
         return True, (f"Черновик {draft_id} показан Владельцу, но отправить его сама система не может: {built.why} "
                       "Владелец отправит сам, если захочет.")
+
+    def _read_outside(self, built: Built, reads: list[dict], others: bool) -> tuple[str, str, bool]:
+        """What the run read outside the exchange this draft answers, counted by source: the card's «Писала, читая»;
+        the closed part of it — the job search, closed Spaces of the base, and, in a run somebody else started, the
+        owner's own conversation; and whether the job search was among it. A new letter answers no exchange: every
+        read is outside."""
+        event = self.core.archive.get(built.reply_to) if built.reply_to else None
+        here = exchange_of(event) if event else None
+        counts: dict[str, int] = {}
+        closed: dict[str, int] = {}
+        job, seen = False, set()
+        for read in reads:
+            if read.get("exchange") == here and read.get("source") != "kb" or read.get("id") in seen:
+                continue
+            seen.add(read.get("id"))
+            name = f"База ({read.get('space') or 'корень'})" if read.get("source") == "kb" else \
+                SOURCES.get(read.get("source"), "другое")
+            counts[name] = counts.get(name, 0) + 1
+            if read.get("job"):
+                job = True
+                closed["поиск работы"] = closed.get("поиск работы", 0) + 1
+            elif read.get("private") or (others and read.get("source") == "owner"):
+                closed[name] = closed.get(name, 0) + 1
+
+        def said(found: dict[str, int]) -> str:
+            order = [*SOURCES.values()]
+            names = sorted(found, key=lambda n: (order.index(n) if n in order else len(order), n))
+            return ", ".join(f"{n} {found[n]}" for n in names)
+
+        return said(counts), said(closed), job
 
     async def _reply(self, reply_to: str, text: str, now: float) -> Built:
         event = self.core.archive.get(reply_to)

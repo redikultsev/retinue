@@ -181,3 +181,30 @@ def test_the_collector_is_reached_with_its_token():
     assert [i["seq"] for i in items] == [4] and gone is None and file == ("a.pdf", "application/pdf", b"%PDF")
     assert day == ([{"summary": "x"}], ["b: нужен вход заново"]) and "401" in refused
     assert all(auth == "Bearer tok" for _, auth, _ in seen) and seen[1][2] == {"upto": 4}
+
+
+def test_a_chat_is_judged_after_half_a_minute_of_quiet_and_never_later_than_two_minutes():
+    """Mail waits GLUE_S for the letters that come with it; a live chat would not: a person who asks expects an
+    answer in about a minute. A chat's messages are judged once it has been quiet for chat_glue seconds, or
+    chat_most seconds after its first message if it keeps writing — each chat on its own, mail on its own."""
+    store = mail.MailStore(sqlite3.connect(":memory:"))
+
+    def kept(ref, source, sender, at):
+        store.keep([{"seq": 1, "account": "a@x.org", "source": source, "ref": ref, "data": {}}], at)
+        seq = store.db.execute("SELECT MAX(seq) FROM mail_items").fetchone()[0]  # the router's own number
+        store.set(seq, at, state="kept", sender=sender, kind="chat" if source == "telegram" else "person", ts=at)
+        return seq
+
+    def ready(now):
+        return [i["seq"] for i in store.ready(now, 150, 10, chat_glue=30, chat_most=120)]
+
+    first = kept("c1", "telegram", "tg:777", NOW)
+    assert ready(NOW + 20) == [] and ready(NOW + 31) == [first], "quiet for half a minute: judged"
+    letter = kept("m1", "mail", "hr@acme.example", NOW)
+    writing = [kept("c2", "telegram", "tg:888", NOW)]
+    for second in range(20, 120, 20):  # chat 888 keeps writing every 20 seconds
+        writing.append(kept(f"c2-{second}", "telegram", "tg:888", NOW + second))
+    assert ready(NOW + 110) == [first], "a chat still writing waits; mail waits its own glue"
+    assert ready(NOW + 121) == [first, *writing], "two minutes after its first message: judged anyway"
+    assert ready(NOW + 151) == [first, letter, *writing]
+    assert [i["seq"] for i in store.ready(NOW + 151, 150, 10)] == [first, letter, *writing], "mail as it was"

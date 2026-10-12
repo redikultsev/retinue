@@ -442,12 +442,27 @@ class MailStore:
     def count(self, state: str) -> int:
         return self.db.execute("SELECT COUNT(*) FROM mail_items WHERE state = ?", (state,)).fetchone()[0]
 
-    def ready(self, now: float, glue: float, limit: int) -> list[dict]:
-        """Kept items for her judgement, once the oldest of them has waited `glue` seconds for others to join."""
+    def ready(self, now: float, glue: float, limit: int, chat_glue: float | None = None,
+              chat_most: float | None = None) -> list[dict]:
+        """Kept items for her judgement. Mail and invitations once the oldest of them has waited `glue` seconds for
+        others to join. With `chat_glue`, a Telegram chat on its own: once it has been quiet that long, or `chat_most`
+        seconds after its first kept message if it keeps writing — a person who asks waits a minute, not three."""
         rows = self.db.execute(f"SELECT {self._COLUMNS} FROM mail_items WHERE state = 'kept' AND retry_at <= ?"
-                               " ORDER BY seq LIMIT ?", (now, limit)).fetchall()
+                               " ORDER BY seq", (now,)).fetchall()
         items = [self._item(row) for row in rows]
-        return items if items and min(i["at"] for i in items) <= now - glue else []
+        if chat_glue is None:
+            items = items[:limit]
+            return items if items and min(i["at"] for i in items) <= now - glue else []
+        chats: dict[str, list[dict]] = {}
+        for item in items:
+            if item["source"] == "telegram":
+                chats.setdefault(item["sender"], []).append(item)
+        letters = [i for i in items if i["source"] != "telegram"]
+        out = letters if letters and min(i["at"] for i in letters) <= now - glue else []
+        for said in chats.values():
+            if max(i["at"] for i in said) <= now - chat_glue or min(i["at"] for i in said) <= now - (chat_most or 0):
+                out += said
+        return sorted(out, key=lambda i: i["seq"])[:limit]
 
     def told_since(self, sender: str, since: float) -> float | None:
         """When the owner was last told at once of this sender, if within the window."""

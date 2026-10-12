@@ -30,6 +30,9 @@ ATTACHMENTS = 5           # files read from one kept letter at most
 PLAIN_BATCH = 20          # items with no model run — his letters, calendar changes — read in one pass at most
 LOGIN = "uv run deploy/mail/login.py --account {account} --kind {kind}"
 GLUE_S = 150              # her judgement waits this long after a letter is kept, for the ones that come with it
+CHAT_LOOK_S = 10          # how often the router looks at the Telegram gateway: a person who asks waits a minute
+CHAT_GLUE_S = 30          # a chat is judged once it has been quiet this long…
+CHAT_MOST_S = 120         # …or this long after its first message, if it keeps writing
 JUDGE_ITEMS = 10          # items in one judgement at most
 JUDGE_RETRY_S = 300
 HOUR = 3600               # urgent letters of one sender within this are one message
@@ -58,6 +61,7 @@ class Mailroom:
         self.chats: tuple[float, dict | str] | None = None  # the last look at the gateway: when, its status or error
         self.core = None
         self.looked = 0.0        # when the router last looked at the collector
+        self.looked_chats = 0.0  # when it last looked at the Telegram gateway
         self.backfilled = 0.0    # when the backfill last read a letter
         self.task: asyncio.Task | None = None  # the one piece of mail work in flight
 
@@ -74,8 +78,11 @@ class Mailroom:
     async def work(self, now: float) -> None:
         try:
             if now - self.looked >= LOOK_S:
-                self.looked = now
+                self.looked = self.looked_chats = now
                 await self.collect(now)
+            elif self.gateway and now - self.looked_chats >= CHAT_LOOK_S:
+                self.looked_chats = now
+                await self.collect_chats(now)
             await self.flush(now)
             if not await self.judge(now):
                 await self.read_next(now)
@@ -377,7 +384,7 @@ class Mailroom:
         someone else's text. Code routes each answer (`route`). Returns whether a judgement ran."""
         if self.core.limit_until > now:  # a refusal by the limit is known; no share of the window holds mail back
             return False
-        items = self.store.ready(now, GLUE_S, JUDGE_ITEMS)
+        items = self.store.ready(now, GLUE_S, JUDGE_ITEMS, CHAT_GLUE_S, CHAT_MOST_S)
         if not items:
             return False
         from .core import meta_of

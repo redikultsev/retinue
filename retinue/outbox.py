@@ -532,6 +532,8 @@ class Outbox:
             core.archive.append(SYSTEM, f"Отправлено по карточке {draft['id']}: {whom}.", channel="system",
                                 ref=draft["card"] or None, meta={"draft": draft["id"], "sent": True},
                                 conversation_id=core.store.conversation(core.default_agent))
+            if draft["channel"] == BY_TELEGRAM:
+                self._into_exchange(draft, result, now)
         elif status == "unknown":
             self.store.move(draft["id"], ("sending",), "unknown", now, result=result)
             await self._retire(draft, "Исход неизвестен: повторно не отправляю. Если письмо или сообщение найдётся "
@@ -544,6 +546,23 @@ class Outbox:
             await self._retire(draft, f"Не отправлено: {why}")
             await core.tell_owner(f"Не отправлено: черновик {draft['id']} ({whom}) — {why}", meta={"draft": draft["id"]})
         await core._each(core.channels, "protocol", f"courier: черновик {draft['id']} → {status}")
+
+    def _into_exchange(self, draft: dict, result: dict, now: float) -> None:
+        """The reply that left, into the chat's exchange at once, as the gateway would have put it: Telegram does not
+        give a bot back what it sent, and without it her next judgement of the chat would not see that he answered."""
+        from .archive import CHAT
+        from .core import defuse
+        from .mailroom import DIRECTIONS
+
+        envelope = draft["envelope"]
+        chat, message_id = str(envelope["to"]), int(result.get("id") or 0)
+        who = defuse(str(envelope.get("name") or "")) or "без имени"
+        self.core.archive.append(
+            CHAT, f"Telegram · {who} · {DIRECTIONS['bot']}\n{envelope['text']}", conversation_id=f"chat:{chat}",
+            channel="tgb", native_id=f"{chat}/{message_id}" if message_id else f"{chat}/draft-{draft['id']}", ts=now,
+            meta={"chat": chat, "message_id": message_id, "direction": "out", "by": "bot", "name": who,
+                  "username": "", "edit": False, "reply_to": int(envelope.get("reply_to_message") or 0),
+                  "draft": draft["id"]})
 
     def _why(self, draft: dict, error: str) -> str:
         if error == "invalid_grant":

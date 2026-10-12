@@ -425,7 +425,8 @@ def test_a_new_message_in_the_exchange_kills_the_open_card_at_once(tmp_path, mon
         (second,) = outbox.store.in_state("shown")
         held = await core.press(channel, dict(channel.shown[-1][1])["Отправить: Анна"])
         chats.message(3, 12, "Алло?")
-        await core.mail.work(NOW + 400)
+        await core.mail.work(NOW + 400)   # the chat's last message has been quiet for long: judged first
+        await core.mail.work(NOW + 410)   # the next step reads the new one
         await asyncio.sleep(0.5)
         return core, outbox, channel, first, second, held
 
@@ -441,3 +442,31 @@ def test_a_new_message_in_the_exchange_kills_the_open_card_at_once(tmp_path, mon
         "her judgement of the new message sees the exchange above it"
     assert held.ok and outbox.store.get(second["id"])["state"] == "stale" and gateway.asked == [], \
         "a card in the hold dies too: nothing leaves"
+
+
+def test_a_telegram_reply_that_left_is_in_the_exchange_at_once(tmp_path, monkeypatch):
+    """Seen on the server: Telegram does not give a bot back the messages it sent, so the exchange her next
+    judgement reads lacked his reply, and she drafted the same answer again. A reply that left is put in the
+    exchange by the router at once — as his reply sent by his card, under the message id Telegram gave it."""
+    import retinue.outbox as outbox_module
+
+    monkeypatch.setattr(outbox_module, "HOLD_S", 0)
+    gateway = FakeNeighbour({"connected": True, "rights": ["can_reply"]}, {"status": "sent", "id": "55"})
+
+    async def run():
+        core, outbox = courier_core(tmp_path, gateway=gateway)
+        channel = CardChannel()
+        await core.start([channel])
+        asked = chat(core.archive, 10, NOW - 600)
+        await propose(core, {"reply_to": asked.id, "text": "Да, в 7."}, {"telegram"})
+        await core.press(channel, dict(channel.shown[-1][1])["Отправить: Анна"])
+        await drain()
+        later = chat(core.archive, 56, NOW + 60)
+        return core, core.archive.earlier(later, 10)
+
+    core, earlier = asyncio.run(run())
+    assert [e.text for e in earlier] == ["Telegram · Анна · входящее\nСозвон в 7?",
+                                         "Telegram · Анна · ответ Владельца, отправленный по его карточке\nДа, в 7."]
+    reply = earlier[-1]
+    assert (reply.kind, reply.conversation_id, reply.channel) == ("chat", "chat:777", "tgb")
+    assert reply.meta["by"] == "bot" and reply.meta["direction"] == "out" and reply.meta["message_id"] == 55

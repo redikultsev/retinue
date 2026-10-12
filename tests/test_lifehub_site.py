@@ -50,7 +50,8 @@ def test_no_template_writes_markup_style_or_an_address_from_data():
 def test_every_page_of_the_first_version_is_there():
     """«Сейчас», trips, status; «Работа», finance and health are «скоро» (decision 6)."""
     base = (SITE / "layouts" / "baseof.html").read_text()
-    assert re.findall(r'<a href="(/[a-z/]*)">', base) == ["/", "/trips/", "/status/", "/work/", "/finance/", "/health/"]
+    assert re.findall(r'<a href="(/[a-z/]*)">', base) == ["/", "/trips/", "/review/", "/status/", "/work/", "/finance/",
+                                                           "/health/"]
     assert '<meta name="referrer" content="no-referrer">' in base and 'href="/css/lifehub.css"' in base
     for name in ("work", "finance", "health"):
         assert "soon: true" in (SITE / "content" / f"{name}.md").read_text()
@@ -59,6 +60,10 @@ def test_every_page_of_the_first_version_is_there():
     for part in ("$now.trips", "$now.today", "$now.tomorrow", "$now.reminders", "$now.mail", "$now.deadlines",
                  "$now.health", "без срока"):
         assert part in home, part
+    assert "layout: review" in (SITE / "content" / "review.md").read_text()
+    review = (SITE / "layouts" / "review.html").read_text()
+    for part in ("$r.items", ".decision", ".draft", "$r.dropped", '"review.json"'):
+        assert part in review, part
     status = (SITE / "layouts" / "status.html").read_text()
     for part in ("$s.limit", "$s.tokens", "$s.connectors", "$s.mail", ".rules", "$s.charts", "оценка CLI"):
         assert part in status, part

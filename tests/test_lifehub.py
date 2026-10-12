@@ -466,3 +466,57 @@ def test_an_option_beyond_the_first_hundred_of_a_view_is_still_found(tmp_path):
         {"search_id": "f4k2m9qa", "limit": 100, "max_stops": 3, "max_leg_hours": 72, "sort": "departure"}]
     (name,) = hub.data.names("trips")
     assert [option["price"] for option in hub.data.read(name)["options"]] == ["497 EUR", "497 EUR"]
+
+
+def test_the_review_page_shows_what_she_decided_on_each_letter_and_message(tmp_path):
+    """The owner, 2026-10-12: «где ты видишь, что она подумала? могу я это на хабе посмотреть?» — a week of her
+    judgements, newest first: where from, from whom, her words, where code sent it, and what became of a draft.
+    His own messages are not hers to judge; the dropped are a line each from the technical log."""
+    from retinue.outbox import Outbox, OutboxStore
+
+    from test_mailroom import ACCOUNT, NOW
+
+    core, hub, _ = hub_core(tmp_path)
+    core.outbox = Outbox(OutboxStore(core.store.db))
+    mail, day = core.mail.store, 86400
+
+    def item(ref, source, state, ts, sender, kind, card=None, data=None, event_id=""):
+        mail.keep([{"seq": 1, "account": ACCOUNT, "source": source, "ref": ref, "data": data or {}}], ts)
+        seq = mail.db.execute("SELECT MAX(seq) FROM mail_items").fetchone()[0]
+        mail.set(seq, ts, state=state, sender=sender, kind=kind, ts=ts, event_id=event_id,
+                 **({"card": card} if card else {}))
+
+    item("m1", "mail", "later", NOW - 3000, "anna@acme.example", "person",
+         {"who": "Анна, Acme", "summary": "Зовёт на созвон", "text": "Анна зовёт на созвон в пятницу.",
+          "needs_now": "reply", "deadline_now": "пт 17.10", "cost": "low"})
+    item("c1", "telegram", "silent", NOW - 2000, "tg:777", "chat",
+         {"text": "Александр шлёт мемы.", "needs_now": "nothing", "cost": "none"}, {"name": "Александр"})
+    item("c2", "telegram", "told", NOW - 1000, "tg:777", "chat",
+         {"text": "Александр спрашивает, когда автобус.", "needs_now": "reply", "cost": "high"},
+         {"name": "Александр"}, event_id="tgb:777/12")
+    item("c3", "telegram", "own", NOW - 900, "tg:777", "chat", data={"name": "Александр"})
+    item("c4", "telegram", "kept", NOW - 30, "tg:777", "chat", data={"name": "Александр"})
+    item("m2", "mail", "silent", NOW - 8 * day, "old@x.example", "service", {"text": "Старое."})
+    mail.dropped(NOW - 500, ACCOUNT, "sale@shop.example", "Скидки до 70%", "promo", "triage")
+    mail.dropped(NOW - 9 * day, ACCOUNT, "old@shop.example", "Давно", "promo", "triage")
+    core.outbox.store.db.execute(
+        "INSERT INTO drafts (id, created, state, channel, envelope, digest, reply_to, head, expires, at) "
+        "VALUES ('0000000a', ?, 'sent', 'telegram', '{}', '', 'tgb:777/12', '[]', 0, ?)", (NOW - 900, NOW - 800))
+
+    page = hub.review(NOW)
+    assert page["updated"].startswith("2025-10-09 ") and page["days"] == 7
+    assert [(i["where"], i["who"], i["decision"]) for i in page["items"]] == [
+        ("Telegram", "Александр", "ждёт её оценки"),
+        ("Telegram", "Александр", "сразу тебе"),
+        ("Telegram", "Александр", "молча"),
+        ("почта", "Анна, Acme", "в утреннюю сводку")], "a week, newest first; his own and older ones left out"
+    told, silent, letter = page["items"][1:]
+    assert told["text"] == "Александр спрашивает, когда автобус." and told["needs"] == "ответить" and \
+        told["draft"] == "черновик отправлен"
+    assert letter["text"] == "Анна зовёт на созвон в пятницу." and letter["deadline"] == "пт 17.10" and \
+        letter["from"] == "anna@acme.example" and letter["draft"] == ""
+    assert silent["needs"] == "" and told["when"].startswith("2025-10-09 ")
+    assert page["dropped"] == [{"when": page["dropped"][0]["when"], "from": "sale@shop.example",
+                                "subject": "Скидки до 70%", "kind": "реклама"}]
+    hub.write_review(NOW)
+    assert hub.data.read("review.json") == page

@@ -149,6 +149,10 @@ class OutboxStore:
                                states).fetchall()
         return [self.get(row[0]) for row in rows]
 
+    def by_reply(self) -> dict[str, str]:
+        """The state of the latest draft answering each archive message: the review page's «what became of it»."""
+        return dict(self.db.execute("SELECT reply_to, state FROM drafts WHERE reply_to IS NOT NULL ORDER BY created"))
+
     def sent(self, since: float, channel: str) -> int:
         """Sent for certain since `since` on this channel: what the status page counts."""
         return self.db.execute("SELECT COUNT(*) FROM drafts WHERE state = 'sent' AND channel = ? AND at >= ?",

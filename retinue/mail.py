@@ -524,6 +524,20 @@ class MailStore:
         return self.db.execute("SELECT COUNT(*) FROM mail_items WHERE source = 'mail' AND sender = ? AND ts >= ?",
                                (sender.lower(), now - DROPPED_DAYS * 86400)).fetchone()[0]
 
+    def review(self, since: float, limit: int) -> list[dict]:
+        """Letters, chat messages and invitations since `since`, newest first: what she judged and what still waits
+        for her. His own, the dropped, the gone and calendar changes she never judged are left out."""
+        rows = self.db.execute(f"SELECT {self._COLUMNS} FROM mail_items WHERE ts >= ? AND state NOT IN ('own', "
+                               "'dropped', 'blocked', 'gone') AND (source != 'calendar' OR card IS NOT NULL) "
+                               "ORDER BY ts DESC, seq DESC LIMIT ?", (since, limit)).fetchall()
+        return [self._item(row) for row in rows]
+
+    def dropped_since(self, since: float, limit: int) -> list[dict]:
+        """The technical log of dropped letters, newest first: who, the subject, why."""
+        rows = self.db.execute("SELECT ts, sender, subject, kind, why FROM mail_dropped WHERE ts >= ? "
+                               "ORDER BY ts DESC LIMIT ?", (since, limit)).fetchall()
+        return [dict(zip(("ts", "sender", "subject", "kind", "why"), row)) for row in rows]
+
     def tally(self, since: float) -> dict:
         """Since `since`: kept and dropped letters by kind, and the drops by each of the owner's blocks."""
         kept = dict(self.db.execute("SELECT kind, COUNT(*) FROM mail_items WHERE source = 'mail' AND at >= ? AND "

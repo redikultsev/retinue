@@ -202,6 +202,16 @@ DEADLINE_PAST_DAYS = 30   # a deadline that passed this long ago is history, not
 DEADLINES = 20            # deadlines on the «now» page at most
 NEEDS = {"read": "прочитать", "reply": "ответить", "decide": "решить", "attend": "прийти", "pay": "оплатить",
          "act": "сделать"}
+REVIEW_DAYS = 7           # the review page: her judgements this many days back
+REVIEW_ITEMS = 400        # at most this many of them
+REVIEW_DROPPED = 300      # and this many lines of the dropped log
+DECISIONS = {"told": "сразу тебе", "held": "сразу, одним сообщением с другими от него", "later": "в утреннюю сводку",
+             "done": "была в утренней сводке", "silent": "молча", "kept": "ждёт её оценки", "new": "ждёт её оценки"}
+DRAFTS = {"shown": "черновик ждёт твоей кнопки", "hidden": "черновик ждёт твоей кнопки", "fixing": "черновик правится",
+          "queued": "черновик отправляется", "sending": "черновик отправляется", "sent": "черновик отправлен",
+          "stale": "черновик устарел: пришло новое сообщение", "expired": "черновик устарел по времени",
+          "dropped": "ты сказал не отвечать", "failed": "черновик не отправлен", "unknown": "черновик: ушло ли — неизвестно",
+          "link": "черновик: отправить сам по ссылке"}
 MAIL_DAYS = 7             # mail that needs the owner, judged this many days back
 
 
@@ -248,7 +258,8 @@ class Lifehub:
 
     async def refresh(self, now: float) -> None:
         """Every page's data, each part on its own: a part that fails is logged, the others are written."""
-        for name, part in (("site", self.write_site), ("status", self.write_status), ("now", self.write_now)):
+        for name, part in (("site", self.write_site), ("status", self.write_status), ("now", self.write_now),
+                           ("review", self.write_review)):
             try:
                 result = part(now)
                 if asyncio.iscoroutine(result):
@@ -313,6 +324,39 @@ class Lifehub:
                 out.append({"text": card.get("text") or card.get("summary") or "", "from": where,
                             "needs": NEEDS.get(card.get("needs_now"), ""), "deadline": card.get("deadline_now") or ""})
         return out
+
+    # --- the «review» page: what she decided ----------------------------------------------------------------------
+
+    def review(self, now: float) -> dict:
+        """A week of her judgements, newest first (the owner, 2026-10-12: «могу я это на хабе посмотреть?»): where
+        from, from whom, her words, where code sent it and what became of a draft; the dropped from the log."""
+        from .mail import KINDS
+
+        page = {"updated": self.stamp(now), "days": REVIEW_DAYS, "items": [], "dropped": []}
+        if not self.core.mail:
+            return page
+        store, since = self.core.mail.store, now - REVIEW_DAYS * DAY
+        drafts = self.core.outbox.store.by_reply() if self.core.outbox else {}
+        for item in store.review(since, REVIEW_ITEMS):
+            card, data = item["card"] or {}, item["data"] or {}
+            chat = item["source"] == "telegram"
+            page["items"].append({
+                "when": self.stamp(item["ts"]), "where": {"telegram": "Telegram", "calendar": "календарь"}.get(
+                    item["source"], "почта"),
+                "who": str(data.get("name") or "") if chat else str(card.get("who") or item["sender"] or ""),
+                "from": "" if chat else str(item["sender"] or ""),
+                "text": str(card.get("text") or card.get("summary") or ""),
+                "decision": DECISIONS.get(item["state"], item["state"]),
+                "needs": NEEDS.get(card.get("needs_now"), ""), "deadline": str(card.get("deadline_now") or ""),
+                "draft": DRAFTS.get(drafts.get(item["event_id"] or ""), "")})
+        for row in store.dropped_since(since, REVIEW_DROPPED):
+            page["dropped"].append({"when": self.stamp(row["ts"]), "from": row["sender"], "subject": row["subject"],
+                                    "kind": "твоё правило" if row["why"] == "blocked" else KINDS.get(row["kind"],
+                                                                                                     row["kind"])})
+        return page
+
+    def write_review(self, now: float) -> None:
+        self.data.write("review.json", self.review(now))
 
     def deadlines(self, today: date) -> list[dict]:
         """Dates from the base's Records about the world and about the owner: `until` (a document, a status) and

@@ -205,6 +205,12 @@ NEEDS = {"read": "прочитать", "reply": "ответить", "decide": "�
 REVIEW_DAYS = 7           # the review page: her judgements this many days back
 REVIEW_ITEMS = 400        # at most this many of them
 REVIEW_DROPPED = 300      # and this many lines of the dropped log
+REVIEW_PAGE = 25          # cards on one page of the review
+REVIEW_DROPPED_PAGE = 50  # lines on one page of the dropped
+REVIEW_SENDERS = 40       # senders with a page of their own, the most frequent first
+SOURCES = {"telegram": "Telegram", "mail": "почта", "calendar": "календарь"}
+REVIEW_MARKS = {"told": "сразу тебе", "held": "сразу, одним сообщением", "later": "в утреннюю сводку",
+                "done": "была в утренней сводке", "silent": "молча", "waiting": "ждёт её оценки"}
 DECISIONS = {"told": "сразу тебе", "held": "сразу, одним сообщением с другими от него", "later": "в утреннюю сводку",
              "done": "была в утренней сводке", "silent": "молча", "kept": "ждёт её оценки", "new": "ждёт её оценки"}
 DRAFTS = {"shown": "черновик ждёт твоей кнопки", "hidden": "черновик ждёт твоей кнопки", "fixing": "черновик правится",
@@ -328,31 +334,63 @@ class Lifehub:
     # --- the «review» page: what she decided ----------------------------------------------------------------------
 
     def review(self, now: float) -> dict:
-        """A week of her judgements, newest first (the owner, 2026-10-12: «могу я это на хабе посмотреть?»): where
-        from, from whom, her words, where code sent it and what became of a draft; the dropped from the log."""
+        """A week of her judgements, newest first (the owner, 2026-10-12: «могу я это на хабе посмотреть?» — then
+        «покрасивее, с разбивкой по источникам, отправителям, пагинацией»): where from, from whom, her words, where
+        code sent it and what became of a draft; the dropped from the log. The site runs no script, so every slice —
+        all, by source, by decision, by sender, the dropped — is its own set of pages of REVIEW_PAGE, cut here."""
+        import hashlib
+
+        from . import clock
         from .mail import KINDS
 
-        page = {"updated": self.stamp(now), "days": REVIEW_DAYS, "items": [], "dropped": []}
+        page = {"updated": self.stamp(now), "days": REVIEW_DAYS, "views": [], "dropped": 0,
+                "facets": {"sources": [], "decisions": [], "senders": []}}
         if not self.core.mail:
+            page["views"] = cut("all", "Всё", {}, [])
             return page
         store, since = self.core.mail.store, now - REVIEW_DAYS * DAY
         drafts = self.core.outbox.store.by_reply() if self.core.outbox else {}
+        items = []
         for item in store.review(since, REVIEW_ITEMS):
             card, data = item["card"] or {}, item["data"] or {}
             chat = item["source"] == "telegram"
-            page["items"].append({
-                "when": self.stamp(item["ts"]), "where": {"telegram": "Telegram", "calendar": "календарь"}.get(
-                    item["source"], "почта"),
-                "who": str(data.get("name") or "") if chat else str(card.get("who") or item["sender"] or ""),
+            who = str(data.get("name") or "") if chat else str(card.get("who") or item["sender"] or "")
+            moment = clock.local(item["ts"], self.core.tz)
+            mark = "waiting" if item["state"] in ("kept", "new") else item["state"]
+            items.append({
+                "when": self.stamp(item["ts"]), "time": f"{moment:%H:%M}",
+                "day": f"{clock.WEEKDAYS[moment.weekday()]}, {moment.day} {clock.MONTHS[moment.month - 1]}",
+                "source": item["source"], "where": SOURCES.get(item["source"], item["source"]),
+                "who": who, "who_key": "who-" + hashlib.sha256(str(item["sender"] or who).encode()).hexdigest()[:10],
                 "from": "" if chat else str(item["sender"] or ""),
                 "text": str(card.get("text") or card.get("summary") or ""),
-                "decision": DECISIONS.get(item["state"], item["state"]),
+                "mark": mark, "decision": DECISIONS.get(item["state"], item["state"]),
                 "needs": NEEDS.get(card.get("needs_now"), ""), "deadline": str(card.get("deadline_now") or ""),
                 "draft": DRAFTS.get(drafts.get(item["event_id"] or ""), "")})
-        for row in store.dropped_since(since, REVIEW_DROPPED):
-            page["dropped"].append({"when": self.stamp(row["ts"]), "from": row["sender"], "subject": row["subject"],
-                                    "kind": "твоё правило" if row["why"] == "blocked" else KINDS.get(row["kind"],
-                                                                                                     row["kind"])})
+        facets = page["facets"]
+        page["views"] += cut("all", "Всё", {}, items)
+        for key, name in SOURCES.items():
+            these = [i for i in items if i["source"] == key]
+            if these:
+                facets["sources"].append({"key": key, "name": name, "count": len(these), "path": f"src-{key}"})
+                page["views"] += cut(f"src-{key}", name, {"source": key}, these)
+        for key, name in REVIEW_MARKS.items():
+            these = [i for i in items if i["mark"] == key]
+            if these:
+                facets["decisions"].append({"key": key, "name": name, "count": len(these), "path": f"dec-{key}"})
+                page["views"] += cut(f"dec-{key}", name, {"decision": key}, these)
+        senders: dict[str, list] = {}
+        for item in items:
+            senders.setdefault(item["who_key"], []).append(item)
+        for key, these in sorted(senders.items(), key=lambda kv: -len(kv[1]))[:REVIEW_SENDERS]:
+            facets["senders"].append({"key": key, "name": these[0]["who"] or "без имени", "where": these[0]["where"],
+                                      "count": len(these), "path": key})
+            page["views"] += cut(key, these[0]["who"] or "без имени", {"who": key}, these)
+        rows = [{"when": self.stamp(row["ts"]), "from": row["sender"], "subject": row["subject"],
+                 "kind": "твоё правило" if row["why"] == "blocked" else KINDS.get(row["kind"], row["kind"])}
+                for row in store.dropped_since(since, REVIEW_DROPPED)]
+        page["dropped"] = len(rows)
+        page["views"] += cut("dropped", "Отсеяно", {}, rows, key="rows", size=REVIEW_DROPPED_PAGE)
         return page
 
     def write_review(self, now: float) -> None:
@@ -701,6 +739,20 @@ def offers(kind: str, view: dict):
             for offer in holder.get("rates" if kind == "stay" else "fares") or []:
                 if isinstance(offer, dict):
                     yield card, offer
+
+
+def cut(base: str, title: str, chosen: dict, rows: list, key: str = "items", size: int | None = None) -> list[dict]:
+    """One slice of the review as its pages: `base`, `base-p2`, … with the neighbours and every page's number."""
+    size = size or REVIEW_PAGE
+    pages = max(1, -(-len(rows) // size))
+    paths = [base if n == 1 else f"{base}-p{n}" for n in range(1, pages + 1)]
+    numbers = [{"page": n, "path": path} for n, path in enumerate(paths, 1)]
+    return [{"path": path, "title": title, "kind": key, "page": n, "pages": pages,
+             "filter": {"source": chosen.get("source", ""), "decision": chosen.get("decision", ""),
+                        "who": chosen.get("who", "")},
+             key: rows[(n - 1) * size:n * size], "prev": paths[n - 2] if n > 1 else "",
+             "next": paths[n] if n < pages else "", "numbers": numbers}
+            for n, path in enumerate(paths, 1)]
 
 
 def money(value) -> str:

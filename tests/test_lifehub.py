@@ -472,6 +472,8 @@ def test_the_review_page_shows_what_she_decided_on_each_letter_and_message(tmp_p
     """The owner, 2026-10-12: «где ты видишь, что она подумала? могу я это на хабе посмотреть?» — a week of her
     judgements, newest first: where from, from whom, her words, where code sent it, and what became of a draft.
     His own messages are not hers to judge; the dropped are a line each from the technical log."""
+    import re
+
     from retinue.outbox import Outbox, OutboxStore
 
     from test_mailroom import ACCOUNT, NOW
@@ -505,18 +507,54 @@ def test_the_review_page_shows_what_she_decided_on_each_letter_and_message(tmp_p
 
     page = hub.review(NOW)
     assert page["updated"].startswith("2025-10-09 ") and page["days"] == 7
-    assert [(i["where"], i["who"], i["decision"]) for i in page["items"]] == [
+    views = {view["path"]: view for view in page["views"]}
+    everything = views["all"]
+    assert [(i["where"], i["who"], i["decision"]) for i in everything["items"]] == [
         ("Telegram", "Александр", "ждёт её оценки"),
         ("Telegram", "Александр", "сразу тебе"),
         ("Telegram", "Александр", "молча"),
         ("почта", "Анна, Acme", "в утреннюю сводку")], "a week, newest first; his own and older ones left out"
-    told, silent, letter = page["items"][1:]
+    told, silent, letter = everything["items"][1:]
     assert told["text"] == "Александр спрашивает, когда автобус." and told["needs"] == "ответить" and \
-        told["draft"] == "черновик отправлен"
+        told["draft"] == "черновик отправлен" and told["mark"] == "told"
     assert letter["text"] == "Анна зовёт на созвон в пятницу." and letter["deadline"] == "пт 17.10" and \
-        letter["from"] == "anna@acme.example" and letter["draft"] == ""
-    assert silent["needs"] == "" and told["when"].startswith("2025-10-09 ")
-    assert page["dropped"] == [{"when": page["dropped"][0]["when"], "from": "sale@shop.example",
-                                "subject": "Скидки до 70%", "kind": "реклама"}]
+        letter["from"] == "anna@acme.example" and letter["draft"] == "" and letter["mark"] == "later"
+    assert silent["needs"] == "" and told["time"] == "11:36" and told["day"] == "четверг, 9 октября"
+    assert (everything["page"], everything["pages"], everything["prev"], everything["next"]) == (1, 1, "", "")
+    facets = page["facets"]
+    assert [(f["name"], f["count"], f["path"]) for f in facets["sources"]] == [("Telegram", 3, "src-telegram"),
+                                                                             ("почта", 1, "src-mail")]
+    assert [(f["name"], f["count"]) for f in facets["decisions"]] == [
+        ("сразу тебе", 1), ("в утреннюю сводку", 1), ("молча", 1), ("ждёт её оценки", 1)]
+    (alex, anna) = facets["senders"]
+    assert (alex["name"], alex["count"], anna["name"], anna["count"]) == ("Александр", 3, "Анна, Acme", 1)
+    assert re.fullmatch(r"who-[0-9a-f]{10}", alex["path"]) and "@" not in anna["path"], "no address in a path"
+    assert [i["who"] for i in views[anna["path"]]["items"]] == ["Анна, Acme"] and views[anna["path"]]["title"] == \
+        "Анна, Acme"
+    assert [i["mark"] for i in views["dec-told"]["items"]] == ["told"] and views["src-mail"]["filter"] == \
+        {"source": "mail", "decision": "", "who": ""}
+    assert views["dropped"]["rows"] == [{"when": views["dropped"]["rows"][0]["when"], "from": "sale@shop.example",
+                                        "subject": "Скидки до 70%", "kind": "реклама"}] and page["dropped"] == 1
+    assert all(re.fullmatch(r"[a-z0-9-]{1,40}", path) for path in views), "the adapter checks every path again"
     hub.write_review(NOW)
     assert hub.data.read("review.json") == page
+
+
+def test_the_review_pages_are_cut_into_pages_of_twenty_five(tmp_path):
+    from test_mailroom import ACCOUNT, NOW
+
+    core, hub, _ = hub_core(tmp_path)
+    mail = core.mail.store
+    for n in range(60):
+        mail.keep([{"seq": 1, "account": ACCOUNT, "source": "mail", "ref": f"m{n}", "data": {}}], NOW - n * 60)
+        seq = mail.db.execute("SELECT MAX(seq) FROM mail_items").fetchone()[0]
+        mail.set(seq, NOW - n * 60, state="silent", sender=f"s{n % 2}@x.example", kind="service", ts=NOW - n * 60,
+                 card={"who": f"S{n % 2}", "text": f"Письмо {n}."})
+    views = {view["path"]: view for view in hub.review(NOW)["views"]}
+    assert [(p, views[p]["page"], views[p]["pages"], len(views[p]["items"])) for p in ("all", "all-p2", "all-p3")] == [
+        ("all", 1, 3, 25), ("all-p2", 2, 3, 25), ("all-p3", 3, 3, 10)]
+    assert (views["all"]["prev"], views["all"]["next"], views["all-p2"]["prev"], views["all-p3"]["next"]) == (
+        "", "all-p2", "all", "")
+    assert views["all"]["items"][0]["text"] == "Письмо 0." and views["all-p3"]["items"][-1]["text"] == "Письмо 59."
+    assert views["all-p2"]["numbers"] == [{"page": 1, "path": "all"}, {"page": 2, "path": "all-p2"},
+                                          {"page": 3, "path": "all-p3"}]

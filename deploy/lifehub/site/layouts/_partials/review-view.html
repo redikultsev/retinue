@@ -1,0 +1,56 @@
+{{- /* One page of the review, by its path in data/review.json. */ -}}
+{{- $r := partial "data.html" "review.json" -}}
+{{- $path := . -}}
+<h1>Разбор</h1>
+{{ if not $r.updated }}<p class="muted">Данных ещё нет: Роутер пишет их раз в пять минут.</p>{{ else }}
+{{ range where $r.views "path" $path }}{{ $v := . }}
+<p class="muted">Что она решила по каждому письму и сообщению за {{ $r.days }} дней. Куда — решает код по её ответу.</p>
+
+<nav class="facets">
+<div><span class="facet-name">Источник</span>
+{{ partial "review-link.html" (dict "path" "all" "text" "всё" "class" "chip" "on" (eq $v.path "all")) }}
+{{ range $r.facets.sources }}{{ partial "review-link.html" (dict "path" .path "text" (printf "%s · %d" .name (int .count)) "class" "chip" "on" (eq $v.filter.source .key)) }}
+{{ end }}</div>
+<div><span class="facet-name">Решение</span>
+{{ range $r.facets.decisions }}{{ partial "review-link.html" (dict "path" .path "text" (printf "%s · %d" .name (int .count)) "class" (printf "chip mark-%s" .key) "on" (eq $v.filter.decision .key)) }}
+{{ end }}
+{{ with $r.dropped }}{{ partial "review-link.html" (dict "path" "dropped" "text" (printf "отсеяно · %d" (int .)) "class" "chip mark-dropped" "on" (eq $v.path "dropped")) }}{{ end }}</div>
+<details{{ if $v.filter.who }} open{{ end }}><summary class="facet-name">Отправители · {{ len $r.facets.senders }}</summary>
+<div>{{ range $r.facets.senders }}{{ partial "review-link.html" (dict "path" .path "text" (printf "%s · %d" .name (int .count)) "class" "chip" "on" (eq $v.filter.who .key)) }}
+{{ end }}</div></details>
+</nav>
+
+<h2>{{ $v.title }}{{ if gt $v.pages 1 }} <span class="muted">· страница {{ $v.page }} из {{ $v.pages }}</span>{{ end }}</h2>
+
+{{ if eq $v.kind "rows" }}
+{{ with $v.rows }}
+<table>
+<tr><th>Когда</th><th>От кого</th><th>Тема</th><th>Почему</th></tr>
+{{ range . }}<tr><td>{{ .when }}</td><td>{{ .from }}</td><td>{{ .subject }}</td><td>{{ .kind }}</td></tr>
+{{ end }}
+</table>
+<p class="muted">Сами письма не хранятся: они в почтовом ящике. Строки журнала живут 30 дней.</p>
+{{ else }}<p class="muted">Ничего не отсеяно.</p>{{ end }}
+{{ else }}
+{{ $day := "" }}
+{{ range $v.items }}
+{{ if ne .day $day }}{{ $day = .day }}<h3 class="day">{{ .day }}</h3>{{ end }}
+<article class="review mark-{{ .mark }}">
+<p class="review-head"><span class="time">{{ .time }}</span> <span class="tag">{{ .where }}</span> <strong>{{ .who | default "без имени" }}</strong>{{ with .from }} <span class="muted">{{ . }}</span>{{ end }}</p>
+<p>{{ .text | default "—" }}</p>
+<p class="review-foot"><span class="decision">{{ .decision }}</span>{{ with .needs }} <span class="tag">{{ . }}</span>{{ end }}{{ with .deadline }} <span class="muted">срок: {{ . }}</span>{{ end }}{{ with .draft }} <span class="muted">· {{ . }}</span>{{ end }}</p>
+</article>
+{{ else }}<p class="muted">За эти дни ничего не пришло.</p>{{ end }}
+{{ end }}
+
+{{ if gt $v.pages 1 }}
+<nav class="pager">
+{{ with $v.prev }}{{ partial "review-link.html" (dict "path" . "text" "← новее" "class" "chip") }}{{ end }}
+{{ range $v.numbers }}{{ partial "review-link.html" (dict "path" .path "text" (string (int .page)) "class" "chip" "on" (eq .page $v.page)) }}
+{{ end }}
+{{ with $v.next }}{{ partial "review-link.html" (dict "path" . "text" "старее →" "class" "chip") }}{{ end }}
+</nav>
+{{ end }}
+{{ else }}<p class="muted">Такой страницы разбора уже нет: данные обновились.</p>{{ end }}
+{{ partial "updated.html" $r }}
+{{ end }}

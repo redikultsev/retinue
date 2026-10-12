@@ -14,9 +14,9 @@
 <p>{{ partial "link.html" (dict "url" .link "ok" .linkable) }}</p>
 </article>
 {{ end }}
-{{ else }}
+{{ else }}{{ with .Params.review }}{{ partial "review-view.html" . }}{{ else }}
 <h1>{{ .Title }}</h1>
 {{ if .Params.soon }}<p class="muted">Скоро.</p>{{ end }}
 {{ .Content }}
-{{ end }}
+{{ end }}{{ end }}
 {{ end }}

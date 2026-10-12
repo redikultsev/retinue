@@ -60,10 +60,13 @@ def test_every_page_of_the_first_version_is_there():
     for part in ("$now.trips", "$now.today", "$now.tomorrow", "$now.reminders", "$now.mail", "$now.deadlines",
                  "$now.health", "без срока"):
         assert part in home, part
-    assert "layout: review" in (SITE / "content" / "review.md").read_text()
-    review = (SITE / "layouts" / "review.html").read_text()
-    for part in ("$r.items", ".decision", ".draft", "$r.dropped", '"review.json"'):
+    assert "layout: review" in (SITE / "content" / "review" / "_index.md").read_text()
+    review = (SITE / "layouts" / "_partials" / "review-view.html").read_text()
+    for part in ("$r.facets.sources", "$r.facets.decisions", "$r.facets.senders", "$v.items", "$v.rows", ".decision",
+                 ".draft", "$v.numbers", "$v.prev", "$v.next", '"review.json"'):
         assert part in review, part
+    adapter = (SITE / "content" / "review" / "_content.gotmpl").read_text()
+    assert 'findRE "^[a-z0-9-]{1,40}$" .path' in adapter, "a page's path is the router's slice name and nothing else"
     status = (SITE / "layouts" / "status.html").read_text()
     for part in ("$s.limit", "$s.tokens", "$s.connectors", "$s.mail", ".rules", "$s.charts", "оценка CLI"):
         assert part in status, part

@@ -307,10 +307,9 @@ def test_a_trip_page_takes_its_prices_from_travel_ops_not_from_her(tmp_path):
     ok, text = asyncio.run(hub.publish(trip_with(FLIGHT, STAY), core.travel, NOW))
     assert ok, text
     assert [call[2]["params"] for call in seen] == [
-        {"name": "refine_flights", "arguments": {"search_id": "f4k2m9qa", "limit": 100, "max_stops": 3,
-                                                 "max_leg_hours": 72, "sort": "departure"}},
-        {"name": "refine_stays", "arguments": {"search_id": "s7n3p2xk", "limit": 100, "min_rating": 0,
-                                               "max_center_km": 100, "sort": "rating"}}], "a stored search, not a site"
+        {"name": "refine_flights", "arguments": {"search_id": "f4k2m9qa", "limit": 100}},
+        {"name": "refine_stays", "arguments": {"search_id": "s7n3p2xk", "limit": 100}}], \
+        "a stored search, not a site; first the view she was shown"
     (name,) = hub.data.names("trips")
     page = hub.data.read(name)
     assert lifehub.ID.fullmatch(page["id"]) and name == f"trips/{page['id']}.json"
@@ -349,7 +348,7 @@ def test_a_trip_is_refused_with_the_field_to_fix(tmp_path):
     assert publish(trip_with({**FLIGHT, "link": "https://evil.example/x"})) == (
         False, "Не опубликовано: options[0].link — не ссылка на площадку travel-ops: возьми link.url из ответа "
                "инструмента целиком.")
-    assert publish(trip_with({**FLIGHT, "link": "https://www.kupibilet.ru/gone"}), FLIGHTS) == (
+    assert publish(trip_with({**FLIGHT, "link": "https://www.kupibilet.ru/gone"}), FLIGHTS, FLIGHTS, FLIGHTS) == (
         False, "Не опубликовано: options[0] — этой ссылки нет в поиске f4k2m9qa. Возьми link.url варианта из ответа "
                "travel-ops по этому search_id.")
     assert publish(trip_with(FLIGHT), {"error": "no search 'f4k2m9qa' in memory (results are kept for 7 days)"}) == (
@@ -445,3 +444,25 @@ def test_the_status_page_counts_what_was_sent_to_people_by_channel(tmp_path):
 
     page = (Path(__file__).resolve().parents[1] / "deploy" / "lifehub" / "site" / "layouts" / "status.html").read_text()
     assert "{{ with $s.sent }}" in page and "Отправлено людям" in page
+
+
+def test_an_option_beyond_the_first_hundred_of_a_view_is_still_found(tmp_path):
+    """Seen on the server: a search of ~800 flights, her direct flight on the later day. The loose view sorted by
+    departure held only the first hundred — the earlier day's flights with stops — so her link was «not in the
+    search». An option is looked for in the view she was shown first, then in the loose views by price and by
+    departure; each view is asked once for all the options of its search."""
+    from test_mailroom import NOW
+    from test_travel import travel_ops
+
+    core, hub, _ = hub_core(tmp_path)
+    empty = {**FLIGHTS, "cards": []}
+    seen = []
+    ok, text = asyncio.run(hub.publish(trip_with(FLIGHT, {**FLIGHT, "pick": False}),
+                                       travel_ops([empty, empty, FLIGHTS], seen), NOW))
+    assert ok, text
+    assert [call[2]["params"]["arguments"] for call in seen] == [
+        {"search_id": "f4k2m9qa", "limit": 100},
+        {"search_id": "f4k2m9qa", "limit": 100, "max_stops": 3, "max_leg_hours": 72, "sort": "price"},
+        {"search_id": "f4k2m9qa", "limit": 100, "max_stops": 3, "max_leg_hours": 72, "sort": "departure"}]
+    (name,) = hub.data.names("trips")
+    assert [option["price"] for option in hub.data.read(name)["options"]] == ["497 EUR", "497 EUR"]

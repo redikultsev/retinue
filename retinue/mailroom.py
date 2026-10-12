@@ -24,7 +24,6 @@ log = logging.getLogger("retinue.mailroom")
 
 LOOK_S = 60               # how often the router looks at what the collector found (the collector reads every 10 min)
 BACKFILL_GAP_S = 30       # the backfill reads a letter at most this often: live mail and the owner come first
-CEILING = 0.8             # past this share of the limit window, background mail waits for the window to reset
 RETRY_S = 600             # a letter whose run failed is tried again after this
 TRIES = 3                 # then it is kept as it is, unread by her: losing a person's letter is worse
 ATTACHMENTS = 5           # files read from one kept letter at most
@@ -135,20 +134,13 @@ class Mailroom:
 
     # --- one item ---------------------------------------------------------------------------------------------
 
-    def paused(self, now: float) -> bool:
-        """The subscription's window is nearly spent: background mail waits, the conversation keeps what is left."""
-        rate = self.core.store.last_rate_limit()
-        if not rate or rate["utilization"] is None or rate["utilization"] < CEILING:
-            return False
-        return (rate["resets_at"] or rate["seen"] + 3600) > now
-
     async def read_next(self, now: float) -> bool:
         for _ in range(PLAIN_BATCH):  # no model: neither the limit nor the pace holds them
             plain = self.store.next_plain(now)
             if plain is None:
                 break
             await {"calendar": self.calendar, TELEGRAM: self.chat}.get(plain["source"], self.letter)(plain, now)
-        if self.core.limit_until > now or self.paused(now):
+        if self.core.limit_until > now:  # a refusal by the limit is known; no share of the window holds mail back
             return False
         item = self.store.next(now, backfill=now - self.backfilled >= BACKFILL_GAP_S)
         if item is None:
@@ -383,7 +375,7 @@ class Mailroom:
         """Kept letters and invitations, glued for GLUE_S, judged in one run of hers outside the conversation, with
         her tools: she may look in the base and the archive, and write a Record — that commit carries the mark of
         someone else's text. Code routes each answer (`route`). Returns whether a judgement ran."""
-        if self.core.limit_until > now or self.paused(now):
+        if self.core.limit_until > now:  # a refusal by the limit is known; no share of the window holds mail back
             return False
         items = self.store.ready(now, GLUE_S, JUDGE_ITEMS)
         if not items:

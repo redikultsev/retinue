@@ -156,7 +156,10 @@ def test_a_kept_letters_files_are_read_and_a_dropped_ones_never_downloaded(tmp_p
     assert core.archive.read(files[0])[0][0] == "application/pdf", "the PDF itself is kept for her"
 
 
-def test_live_mail_first_the_backfill_paced_and_nothing_while_the_window_is_spent(tmp_path):
+def test_live_mail_first_the_backfill_paced_and_nothing_while_the_limit_refuses(tmp_path):
+    """No share of the limit window holds mail back (the owner, 2026-10-12: «лимиты убери, пусть обрабатывает»):
+    seen on the server, a weekly window at 82% held 45 messages of a chat for a day. Only a refusal by the limit,
+    which is known to refuse, stops a run from starting."""
     fake, asked = FakeCollector(), []
     for n in range(1, 4):
         fake.letter_in(n, f"b{n}", f"old{n}@x.example", "Старое", "x", backfill=True)
@@ -171,19 +174,19 @@ def test_live_mail_first_the_backfill_paced_and_nothing_while_the_window_is_spen
         await room.work(NOW + 1)      # a backfill letter
         await room.work(NOW + 2)      # too soon for the next backfill letter
         core.store.run(agent_id="assistant", conversation_id="c", kind="conversation", status="done",
-                       meta={"rate_limit": {"status": "allowed_warning", "rate_limit_type": "five_hour",
-                                            "utilization": 0.85, "resets_at": NOW + 3600}})
-        await room.work(NOW + 100)    # the window is nearly spent: the rest is the conversation's
-        await room.work(NOW + 3700)   # it reset: her judgement of the two kept ones comes first
-        await room.work(NOW + 3701)
+                       meta={"rate_limit": {"status": "allowed_warning", "rate_limit_type": "seven_day",
+                                            "utilization": 0.95, "resets_at": NOW + 90000}})
+        await room.work(NOW + 100)    # the window is nearly spent: mail goes on all the same
+        await room.work(NOW + 101)
         core.limit_until = NOW + 9000
         await room.work(NOW + 3800)   # the limit is known to refuse: nothing starts
         return room
 
     room = asyncio.run(run())
     senders = [a["text"].split("От: ")[1].split("\n")[0] for a in asked if a["control"] == "bare"]
-    assert senders == ["new <new@x.example>", "old1 <old1@x.example>", "old2 <old2@x.example>"]
-    assert room.store.get(3)["state"] == "new"
+    assert senders[:2] == ["new <new@x.example>", "old1 <old1@x.example>"], "live mail first"
+    assert "old2 <old2@x.example>" in senders, "a window at 95% holds nothing back"
+    assert room.store.get(3)["state"] == "new", "a known refusal does"
 
 
 def test_a_run_that_fails_tries_again_and_a_letter_she_never_read_is_kept(tmp_path):

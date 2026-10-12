@@ -495,22 +495,27 @@ class Lifehub:
             if not linkable(option["link"], self.link_hosts):
                 return False, (f"Не опубликовано: options[{number}].link — не ссылка на площадку travel-ops: возьми "
                                "link.url из ответа инструмента целиком.")
-        views = {}
+        views: dict[tuple, dict] = {}
+        options = []
         try:
-            for kind, search_id in dict.fromkeys((o["kind"], o["search_id"]) for o in trip["options"]):
-                views[kind, search_id] = await travel.call(VIEWS[kind], {"search_id": search_id, "limit": VIEW_LIMIT,
-                                                                         **LOOSE[kind]})
+            for number, option in enumerate(trip["options"]):
+                found = None
+                for bars in LOOKS[option["kind"]]:  # each view is asked once for all the options of its search
+                    key = (option["kind"], option["search_id"], tuple(bars.items()))
+                    if key not in views:
+                        views[key] = await travel.call(VIEWS[option["kind"]], {
+                            "search_id": option["search_id"], "limit": VIEW_LIMIT, **bars})
+                    found = next(((card, offer, views[key]) for card, offer in offers(option["kind"], views[key])
+                                  if (offer.get("link") or {}).get("url") == option["link"]), None)
+                    if found:
+                        break
+                if found is None:
+                    return False, (f"Не опубликовано: options[{number}] — этой ссылки нет в поиске "
+                                   f"{option['search_id']}. Возьми link.url варианта из ответа travel-ops по этому "
+                                   "search_id.")
+                options.append(self.describe(option, *found))
         except (TravelRefused, TravelUnavailable) as exc:
             return False, f"Не опубликовано: {str(exc).rstrip('.')}."
-        options = []
-        for number, option in enumerate(trip["options"]):
-            view = views[option["kind"], option["search_id"]]
-            found = next(((card, offer) for card, offer in offers(option["kind"], view)
-                          if (offer.get("link") or {}).get("url") == option["link"]), None)
-            if found is None:
-                return False, (f"Не опубликовано: options[{number}] — этой ссылки нет в поиске {option['search_id']}. "
-                               "Возьми link.url варианта из ответа travel-ops по этому search_id.")
-            options.append(self.describe(option, *found, view))
         page_id = page_id or self.data.new_id("trips")
         self.data.write(f"trips/{page_id}.json", {
             "id": page_id, "title": trip["title"], "summary": trip["summary"], "start": trip["start"],
@@ -629,10 +634,14 @@ class Lifehub:
 
 
 VIEWS = {"flight": "refine_flights", "stay": "refine_stays", "ground": "refine_ground"}
-# A view of a stored search with the bars as loose as they go, sorted not by price (a price order thins near-copies
-# out): her option is looked for among all of it. A stay with no rating at all is still hidden by any rating bar.
-LOOSE = {"flight": {"max_stops": 3, "max_leg_hours": 72, "sort": "departure"},
-         "stay": {"min_rating": 0, "max_center_km": 100, "sort": "rating"}, "ground": {"sort": "departure"}}
+# Views of a stored search her option is looked for in, in order: the one she was shown (travel-ops' own bars), then
+# the bars as loose as they go by price and by another order (a price order thins near-copies out). A view holds at
+# most VIEW_LIMIT cards: a search of ~800 flights sorted by departure showed only the earlier day's, so one loose
+# view was not enough. A stay with no rating at all is still hidden by any rating bar.
+LOOSE = {"flight": {"max_stops": 3, "max_leg_hours": 72}, "stay": {"min_rating": 0, "max_center_km": 100},
+         "ground": {}}
+LOOKS = {kind: [{}, {**bars, "sort": "price"}, {**bars, "sort": "rating" if kind == "stay" else "departure"}]
+         for kind, bars in LOOSE.items()}
 VIEW_LIMIT = 100
 PHOTOS = 2  # photos of one stay on the page
 STAY_KINDS = {"hotel": "отель", "apartment": "апартаменты", "room": "комната", "house": "дом",

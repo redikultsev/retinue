@@ -450,6 +450,12 @@ class MailStore:
                                (state, limit)).fetchall()
         return [self._item(row) for row in rows]
 
+    def answered_after(self, sender: str, ts: float) -> bool:
+        """Whether the owner wrote in this Telegram chat after `ts` — himself or by a card: he has seen what came
+        before it."""
+        return self.db.execute("SELECT 1 FROM mail_items WHERE source = 'telegram' AND state = 'own' AND sender = ?"
+                               " AND ts > ? LIMIT 1", (sender, ts)).fetchone() is not None
+
     def count(self, state: str) -> int:
         return self.db.execute("SELECT COUNT(*) FROM mail_items WHERE state = ?", (state,)).fetchone()[0]
 

@@ -729,8 +729,8 @@ def test_the_owners_chosen_chats_are_kept_like_mail_and_the_other_persons_words_
 def test_the_other_persons_files_are_read_like_attachments_and_her_judgement_sees_the_exchange(tmp_path):
     """A photo, a voice note, a document from the other person: downloaded through the gateway, read by the same
     worker and speech to text as the owner's own files, kept with the message as someone else's — her judgement gets
-    them as it gets a letter's. Over 20 MB: said, not downloaded. His own files: named only. Each new message comes
-    with the earlier ones of the same chat."""
+    them as it gets a letter's. Over 20 MB: said, not downloaded. His own files: named only, but his own voice is
+    transcribed and kept as his — not judged. Each new message comes with the earlier ones of the same chat."""
     from test_attachments import FakeScribe, picture
 
     gateway, asked = FakeGateway(), []
@@ -742,6 +742,9 @@ def test_the_other_persons_files_are_read_like_attachments_and_her_judgement_see
     gateway.message(3, 12, "И договор.", file={"kind": "document", "id": "d1", "name": "dogovor.pdf",
                                                "type": "application/pdf", "size": 25 * 2**20, "duration": 0})
     gateway.message(4, 13, "Моё фото", direction="own", media="photo")
+    gateway.message(5, 14, "", direction="own", media="voice", file={"kind": "voice", "id": "v2", "name": "",
+                                                                       "type": "audio/ogg", "size": 10, "duration": 4})
+    gateway.files["v2"] = b"OggS-mine"
 
     async def run():
         core, room = chat_room(tmp_path, gateway, asked, decided(*[("read", "low", "Анна прислала квартиру.")] * 3))
@@ -749,9 +752,9 @@ def test_the_other_persons_files_are_read_like_attachments_and_her_judgement_see
         await core.start([FakeChannel("telegram", False)])
         await room.work(NOW)
         await room.work(NOW + 200)
-        return core
+        return core, room
 
-    core = asyncio.run(run())
+    core, room = asyncio.run(run())
     photo, voice, contract, mine = (core.archive.get(f"tgb:777/{m}") for m in (10, 11, 12, 13))
     marks = [a.mark() for e in (photo, voice) for a in core.archive.attachments_of(e.id)]
     assert marks == ["[вложение #1: фото 64×48 · чужое: Telegram, Анна (@anna_x)]",
@@ -759,11 +762,48 @@ def test_the_other_persons_files_are_read_like_attachments_and_her_judgement_see
     assert photo.text.endswith("Вот фото квартиры.") and photo.meta["attachments"] == [1]
     assert "Перезвоню вечером, обсудим цену." in voice.text, "voice: the transcript, as the owner's own"
     assert "Telegram отдаёт ботам файлы до 20 МБ" in contract.text and "[не прочитано:" in contract.text
-    assert "[фото — не загружалось]" in mine.text and gateway.fetched == ["p1", "v1"], "too big and his own: no"
+    assert "[фото — не загружалось]" in mine.text and gateway.fetched == ["p1", "v1", "v2"], "too big, his photo: no"
+    spoken = core.archive.get("tgb:777/14")
+    marks = [a.mark() for a in core.archive.attachments_of(spoken.id)]
+    assert marks == ["[вложение #3: голосовое 0:04 · своё: Telegram]"]
+    assert "Перезвоню вечером" in spoken.text and room.store.get(5)["state"] == "own", "transcribed, not judged"
     judge = asked[-1]
     assert judge["files"] == ["вложение #1: фото 64×48 · чужое: Telegram, Анна (@anna_x)"], "she sees the photo"
     assert "--- 1." in judge["text"] and "--- 3." in judge["text"], "one chat, one run: its three messages"
 
+
+
+def test_the_summary_leaves_out_chat_messages_the_owner_answered_after_but_not_what_he_was_to_do(tmp_path):
+    """A live talk: everything she put off in a chat he then wrote in, he has seen — it is closed, not listed. What her
+    card asked him to do or decide stays: a reply in the chat does not prove it done. Another chat and mail stay."""
+    gateway, asked = FakeGateway(), []
+
+    async def run():
+        core, room = chat_room(tmp_path, gateway, asked, decided())
+        store = room.store
+        rows = [(1, "telegram", "777/1", "tg:777", NOW, "later", "read", "Анна шутит."),
+                (2, "telegram", "777/2", "tg:777", NOW + 10, "later", "act", "Анна просит купить хлеб."),
+                (3, "telegram", "777/3", "tg:777", NOW + 20, "own", "", ""),
+                (4, "telegram", "777/4", "tg:777", NOW + 30, "later", "read", "Анна прислала ссылку."),
+                (5, "telegram", "888/1", "tg:888", NOW, "later", "reply", "Марко спрашивает про встречу."),
+                (6, "mail", "m1", "bank@bank.example", NOW, "later", "read", "Пришла выписка.")]
+        store.keep([{"seq": seq, "account": "telegram" if source == "telegram" else ACCOUNT, "source": source,
+                     "ref": ref, "data": {}} for seq, source, ref, *_ in rows], NOW)
+        for seq, _, ref, sender, ts, state, needs, text in rows:
+            n = store.db.execute("SELECT seq FROM mail_items WHERE ref = ?", (ref,)).fetchone()[0]
+            store.set(n, NOW, state=state, sender=sender, ts=ts, **({"card": {"text": text, "needs_now": needs}}
+                                                                    if text else {}))
+        return room
+
+    room = asyncio.run(run())
+    lines, covered = room.waited(NOW + 100)
+    said = " ".join(lines)
+    assert "Анна шутит" not in said, "he wrote in that chat after it: seen"
+    assert "купить хлеб" in said, "to do: stays"
+    assert "прислала ссылку" in said, "after his last word: not seen"
+    assert "Марко" in said and "выписка" in said
+    seen = room.store.db.execute("SELECT seq FROM mail_items WHERE ref = '777/1'").fetchone()[0]
+    assert seen in covered, "closed with the summary, not left to come back"
 
 def said_in(core, room, chat="777", name="Марко"):
     """Earlier messages of a chosen chat, put on record as `Mailroom.chat` would: the router's archive is the memory."""

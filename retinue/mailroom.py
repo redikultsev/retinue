@@ -20,6 +20,7 @@ from .attachments import Unreadable, Upload, prepare
 from .mail import (ANSWERS, EVENT_CHARS, EVENT_SCHEMA, JOB, KINDS, LATER, NOW, TRIAGE_SCHEMA, Card, Collector,
                    MailStore, Unavailable, card_of, decisions, event_record, invitation, letter_record, route,
                    safe_label, triage_prompt, when)
+from .tgbusiness import OWN_SPEECH
 
 log = logging.getLogger("retinue.mailroom")
 
@@ -38,6 +39,7 @@ JUDGE_ITEMS = 10          # items in one judgement at most
 JUDGE_RETRY_S = 300
 HOUR = 3600               # urgent letters of one sender within this are one message
 SUMMARY_ITEMS = 15        # letters that waited till morning, named in the summary; the rest are counted
+STILL_OPEN = ("decide", "attend", "pay", "act")  # a later reply in the chat does not close these: said is not done
 STALE_S = 1800            # a source not synced for this long is not counted as working (it syncs every 10 min)
 URGENT_DAY = 8            # more urgent messages a day than this: the summary asks what could have waited
 TELEGRAM = "telegram"     # the source of the Business gateway's items
@@ -195,7 +197,8 @@ class Mailroom:
         """A message of a chosen Telegram chat, on record verbatim. The other person's goes on to her judgement, like
         a kept letter: no triage — the owner chose these people himself. A file of theirs is read like a letter's
         attachment — by the same worker, voice by the same speech to text — and kept with the message, marked as
-        someone else's. His own, a reply the courier sent and an edit are on record and nothing more."""
+        someone else's. His own, a reply the courier sent and an edit are on record and nothing more; of his own
+        files only his voice is read, as his, so that a talk by voice has both halves."""
         from .core import defuse, said_with
 
         data = item["data"]
@@ -205,8 +208,10 @@ class Mailroom:
             who += f" (@{defuse(str(data['username']))})"
         lines = [f"Telegram · {who} · {DIRECTIONS[direction]}" + (" · изменено" if data.get("edit") else "")]
         kept, refused = [], []
-        if isinstance(data.get("file"), dict) and direction == "in" and self.gateway:
-            kept, refused = await self._chat_file(item, data["file"], who)
+        file = data.get("file") if isinstance(data.get("file"), dict) else None
+        spoken = direction == "own" and file is not None and file.get("kind") in OWN_SPEECH
+        if file and (direction == "in" or spoken) and self.gateway:
+            kept, refused = await self._chat_file(item, file, who, own=spoken)
         elif data.get("media"):
             lines.append(f"[{MEDIA.get(data['media'], 'вложение')} — не загружалось]")
         record = "\n".join(lines + [said_with(kept, refused, defuse(str(data.get("text") or "")))]).strip()
@@ -232,9 +237,10 @@ class Mailroom:
         self.store.set(item["seq"], now, state="kept" if judged else ("own" if direction != "in" else "done"),
                        event_id=event.id, sender=f"tg:{chat}", ts=float(data.get("date") or now), kind="chat")
 
-    async def _chat_file(self, item: dict, file: dict, who: str) -> tuple[list, list[str]]:
-        """The other person's file: downloaded through the gateway (Telegram serves bots up to 20 MB), read by the
-        attachment worker, voice and video sound by speech to text, as the owner's own files are."""
+    async def _chat_file(self, item: dict, file: dict, who: str, own: bool = False) -> tuple[list, list[str]]:
+        """The other person's file — or the owner's own voice (`own`): downloaded through the gateway (Telegram serves
+        bots up to 20 MB), read by the attachment worker, voice and video sound by speech to text, as the owner's own
+        files are."""
         from .attachments import MAX_DOWNLOAD, Unreadable, Upload, prepare, too_big
         from .core import defuse
 
@@ -258,7 +264,8 @@ class Mailroom:
             log.exception("a file of item %s failed", item["seq"])
             return [], [f"{defuse(upload.label())}: ошибка ({type(exc).__name__})"]
         known = event_id(CHAT, 0, "", "tgb", item["ref"])
-        return [self.core.archive.attach(known, upload.kind, defuse(done.what), f"чужое: Telegram, {who}",
+        origin = "своё: Telegram" if own else f"чужое: Telegram, {who}"
+        return [self.core.archive.attach(known, upload.kind, defuse(done.what), origin,
                                          defuse(done.text), done.files, commit=False)], []
 
     async def letter(self, item: dict, now: float) -> None:
@@ -725,12 +732,18 @@ class Mailroom:
         return lines or ["- событий нет"]
 
     def waited(self, now: float) -> tuple[list[str], list[int]]:
-        """What she judged could wait till morning, for the summary: her words and where they come from."""
-        items = self.store.in_state("later")
+        """What she judged could wait till morning, for the summary: her words and where they come from. A chat
+        message the owner wrote after, in the same chat, he has seen: it is left out and closed with the rest — unless
+        her card asked him to do or decide something, which a reply does not prove done."""
+        items, seen = [], []
+        for item in self.store.in_state("later"):
+            read = item["source"] == "telegram" and (item["card"] or {}).get("needs_now") not in STILL_OPEN \
+                and self.store.answered_after(str(item["sender"] or ""), float(item["ts"] or 0))
+            (seen if read else items).append(item)
         lines = [f"- {self._said(item)}".replace("\n", " ") for item in items[:SUMMARY_ITEMS]]
         if len(items) > SUMMARY_ITEMS:
             lines.append(f"- и ещё {len(items) - SUMMARY_ITEMS}: в архиве")
-        return lines, [item["seq"] for item in items[:SUMMARY_ITEMS]]
+        return lines, [item["seq"] for item in seen + items[:SUMMARY_ITEMS]]
 
     def probed(self, now: float) -> str:
         """For the owner's morning, in code's words: who wrote to the assistant rather than to him in the last day.

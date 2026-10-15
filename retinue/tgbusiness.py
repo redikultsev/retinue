@@ -11,7 +11,9 @@ reach a business bot; history before the connection never does either.
 
 A file the other person sent — a photo, a document, a voice note, audio, a video — is not read here: the router asks
 for it by its id (`/file`), only for an id that came in an item, and reads it with its own worker, like the owner's
-files. The gateway only downloads it from Telegram, up to the Bot API's 20 MB.
+files. The gateway only downloads it from Telegram, up to the Bot API's 20 MB. Of the owner's own files only his
+speech — a voice note or a round video he recorded, not forwarded — goes the same way: without its transcript his half
+of a talk by voice is missing from the exchange. His photos and documents he has; they are named, not fetched.
 
 A reply goes only where Telegram allows it: the owner's connection enabled with the right to reply, and an incoming
 message in that chat within 24 hours. Outside the window the router offers the owner a deep link instead.
@@ -45,6 +47,7 @@ TEXT_CHARS = 4096
 MEDIA = ("photo", "video", "voice", "audio", "document", "video_note", "sticker", "animation", "contact", "location")
 FILES = ("photo", "document", "voice", "audio", "video", "video_note")  # what the router reads, as the owner's own (8б)
 MAX_FILE = 20 * 1024 * 1024  # getFile serves bots files up to 20 MB
+OWN_SPEECH = ("voice", "video_note")  # the owner's own files that are fetched: what he said, for its transcript
 
 
 class TelegramError(Exception):
@@ -134,7 +137,8 @@ def item_of(message: dict, owner: int) -> tuple[str, dict] | None:
     ref = f"{chat['id']}/{message['message_id']}" + (f"/e{edit}" if edit else "")
     kind = next((key for key in FILES if key in message), "") if "animation" not in message else ""
     found = {}
-    if kind and direction == "in" and not edit:  # the other person's file: the router reads it; his own he has
+    spoken = direction == "own" and kind in OWN_SPEECH and "forward_origin" not in message  # his own voice, recorded
+    if kind and (direction == "in" or spoken) and not edit:  # the other person's file, his speech; other own he has
         item = (message[kind] or [{}])[-1] if kind == "photo" else message[kind]  # a photo: sizes, the largest last
         if isinstance(item, dict) and item.get("file_id"):
             found = {"file": {"kind": kind, "id": str(item["file_id"]), "name": str(item.get("file_name") or "")[:200],

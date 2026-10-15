@@ -149,7 +149,8 @@ def test_the_router_reaches_the_gateway_with_its_token_and_sees_rights_by_name(m
 
 def test_the_other_persons_file_is_served_by_the_id_an_item_carried_and_nothing_else():
     """A photo, a voice note, a document of the other person's: the item carries the file's id and size; the router
-    asks for it by that id and gets the bytes the gateway took from Telegram. His own files and unknown ids — no."""
+    asks for it by that id and gets the bytes the gateway took from Telegram. His own files and unknown ids — no, but
+    a voice note he recorded himself — yes: its transcript is his half of the talk."""
     import base64
 
     import httpx
@@ -168,6 +169,11 @@ def test_the_other_persons_file_is_served_by_the_id_an_item_carried_and_nothing_
                                                                                          "mime_type": "audio/ogg"})})
         await g.consume({"update_id": 3, "business_message": message("", sender=OWNER, mid=22,
                                                                      document={"file_id": "mine", "file_name": "cv.pdf"})})
+        await g.consume({"update_id": 4, "business_message": message("", sender=OWNER, mid=23,
+                                                                     voice={"file_id": "said", "duration": 5})})
+        await g.consume({"update_id": 5, "business_message": message("", sender=OWNER, mid=24,
+                                                                     forward_origin={"type": "user"},
+                                                                     voice={"file_id": "passed", "duration": 5})})
         client = TestClient(TestServer(tgbusiness.Service(g, courier.Ledger(":memory:"), "tok").app()))
         await client.start_server()
         try:
@@ -180,9 +186,10 @@ def test_the_other_persons_file_is_served_by_the_id_an_item_carried_and_nothing_
             await client.close()
 
     got, mine_status, mine, gone = asyncio.run(run())
-    photo, voice, own = (item["data"] for item in g.state.look())
+    photo, voice, own, said, passed = (item["data"] for item in g.state.look())
     assert photo["file"] == {"kind": "photo", "id": "big-photo", "name": "", "type": "", "size": 3, "duration": 0}
     assert voice["file"]["kind"] == "voice" and voice["file"]["duration"] == 7 and "file" not in own, "his own: no"
+    assert said["file"]["id"] == "said" and "file" not in passed, "his own voice: yes; a voice he forwarded: no"
     assert base64.b64decode(got["data"]) == b"JPG"
     assert mine_status == 400 and mine == {"error": "такого файла не было в сообщениях"}
     assert gone["error"].startswith("Telegram не отдал файл (404"), "the reason, never the address with the token"

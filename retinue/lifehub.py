@@ -191,7 +191,7 @@ WEEK = 7 * DAY
 # How a model run is named on the status page. A kind not here is shown as it is.
 RUN_KINDS = {"conversation": "разговор", "retry": "ответ после лимита", "summary": "утренняя сводка",
              "compact": "сжатие", "reminder": "напоминание", "price": "слежение за ценой", "triage": "разбор письма",
-             "mail": "суждение о почте"}
+             "mail": "суждение о почте", "weekly": "недельный обзор"}
 TOKENS = ("вход", "выход", "кеш: чтение", "кеш: запись")
 RUN_STATES = {"done": "удачно", "error": "сбой", "failed": "сбой", "rejected": "отказ", "limit": "упёрлись в лимит"}
 WINDOW_NAMES = {"five_hour": "5 часов", "seven_day": "неделя"}
@@ -220,6 +220,44 @@ DRAFTS = {"shown": "черновик ждёт твоей кнопки", "hidden"
           "dropped": "ты сказал не отвечать", "failed": "черновик не отправлен", "unknown": "черновик: ушло ли — неизвестно",
           "link": "черновик: отправить сам по ссылке"}
 MAIL_DAYS = 7             # mail that needs the owner, judged this many days back
+TRACKER = "career/profile/applications.md"  # the owner's applications: career-ops' table, kept in the base
+WORK_DAYS = 14            # the «Работа» page: interviews this many days ahead
+WORK_MAIL_DAYS = 30       # and job letters waiting for his answer, this many days back
+WORK_NOTES = 300          # a tracker row's notes, cut to this on the page
+STATES = {"evaluated": "оценена", "applied": "отклик отправлен", "responded": "ответили", "interview": "собеседования",
+          "offer": "оффер", "rejected": "отказ", "discarded": "отброшена", "skip": "пропущена", "hired": "нанят"}
+INTERVIEW_WORDS = ("interview", "интервью", "собеседован", "screening", "скрининг", "hiring")
+
+
+def tracker_rows(text: str) -> list[dict]:
+    """career-ops' table (`data/applications.md`), read by its header — the columns vary between versions: the number,
+    the date, the company, the role, the score, the status, the report's number, the notes. Markdown is stripped; a
+    status not in career-ops' list is shown as it is. Anything else in the file — the Record's header — is skipped."""
+    header, rows = [], []
+    for line in text.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if not header:
+            if any(cell.lower() == "status" for cell in cells):
+                header = [cell.lower() for cell in cells]
+            continue
+        if all(re.fullmatch(r":?-{2,}:?", cell) for cell in cells if cell):
+            continue
+        row = dict(zip(header, (plain(cell) for cell in cells)))
+        status = row.get("status", "")
+        key = status.lower() if status.lower() in STATES else ""
+        rows.append({"n": row.get("#", ""), "date": row.get("date", ""), "company": row.get("company", "") or "?",
+                     "role": row.get("role", ""), "score": row.get("score", ""), "key": key,
+                     "status": STATES.get(key, status),
+                     "report": "".join(re.findall(r"\d+", row.get("report", "")))[:6],
+                     "notes": row.get("notes", "")[:WORK_NOTES]})
+    return rows
+
+
+def plain(cell: str) -> str:
+    """A table cell as text: a link is its text, emphasis marks go."""
+    return re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", cell).replace("**", "").replace("`", "").strip()
 
 
 def grouped(number: int) -> str:
@@ -266,7 +304,7 @@ class Lifehub:
     async def refresh(self, now: float) -> None:
         """Every page's data, each part on its own: a part that fails is logged, the others are written."""
         for name, part in (("site", self.write_site), ("status", self.write_status), ("now", self.write_now),
-                           ("review", self.write_review)):
+                           ("review", self.write_review), ("work", self.write_work)):
             try:
                 result = part(now)
                 if asyncio.iscoroutine(result):
@@ -396,6 +434,58 @@ class Lifehub:
 
     def write_review(self, now: float) -> None:
         self.data.write("review.json", self.review(now))
+
+    # --- the «work» page: the job search ---------------------------------------------------------------------------
+
+    async def work(self, now: float) -> dict:
+        """The «Работа» page (the owner, 2026-10-16): the funnel, the applications from the tracker in the base, the
+        interviews in his calendars two weeks ahead, the job letters he has not answered. Read only: statuses change
+        in the tracker — by career-ops on the Mac or by her from a letter."""
+        from . import clock
+        from .mail import JOB, when
+
+        path = Path(self.kb) / TRACKER if self.kb else None
+        rows = tracker_rows(path.read_text(encoding="utf-8")) if path and path.is_file() else []
+        page = {"updated": self.stamp(now), "tracker": bool(rows) or bool(path and path.is_file()),
+                "funnel": [{"state": label, "count": n} for key, label in STATES.items()
+                           if (n := sum(1 for r in rows if r["key"] == key))],
+                "rows": rows, "interviews": [], "letters": []}
+        core = self.core
+        if core.mail and core.mail.collector is not None:
+            try:
+                events, _ = await core.mail.collector.agenda(now, now + WORK_DAYS * DAY)
+            except Exception:
+                log.exception("lifehub: the calendar for the work page was not read")
+                events = []
+            names = [r["company"].casefold() for r in rows if len(r["company"]) >= 3 and r["company"] != "?"]
+            for event in events:
+                title = str(event.get("summary") or "")
+                about = f"{title} {event.get('organizer') or ''}".casefold()
+                if any(word in about for word in INTERVIEW_WORDS) or any(name in about for name in names):
+                    page["interviews"].append({"when": when(event, core.tz), "title": title[:200],
+                                               "where": str(event.get("location") or "")[:200]})
+        if core.mail:
+            for item in core.mail.store.needing(now - WORK_MAIL_DAYS * DAY):
+                card = item["card"] or {}
+                if not (item["kind"] == JOB or card.get("job")) or self.answered(item):
+                    continue
+                page["letters"].append({"when": self.stamp(float(item["ts"] or 0)), "from": str(item["sender"] or ""),
+                                        "text": str(card.get("text") or card.get("summary") or ""),
+                                        "needs": NEEDS.get(card.get("needs_now"), "")})
+        return page
+
+    async def write_work(self, now: float) -> None:
+        self.data.write("work.json", await self.work(now))
+
+    def answered(self, item: dict) -> bool:
+        """Has the owner written in this letter's thread after it — from Gmail himself or by a card?"""
+        event = self.core.archive.get(item["event_id"] or "")
+        thread = event.meta.get("thread") if event else ""
+        if not thread:
+            return False
+        return self.core.archive.db.execute(
+            "SELECT 1 FROM events WHERE kind = 'mail' AND ts > ? AND json_extract(meta, '$.direction') = 'out'"
+            " AND json_extract(meta, '$.thread') = ? LIMIT 1", (event.ts, thread)).fetchone() is not None
 
     def deadlines(self, today: date) -> list[dict]:
         """Dates from the base's Records about the world and about the owner: `until` (a document, a status) and

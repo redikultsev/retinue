@@ -209,6 +209,20 @@ class Memory:
         return [{"sha": r[0], "ts": r[1], "subject": r[2], "files": json.loads(r[3]), "owner_records": json.loads(r[4]),
                  "deleted": json.loads(r[5]), "foreign": json.loads(r[6]), "reverted": r[7]} for r in rows]
 
+    def changed_since(self, ts: float) -> dict[str, int]:
+        """Files of the base changed since `ts` by anyone — the owner from his Mac or her — by Space: what the weekly
+        review counts. Files at the root are not a Space's."""
+        try:
+            out = self._out("log", f"--since=@{int(ts)}", "--name-only", "--format=", "HEAD")
+        except subprocess.CalledProcessError:
+            return {}
+        spaces: dict[str, set] = {}
+        for path in filter(None, out.splitlines()):
+            space, _, rest = path.partition("/")
+            if rest and not space.startswith("."):
+                spaces.setdefault(space, set()).add(path)
+        return {space: len(files) for space, files in sorted(spaces.items(), key=lambda kv: -len(kv[1]))}
+
     # --- inside ----------------------------------------------------------------------------------
 
     def _commit(self, tree: str, parent: str, message: str) -> str:

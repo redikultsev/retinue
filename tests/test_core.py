@@ -1314,3 +1314,57 @@ def test_a_file_from_a_chat_is_fetched_only_in_a_run_of_that_chat(tmp_path):
     assert asyncio.run(get(run, there))[:2] == (False, f"Вложения #{there} нет."), "another person's chat: no"
     assert asyncio.run(get(own, here))[0] is False, "not in the owner's conversation either: it is not his file"
     assert "attachment" in run.tree.foreign
+
+
+def test_the_weekly_review_runs_on_sunday_at_six_only_with_goals(tmp_path, monkeypatch):
+    """Sunday 18:00 МСК, one a week: no goals in the base — a line saying so and no run; with goals — a run outside
+    the conversation with his goals, the week's facts counted by code and the week's talk; she fails — the facts."""
+    from types import SimpleNamespace
+
+    from retinue.core import GOALS
+
+    clock = [WEDNESDAY]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    store, asked = Store(str(tmp_path / "r.sqlite")), []
+    tree = tmp_path / "kb"
+    memory = SimpleNamespace(tree=str(tree), cfg=SimpleNamespace(digest_at="21:00"), sync=lambda: None,
+                             changed_since=lambda ts: {"career": 3, "brand": 1})
+
+    async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None):
+        asked.append((text, context_id, control))
+        if len(asked) == 2:
+            raise RuntimeError("model down")
+        return Reply("done", "Неделя: по карьере два отклика. Цели те же?", [], {})
+
+    async def run():
+        core = Core([AGENT], store, "owner", ask=fake_ask, archive=Archive(str(tmp_path / "a.sqlite")))
+        core.memory = memory
+        telegram = FakeChannel("telegram", False)
+        await core.start([telegram])
+
+        async def loop_at(now):
+            clock[0] = now
+            core.jobs.ensure_weekly(now)
+            await core.tick(now)
+            await drain()
+
+        await loop_at(WEDNESDAY)
+        await loop_at(moscow(11, 17, 59))
+        assert telegram.cards == [], "not before Sunday six"
+        await loop_at(moscow(11, 18, 0) + 10)  # no goals yet
+        (tree / GOALS).parent.mkdir(parents=True)
+        (tree / GOALS).write_text("---\nid: goals\n---\n\n# Цели\n\n- Оффер с релокацией до марта\n", encoding="utf-8")
+        await loop_at(moscow(11, 18, 0) + 40)
+        await loop_at(moscow(18, 18, 0) + 10)
+        await loop_at(moscow(25, 18, 0) + 10)
+        return telegram
+
+    telegram = asyncio.run(run())
+    cards = [c[0] for c in telegram.cards]
+    assert cards[0].startswith("Недельного обзора нет: в базе нет целей") and len(cards) == 3, "one a week"
+    prompt, context_id, control = asked[0]
+    assert control == "oneshot" and context_id.startswith("weekly-")
+    assert prompt.startswith("[Недельный обзор.") and "- Оффер с релокацией до марта" in prompt
+    assert "Правок базы по Пространствам (Владелец и ты): career — 3, brand — 1." in prompt
+    assert cards[1] == "Неделя: по карьере два отклика. Цели те же?"
+    assert cards[2].startswith("Недельный обзор — без ассистентки: её запуск не удался. Факты недели:")

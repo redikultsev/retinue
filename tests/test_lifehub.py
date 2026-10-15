@@ -581,3 +581,63 @@ def test_a_sender_chip_is_short_and_the_dropped_count_is_the_whole_week(tmp_path
     mail.db.commit()
     page = hub.review(NOW)
     assert (page["dropped"], page["dropped_shown"]) == (lifehub.REVIEW_DROPPED + 5, lifehub.REVIEW_DROPPED)
+
+
+TRACKER_TEXT = """---
+id: job-applications
+type: profile
+---
+
+# Отклики
+
+| # | Date | Company | Role | Score | Status | PDF | Report | Notes |
+|---|------|---------|------|-------|--------|-----|--------|-------|
+| 1 | 2026-09-23 | Acme | AI Engineer | 4.1/5 | **Interview** | ✅ | [001](../reports/001-acme.md) | remote EU |
+| 2 | 2026-09-24 | ? | ML Platform | 3.5/5 | Evaluated | ❌ | 002 | |
+| 3 | 2026-09-25 | Globex | Backend | 3.0/5 | Applied | ❌ | 003 | |
+| 4 | 2026-09-26 | Initech | Staff | 2.0/5 | Maybe later | ❌ | | |
+"""
+
+
+def test_the_work_page_reads_the_tracker_the_calendar_and_unanswered_job_letters(tmp_path):
+    """The «Работа» page: the tracker in the base is read by its header — the Record's own header and markdown in
+    cells do not get in the way; the funnel counts career-ops' states; a calendar event is an interview when it
+    names a company of the tracker or says «interview»; a job letter waits until he writes in its thread."""
+    from retinue.archive import MAIL
+
+    from test_mailroom import ACCOUNT, NOW
+
+    rows = lifehub.tracker_rows(TRACKER_TEXT)
+    assert [(r["n"], r["company"], r["status"], r["report"]) for r in rows] == [
+        ("1", "Acme", "собеседования", "001"), ("2", "?", "оценена", "002"), ("3", "Globex", "отклик отправлен", "003"),
+        ("4", "Initech", "Maybe later", "")]
+    kb = tmp_path / "kb"
+    (kb / "career/profile").mkdir(parents=True)
+    (kb / lifehub.TRACKER).write_text(TRACKER_TEXT, encoding="utf-8")
+    core, hub, fake = hub_core(tmp_path, kb=str(kb))
+
+    async def agenda(start, end):
+        return [{"summary": "Acme — technical round", "start": {"dateTime": "2025-10-10T12:00:00Z"},
+                 "end": {"dateTime": "2025-10-10T13:00:00Z"}, "location": "Zoom"},
+                {"summary": "Interview with Hooli", "start": {"dateTime": "2025-10-11T12:00:00Z"},
+                 "end": {"dateTime": "2025-10-11T13:00:00Z"}},
+                {"summary": "Стоматолог", "start": {"dateTime": "2025-10-12T12:00:00Z"},
+                 "end": {"dateTime": "2025-10-12T13:00:00Z"}}], []
+
+    fake.agenda = agenda
+    store = core.mail.store
+    for seq, thread in ((1, "t-acme"), (2, "t-globex")):
+        event, _ = core.archive.append(MAIL, "Письмо", conversation_id=f"mail:{ACCOUNT}", channel="mail",
+                                       native_id=f"{ACCOUNT}/j{seq}", ts=NOW - 3600,
+                                       meta={"direction": "in", "thread": thread})
+        store.keep([{"seq": seq, "account": ACCOUNT, "source": "mail", "ref": f"j{seq}", "data": {}}], NOW - 3600)
+        n = store.db.execute("SELECT MAX(seq) FROM mail_items").fetchone()[0]
+        store.set(n, NOW - 3600, state="later", kind="job", sender=f"hr@{thread}.example", ts=NOW - 3600,
+                  event_id=event.id, card={"text": f"Письмо {thread}", "needs_now": "reply"})
+    core.archive.append(MAIL, "Ответ", conversation_id=f"mail:{ACCOUNT}", channel="mail", native_id=f"{ACCOUNT}/o1",
+                        ts=NOW - 60, meta={"direction": "out", "thread": "t-globex"})
+    page = asyncio.run(hub.work(NOW))
+    assert page["funnel"] == [{"state": "оценена", "count": 1}, {"state": "отклик отправлен", "count": 1},
+                              {"state": "собеседования", "count": 1}]
+    assert [i["title"] for i in page["interviews"]] == ["Acme — technical round", "Interview with Hooli"]
+    assert [l["text"] for l in page["letters"]] == ["Письмо t-acme"], "he answered Globex: not waiting"

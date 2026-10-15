@@ -1,0 +1,45 @@
+{{ define "main" }}
+{{ $w := partial "data.html" "work.json" }}
+<h1>Работа</h1>
+{{ if not $w.updated }}<p class="muted">Данных ещё нет: Роутер пишет их раз в пять минут.</p>{{ else }}
+{{ if not $w.tracker }}<p class="muted">Трекера откликов в базе нет: career/profile/applications.md.</p>{{ end }}
+
+{{ with $w.funnel }}
+<nav class="facets"><div><span class="facet-name">Воронка</span>
+{{ range . }}<span class="chip">{{ .state }} · {{ int .count }}</span>
+{{ end }}</div></nav>
+{{ end }}
+
+<section>
+<h2>Собеседования на две недели</h2>
+{{ with $w.interviews }}<ul>
+{{ range . }}<li>{{ .when }} — {{ .title }}{{ with .where }} <span class="muted">· {{ . }}</span>{{ end }}</li>
+{{ end }}</ul>
+{{ else }}<p class="muted">В календаре ничего похожего на собеседование.</p>{{ end }}
+</section>
+
+<section>
+<h2>Письма о работе ждут ответа</h2>
+{{ with $w.letters }}
+{{ range . }}<article class="review mark-told">
+<p class="review-head"><span class="time">{{ .when }}</span> <strong>{{ .from }}</strong>{{ with .needs }} <span class="tag">{{ . }}</span>{{ end }}</p>
+<p>{{ .text | default "—" }}</p>
+</article>
+{{ end }}
+{{ else }}<p class="muted">Неотвеченных писем о работе нет.</p>{{ end }}
+</section>
+
+<section>
+<h2>Отклики</h2>
+{{ with $w.rows }}
+<table>
+<tr><th>#</th><th>Дата</th><th>Компания</th><th>Роль</th><th>Оценка</th><th>Статус</th><th>Отчёт</th></tr>
+{{ range . }}<tr><td>{{ .n }}</td><td>{{ .date }}</td><td>{{ .company }}</td><td>{{ .role }}{{ with .notes }}<br><span class="muted">{{ . }}</span>{{ end }}</td><td>{{ .score }}</td><td>{{ .status }}</td><td>{{ .report }}</td></tr>
+{{ end }}
+</table>
+<p class="muted">Отчёты по вакансиям лежат в career-ops на Mac, здесь — их номера.</p>
+{{ else }}<p class="muted">Откликов пока нет.</p>{{ end }}
+</section>
+{{ partial "updated.html" $w }}
+{{ end }}
+{{ end }}

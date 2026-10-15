@@ -48,13 +48,17 @@ def test_no_template_writes_markup_style_or_an_address_from_data():
 
 
 def test_every_page_of_the_first_version_is_there():
-    """«Сейчас», trips, status; «Работа», finance and health are «скоро» (decision 6)."""
+    """«Сейчас», trips, status, «Работа» (the owner, 2026-10-16); finance and health are «скоро» (decision 6)."""
     base = (SITE / "layouts" / "baseof.html").read_text()
     assert re.findall(r'<a href="(/[a-z/]*)">', base) == ["/", "/trips/", "/review/", "/status/", "/work/", "/finance/",
                                                            "/health/"]
     assert '<meta name="referrer" content="no-referrer">' in base and 'href="/css/lifehub.css"' in base
-    for name in ("work", "finance", "health"):
+    for name in ("finance", "health"):
         assert "soon: true" in (SITE / "content" / f"{name}.md").read_text()
+    assert "layout: work" in (SITE / "content" / "work.md").read_text()
+    work = (SITE / "layouts" / "work.html").read_text()
+    for part in ('"work.json"', "$w.funnel", "$w.interviews", "$w.letters", "$w.rows"):
+        assert part in work, part
     assert "layout: status" in (SITE / "content" / "status.md").read_text()
     home = (SITE / "layouts" / "home.html").read_text()
     for part in ("$now.trips", "$now.today", "$now.tomorrow", "$now.reminders", "$now.mail", "$now.deadlines",

@@ -19,10 +19,11 @@ from datetime import datetime, timedelta
 
 from . import clock
 
-REMINDER, SUMMARY, RETRY, PRICE, DIGEST = "reminder", "summary", "retry", "price", "digest"
+REMINDER, SUMMARY, RETRY, PRICE, DIGEST, WEEKLY = "reminder", "summary", "retry", "price", "digest", "weekly"
 ACTIVE, RUNNING, SENT, CANCELLED = "active", "running", "sent", "cancelled"
 MAX_TEXT = 500
 SUMMARY_AT = "09:00"  # the morning summary, the owner's wall time
+WEEKLY_AT = (6, "18:00")  # the weekly review of his goals: Sunday (Monday is 0), his wall time
 ID_NOTE = "id — для отмены и переноса; Владельцу его не называй, говори, о чём и когда."
 REPEATS = {"daily": "каждый день", "weekdays": "по будням", "weekly": "каждую неделю", "monthly": "каждый месяц"}
 _COLUMNS = "id, kind, text, local, tz, due, status, data"
@@ -52,7 +53,7 @@ class Scheduler:
             """
             CREATE TABLE IF NOT EXISTS jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT NOT NULL,                 -- reminder | summary | retry | price | digest
+                kind TEXT NOT NULL,                 -- reminder | summary | retry | price | digest | weekly
                 text TEXT NOT NULL,                 -- a reminder's words, written in advance and sent as they are
                 local TEXT NOT NULL,                -- the owner's wall time: 2026-10-09T18:00
                 tz TEXT NOT NULL,                   -- IANA zone of `local`
@@ -65,6 +66,7 @@ class Scheduler:
             CREATE INDEX IF NOT EXISTS jobs_due ON jobs (status, due);
             CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_summary_a_day ON jobs (local) WHERE kind = 'summary';
             CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_digest_a_day ON jobs (local) WHERE kind = 'digest';
+            CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_weekly_a_week ON jobs (local) WHERE kind = 'weekly';
             """
         )
         # A summary or a retry the previous process was running when it stopped: run it again. Better a second
@@ -172,8 +174,17 @@ class Scheduler:
         """The evening list of the assistant's commits to the knowledge base: the same one-a-day row as the summary."""
         self._ensure_daily(DIGEST, at, now)
 
-    def _ensure_daily(self, kind: str, at: str, now: float) -> None:
+    def ensure_weekly(self, now: float) -> None:
+        """The weekly review of the owner's goals: the next Sunday 18:00, one row a week, like the summary."""
+        weekday, at = WEEKLY_AT
         moment = clock.next_at(at, now, self.tz)
+        moment += timedelta(days=(weekday - moment.weekday()) % 7)
+        self._ensure_at(WEEKLY, moment, now)
+
+    def _ensure_daily(self, kind: str, at: str, now: float) -> None:
+        self._ensure_at(kind, clock.next_at(at, now, self.tz), now)
+
+    def _ensure_at(self, kind: str, moment: datetime, now: float) -> None:
         local = f"{moment:%Y-%m-%dT%H:%M}"
         # Checked before the insert: a refused insert would still spend an id, and the loop asks every 30 s.
         self.db.execute("INSERT OR IGNORE INTO jobs (kind, text, local, tz, due, status, created)"

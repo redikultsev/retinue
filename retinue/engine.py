@@ -172,10 +172,12 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
           "сделать, кому, зачем. when — местное время Владельца, в его "
           "поясе из справки «Сейчас», вида 2026-10-09T18:00. weekday — день недели, который ты имеешь в виду "
           "(«пятница»): Роутер сверит его с датой и откажет, если не совпало или время уже прошло. Тот же текст на "
-          "то же время вернёт «Уже стоит». Владельцу назови день и время из ответа Роутера, id — нет.",
-          {"text": str, "when": str, "weekday": str})
+          "то же время вернёт «Уже стоит». repeat — повтор: пусто (один раз), daily, weekdays, weekly или "
+          "monthly; when тогда — первый раз. Владельцу назови день и время из ответа Роутера, id — нет.",
+          {"text": str, "when": str, "weekday": str, "repeat": str})
     async def set_reminder(args):
-        return await reminders("add", {"text": args["text"], "when": args["when"], "weekday": args["weekday"]})
+        return await reminders("add", {"text": args["text"], "when": args["when"], "weekday": args["weekday"],
+                                       "repeat": args.get("repeat", "")})
 
     @tool("list_reminders", "Активные напоминания Владельца, ближайшие первыми: когда, текст, [id].", {})
     async def list_reminders(args):

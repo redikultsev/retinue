@@ -38,6 +38,8 @@ CHAT_MOST_S = 120         # …or this long after its first message, if it keeps
 JUDGE_ITEMS = 10          # items in one judgement at most
 JUDGE_RETRY_S = 300
 UNREACHABLE_S = 30        # the assistant did not take the connection (a restart): asked again soon, no try lost
+OWN_COPY_WAIT_S = 1200    # a letter from his other mailbox waits this long for its copy in that mailbox's Sent
+OWN_COPY_LOOK_S = 120     # …looked for this often: the collector reads every mailbox every 10 minutes
 HOUR = 3600               # urgent letters of one sender within this are one message
 SUMMARY_ITEMS = 15        # letters that waited till morning, named in the summary; the rest are counted
 STILL_OPEN = ("decide", "attend", "pay", "act")  # a later reply in the chat does not close these: said is not done
@@ -307,6 +309,21 @@ class Mailroom:
             await self.core.outbox.supersede([f"mail:{letter.get('thread') or item['data'].get('thread', '')}",
                                               f"from:{sender}"])
 
+    def _sender_fact(self, item: dict, letter: dict, now: float) -> str | None:
+        """Whether the letter came from the owner's other mailbox — told to the triage by code, never left to the
+        look of an address. The From header can be forged, so the proof is his copy of the same Message-ID in that
+        mailbox's Sent. None: no copy yet, and the collector may still bring it — wait."""
+        sender = str(letter.get("sender") or "").lower()
+        mine = {row["account"] for row in self.store.health() if row["source"] == "mail"}
+        if sender not in mine or sender == item["account"]:
+            return ""
+        if self.core.archive.sent_copy(sender, str(letter.get("message_id") or "")):
+            return f"Отправитель — другой ящик Владельца, {sender}: копия этого письма есть в его отправленных."
+        if now - float(letter.get("ts") or now) < OWN_COPY_WAIT_S:
+            return None
+        return (f"Адрес отправителя — как у другого ящика Владельца, {sender}, но копии этого письма в отправленных "
+                "того ящика нет: адрес отправителя мог быть подделан.")
+
     async def triage(self, item: dict, letter: dict, now: float) -> Card | None:
         """One letter, one run, no tool: her answer by TRIAGE_SCHEMA, checked by `card_of`. None: try later."""
         from .core import unreachable
@@ -314,9 +331,13 @@ class Mailroom:
         core = self.core
         agent = core.agents[core.default_agent]
         context_id = f"triage-{item['seq']}"
+        fact = self._sender_fact(item, letter, now)
+        if fact is None:
+            self.store.again(item["seq"], now, OWN_COPY_LOOK_S)
+            return None
         status, answer, meta, lost = "error", "", {}, False
         try:
-            reply = await core.ask(agent.url, triage_prompt(letter, item["account"]), context_id, None, None,
+            reply = await core.ask(agent.url, triage_prompt(letter, item["account"], fact), context_id, None, None,
                                    control="bare", schema=TRIAGE_SCHEMA)
             (status, answer, _), meta = reply, getattr(reply, "meta", {})
         except Exception as exc:

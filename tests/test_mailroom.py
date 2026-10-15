@@ -842,6 +842,33 @@ def test_an_assistant_not_up_yet_is_not_a_try_and_is_asked_again_in_half_a_minut
     assert early == 1 and len(asked) == 2, "asked again after half a minute, not five"
     assert room.store.get(1)["state"] == "later"
 
+
+def test_a_letter_from_his_other_mailbox_is_named_so_by_code_and_only_with_his_sent_copy(tmp_path):
+    """The triage saw «redikulcev2 — почти как адрес Владельца» and suspected a fake. Code knows his mailboxes: a
+    letter from the other one is named as his — when that mailbox's Sent has the same Message-ID. No copy yet: wait
+    for the collector; still none after 20 minutes: the From may be forged, and the triage is told so."""
+    from retinue.archive import MAIL
+    from retinue.mail import triage_prompt
+    from retinue.mailroom import OWN_COPY_WAIT_S
+
+    other = "second@example.org"
+    core, room, _ = judged_room(tmp_path, FakeCollector(), [], {}, {})
+    for account in (ACCOUNT, other):
+        room.store.db.execute("INSERT INTO mail_sources (account, source, since) VALUES (?, 'mail', ?)", (account, NOW))
+    room.store.db.commit()
+    item = {"seq": 1, "account": ACCOUNT}
+    letter = {"sender": other.upper(), "message_id": "<q1@x>", "ts": NOW - 60}
+    assert room._sender_fact(item, letter, NOW) is None, "no copy yet: wait for the other mailbox"
+    assert "мог быть подделан" in room._sender_fact(item, letter, NOW + OWN_COPY_WAIT_S)
+    core.archive.append(MAIL, "Письмо", conversation_id=f"mail:{other}", channel="mail", native_id=f"{other}/q1",
+                        meta={"account": other, "direction": "out", "message_id": "<q1@x>"})
+    fact = room._sender_fact(item, letter, NOW)
+    assert fact.startswith(f"Отправитель — другой ящик Владельца, {other}")
+    assert room._sender_fact(item, {**letter, "sender": "anna@example.org"}, NOW) == "", "a stranger: nothing"
+    assert room._sender_fact({"seq": 2, "account": other}, letter, NOW) == "", "his own mailbox to itself: not this"
+    prompt = triage_prompt({**letter, "text": "Привет", "subject": "Автобус"}, ACCOUNT, fact)
+    assert fact in prompt.split("<<<")[0], "a fact of code, before the letter's text"
+
 def said_in(core, room, chat="777", name="Марко"):
     """Earlier messages of a chosen chat, put on record as `Mailroom.chat` would: the router's archive is the memory."""
     from retinue.archive import CHAT

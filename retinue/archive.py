@@ -244,6 +244,16 @@ class Archive:
                                (key, event.ts, event.id, limit)).fetchall()
         return [self._event(row) for row in reversed(rows)]
 
+    def sent_copy(self, account: str, message_id: str) -> Event | None:
+        """The owner's own copy of a letter in that mailbox's Sent, by its Message-ID."""
+        if not message_id:
+            return None
+        row = self.db.execute(f"SELECT {self._COLUMNS} FROM events WHERE kind = 'mail' AND conversation_id = ?"
+                              " AND json_extract(meta, '$.direction') = 'out' AND json_extract(meta, '$.message_id') = ?"
+                              " LIMIT 1",
+                              (f"mail:{account}", message_id)).fetchone()
+        return self._event(row) if row else None
+
     def count(self, kind: str, since: float) -> int:
         return self.db.execute("SELECT COUNT(*) FROM events WHERE kind = ? AND ts >= ?", (kind, since)).fetchone()[0]
 

@@ -4,13 +4,16 @@ in the router (`Core.clock`); no framework.
 
 A reminder keeps the owner's wall time and zone as they were said (`local`, `tz`) and the moment it fires (`due`,
 UTC). The text is written when the reminder is set; when it fires, the assistant tells it in her own words, and
-code sends the text as it is when she cannot.
+code sends the text as it is when she cannot. A repeating one (`data.repeat`) is the same row moved to its next
+wall time when it has fired: cancelling it cancels the series, moving it moves the series.
 """
 
 from __future__ import annotations
 
+import calendar
 import json
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -21,6 +24,7 @@ ACTIVE, RUNNING, SENT, CANCELLED = "active", "running", "sent", "cancelled"
 MAX_TEXT = 500
 SUMMARY_AT = "09:00"  # the morning summary, the owner's wall time
 ID_NOTE = "id — для отмены и переноса; Владельцу его не называй, говори, о чём и когда."
+REPEATS = {"daily": "каждый день", "weekdays": "по будням", "weekly": "каждую неделю", "monthly": "каждый месяц"}
 _COLUMNS = "id, kind, text, local, tz, due, status, data"
 
 
@@ -75,7 +79,9 @@ class Scheduler:
     def line(self, job: Job, numbered: bool = True) -> str:
         """How a reminder is named: with its id as a service mark at the end for the tools, without it wherever it
         may reach the owner. A «#3» at the front reads as a label, and the model repeats it to the owner."""
-        return f"{clock.day(job.due, job.tz)} — {job.text}" + (f" [id {job.id}]" if numbered else "")
+        repeat = REPEATS.get(job.data.get("repeat", ""), "")
+        return (f"{clock.day(job.due, job.tz)} — {job.text}" + (f" ({repeat})" if repeat else "")
+                + (f" [id {job.id}]" if numbered else ""))
 
     # --- the owner's reminders: what the assistant's tools do ------------------------------------
 
@@ -98,20 +104,27 @@ class Scheduler:
                           f"Сейчас {clock.stamp(now, self.tz)}.")
         return moment, ""
 
-    def add(self, text: str, when: str, weekday: str, now: float) -> tuple[bool, str]:
+    def add(self, text: str, when: str, weekday: str, now: float, repeat: str = "") -> tuple[bool, str]:
         text = " ".join(text.split())[:MAX_TEXT]
+        repeat = repeat.strip().lower()
         if not text:
             return False, "Не поставила: нет текста напоминания."
+        if repeat and repeat not in REPEATS:
+            return False, f"Не поставила: повтор «{repeat}» не знаю. Можно: {', '.join(REPEATS)} или пусто."
         moment, refusal = self.when(when, weekday, now)
         if moment is None:
             return False, refusal
+        if repeat == "weekdays" and moment.weekday() >= 5:
+            return False, "Не поставила: повтор по будням, а первый раз выпадает на выходной. Начни с буднего дня."
         due = moment.timestamp()
         for job in self.reminders():
             if job.due == due and job.text.casefold() == text.casefold():
                 return True, f"Уже стоит: {self.line(job)}. {ID_NOTE}"
-        cursor = self.db.execute("INSERT INTO jobs (kind, text, local, tz, due, status, created)"
-                                 " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                 (REMINDER, text, f"{moment:%Y-%m-%dT%H:%M}", self.tz, due, ACTIVE, now))
+        data = {"repeat": repeat, "day": moment.day} if repeat else {}
+        cursor = self.db.execute("INSERT INTO jobs (kind, text, local, tz, due, status, data, created)"
+                                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                 (REMINDER, text, f"{moment:%Y-%m-%dT%H:%M}", self.tz, due, ACTIVE, json.dumps(data),
+                                  now))
         self.db.commit()
         return True, f"Поставила: {self.line(self.get(cursor.lastrowid))}. {ID_NOTE}"
 
@@ -215,14 +228,23 @@ class Scheduler:
         self.db.execute("UPDATE jobs SET status = ?, due = ? WHERE id = ? AND status = ?", (ACTIVE, due, job.id, RUNNING))
         self.db.commit()
 
-    def done(self, job: Job) -> None:
-        self.db.execute("UPDATE jobs SET status = ? WHERE id = ? AND status = ?", (SENT, job.id, RUNNING))
+    def done(self, job: Job, now: float | None = None) -> None:
+        """A job has run. A repeating reminder is not over: the same row, active again at its next wall time after
+        both its own moment and now — the ones missed while the router was down are not sent in a burst."""
+        after = max(job.due, time.time() if now is None else now)
+        moment = following(job, after) if job.kind == REMINDER else None
+        if moment is not None:
+            self.db.execute("UPDATE jobs SET status = ?, local = ?, due = ? WHERE id = ? AND status = ?",
+                            (ACTIVE, f"{moment:%Y-%m-%dT%H:%M}", moment.timestamp(), job.id, RUNNING))
+        else:
+            self.db.execute("UPDATE jobs SET status = ? WHERE id = ? AND status = ?", (SENT, job.id, RUNNING))
         self.db.commit()
 
     def fired_since(self, ts: float) -> int:
-        """Reminders sent since `ts`: a number for the morning summary's health line."""
-        return self.db.execute("SELECT COUNT(*) FROM jobs WHERE kind = ? AND status = ? AND fired >= ?",
-                               (REMINDER, SENT, ts)).fetchone()[0]
+        """Reminders sent since `ts`: a number for the morning summary's health line. A repeating one is active
+        again after it fires, so it is counted by when it fired, not by its status."""
+        return self.db.execute("SELECT COUNT(*) FROM jobs WHERE kind = ? AND status != ? AND fired >= ?",
+                               (REMINDER, CANCELLED, ts)).fetchone()[0]
 
     def move(self, job_id: int, when: str, weekday: str, now: float) -> tuple[bool, str]:
         job = self._active_reminder(job_id)
@@ -231,7 +253,30 @@ class Scheduler:
         moment, refusal = self.when(when, weekday, now)
         if moment is None:
             return False, refusal.replace("Не поставила", "Не перенесла")
-        self.db.execute("UPDATE jobs SET local = ?, tz = ?, due = ? WHERE id = ? AND status = ?",
-                        (f"{moment:%Y-%m-%dT%H:%M}", self.tz, moment.timestamp(), job.id, ACTIVE))
+        if job.data.get("repeat") == "weekdays" and moment.weekday() >= 5:
+            return False, "Не перенесла: повтор по будням, а новая дата — выходной. Выбери будний день."
+        data = {**job.data, "day": moment.day} if job.data.get("repeat") else job.data  # a series moves whole
+        self.db.execute("UPDATE jobs SET local = ?, tz = ?, due = ?, data = ? WHERE id = ? AND status = ?",
+                        (f"{moment:%Y-%m-%dT%H:%M}", self.tz, moment.timestamp(), json.dumps(data), job.id, ACTIVE))
         self.db.commit()
         return True, f"Перенесла: {self.line(self.get(job.id))}."
+
+
+def following(job: Job, after: float) -> datetime | None:
+    """The next wall time of a repeating reminder strictly after `after`, in its own zone: the same hour and minute;
+    a monthly one on its day of the month, or the month's last day when the month is shorter (the 31st → 30 April
+    → 31 May). None for a reminder that does not repeat."""
+    repeat = job.data.get("repeat", "")
+    if repeat not in REPEATS:
+        return None
+    moment = datetime.strptime(job.local, "%Y-%m-%dT%H:%M").replace(tzinfo=clock.zone(job.tz))
+    anchor = int(job.data.get("day") or moment.day)
+    while moment.timestamp() <= after:
+        if repeat == "monthly":
+            year, month = (moment.year + 1, 1) if moment.month == 12 else (moment.year, moment.month + 1)
+            moment = moment.replace(year=year, month=month, day=min(anchor, calendar.monthrange(year, month)[1]))
+            continue
+        moment += timedelta(days=7 if repeat == "weekly" else 1)
+        while repeat == "weekdays" and moment.weekday() >= 5:
+            moment += timedelta(days=1)
+    return moment

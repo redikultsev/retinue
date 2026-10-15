@@ -927,7 +927,7 @@ class Core:
             raise  # the router is stopping: the job stays running, and the next process sends it
         except Exception:
             log.exception("reminder %s failed", job.key)
-        self.jobs.done(job)
+        self.jobs.done(job, now)
 
     async def _remind(self, job: Job, now: float) -> None:
         agent = self.agents[self.default_agent]
@@ -1407,7 +1407,7 @@ class Core:
         except (TypeError, ValueError):
             job_id = 0
         if action == "add":
-            ok, text = self.jobs.add(str(args.get("text", "")), when, weekday, now)
+            ok, text = self.jobs.add(str(args.get("text", "")), when, weekday, now, str(args.get("repeat") or ""))
         elif action == "list":
             ok, text = True, self.jobs.listing()
         elif action == "cancel":

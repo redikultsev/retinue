@@ -178,14 +178,15 @@ def category(labels: list[str]) -> str:
     return next((CATEGORIES[label] for label in labels if label in CATEGORIES), "")
 
 
-def triage_prompt(letter: dict, account: str) -> str:
-    """One letter for the triage run: the facts code knows (the mailbox, Gmail's tab, mailing headers, hidden text)
-    and the letter between markers no letter can know in advance. Somebody else's text, defused."""
+def triage_prompt(letter: dict, account: str, sender_fact: str = "") -> str:
+    """One letter for the triage run: the facts code knows (the mailbox, Gmail's tab, mailing headers, hidden text,
+    whether the sender is the owner's other mailbox) and the letter between markers no letter can know in advance.
+    Somebody else's text, defused."""
     from .core import defuse  # here: the core imports this module's users, not the other way round
 
     marker = secrets.token_hex(4)
     text = defuse(str(letter.get("text") or ""))
-    facts = []
+    facts = [sender_fact] if sender_fact else []
     if tab := category(letter.get("labels") or []):
         facts.append(f"Gmail отнёс письмо к вкладке «{tab}».")
     if "IMPORTANT" in (letter.get("labels") or []):

@@ -100,3 +100,34 @@ def test_a_price_drop_is_kept_once_and_sent_at_once(tmp_path):
     assert job.kind == "price" and job.due == NOW and {k: v for k, v in job.data.items() if k != "key"} == alert
     assert jobs.claim(job, NOW) and Scheduler(jobs.db).due(NOW)[0].id == job.id, "a restart before `done` resends"
     assert jobs.reminders() == [] and jobs.listing() == "Активных напоминаний нет.", "not one of the owner's reminders"
+
+
+def test_a_repeating_reminder_moves_to_its_next_time_after_it_fires(tmp_path):
+    """«Каждый понедельник», «по будням», «1-го каждого месяца»: one row, moved to its next wall time when it has
+    fired; days missed while the router was down are skipped, not sent in a burst; the 31st falls to a shorter
+    month's last day and comes back; cancelling ends the series."""
+    jobs = make(tmp_path)
+    ok, said = jobs.add("оплатить сервер", "2026-10-31T10:00", "суббота", NOW, "monthly")
+    assert ok and "(каждый месяц)" in said
+    assert jobs.add("x", "2026-10-09T18:00", "пт", NOW, "hourly")[0] is False
+    assert "выходной" in jobs.add("зарядка", "2026-10-10T08:00", "суббота", NOW, "weekdays")[1]
+    jobs.add("зарядка", "2026-10-09T08:00", "пятница", NOW, "weekdays")
+
+    def fire(job_id, at):
+        job = jobs.get(job_id)
+        assert jobs.claim(job, at)
+        jobs.done(jobs.get(job_id), at)
+        return jobs.get(job_id)
+
+    pay = jobs.get(1)
+    assert [fire(1, pay.due + 60).local, fire(1, jobs.get(1).due + 60).local, fire(1, jobs.get(1).due + 60).local] \
+        == ["2026-11-30T10:00", "2026-12-31T10:00", "2027-01-31T10:00"], "the 31st, the 30th, back to the 31st"
+    gym = jobs.get(2)
+    assert fire(2, gym.due + 60).local == "2026-10-12T08:00", "Friday → Monday: weekends skipped"
+    week_later = jobs.get(2).due + 7 * 86400
+    assert fire(2, week_later).local == "2026-10-20T08:00", "down for a week: the next one, not seven at once"
+    assert jobs.get(2).status == "active" and jobs.fired_since(week_later - 60) == 2, "counted by its last firing"
+    assert jobs.cancel(2)[0] and jobs.get(2).status == "cancelled"
+    jobs.add("позвонить маме", "2026-10-09T18:00", "пт", NOW)
+    once = next(job for job in jobs.reminders() if job.text == "позвонить маме")
+    assert fire(once.id, once.due + 60).status == "sent", "a one-off ends"

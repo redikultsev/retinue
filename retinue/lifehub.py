@@ -208,6 +208,7 @@ REVIEW_DROPPED = 300      # and this many lines of the dropped log
 REVIEW_PAGE = 25          # cards on one page of the review
 REVIEW_DROPPED_PAGE = 50  # lines on one page of the dropped
 REVIEW_SENDERS = 40       # senders with a page of their own, the most frequent first
+CHIP_CHARS = 28           # a sender's name on a chip: her «who» up to its first aside, then cut
 SOURCES = {"telegram": "Telegram", "mail": "почта", "calendar": "календарь"}
 REVIEW_MARKS = {"told": "сразу тебе", "held": "сразу, одним сообщением", "later": "в утреннюю сводку",
                 "done": "была в утренней сводке", "silent": "молча", "waiting": "ждёт её оценки"}
@@ -383,13 +384,13 @@ class Lifehub:
         for item in items:
             senders.setdefault(item["who_key"], []).append(item)
         for key, these in sorted(senders.items(), key=lambda kv: -len(kv[1]))[:REVIEW_SENDERS]:
-            facets["senders"].append({"key": key, "name": these[0]["who"] or "без имени", "where": these[0]["where"],
+            facets["senders"].append({"key": key, "name": chip(these[0]["who"]), "where": these[0]["where"],
                                       "count": len(these), "path": key})
             page["views"] += cut(key, these[0]["who"] or "без имени", {"who": key}, these)
         rows = [{"when": self.stamp(row["ts"]), "from": row["sender"], "subject": row["subject"],
                  "kind": "твоё правило" if row["why"] == "blocked" else KINDS.get(row["kind"], row["kind"])}
                 for row in store.dropped_since(since, REVIEW_DROPPED)]
-        page["dropped"] = len(rows)
+        page["dropped"], page["dropped_shown"] = store.dropped_count(since), len(rows)
         page["views"] += cut("dropped", "Отсеяно", {}, rows, key="rows", size=REVIEW_DROPPED_PAGE)
         return page
 
@@ -739,6 +740,13 @@ def offers(kind: str, view: dict):
             for offer in holder.get("rates" if kind == "stay" else "fares") or []:
                 if isinstance(offer, dict):
                     yield card, offer
+
+
+def chip(who: str) -> str:
+    """A sender's name short enough for a chip: her «who» — «Google (no-reply@…)», «Sit'n'Go (…), Ekaterina» — up to
+    its first aside; the full one stays on the sender's page."""
+    name = re.split(r" \(|, | через | → | — ", who or "", maxsplit=1)[0].strip() or "без имени"
+    return name if len(name) <= CHIP_CHARS else name[:CHIP_CHARS - 1].rstrip() + "…"
 
 
 def cut(base: str, title: str, chosen: dict, rows: list, key: str = "items", size: int | None = None) -> list[dict]:

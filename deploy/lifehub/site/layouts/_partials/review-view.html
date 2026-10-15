@@ -23,6 +23,7 @@
 <h2>{{ $v.title }}{{ if gt $v.pages 1 }} <span class="muted">· страница {{ $v.page }} из {{ $v.pages }}</span>{{ end }}</h2>
 
 {{ if eq $v.kind "rows" }}
+{{ with $r.dropped_shown }}{{ if lt (int .) (int $r.dropped) }}<p class="muted">Показаны последние {{ int . }} из {{ int $r.dropped }}.</p>{{ end }}{{ end }}
 {{ with $v.rows }}
 <table>
 <tr><th>Когда</th><th>От кого</th><th>Тема</th><th>Почему</th></tr>

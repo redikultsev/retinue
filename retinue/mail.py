@@ -445,6 +445,11 @@ class MailStore:
         self.db.execute("UPDATE mail_items SET tries = tries + 1, retry_at = ? WHERE seq = ?", (now + wait, seq))
         self.db.commit()
 
+    def again(self, seq: int, now: float, wait: float) -> None:
+        """Try this item again after `wait`, not counted as a try: nobody was there to ask."""
+        self.db.execute("UPDATE mail_items SET retry_at = ? WHERE seq = ?", (now + wait, seq))
+        self.db.commit()
+
     def in_state(self, state: str, limit: int = 1000) -> list[dict]:
         rows = self.db.execute(f"SELECT {self._COLUMNS} FROM mail_items WHERE state = ? ORDER BY seq LIMIT ?",
                                (state, limit)).fetchall()
@@ -575,6 +580,9 @@ class MailStore:
         rows = self.db.execute("SELECT ts, sender, subject, kind, why FROM mail_dropped WHERE ts >= ? "
                                "ORDER BY ts DESC LIMIT ?", (since, limit)).fetchall()
         return [dict(zip(("ts", "sender", "subject", "kind", "why"), row)) for row in rows]
+
+    def dropped_count(self, since: float) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM mail_dropped WHERE ts >= ?", (since,)).fetchone()[0]
 
     def tally(self, since: float) -> dict:
         """Since `since`: kept and dropped letters by kind, and the drops by each of the owner's blocks."""

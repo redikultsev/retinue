@@ -37,6 +37,7 @@ CHAT_GLUE_S = 30          # a chat is judged once it has been quiet this long…
 CHAT_MOST_S = 120         # …or this long after its first message, if it keeps writing
 JUDGE_ITEMS = 10          # items in one judgement at most
 JUDGE_RETRY_S = 300
+UNREACHABLE_S = 30        # the assistant did not take the connection (a restart): asked again soon, no try lost
 HOUR = 3600               # urgent letters of one sender within this are one message
 SUMMARY_ITEMS = 15        # letters that waited till morning, named in the summary; the rest are counted
 STILL_OPEN = ("decide", "attend", "pay", "act")  # a later reply in the chat does not close these: said is not done
@@ -308,19 +309,27 @@ class Mailroom:
 
     async def triage(self, item: dict, letter: dict, now: float) -> Card | None:
         """One letter, one run, no tool: her answer by TRIAGE_SCHEMA, checked by `card_of`. None: try later."""
+        from .core import unreachable
+
         core = self.core
         agent = core.agents[core.default_agent]
         context_id = f"triage-{item['seq']}"
-        status, answer, meta = "error", "", {}
+        status, answer, meta, lost = "error", "", {}, False
         try:
             reply = await core.ask(agent.url, triage_prompt(letter, item["account"]), context_id, None, None,
                                    control="bare", schema=TRIAGE_SCHEMA)
             (status, answer, _), meta = reply, getattr(reply, "meta", {})
-        except Exception:
-            log.exception("triage of item %s failed", item["seq"])
+        except Exception as exc:
+            if lost := unreachable(exc):
+                log.warning("triage of item %s: the assistant is not up yet", item["seq"])
+            else:
+                log.exception("triage of item %s failed", item["seq"])
         core._account(agent, context_id, "triage", status, meta)
         if meta.get("limit"):
             core.limit_until = float(meta.get("limit_until") or now + 3600)
+            return None
+        if lost:
+            self.store.again(item["seq"], now, UNREACHABLE_S)
             return None
         if status != "done":
             if item["tries"] + 1 < TRIES:
@@ -508,7 +517,7 @@ class Mailroom:
             items = [i for i in items if i["source"] == TELEGRAM and i["sender"] == items[0]["sender"]]
         else:
             items = [i for i in items if i["source"] != TELEGRAM]
-        from .core import meta_of
+        from .core import meta_of, unreachable
 
         core = self.core
         agent = core.agents[core.default_agent]
@@ -530,7 +539,7 @@ class Mailroom:
         prompt = [EVENT_HEAD, *context, f"Сейчас: {clock.stamp(now, core.tz)}.", "Новые пункты:", *entries]
         events = [e for e in (core.archive.get(i["event_id"] or "") for i in items) if e]
         files = core.files(events)
-        status, answer, meta = "error", "", {}
+        status, answer, meta, lost = "error", "", {}, False
         async with core.queue:  # it may write to the base: one writer, and the owner's turn waits for one run only
             turn = core.turns.open_root(agent.id)
             core.writer = turn.id
@@ -544,8 +553,11 @@ class Mailroom:
                 reply = await core.ask(agent.url, "\n".join(prompt), context_id, None, turn.id, control="oneshot",
                                        schema=EVENT_SCHEMA, **({"attachments": files} if files else {}))
                 (status, answer, _), meta = reply, meta_of(reply)
-            except Exception:
-                log.exception("mail judgement %s failed", context_id)
+            except Exception as exc:
+                if lost := unreachable(exc):
+                    log.warning("mail judgement %s: the assistant is not up yet", context_id)
+                else:
+                    log.exception("mail judgement %s failed", context_id)
             finally:
                 core.turns.close(turn)
                 core.writer = None
@@ -559,7 +571,9 @@ class Mailroom:
         for number, item in enumerate(items, 1):
             decision = found.get(number)
             if decision is None:
-                if item["tries"] + 1 < TRIES:
+                if lost:
+                    self.store.again(item["seq"], now, UNREACHABLE_S)
+                elif item["tries"] + 1 < TRIES:
                     self.store.later(item["seq"], now, JUDGE_RETRY_S)
                 else:  # never judged: the morning summary names it in code's words
                     self.store.set(item["seq"], now, state="later")

@@ -527,7 +527,7 @@ def test_the_review_page_shows_what_she_decided_on_each_letter_and_message(tmp_p
     assert [(f["name"], f["count"]) for f in facets["decisions"]] == [
         ("сразу тебе", 1), ("в утреннюю сводку", 1), ("молча", 1), ("ждёт её оценки", 1)]
     (alex, anna) = facets["senders"]
-    assert (alex["name"], alex["count"], anna["name"], anna["count"]) == ("Александр", 3, "Анна, Acme", 1)
+    assert (alex["name"], alex["count"], anna["name"], anna["count"]) == ("Александр", 3, "Анна", 1), "a short chip"
     assert re.fullmatch(r"who-[0-9a-f]{10}", alex["path"]) and "@" not in anna["path"], "no address in a path"
     assert [i["who"] for i in views[anna["path"]]["items"]] == ["Анна, Acme"] and views[anna["path"]]["title"] == \
         "Анна, Acme"
@@ -558,3 +558,26 @@ def test_the_review_pages_are_cut_into_pages_of_twenty_five(tmp_path):
     assert views["all"]["items"][0]["text"] == "Письмо 0." and views["all-p3"]["items"][-1]["text"] == "Письмо 59."
     assert views["all-p2"]["numbers"] == [{"page": 1, "path": "all"}, {"page": 2, "path": "all-p2"},
                                           {"page": 3, "path": "all-p3"}]
+
+
+def test_a_sender_chip_is_short_and_the_dropped_count_is_the_whole_week(tmp_path):
+    """Her «who» is a description — «Google (no-reply@…)», «Sit'n'Go (…), Ekaterina»: the chip takes it up to its
+    first aside. The dropped log shows the newest REVIEW_DROPPED lines, and says how many there were in all."""
+    from test_mailroom import NOW
+
+    from retinue import lifehub
+
+    assert lifehub.chip("Google (no-reply@accounts.google.com)") == "Google"
+    assert lifehub.chip("Sit'n'Go (Сел и поехал Черногория), Ekaterina Kornishina") == "Sit'n'Go"
+    assert lifehub.chip("Лев Рагулин (через Google Таблицы)") == "Лев Рагулин"
+    assert lifehub.chip("Владелец (Steffano) → прокат") == "Владелец"
+    assert lifehub.chip("Наталья Владимировна, деканат") == "Наталья Владимировна"
+    assert lifehub.chip("A" * 40) == "A" * 27 + "…" and lifehub.chip("") == "без имени"
+    core, hub, _ = hub_core(tmp_path)
+    mail = core.mail.store
+    for n in range(lifehub.REVIEW_DROPPED + 5):
+        mail.db.execute("INSERT INTO mail_dropped (ts, account, sender, subject, kind, why) VALUES (?, ?, ?, ?, ?, ?)",
+                        (NOW - n, "a@example.org", "promo@shop.example", f"Скидки {n}", "promo", "triage"))
+    mail.db.commit()
+    page = hub.review(NOW)
+    assert (page["dropped"], page["dropped_shown"]) == (lifehub.REVIEW_DROPPED + 5, lifehub.REVIEW_DROPPED)

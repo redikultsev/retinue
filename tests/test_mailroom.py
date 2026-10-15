@@ -805,6 +805,43 @@ def test_the_summary_leaves_out_chat_messages_the_owner_answered_after_but_not_w
     seen = room.store.db.execute("SELECT seq FROM mail_items WHERE ref = '777/1'").fetchone()[0]
     assert seen in covered, "closed with the summary, not left to come back"
 
+
+def test_an_assistant_not_up_yet_is_not_a_try_and_is_asked_again_in_half_a_minute(tmp_path):
+    """Right after a deploy the router is up before the assistant: the connection is refused, nothing was asked of her.
+    That is not one of the three tries, and the message does not wait five minutes — only half a minute."""
+    import httpx
+    from a2a.client.errors import A2AClientError
+
+    from retinue.core import unreachable
+
+    gateway, asked = FakeGateway(), []
+    gateway.message(1, 10, "Привет! Ты где?")
+    try:
+        try:
+            raise httpx.ConnectError("All connection attempts failed")
+        except httpx.ConnectError as exc:
+            raise A2AClientError("Network communication error") from exc
+    except A2AClientError as wrapped:
+        refused = wrapped
+    assert unreachable(refused) and not unreachable(RuntimeError("down")), "the A2A client wraps it: the cause counts"
+
+    async def run():
+        answer = decided(("read", "low", "Анна спрашивает, где ты."))
+        core, room = chat_room(tmp_path, gateway, asked, [refused, answer])
+        await core.start([FakeChannel("telegram", False)])
+        await room.work(NOW)
+        await room.work(NOW + 200)
+        first = dict(room.store.get(1))
+        await room.work(NOW + 215)
+        early = len(asked)
+        await room.work(NOW + 240)
+        return room, first, early
+
+    room, first, early = asyncio.run(run())
+    assert (first["state"], first["tries"]) == ("kept", 0), "refused: not a try"
+    assert early == 1 and len(asked) == 2, "asked again after half a minute, not five"
+    assert room.store.get(1)["state"] == "later"
+
 def said_in(core, room, chat="777", name="Марко"):
     """Earlier messages of a chosen chat, put on record as `Mailroom.chat` would: the router's archive is the memory."""
     from retinue.archive import CHAT

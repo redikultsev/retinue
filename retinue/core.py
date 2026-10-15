@@ -167,6 +167,17 @@ class Reply(tuple):
         return reply
 
 
+def unreachable(exc: BaseException | None) -> bool:
+    """The agent's host did not take the connection — restarting after a deploy, say: nothing was asked of her."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, (httpx.ConnectError, ConnectionRefusedError)):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 def meta_of(reply) -> dict:
     return getattr(reply, "meta", {})
 

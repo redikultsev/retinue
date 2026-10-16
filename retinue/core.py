@@ -893,6 +893,8 @@ class Core:
         return facts
 
     async def _weekly(self, job: Job, now: float) -> None:
+        async with self.queue:  # the goals as the hub has them: the Mac may have pushed since her last run
+            await self._fresh_base()
         goals = self.goals()
         if not goals:
             await self.tell_owner(NO_GOALS.format(path=GOALS), meta={"job": job.key})

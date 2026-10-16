@@ -641,3 +641,23 @@ def test_the_work_page_reads_the_tracker_the_calendar_and_unanswered_job_letters
                               {"state": "собеседования", "count": 1}]
     assert [i["title"] for i in page["interviews"]] == ["Acme — technical round", "Interview with Hooli"]
     assert [l["text"] for l in page["letters"]] == ["Письмо t-acme"], "he answered Globex: not waiting"
+
+
+def test_the_pages_bring_the_base_to_the_hub_first_when_no_run_is_going(tmp_path):
+    """What the Mac pushed — the tracker, the goals — shows within a refresh, not after her next run; never in the
+    middle of a run, which owns the tree."""
+    from types import SimpleNamespace
+
+    from test_mailroom import NOW
+
+    core, hub, _ = hub_core(tmp_path)
+    synced = []
+    core.memory = SimpleNamespace(sync=lambda: synced.append(1), cfg=SimpleNamespace(digest_at="21:00"))
+
+    async def run():
+        await hub.refresh(NOW)
+        async with core.queue:  # a run is going
+            await hub.refresh(NOW + 300)
+
+    asyncio.run(run())
+    assert synced == [1]

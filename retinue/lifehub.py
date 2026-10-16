@@ -302,7 +302,12 @@ class Lifehub:
             self.fetching = asyncio.create_task(self.photos(self.pending.pop(0), self.core.travel, now))
 
     async def refresh(self, now: float) -> None:
-        """Every page's data, each part on its own: a part that fails is logged, the others are written."""
+        """Every page's data, each part on its own: a part that fails is logged, the others are written. The base is
+        brought to the hub's first when no run is going: what the Mac pushed shows without waiting for her next run."""
+        core = self.core
+        if core.memory and not core.queue.locked():
+            async with core.queue:
+                await core._fresh_base()
         for name, part in (("site", self.write_site), ("status", self.write_status), ("now", self.write_now),
                            ("review", self.write_review), ("work", self.write_work)):
             try:

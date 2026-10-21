@@ -114,10 +114,15 @@ class Envelope:
             raise Refused("конверт: не те поля") from None
 
 
+def sha256_of(data: object) -> str:
+    """Canonical JSON of `data`, SHA-256 hex: the one form every button-bound digest is computed in."""
+    canonical = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def digest(envelope: Envelope) -> str:
     """What the owner's button is bound to: the whole envelope, canonical JSON, SHA-256."""
-    canonical = json.dumps(envelope.as_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode()).hexdigest()
+    return sha256_of(envelope.as_dict())
 
 
 def check(envelope: Envelope) -> Envelope:

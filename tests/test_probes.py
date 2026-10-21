@@ -27,7 +27,10 @@ def _pinned() -> bool:
     path = os.environ.get("RETINUE_LANE_CLI")
     if not path or not os.access(path, os.X_OK):
         return False
-    done = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=60)
+    try:
+        done = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
     return cliengine.version_ok(done.stdout)
 
 

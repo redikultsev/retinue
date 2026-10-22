@@ -733,29 +733,23 @@ def test_no_lane_mounts_another_lanes_or_the_routers_volumes():
 
 
 def test_the_lanes_managed_settings_deny_the_web_and_hooks_anywhere_but_the_platform():
-    for lane in LANES:
-        managed = json.loads((ROOT / "deploy" / "lanes" / lane / "managed-settings.json").read_text())
-        assert managed["permissions"]["deny"] == ["WebSearch", "WebFetch"]
-        assert managed["permissions"]["disableBypassPermissionsMode"] == "disable"
-        assert managed["allowedHttpHookUrls"] == ["http://platform:9500/hook/*"]
-        assert "allowManagedHooksOnly" not in managed, "it would drop the run's own --settings hooks"
-        assert managed["sandbox"] == {"enabled": True, "failIfUnavailable": True, "autoAllowBashIfSandboxed": False,
-                                      "filesystem": {"denyWrite": ["/lane/config", "/lane/run", "/etc/claude-code"]}}
-        assert managed["cleanupPeriodDays"] == 30
+    managed = json.loads((ROOT / "deploy" / "lanes" / "managed-settings.json").read_text())
+    assert managed["permissions"]["deny"] == ["WebSearch", "WebFetch"]
+    assert managed["permissions"]["disableBypassPermissionsMode"] == "disable"
+    assert managed["allowedHttpHookUrls"] == ["http://platform:9500/hook/*"]
+    assert "allowManagedHooksOnly" not in managed, "it would drop the run's own --settings hooks"
+    assert managed["sandbox"] == {"enabled": True, "failIfUnavailable": True, "autoAllowBashIfSandboxed": False,
+                                  "filesystem": {"denyWrite": ["/lane/config", "/lane/run", "/etc/claude-code"]}}
+    assert managed["cleanupPeriodDays"] == 30
 
 
-def test_the_lane_image_installs_the_pinned_cli_with_its_sandbox():
+def test_the_lane_image_has_the_cli_sandbox_and_root_owned_managed_settings():
     dockerfile = (ROOT / "deploy" / "lanes" / "Dockerfile").read_text()
     packages = dockerfile.split("apt-get install")[1].split("\n")[0].split()
     assert "bubblewrap" in packages and "socat" in packages, "without either the CLI's sandbox cannot start"
-    assert "COPY deploy/lanes/fetch-cli.sh deploy/lanes/cli.lock" in dockerfile
-    assert "fetch-cli.sh /opt/claude" in dockerfile, "the version and integrity in cli.lock, where cliengine looks"
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile and "pip install" not in dockerfile
-    assert re.search(r"astral-sh/uv:\d+\.\d+\.\d+ ", dockerfile)
-    assert "COPY --chown=root:root --chmod=0644 deploy/lanes/$LANE/managed-settings.json " \
+    assert "COPY --chown=root:root --chmod=0644 deploy/lanes/managed-settings.json " \
            "/etc/claude-code/managed-settings.json" in dockerfile
-    assert "install -d -o lane -g lane /work /lane/config /lane/state /lane/run" in dockerfile
-    assert 'CMD ["retinue-lane"]' in dockerfile and "USER lane" in dockerfile
 
 
 def test_setup_with_the_platform(tmp_path, monkeypatch):

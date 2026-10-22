@@ -19,10 +19,11 @@ ENV UV_PYTHON_DOWNLOADS=never
 RUN uv sync --frozen --no-dev --no-editable
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Root's and read-only to the lane: what the CLI may never be talked out of (sandbox, denied tools, hook addresses).
+# The same for both lanes.
+COPY --chown=root:root --chmod=0644 deploy/lanes/managed-settings.json /etc/claude-code/managed-settings.json
 ARG LANE
 ARG LANE_UID
-# Root's and read-only to the lane: what the CLI may never be talked out of (sandbox, denied tools, hook addresses).
-COPY --chown=root:root --chmod=0644 deploy/lanes/$LANE/managed-settings.json /etc/claude-code/managed-settings.json
 RUN test -n "$LANE" && test -n "$LANE_UID" \
  && useradd --uid "$LANE_UID" --home-dir /lane/config --no-create-home lane \
  && install -d -o lane -g lane /work /lane/config /lane/state /lane/run

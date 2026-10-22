@@ -1,6 +1,6 @@
-"""The platform's own SQLite: its sessions and their runs, what the owner wrote into them, every raw line the lanes
-journaled, the transcript projected from those lines, the approvals with the buttons bound to them, and the notes
-the router takes by number (the journal pattern of `tgbusiness.State`).
+"""The platform's own SQLite: its sessions and their runs, the runs queued for room on a lane, what the owner wrote
+into them, every raw line the lanes journaled, the transcript projected from those lines, the approvals with the
+buttons bound to them, and the notes the router takes by number (the journal pattern of `tgbusiness.State`).
 
 A raw line is stored once — `UNIQUE(lane, lane_seq)` makes a lane's replay after a reconnect a no-op — and is
 numbered into its session's turns as it arrives: a `result` closes a turn, and so does a new run of the session
@@ -115,6 +115,14 @@ class PlatformStore:
                 data TEXT NOT NULL,
                 given INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS queue (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                session TEXT NOT NULL,
+                prompt TEXT,                        -- NULL: a resume after the owner's decision
+                at REAL NOT NULL,
+                attempt TEXT                        -- the run sent for it whose answer was lost: the lane's journal
+                                                    -- tells whether it started
+            );
             """)
         self.db.commit()
 
@@ -151,11 +159,62 @@ class PlatformStore:
                               (hook_token_hash,)).fetchone()
         return {"id": row[0], "session": row[1], "marks": json.loads(row[2]), "ended": row[3]} if row else None
 
+    def end_run(self, run: str, now: float) -> None:
+        self.db.execute("UPDATE runs SET ended = ? WHERE id = ? AND ended IS NULL", (now, run))
+        self.db.commit()
+
+    def open_runs(self) -> list[dict]:
+        """The runs a lane may still be running: started and not yet seen to end."""
+        rows = self.db.execute("SELECT r.id, r.session, s.lane FROM runs r JOIN sessions s ON s.id = r.session "
+                               "WHERE r.ended IS NULL ORDER BY r.started")
+        return [{"run": run, "session": session, "lane": lane} for run, session, lane in rows]
+
+    def sessions_in(self, state: str, idle_before: float | None = None) -> list[str]:
+        sql, args = "SELECT id FROM sessions WHERE state = ?", [state]
+        if idle_before is not None:
+            sql, args = sql + " AND idle_since < ?", [*args, idle_before]
+        return [row[0] for row in self.db.execute(sql + " ORDER BY created", args)]
+
     def add_input(self, input_id: str, session: str, text: str, now: float) -> bool:
         """True when the owner's message is new; the router sending it again after a timeout is not."""
         cursor = self.db.execute("INSERT OR IGNORE INTO inputs VALUES (?, ?, ?, ?)", (input_id, session, text, now))
         self.db.commit()
         return cursor.rowcount == 1
+
+    def input_session(self, input_id: str) -> str | None:
+        row = self.db.execute("SELECT session FROM inputs WHERE input_id = ?", (input_id,)).fetchone()
+        return row[0] if row else None
+
+    def last_input_at(self, session: str) -> float | None:
+        return self.db.execute("SELECT MAX(at) FROM inputs WHERE session = ?", (session,)).fetchone()[0]
+
+    # --- the runs waiting for room on their lane ----------------------------------------------------------------
+
+    def enqueue(self, session: str, prompt: str | None, now: float) -> None:
+        self.db.execute("INSERT INTO queue (session, prompt, at) VALUES (?, ?, ?)", (session, prompt, now))
+        self.db.commit()
+
+    def queued(self) -> list[dict]:
+        rows = self.db.execute("SELECT seq, session, prompt FROM queue ORDER BY seq")
+        return [{"seq": seq, "session": session, "prompt": prompt} for seq, session, prompt in rows]
+
+    def dequeue(self, seq: int) -> None:
+        self.db.execute("DELETE FROM queue WHERE seq = ?", (seq,))
+        self.db.commit()
+
+    def attempt(self, seq: int, run: str | None) -> None:
+        self.db.execute("UPDATE queue SET attempt = ? WHERE seq = ?", (run, seq))
+        self.db.commit()
+
+    def attempted(self, run: str) -> int | None:
+        """The queued entry `run` was sent for, while the lane's journal has not yet said what became of it."""
+        row = self.db.execute("SELECT seq FROM queue WHERE attempt = ?", (run,)).fetchone()
+        return row[0] if row else None
+
+    def attempts(self, lane: str) -> list[str]:
+        rows = self.db.execute("SELECT q.attempt FROM queue q JOIN sessions s ON s.id = q.session "
+                               "WHERE q.attempt IS NOT NULL AND s.lane = ? ORDER BY q.seq", (lane,))
+        return [row[0] for row in rows]
 
     # --- raw lines and the projection ---------------------------------------------------------------------------
 
@@ -170,15 +229,26 @@ class PlatformStore:
                 turn += 1
             self.db.execute("INSERT INTO raw (lane, lane_seq, session, run, turn, line, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (lane, lane_seq, session, run, turn, line, now))
-            ended = transcript.ends_turn(_parsed(line))
+            ended = transcript.ends_turn(parsed(line))
             self.db.execute("UPDATE sessions SET turn = ?, turn_run = ? WHERE id = ?",
                             (turn + 1 if ended else turn, None if ended else run, session))
         return turn
 
+    def has_raw(self, lane: str, lane_seq: int) -> bool:
+        return self.db.execute("SELECT 1 FROM raw WHERE lane = ? AND lane_seq = ?", (lane, lane_seq)).fetchone() \
+            is not None
+
+    def last_line(self, session: str) -> tuple[dict, float] | None:
+        """The session's last CLI line and when it came; the lane's own events after it do not count."""
+        row = self.db.execute("SELECT line, at FROM raw WHERE session = ? AND (NOT json_valid(line) OR "
+                              "json_extract(line, '$.type') IS NOT 'lane') ORDER BY id DESC LIMIT 1",
+                              (session,)).fetchone()
+        return (parsed(row[0]), row[1]) if row else None
+
     def _turn_lines(self, session: str, turn: int) -> tuple[list[int], list[dict]]:
         rows = self.db.execute("SELECT id, line FROM raw WHERE session = ? AND turn = ? ORDER BY id",
                                (session, turn)).fetchall()
-        return [row[0] for row in rows], [_parsed(row[1]) for row in rows]
+        return [row[0] for row in rows], [parsed(row[1]) for row in rows]
 
     def _resumed(self, session: str, turn: int) -> dict | None:
         """The call the session's last result before this turn deferred — what a resume finishes first. Read from
@@ -206,6 +276,11 @@ class PlatformStore:
                                        (session,)).fetchall():
             self.reproject(session, turn)
 
+    def rebuild_all(self) -> None:
+        """The whole projection again from the raw lines; a turn whose lines were pruned keeps its items."""
+        for (session,) in self.db.execute("SELECT id FROM sessions").fetchall():
+            self.rebuild(session)
+
     def items(self, session: str) -> list[dict]:
         rows = self.db.execute("SELECT turn, n, kind, data, first_raw, last_raw FROM items WHERE session = ? "
                                "ORDER BY turn, n", (session,))
@@ -228,11 +303,12 @@ class PlatformStore:
                 "view", "created", "at")
 
     def add_approval(self, session: str, run: str, tool_use_id: str, kind: str, tool: str, tool_input: dict,
-                     cwd: str, file_hash: str, digest: str, now: float, state: str = "pending") -> str:
+                     cwd: str, file_hash: str, digest: str, now: float, state: str = "pending",
+                     view: dict | None = None) -> str:
         approval = secrets.token_hex(4)
         self.db.execute(f"INSERT INTO approvals ({', '.join(self.APPROVAL)}) VALUES ({', '.join('?' * 14)})",
                         (approval, session, run, tool_use_id, kind, tool, _json(tool_input), cwd, file_hash, digest,
-                         state, "{}", now, now))
+                         state, _json(view or {}), now, now))
         self.db.commit()
         return approval
 
@@ -243,6 +319,21 @@ class PlatformStore:
         data = dict(zip(self.APPROVAL, row))
         data["input"], data["view"] = json.loads(data["input"]), json.loads(data["view"])
         return data
+
+    def approvals(self, *, session: str | None = None, run: str | None = None, tool_use_id: str | None = None,
+                  kind: str | None = None, states: tuple[str, ...] = ()) -> list[dict]:
+        """The approvals that match every filter given, oldest first."""
+        where, args = [], []
+        for column, value in (("session", session), ("run", run), ("tool_use_id", tool_use_id), ("kind", kind)):
+            if value is not None:
+                where.append(f"{column} = ?")
+                args.append(value)
+        if states:
+            where.append(f"state IN ({', '.join('?' * len(states))})")
+            args += states
+        ids = self.db.execute(f"SELECT id FROM approvals WHERE {' AND '.join(where) or '1'} ORDER BY created, rowid",
+                              args).fetchall()
+        return [self.approval(approval) for (approval,) in ids]
 
     def move(self, approval: str, states: tuple[str, ...], to: str, now: float, **fields) -> bool:
         """`to` only from one of `states`; True when this call moved it — of two racing moves exactly one wins."""
@@ -292,7 +383,7 @@ class PlatformStore:
         return cursor.rowcount
 
 
-def _parsed(line: str) -> dict:
+def parsed(line: str) -> dict:
     """A raw line as the projection reads it; one that is not a JSON object projects to nothing."""
     try:
         data = json.loads(line)

@@ -33,6 +33,7 @@ retinue-admin = "retinue.admin:main"
 retinue-collector = "retinue.collector:main"
 retinue-mail-send = "retinue.sender:main"
 retinue-tg-business = "retinue.tgbusiness:main"
+retinue-lane = "retinue.lane_host:main"
 
 [build-system]
 requires = ["hatchling"]

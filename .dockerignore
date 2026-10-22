@@ -3,5 +3,8 @@
 tests
 agents
 deploy
+!deploy/lanes/fetch-cli.sh
+!deploy/lanes/cli.lock
+!deploy/lanes/managed-settings.json
 docs
 **/__pycache__

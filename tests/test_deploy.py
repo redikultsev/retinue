@@ -1,5 +1,6 @@
 """What gets deployed: deploy/compose.yml and the files deploy/setup.sh writes. No Docker and no root needed."""
 
+import fnmatch
 import json
 import os
 import re
@@ -750,6 +751,24 @@ def test_the_lane_image_has_the_cli_sandbox_and_root_owned_managed_settings():
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile and "pip install" not in dockerfile
     assert "COPY --chown=root:root --chmod=0644 deploy/lanes/managed-settings.json " \
            "/etc/claude-code/managed-settings.json" in dockerfile
+
+
+def test_the_lane_image_copies_only_what_the_build_context_keeps():
+    rules = [line for line in (ROOT / ".dockerignore").read_text().splitlines() if line and not line.startswith("#")]
+
+    def ignored(path):
+        verdict = False
+        for rule in rules:
+            pattern = rule.removeprefix("!")
+            parts = path.split("/")
+            if any(fnmatch.fnmatchcase("/".join(parts[:n]), pattern) for n in range(1, len(parts) + 1)):
+                verdict = not rule.startswith("!")
+        return verdict
+
+    copies = re.findall(r"^COPY (?!--from)(?:--\S+ )*(.+) \S+$", (ROOT / "deploy" / "lanes" / "Dockerfile").read_text(), re.M)
+    sources = [source for line in copies for source in line.split()]
+    assert "deploy/lanes/managed-settings.json" in sources
+    assert [source for source in sources if ignored(source)] == []
 
 
 def test_setup_with_the_platform(tmp_path, monkeypatch):

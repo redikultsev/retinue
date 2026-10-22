@@ -45,7 +45,9 @@ START = ("Пиши сюда — ответит ассистентка. Кома�
 
 
 class TelegramError(Exception):
-    pass
+    def __init__(self, text: str, code: int | None = None) -> None:
+        super().__init__(text)
+        self.code = code  # Telegram's error_code, or the HTTP status of an answer that is not the Bot API's JSON
 
 
 BUTTONS_PER_ROW = 4  # Telegram takes at most 8 in a row; four labels like «Откатить 10» still read
@@ -87,9 +89,14 @@ class TelegramChannel:
         url = f"{API}/bot{self.cfg.bot_token}/{method}"
         params = {k: v for k, v in params.items() if v is not None}
         response = await (self.http.post(url, data=params, files=files) if files else self.http.post(url, json=params))
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError:  # a gateway's HTML page; worded without the URL, which carries the token
+            raise TelegramError(f"{method}: {response.status_code} not the Bot API's answer",
+                                response.status_code) from None
         if not data.get("ok"):
-            raise TelegramError(f"{method}: {data.get('error_code')} {data.get('description')}")
+            code = data.get("error_code")
+            raise TelegramError(f"{method}: {code} {data.get('description')}", code if isinstance(code, int) else None)
         return data["result"]
 
     # --- setup -------------------------------------------------------------------------------

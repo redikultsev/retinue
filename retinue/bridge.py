@@ -5,7 +5,8 @@ The router stays the only Telegram poller; the platform has no bot token. What t
 approval or courier card, a card rewritten, a session's summary — it journals by number, and the bridge pulls it like
 any neighbour's items: shown, then confirmed. A note that did not go out for a passing reason (Telegram busy, the
 network) is not confirmed and is tried again on the next pull. A note that can never go out — Telegram refuses it, or
-it is malformed — is said to the owner as such and confirmed past, so it does not hold back the notes after it. Every message the bridge sends is mapped in the router's `sent` table under its own channel names
+it is malformed — is said to the owner as such and confirmed past, so it does not hold back the notes after it. Every
+message the bridge sends is mapped in the router's `sent` table under its own channel names
 (`platform`: message → session, `platform-card`: message → approval), never under `telegram`: a reply to it goes to
 its session, and nothing of the platform enters the assistant's archive or her context.
 """
@@ -158,7 +159,7 @@ class PlatformBridge:
 
 def refused(exc: TelegramError) -> bool:
     """Telegram's 400: the same request would be refused again. A 429, a 5xx or the network may pass."""
-    return ": 400 " in str(exc)
+    return exc.code == 400
 
 
 def view_of(data: dict) -> CardView:

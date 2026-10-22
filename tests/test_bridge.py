@@ -3,6 +3,8 @@ platform's own channel names, a note that did not go out is not confirmed, and t
 
 import asyncio
 
+import httpx
+
 from retinue.bridge import CARD, NOT_SHOWN, SESSION, UNAVAILABLE, PlatformBridge
 from retinue.channels.telegram import TelegramChannel, TelegramError
 from retinue.config import TelegramConfig
@@ -46,7 +48,7 @@ def make(tmp_path, notes=()):
         ch.sent.append((method, params, files))
         for match, error in ch.fail.items():
             if match == params.get("message_id") or isinstance(match, str) and match in params.get("text", ""):
-                raise TelegramError(f"{method}: {error}")
+                raise TelegramError(f"{method}: {error}", int(error.split()[0]))
         return {"message_id": next(ids)}
 
     ch.call = call
@@ -190,3 +192,23 @@ def test_an_unknown_track_is_said_and_maps_to_nothing(tmp_path):
     asyncio.run(bridge.new("x", "", "7"))
     assert [p["text"] for _, p, _ in ch.sent] == ["Нет такого трека: x. Есть: notes, retinue"]
     assert ch.store.sent_event(SESSION, "900") is None
+
+
+def test_a_gateway_error_page_from_telegram_leaves_the_note_unconfirmed(tmp_path):
+    store = Store(str(tmp_path / "s.db"))
+    bridge = PlatformBridge(FakePlatform([card(1)]), store)
+    ch = TelegramChannel(TelegramConfig(owner_id=OWNER, bot_token="SECRET"), store, bridge=bridge)
+    answers = iter([httpx.Response(502, text="<html>502 Bad Gateway</html>"),
+                    httpx.Response(200, json={"ok": True, "result": {"message_id": 900}})])
+    ch.http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: next(answers)))
+
+    async def run():
+        try:
+            await bridge.deliver()
+        except TelegramError as exc:
+            assert exc.code == 502 and "SECRET" not in str(exc), "the URL carries the token"
+        assert bridge.neighbour.confirmed == [], "a passing failure is tried again, not said and confirmed past"
+        assert await bridge.deliver() == 1
+
+    asyncio.run(run())
+    assert bridge.neighbour.confirmed == [1] and store.sent_event(CARD, "900") == "a1"

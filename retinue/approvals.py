@@ -18,7 +18,7 @@ import os
 import unicodedata
 from dataclasses import dataclass
 
-from . import courier
+from . import courier, transcript
 from .config import LaneRef, Track
 
 NEVER: list[tuple[str, str]] = [
@@ -41,7 +41,6 @@ NEVER: list[tuple[str, str]] = [
 BASE_ALLOW = ["Read", "Grep", "Glob", "TodoWrite"]
 BASE_DENY = ["WebSearch", "WebFetch", "CronCreate", "CronDelete", "ScheduleWakeup", "RemoteTrigger"]
 
-FILE_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 WORK = "/work"  # the lane's own view of its work volume; the platform reads it at `LaneRef.work_mount`
 OPEN_LIMIT = 4096  # one Telegram message: a longer card offers only «Открыть»
 APPROVE, REJECT, OPEN = "approve", "reject", "open"
@@ -64,30 +63,69 @@ def marks_for(track: Track, lane: LaneRef) -> list[Mark]:
     return [m for m in marks if not (m.rule in seen or seen.add(m.rule))]
 
 
+class Unbindable(Exception):
+    """The file a call would change is one the platform cannot read as the lane sees it, so no digest can hold it
+    as it is and no grant may be given for the call."""
+
+
+def _lane_relative(path: str) -> list[str] | None:
+    """A lane path's components under /work, none for /work itself; None for a path that is not in /work."""
+    relative = os.path.relpath(os.path.normpath(path), WORK)
+    if relative == os.curdir:
+        return []
+    return None if relative.split(os.sep)[0] == os.pardir else relative.split(os.sep)
+
+
+def _in_mount(parts: list[str], root: str) -> str:
+    """The platform's path of a file in the lane's /work, its links followed as the lane follows them: an absolute
+    target is a lane path, read back through the mount."""
+    todo, done, links = list(reversed(parts)), [], 0
+    while todo:
+        part = todo.pop()
+        if part in ("", os.curdir):
+            continue
+        if part == os.pardir:
+            if not done:
+                raise Unbindable("a link leads out of /work")
+            done.pop()
+            continue
+        here = os.path.join(root, *done, part)
+        if not os.path.islink(here):
+            done.append(part)
+            continue
+        links += 1
+        if links > 40:  # as the kernel's own limit: a loop of links
+            raise Unbindable("too many links")
+        link = os.readlink(here)
+        if os.path.isabs(link):
+            done, followed = [], _lane_relative(link)
+            if followed is None:
+                raise Unbindable("a link leads out of /work")
+        else:
+            followed = link.split("/")
+        todo += reversed(followed)
+    return os.path.join(root, *done)
+
+
 def file_hash(tool: str, tool_input: dict, work_mount: str) -> str:
     """SHA-256 of the file the call would change, read through the platform's mount of the lane's /work: `absent`
-    when there is none yet, `outside` for a path that is not in /work, `unreadable` for one the platform may not
-    read; empty for a tool that changes no file."""
-    key = FILE_TOOLS.get(tool)
+    when there is none yet, `outside` for a path not in /work (the CLI asks for such a call, and an ask is denied);
+    empty for a tool that changes no file. Raises `Unbindable` for a file the platform cannot read: a link out of
+    /work, or one it may not open."""
+    key = transcript.EDITS.get(tool)
     if key is None:
         return ""
     path = tool_input.get(key)
-    if not isinstance(path, str) or not os.path.isabs(path):
-        return "outside"
-    relative = os.path.relpath(os.path.normpath(path), WORK)
-    if relative == os.curdir or relative.split(os.sep)[0] == os.pardir:
-        return "outside"
-    root = os.path.realpath(work_mount)
-    target = os.path.realpath(os.path.join(root, relative))
-    if os.path.commonpath([root, target]) != root:
+    parts = _lane_relative(path) if isinstance(path, str) and os.path.isabs(path) else None
+    if not parts:
         return "outside"
     try:
-        with open(target, "rb") as f:
+        with open(_in_mount(parts, os.path.realpath(work_mount)), "rb") as f:
             return hashlib.file_digest(f, "sha256").hexdigest()
     except FileNotFoundError:
         return "absent"
-    except OSError:
-        return "unreadable"
+    except OSError as e:
+        raise Unbindable(str(e)) from e
 
 
 def digest(tool: str, tool_input: dict, cwd: str, file_hash: str) -> str:

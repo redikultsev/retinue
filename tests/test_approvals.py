@@ -27,15 +27,37 @@ def test_the_digest_changes_with_the_tool_the_input_the_directory_and_the_file()
 def test_the_file_hash_is_read_through_the_lanes_mount(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "a.py").write_bytes(b"print(1)\n")
-    (tmp_path / "escape").symlink_to("/etc")
     edit = lambda path: approvals.file_hash("Edit", {"file_path": path}, str(tmp_path))  # noqa: E731
     assert edit("/work/src/a.py") == hashlib.sha256(b"print(1)\n").hexdigest()
     assert edit("/work/src/new.py") == "absent"
     assert edit("/etc/x") == edit("/work/../etc/passwd") == edit("/work") == edit("src/a.py") == "outside"
-    assert edit("/work/escape/passwd") == "outside", "a symlink out of /work is not followed"
     assert approvals.file_hash("NotebookEdit", {"notebook_path": "/work/src/a.py"}, str(tmp_path)) == \
         edit("/work/src/a.py")
     assert approvals.file_hash("Bash", {"command": "cat /work/src/a.py"}, str(tmp_path)) == ""
+
+
+def test_a_link_is_followed_as_the_lane_follows_it(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_bytes(b"one")
+    (tmp_path / "abs.py").symlink_to("/work/src/a.py")
+    (tmp_path / "rel.py").symlink_to("src/a.py")
+    (tmp_path / "srcdir").symlink_to("/work/src")
+    edit = lambda path: approvals.file_hash("Edit", {"file_path": path}, str(tmp_path))  # noqa: E731
+    before = edit("/work/abs.py")
+    assert before == edit("/work/rel.py") == edit("/work/srcdir/a.py") == hashlib.sha256(b"one").hexdigest()
+    (tmp_path / "src" / "a.py").write_bytes(b"two")
+    assert edit("/work/abs.py") != before, "the hash follows the file the lane's link points at"
+
+
+def test_a_file_the_platform_cannot_read_binds_no_grant(tmp_path):
+    (tmp_path / "escape").symlink_to("/etc")
+    (tmp_path / "up").symlink_to("../x")
+    (tmp_path / "loop").symlink_to("loop")
+    (tmp_path / "secret.py").write_bytes(b"x")
+    (tmp_path / "secret.py").chmod(0)
+    for path in ("/work/escape/passwd", "/work/up", "/work/loop", "/work/secret.py"):
+        with pytest.raises(approvals.Unbindable):
+            approvals.file_hash("Write", {"file_path": path}, str(tmp_path))
 
 
 def test_marks_cover_every_rule_once_strictest_first():
@@ -48,6 +70,13 @@ def test_marks_cover_every_rule_once_strictest_first():
     assert all(m.label for m in marks if m.kind == "never")
     assert set(rules) == {r for r, _ in approvals.NEVER} | {*approvals.BASE_ALLOW, *approvals.BASE_DENY, *LANE.deny,
                                                             *TRACK.allow, *TRACK.deny}
+
+
+def test_a_track_cannot_allow_what_is_denied_or_never():
+    track = Track(name="retinue", lane="code", kind="code", cwd="retinue",
+                  allow=["WebSearch", "Bash(curl:*)", "Bash(git push:*)"])
+    kind = {m.rule: m.kind for m in approvals.marks_for(track, LANE)}
+    assert (kind["WebSearch"], kind["Bash(curl:*)"], kind["Bash(git push:*)"]) == ("deny", "deny", "never")
 
 
 def test_every_rule_in_code_is_one_the_cli_matches():

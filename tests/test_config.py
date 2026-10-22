@@ -281,6 +281,11 @@ def test_platform_lanes_tracks_and_their_tokens(tmp_path, monkeypatch):
     (("cwd: retinue", "cwd: /etc"), "not a path inside /work"),
     (("'Bash(make test:*)'", "'Bash(make (x))'"), "not a permission rule"),
     (("deny: [WebSearch", "deny: ['Web Search'"), "lane code: not a permission rule"),
+    (("  code: {", "  lane-code: {"), "lane name 'lane-code'"),
+    (("work_mount: /lanes/code,", "work_mount: /lanes/code, max_sessions: 0,"), "lane code: max_sessions"),
+    (("lanes:", "max_sessions: 0\nlanes:"), "platform config: max_sessions"),
+    (("  - {name: retinue", "  - {name: retinue, lane: code, kind: code, cwd: x}\n  - {name: retinue"),
+     "two tracks with one name"),
 ])
 def test_platform_refuses_a_track_or_rule_it_cannot_run(tmp_path, monkeypatch, change, error):
     with pytest.raises(SystemExit, match=re.escape(error)):

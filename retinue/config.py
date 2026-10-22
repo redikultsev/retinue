@@ -200,6 +200,33 @@ class GatewayConfig:
         return cls(token=_env("RETINUE_GATEWAY_TOKEN"), bot_token=_env("TELEGRAM_BUSINESS_TOKEN"), owner_id=int(owner))
 
 
+@dataclass
+class LaneHostConfig:
+    """A lane's host (`retinue-lane`): the platform's token, the login its CLI runs with, the one hook address a run
+    may point at, the lane's egress proxy, how many CLI processes may run at once. From the environment."""
+    token: str = ""                     # from RETINUE_LANE_TOKEN: the platform signs every command with it
+    oauth_token: str = ""               # from CLAUDE_CODE_OAUTH_TOKEN
+    hook_url: str = ""                  # from RETINUE_LANE_HOOK_URL: a settings file with any other address is refused
+    proxy: str = ""                     # HTTPS_PROXY
+    no_proxy: str = ""                  # NO_PROXY
+    max_running: int = 2                # RETINUE_LANE_MAX
+    work: str = "/work"                 # the sessions' working trees
+    home: str = "/lane/config"          # the CLI's HOME
+    config_dir: str = "/lane/config/claude"  # its CLAUDE_CONFIG_DIR: the CLI's transcripts
+    state: str = "/lane/state"          # the journal
+    run_dir: str = "/lane/run"          # tmpfs: one settings file per run (cliengine.SETTINGS_DIR)
+    listen_port: int = 9600
+
+    @classmethod
+    def load(cls) -> LaneHostConfig:
+        cap = os.environ.get("RETINUE_LANE_MAX", str(cls.max_running))
+        if not cap.isdigit() or int(cap) < 1:
+            raise SystemExit("RETINUE_LANE_MAX: a positive number of CLI processes")
+        return cls(token=_env("RETINUE_LANE_TOKEN"), oauth_token=_env("CLAUDE_CODE_OAUTH_TOKEN"),
+                   hook_url=_env("RETINUE_LANE_HOOK_URL").rstrip("/"), proxy=os.environ.get("HTTPS_PROXY", ""),
+                   no_proxy=os.environ.get("NO_PROXY", ""), max_running=int(cap))
+
+
 
 LANE_NAME = re.compile(r"[a-z][a-z0-9]{1,30}")  # its token is RETINUE_LANE_TOKEN_<NAME>, so no dash
 TRACK_NAME = re.compile(r"[a-z][a-z0-9-]{1,30}")

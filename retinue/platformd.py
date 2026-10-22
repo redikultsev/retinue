@@ -75,8 +75,8 @@ class Platform:
 
     def app(self) -> web.Application:
         app = web.Application(middlewares=[self._signed], client_max_size=16 * 1024 * 1024)  # a Write's content
-        app.add_routes([web.post(r"/hook/mark/{n:\d{1,4}}", self.mark), web.post(f"/hook/{{event:{HOOK_EVENTS}}}",
-                                                                                    self.hook),
+        app.add_routes([web.post(f"/hook/mark/{{n:{cliengine.MARK_N}}}", self.mark),
+                        web.post(f"/hook/{{event:{HOOK_EVENTS}}}", self.hook),
                         web.post("/owner/new", self.owner_new), web.post("/owner/input", self.owner_input),
                         web.post("/owner/press", self.owner_press), web.post("/items", self.items),
                         web.post("/items/confirm", self.confirm)])
@@ -149,7 +149,7 @@ class Platform:
         for approval in self.store.approvals(session=session_id, kind="approval", states=("pending", "shown")):
             if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
                 retire(self.store, {**approval, "state": "stale"}, "Устарела: ты написал новое сообщение", now)
-        if any(r["session"] == session_id for r in self.store.open_runs()):
+        if session["lane"] in self.lanes and any(r["session"] == session_id for r in self.store.open_runs()):
             try:
                 if (await self.lanes[session["lane"]].answer(session_id, text)).get("status") == "sent":
                     return web.json_response({"say": "Передал в сессию."})
@@ -204,16 +204,21 @@ class Platform:
 
     async def drain(self) -> None:
         """Start the queued runs there is room for, oldest first: one run per session at a time, the lane's own cap
-        and the platform's total. A run the lane could not take now stays queued."""
+        and the platform's total. A run the lane could not take now stays queued; one whose lane or track is no longer
+        configured is refused at once."""
         async with self._draining:
-            running = self.store.open_runs()
+            running = [r for r in self.store.open_runs() if r["lane"] in self.cfg.lanes]  # the others no one settles
             sessions = {r["session"] for r in running}
             per_lane, total = Counter(r["lane"] for r in running), len(running)
             for queued in self.store.queued():
-                if total >= self.cfg.max_sessions:
-                    break
                 session = self.store.session(queued["session"])
-                if session is None or queued["session"] in sessions:
+                if session is None:
+                    continue
+                if (why := self._unrunnable(session)) is not None:  # told now, room or not
+                    self._refused(session, why, self.clock())
+                    self.store.dequeue(queued["seq"])
+                    continue
+                if total >= self.cfg.max_sessions or queued["session"] in sessions:
                     continue
                 sessions.add(queued["session"])  # the session's later entries wait behind this one
                 if per_lane[session["lane"]] >= self.cfg.lanes[session["lane"]].max_sessions:
@@ -225,11 +230,16 @@ class Platform:
                     per_lane[session["lane"]] += 1
                     total += 1
 
+    def _unrunnable(self, session: dict) -> str | None:
+        if session["lane"] not in self.cfg.lanes:
+            return f"линии {session['lane']} больше нет в настройках"
+        if session["track"] not in self.tracks:
+            return f"трека {session['track']} больше нет в настройках"
+        return None
+
     async def _start(self, session: dict, queued: dict) -> str:
         now = self.clock()
-        track, lane = self.tracks.get(session["track"]), self.cfg.lanes[session["lane"]]
-        if track is None:
-            return self._refused(session, f"трека {session['track']} больше нет в настройках", now)
+        track, lane = self.tracks[session["track"]], self.cfg.lanes[session["lane"]]
         marks = approvals.marks_for(track, lane)
         token = secrets.token_urlsafe(32)
         run = self.store.add_run(session["id"], self.gate.token_hash(token), [dataclasses.asdict(m) for m in marks],
@@ -325,8 +335,7 @@ class Platform:
                 else:
                     self._refused(session, str(line.get("error") or event), now)
             current = self.store.session(session["id"])["state"]
-            if (event in ("stopped", "restarted") and current != "closed") or (event == "exited" and
-                                                                                current == "active"):
+            if event in ("stopped", "restarted", "exited") and current == "active":  # a waiting one keeps its card
                 self._set_state(session["id"], "idle", now)
 
     def _result(self, session: dict, run: str, line: dict, now: float) -> None:
@@ -427,6 +436,8 @@ class Platform:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         for run in self.store.open_runs():
+            if run["lane"] not in self.lanes:
+                continue
             try:
                 await self.lanes[run["lane"]].stop(run["session"])
             except Unavailable as exc:

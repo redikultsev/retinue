@@ -5,6 +5,7 @@ A platform is torn down and built again from the same files where the scenario i
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from retinue import gate, platformd
+from retinue import gate, platformd, sessions
 from retinue.config import LaneRef, PlatformConfig, Track
 from retinue.platformd import Platform
 from retinue.sessions import PlatformStore
@@ -710,11 +711,7 @@ def _owner_wrote_since(world: World, session: str, run: str) -> None:
     world.store.db.commit()
 
 
-def _session_stopped(world: World, session: str, run: str) -> None:
-    world.lanes["code"].add(session, run, json.dumps({"type": "lane", "event": "stopped"}))
-
-
-@pytest.mark.parametrize("since", [_later_cli_line, _another_call_deferred, _owner_wrote_since, _session_stopped])
+@pytest.mark.parametrize("since", [_later_cli_line, _another_call_deferred, _owner_wrote_since])
 def test_a_card_is_pressable_only_while_its_call_is_what_the_session_waits_on(tmp_path, since):
     async def body(world: World):
         session, run, card = await deferred_session(world)
@@ -724,6 +721,59 @@ def test_a_card_is_pressable_only_while_its_call_is_what_the_session_waits_on(tm
         assert pressed == {"toast": "Карточка устарела — решение не принято."}
         assert len(world.lanes["code"].runs()) == 1
         assert world.store.approval(card["approval"])["state"] == "shown"
+
+    scenario(tmp_path, body)
+
+
+@pytest.mark.parametrize("event", ["stopped", "restarted"])
+def test_a_run_stopped_after_its_deferral_keeps_the_card_pressable(tmp_path, event):
+    async def body(world: World):
+        session, run, card = await deferred_session(world)
+        world.lanes["code"].add(session, run["run"], json.dumps({"type": "lane", "event": event}))
+        await world.poll()
+        assert world.store.session(session)["state"] == "waiting"
+        assert (await world.owner("press", {"button": card["data"]["buttons"][0][1]}))["toast"] == "Разрешено."
+        assert world.store.approval(card["approval"])["state"] == "granted"
+        assert len(world.lanes["code"].runs()) == 2
+
+    scenario(tmp_path, body)
+
+
+def test_a_session_whose_lane_left_the_config_is_refused_and_blocks_no_one(tmp_path):
+    async def body(world: World):
+        running = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "x"}))["session"]
+        queued = (await world.owner("new", {"input_id": "tg:2", "track": "notes", "text": "y"}))["session"]
+        assert [q["session"] for q in world.store.queued()] == [queued], "the open run holds the only room"
+        await world.down()
+        world.cfg = dataclasses.replace(world.cfg, lanes={"code": world.cfg.lanes["code"]})
+        await world.up()
+        fix = (await world.owner("new", {"input_id": "tg:3", "track": "retinue", "text": "почини"}))["session"]
+        assert [r["session"] for r in world.lanes["code"].runs()] == [fix], "the stranded run holds no room"
+        assert world.store.queued() == []
+        assert await world.owner("input", {"input_id": "tg:4", "session": running, "text": "z"}) == {"say": "Принято."}
+        assert [n["data"]["text"] for n in world.notes("summary")] == \
+            ["Линия не запустила сессию: линии private больше нет в настройках"] * 2
+        await world.platform.shutdown()
+        assert world.lanes["code"].commands[-1] == ("/stop", {"session": fix})
+        assert len(world.lanes["private"].commands) == 1
+
+    scenario(tmp_path, body, max_sessions=1)
+
+
+def test_the_clock_prunes_raw_lines_after_ninety_days_and_keeps_the_projection(tmp_path):
+    async def body(world: World):
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "x"}))["session"]
+        [run] = world.lanes["private"].runs()
+        world.lanes["private"].add(session, run["run"], *fixture("reads"))
+        await world.poll()
+        projected, raw = world.store.items(session), world.store.db.execute("SELECT COUNT(*) FROM raw").fetchone()
+        world.clock.now += sessions.RAW_KEEP_S
+        world.platform.tick()
+        assert world.store.db.execute("SELECT COUNT(*) FROM raw").fetchone() == raw
+        world.clock.now += 1
+        world.platform.tick()
+        assert world.store.db.execute("SELECT COUNT(*) FROM raw").fetchone() == (0,)
+        assert world.store.items(session) == projected
 
     scenario(tmp_path, body)
 

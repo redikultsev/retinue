@@ -24,6 +24,7 @@ EVENTS = ("PreToolUse", "PermissionRequest", "PostToolUse", "Stop")
 # parenthesis and no control character, so it can neither nest nor break a line.
 RULE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\([^\x00-\x1f()]{1,200}\))?")
 RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # sessions.PlatformStore.add_run; it names the run's settings file
+MARK_N = r"\d{1,4}"  # the n of a marker hook's address `<hook_url>/mark/<n>`; the platform routes the same
 SETTINGS_PATH = re.compile(re.escape(SETTINGS_DIR) + "/" + RUN_ID.pattern + r"\.json")
 UUID4 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 PREFIX = ("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -174,7 +175,8 @@ def _check_hook(event: str, hook: object, hook_url: str) -> None:
     if any(hook[k] != v for k, v in HOOK_FIELDS.items()):
         raise Refused(f"settings: {event} — хук не http, не блокирует при сбое или не тот заголовок")
     url = hook["url"]
-    mark = event == "PreToolUse" and isinstance(url, str) and re.fullmatch(re.escape(hook_url) + r"/mark/\d{1,4}", url)
+    mark = event == "PreToolUse" and isinstance(url, str) and \
+        re.fullmatch(re.escape(hook_url) + rf"/mark/{MARK_N}", url)
     if url != f"{hook_url}/{event}" and not mark:
         raise Refused(f"settings: {event} — чужой адрес {url!r}")
     if "if" in hook and not rule_ok(hook["if"]):

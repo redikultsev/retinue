@@ -180,21 +180,21 @@ class PlatformStore:
                                (session, turn)).fetchall()
         return [row[0] for row in rows], [_parsed(row[1]) for row in rows]
 
-    def _deferred_before(self, session: str, raw_id: int) -> dict | None:
-        """The call the session's last result before this line deferred — what a resume finishes first. Looked up
-        by the result, not by turn: a lane event after a result opens a turn of its own."""
-        for (line,) in self.db.execute("SELECT line FROM raw WHERE session = ? AND id < ? ORDER BY id DESC",
-                                       (session, raw_id)):
-            if transcript.ends_turn(parsed := _parsed(line)):
-                return transcript.deferred_of([parsed])
-        return None
+    def _resumed(self, session: str, turn: int) -> dict | None:
+        """The call the session's last result before this turn deferred — what a resume finishes first. Read from
+        the projection, which outlives the result's raw line; by result, not by the turn just before: a lane event
+        after a result opens a turn of its own."""
+        row = self.db.execute("SELECT data FROM items WHERE session = ? AND turn < ? AND kind = 'result' "
+                              "ORDER BY turn DESC, n DESC LIMIT 1", (session, turn)).fetchone()
+        return json.loads(row[0])["deferred"] if row else None
 
     def reproject(self, session: str, turn: int) -> None:
-        """The turn's items projected again from its raw lines; a turn whose lines were pruned keeps its items."""
+        """The turn's items projected again from its raw lines, after the turns before it; a turn whose lines were
+        pruned keeps its items."""
         ids, lines = self._turn_lines(session, turn)
         if not lines:
             return
-        resumed = self._deferred_before(session, ids[0])
+        resumed = self._resumed(session, turn)
         with self.db:
             self.db.execute("DELETE FROM items WHERE session = ? AND turn = ?", (session, turn))
             self.db.executemany("INSERT INTO items VALUES (?, ?, ?, ?, ?, ?, ?)",

@@ -106,3 +106,28 @@ def test_prune_drops_old_raw_turns_and_keeps_their_projection(tmp_path):
     assert store.items(session) == projected
     assert feed(store, session, [("r2", raw("reads")[3:])], now=sessions.RAW_KEEP_S, seq=103)[-1] == 1, \
         "the turns are numbered on, not again from what is left"
+
+
+def test_a_resume_rebuilt_after_its_deferred_turn_was_pruned_keeps_its_call(tmp_path):
+    store = PlatformStore(str(tmp_path / "p.sqlite"))
+    session = store.new_session("retinue", "code", "code", 0.0)
+    feed(store, session, [("r1", raw("deferred"))], now=0.0)
+    feed(store, session, [("r2", raw("resumed"))], now=sessions.RAW_KEEP_S, seq=100)
+    projected = store.items(session)
+    assert store.prune(sessions.RAW_KEEP_S + DAY) == len(raw("deferred"))
+    store.rebuild(session)
+    assert store.items(session) == projected
+    resumed_call = next(i for i in projected if i["turn"] == 1)
+    assert resumed_call["data"]["tool"] == "Bash" and resumed_call["data"]["input"]
+
+
+def test_a_run_is_found_by_its_hook_token_and_a_session_updated(tmp_path):
+    store = PlatformStore(str(tmp_path / "p.sqlite"))
+    session = store.new_session("retinue", "code", "code", 0.0)
+    run = store.add_run(session, "h1", [{"kind": "allow", "rule": "Read", "label": ""}], 1.0)
+    assert store.run_of("h1") == {"id": run, "session": session,
+                                  "marks": [{"kind": "allow", "rule": "Read", "label": ""}], "ended": None}
+    assert store.run_of("h2") is None
+    store.update_session(session, 2.0, state="waiting", cli_session="c1")
+    assert {k: store.session(session)[k] for k in ("state", "cli_session", "at")} == \
+        {"state": "waiting", "cli_session": "c1", "at": 2.0}

@@ -27,7 +27,7 @@ def test_a_deferred_turn_ends_on_the_call_and_its_resume_finishes_it():
     call = first[-1].data["deferred"]
     assert first[-1].data["stop_reason"] == "tool_deferred" and call["name"] == "Bash"
     assert first[0].data["id"] == call["id"] and first[0].data["result"] is None, "deferred: nothing ran"
-    assert transcript.deferred_of(deferred) == call
+    assert transcript.deferred_of(deferred[-1]) == call
 
     assert next(i for i, line in enumerate(resumed) if line.get("subtype") == "init") > \
         next(i for i, line in enumerate(resumed) if line["type"] == "user"), "the deferred call's result precedes init"

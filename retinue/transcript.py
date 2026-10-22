@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 
 READS = ("Read", "Grep", "Glob")
-EDITS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+EDITS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 PLANS = ("ExitPlanMode", "TodoWrite")
 SUBAGENTS = ("Task", "Agent")
 QUESTION = "AskUserQuestion"
@@ -41,12 +41,9 @@ def turns(lines: list[dict]) -> list[list[dict]]:
     return out if out[-1] else out[:-1]
 
 
-def deferred_of(turn: list[dict]) -> dict | None:
-    """The call a turn ended deferred on: what the next turn, its resume, finishes first."""
-    for line in reversed(turn):
-        if ends_turn(line):
-            return line.get("deferred_tool_use") if line.get("stop_reason") == "tool_deferred" else None
-    return None
+def deferred_of(result: dict) -> dict | None:
+    """The call a turn's `result` line ended deferred on: what the next turn, its resume, finishes first."""
+    return result.get("deferred_tool_use") if result.get("stop_reason") == "tool_deferred" else None
 
 
 def _head(content) -> str:
@@ -60,7 +57,7 @@ def _call(name: str, call_id: str, args: dict) -> tuple[str, dict]:
     if name in READS:
         return "reads", {"calls": [{"id": call_id, "tool": name, "input": args, "result": None, "error": False}]}
     if name in EDITS:
-        data = {"id": call_id, "tool": name, "path": args.get("file_path") or args.get("notebook_path") or "",
+        data = {"id": call_id, "tool": name, "path": args.get(EDITS[name]) or "",
                 "ok": None, "error": ""}
         if name == "Edit":
             data |= {"old": args.get("old_string", ""), "new": args.get("new_string", "")}
@@ -134,7 +131,7 @@ class _Fold:
         kind = line.get("type")
         if kind == "result":
             self.add("result", {"stop_reason": line.get("stop_reason") or "", "is_error": bool(line.get("is_error")),
-                                "text": line.get("result") or "", "deferred": line.get("deferred_tool_use")}, at)
+                                "text": line.get("result") or "", "deferred": deferred_of(line)}, at)
             return
         if kind not in ("assistant", "user"):
             return
@@ -153,7 +150,7 @@ class _Fold:
 
 
 def project(lines: list[dict], resumed: dict | None = None, root: str | None = None) -> list[Item]:
-    """One turn's items. `resumed`: the previous turn's deferred call (`deferred_of`), whose result may open this
+    """One turn's items. `resumed`: the previous turn's deferred call (its result item's `deferred`), whose result may open this
     turn. A line whose `parent_tool_use_id` is a subagent's call goes into that subagent's item — projected the same
     way — not into the turn's own; `root` is that parent while a subagent's lines are folded."""
     fold = _Fold()

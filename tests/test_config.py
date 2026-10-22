@@ -1,12 +1,13 @@
 """Router config: every channel is optional, secrets come from the environment, one agent is the default."""
 
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from retinue.config import AgentConfig, RouterConfig
+from retinue.config import AgentConfig, PlatformConfig, RouterConfig
 
 AGENT = "agents:\n  - {id: assistant, name: Ассистентка, url: 'http://assistant:9000', trust_class: private, archive: true}\n"
 MATRIX = "matrix:\n  homeserver: http://tuwunel:6167\n  server_name: example.com\n  owner: '@alice:example.com'\n"
@@ -240,3 +241,52 @@ def test_the_router_reaches_the_gateway_and_the_sender_with_their_tokens(tmp_pat
     assert (cfg.gateway_token, cfg.sender_token) == ("x", "x")
     assert RouterAgent(id="a", name="A", url="u").drafts is False, "no agent drafts unless granted"
     assert "draft_reply" in BUS_TOOLS
+
+
+PLATFORM = """\
+lanes:
+  code: {url: 'http://lane-code:9600', hook_url: 'http://platform:9500/hook', work_mount: /lanes/code,
+         deny: [WebSearch, WebFetch]}
+tracks:
+  - {name: retinue, lane: code, kind: code, cwd: retinue, allow: ['Bash(make test:*)'], deny: []}
+"""
+
+
+def load_platform(tmp_path, monkeypatch, text=PLATFORM):
+    for name, value in (("RETINUE_PLATFORM_TOKEN", "router"), ("RETINUE_HOOK_SECRET", "hooks"),
+                        ("RETINUE_LANE_TOKEN_CODE", "lane")):
+        monkeypatch.setenv(name, value)
+    path = tmp_path / "platform.yaml"
+    path.write_text(text)
+    return PlatformConfig.load(path)
+
+
+def test_platform_lanes_tracks_and_their_tokens(tmp_path, monkeypatch):
+    cfg = load_platform(tmp_path, monkeypatch)
+    lane = cfg.lanes["code"]
+    assert (lane.max_sessions, lane.deny, lane.token) == (2, ["WebSearch", "WebFetch"], "lane")
+    assert (cfg.max_sessions, cfg.state_db, cfg.listen_port) == (5, "/data/platform.sqlite", 9500)
+    assert (cfg.router_token, cfg.hook_secret) == ("router", "hooks")
+    assert cfg.tracks[0].allow == ["Bash(make test:*)"] and cfg.tracks[0].kind == "code"
+    monkeypatch.delenv("RETINUE_LANE_TOKEN_CODE")
+    with pytest.raises(SystemExit, match="RETINUE_LANE_TOKEN_CODE"):
+        PlatformConfig.load(tmp_path / "platform.yaml")
+
+
+@pytest.mark.parametrize("change, error", [
+    (("lane: code", "lane: private"), "unknown lane 'private'"),
+    (("name: retinue", "name: Retinue"), "track name"),
+    (("kind: code", "kind: web"), "kind 'web'"),
+    (("cwd: retinue", "cwd: ../etc"), "not a path inside /work"),
+    (("cwd: retinue", "cwd: /etc"), "not a path inside /work"),
+    (("'Bash(make test:*)'", "'Bash(make (x))'"), "not a permission rule"),
+    (("deny: [WebSearch", "deny: ['Web Search'"), "lane code: not a permission rule"),
+    (("  code: {", "  lane-code: {"), "lane name 'lane-code'"),
+    (("work_mount: /lanes/code,", "work_mount: /lanes/code, max_sessions: 0,"), "lane code: max_sessions"),
+    (("lanes:", "max_sessions: 0\nlanes:"), "platform config: max_sessions"),
+    (("  - {name: retinue", "  - {name: retinue, lane: code, kind: code, cwd: x}\n  - {name: retinue"),
+     "two tracks with one name"),
+])
+def test_platform_refuses_a_track_or_rule_it_cannot_run(tmp_path, monkeypatch, change, error):
+    with pytest.raises(SystemExit, match=re.escape(error)):
+        load_platform(tmp_path, monkeypatch, PLATFORM.replace(*change))

@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
+from .cliengine import rule_ok
+
 
 def _env(name: str) -> str:
     value = os.environ.get(name)
@@ -197,6 +199,80 @@ class GatewayConfig:
             raise SystemExit("TELEGRAM_OWNER_ID: the owner's numeric Telegram id")
         return cls(token=_env("RETINUE_GATEWAY_TOKEN"), bot_token=_env("TELEGRAM_BUSINESS_TOKEN"), owner_id=int(owner))
 
+
+
+LANE_NAME = re.compile(r"[a-z][a-z0-9]{1,30}")  # its token is RETINUE_LANE_TOKEN_<NAME>, so no dash
+TRACK_NAME = re.compile(r"[a-z][a-z0-9-]{1,30}")
+TRACK_KINDS = ("code", "private")
+
+
+@dataclass
+class LaneRef:
+    """A lane as the platform reaches it: its lane host, the hook address its CLI is given, and where the platform
+    reads the lane's /work (a read-only mount: the file hash an approval is bound to)."""
+    name: str
+    url: str
+    hook_url: str
+    work_mount: str
+    max_sessions: int = 2
+    deny: list[str] = field(default_factory=list)  # always-deny rules for every run on the lane
+    token: str = ""                     # from RETINUE_LANE_TOKEN_<NAME>
+
+
+@dataclass
+class Track:
+    name: str
+    lane: str
+    kind: str                           # code: closes on its summary | private: goes idle
+    cwd: str = ""                       # the session's directory, relative to the lane's /work
+    allow: list[str] = field(default_factory=list)  # always-allow rules, in the CLI's syntax
+    deny: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PlatformConfig:
+    """The platform (`retinue-platform`): its lanes, the owner's tracks and their always rules, its own SQLite."""
+    lanes: dict[str, LaneRef]
+    tracks: list[Track]
+    max_sessions: int = 5               # running sessions across every lane
+    state_db: str = "/data/platform.sqlite"
+    listen_port: int = 9500
+    router_token: str = ""              # from RETINUE_PLATFORM_TOKEN
+    hook_secret: str = ""               # from RETINUE_HOOK_SECRET
+
+    @classmethod
+    def load(cls, path: str | Path = "/config/platform.yaml") -> PlatformConfig:
+        raw = yaml.safe_load(Path(path).read_text())
+        lanes = {name: LaneRef(name=name, **lane) for name, lane in (raw.pop("lanes") or {}).items()}
+        tracks = [Track(**track) for track in raw.pop("tracks") or []]
+        cfg = cls(lanes=lanes, tracks=tracks, **raw)
+        for lane in cfg.lanes.values():
+            if not LANE_NAME.fullmatch(lane.name):
+                raise SystemExit(f"platform config: lane name {lane.name!r} is not {LANE_NAME.pattern}")
+            if type(lane.max_sessions) is not int or lane.max_sessions < 1:
+                raise SystemExit(f"platform config: lane {lane.name}: max_sessions is not a positive number")
+            lane.token = _env(f"RETINUE_LANE_TOKEN_{lane.name.upper()}")
+        if type(cfg.max_sessions) is not int or cfg.max_sessions < 1:
+            raise SystemExit("platform config: max_sessions is not a positive number")
+        names = [t.name for t in cfg.tracks]
+        if len(set(names)) != len(names):
+            raise SystemExit("platform config: two tracks with one name")
+        for track in cfg.tracks:
+            if not TRACK_NAME.fullmatch(track.name):
+                raise SystemExit(f"platform config: track name {track.name!r} is not {TRACK_NAME.pattern}")
+            if track.lane not in cfg.lanes:
+                raise SystemExit(f"track {track.name}: unknown lane {track.lane!r}; known: {', '.join(cfg.lanes)}")
+            if track.kind not in TRACK_KINDS:
+                raise SystemExit(f"track {track.name}: kind {track.kind!r} is not one of {', '.join(TRACK_KINDS)}")
+            if track.cwd.startswith("/") or ".." in Path(track.cwd).parts:
+                raise SystemExit(f"track {track.name}: cwd {track.cwd!r} is not a path inside /work")
+        for where, rules in [*((f"lane {lane.name}", lane.deny) for lane in cfg.lanes.values()),
+                             *((f"track {track.name}", track.allow + track.deny) for track in cfg.tracks)]:
+            if bad := [rule for rule in rules if not rule_ok(rule)]:
+                raise SystemExit(f"{where}: not a permission rule: {bad[0]!r}")
+        cfg.router_token = _env("RETINUE_PLATFORM_TOKEN")
+        cfg.hook_secret = _env("RETINUE_HOOK_SECRET")
+        return cfg
 
 # What an agent can be given through the router.
 BUS_TOOLS = ("ask_agent", "list_agents", "search_archive", "set_reminder", "list_reminders", "cancel_reminder",

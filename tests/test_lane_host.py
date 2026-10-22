@@ -13,6 +13,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from retinue import cliengine, lane_host
 from retinue.config import LaneHostConfig
+from retinue.sessions import PlatformStore
 
 TOKEN = "lane-token"
 SIGNED = {"Authorization": f"Bearer {TOKEN}"}
@@ -288,13 +289,16 @@ def test_a_host_that_comes_up_again_journals_the_runs_left_running_as_restarted(
     ({"cwd": "../state"}, "cwd: не путь внутри"),
     ({"cwd": "/etc"}, "cwd: не путь внутри"),
     ({"cwd": "nowhere"}, "cwd: нет такой папки"),
+    ({"cwd": "repo/out"}, "cwd: нет такой папки"),
     ({"allowed": ["Bash(ls\n)"]}, "argv: не правило"),
     ({"allowed": "Bash"}, "allowed/disallowed: не списки правил"),
     ({"cli_session": "../../x"}, "argv: --resume без id сессии"),
     ({"prompt": None}, "новая сессия без запроса"),
+    ({"prompt": None, "cli_session": ""}, "новая сессия без запроса"),
     ({"hook_token": ""}, "hook_token: нет"),
 ])
 def test_a_run_off_its_shape_is_refused_journaled_and_nothing_is_spawned(lane, over, why):
+    (lane.work / "repo" / "out").symlink_to(lane.dir)  # a directory, but outside /work
     async def scenario(host, client, post, items, until, event):
         return await post("/run", run_body(**over)), await items(), host.live
 
@@ -303,6 +307,64 @@ def test_a_run_off_its_shape_is_refused_journaled_and_nothing_is_spawned(lane, o
     assert lane.call("r1") is None and live == {} and list(Path(lane.cfg.run_dir).iterdir()) == []
     assert [(i["session"], i["data"]["event"], i["data"]["error"]) for i in journal] == \
         [("0a1b2c3d", "refused", answer["error"])]
+
+
+def test_a_settings_file_that_cannot_be_written_is_a_refusal_not_a_crash(lane):
+    Path(lane.cfg.run_dir).rmdir()  # the run tmpfs is not there
+
+    async def scenario(host, client, post, items, until, event):
+        return await post("/run", run_body()), await items(), host.live
+
+    (status, answer), journal, live = served(lane, scenario)
+    assert (status, answer) == (400, {"status": "refused", "error": "настройки не записаны: FileNotFoundError"})
+    assert lane.call("r1") is None and live == {} and [i["data"]["event"] for i in journal] == ["refused"]
+
+
+def test_concurrent_runs_keep_one_process_per_session_and_the_cap(lane):
+    lane.plan(linger=2)
+
+    async def scenario(host, client, post, items, until, event):
+        same = await asyncio.gather(*(post("/run", run_body(run=f"r{i}")) for i in range(3)))
+        others = await asyncio.gather(*(post("/run", run_body(session=f"{i}bbbbbbb", run=f"q{i}")) for i in range(3)))
+        return same, others, sorted(host.live)
+
+    same, others, live = served(lane, scenario)
+    assert sorted(answer["status"] for _, answer in same) == ["running", "running", "started"]
+    assert sorted(answer["status"] for _, answer in others) == ["busy", "busy", "started"]
+    assert len(live) == 2 and live[0] == "0a1b2c3d"
+
+
+def test_stop_and_answer_without_a_session_id_are_refused(lane):
+    async def scenario(host, client, post, items, until, event):
+        return await post("/stop", {"session": 1}), await post("/answer", {"prompt": "привет"})
+
+    stop, answer = served(lane, scenario)
+    assert stop == (400, {"status": "refused", "error": "session: не id"})
+    assert answer == (400, {"status": "refused", "error": "session: не id"})
+
+
+def test_lines_never_hold_a_line_over_the_cap_across_reads():
+    class Pieces:
+        def __init__(self, *pieces):
+            self.pieces = list(pieces)
+
+        async def read(self, n):
+            return self.pieces.pop(0) if self.pieces else b""
+
+    async def go():
+        pieces = Pieces(b"a" * 120, b"b" * 120, b"c" * 60 + b"\nshort\n" + b"d" * 100, b"\nta", b"il")
+        return [line async for line in lane_host.lines(pieces, 100)]
+
+    assert asyncio.run(go()) == [300, b"short", b"d" * 100, b"tail"]
+
+
+def test_the_ids_the_platform_makes_are_the_ids_the_lane_takes(tmp_path):
+    store = PlatformStore(str(tmp_path / "platform.sqlite"))
+    session = store.new_session("retinue", "code", "code", 0.0)
+    run = store.add_run(session, "hash", [], 0.0)
+    assert lane_host.SESSION_ID.fullmatch(session) and lane_host.RUN_ID.fullmatch(run)
+    assert cliengine.SETTINGS_PATH.fullmatch(f"{LaneHostConfig.run_dir}/{run}.json")
+    assert cliengine.SETTINGS_PATH.fullmatch(f"{LaneHostConfig.run_dir}/{'R_-9' * 16}.json")
 
 
 def test_a_cli_off_the_pin_starts_no_run_and_ping_says_so(lane):

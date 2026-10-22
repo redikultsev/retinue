@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
-from .cliengine import rule_ok
+from .cliengine import SETTINGS_DIR, rule_ok
 
 
 def _env(name: str) -> str:
@@ -214,7 +214,7 @@ class LaneHostConfig:
     home: str = "/lane/config"          # the CLI's HOME
     config_dir: str = "/lane/config/claude"  # its CLAUDE_CONFIG_DIR: the CLI's transcripts
     state: str = "/lane/state"          # the journal
-    run_dir: str = "/lane/run"          # tmpfs: one settings file per run (cliengine.SETTINGS_DIR)
+    run_dir: str = SETTINGS_DIR         # tmpfs: one settings file per run
     listen_port: int = 9600
 
     @classmethod

@@ -34,8 +34,9 @@ log = logging.getLogger("retinue.lane_host")
 LINE_CAP = 8 * 1024 * 1024  # a longer stdout line is journaled as its length only
 STOP_GRACE_S = 10           # SIGINT, then SIGTERM after this long
 PROBE_TIMEOUT_S = 15        # `claude --version`, `claude auth status`
-SESSION_ID = re.compile(r"[0-9a-f]{8}")
-RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # it names the run's settings file: cliengine.SETTINGS_PATH
+SESSION_ID = re.compile(r"[0-9a-f]{8}")  # sessions.PlatformStore.new_session
+# sessions.PlatformStore.add_run; it names the run's settings file: cliengine.SETTINGS_PATH
+RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 class Journal:
@@ -235,17 +236,20 @@ class LaneHost:
         prompt, hook_token = body.get("prompt"), body.get("hook_token")
         if prompt is not None and not isinstance(prompt, str):
             raise Refused("prompt: не текст")
-        if prompt is None and body.get("cli_session") is None:
+        if prompt is None and not body.get("cli_session"):  # '' is no session, as in the store and `cliengine.argv`
             raise Refused("новая сессия без запроса")
         if not isinstance(hook_token, str) or not hook_token:
             raise Refused("hook_token: нет")
         cwd = self._cwd(body.get("cwd"))
         path = Path(self.cfg.run_dir) / f"{run}.json"
         argv, env = self._argv(body, path), self._env(hook_token)
-        path.unlink(missing_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
-        with os.fdopen(fd, "w") as out:
-            json.dump(settings, out, ensure_ascii=False)
+        try:
+            path.unlink(missing_ok=True)
+            with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444), "w") as out:
+                json.dump(settings, out, ensure_ascii=False)
+        except OSError as exc:
+            path.unlink(missing_ok=True)
+            raise Refused(f"настройки не записаны: {type(exc).__name__}") from None
         try:
             proc = await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE,
                                                         stdout=asyncio.subprocess.PIPE)
@@ -278,15 +282,14 @@ class LaneHost:
             self.live.pop(live.session, None)
             live.settings.unlink(missing_ok=True)
 
-    def _live(self, body: dict) -> Live | None:
-        session = body.get("session")
-        return self.live.get(session) if isinstance(session, str) else None
-
     async def answer(self, request: web.Request) -> web.Response:
         body = await _body(request)
-        live, prompt = self._live(body), body.get("prompt")
+        session, prompt = body.get("session"), body.get("prompt")
+        if not isinstance(session, str):
+            return _refused("session: не id")
         if not isinstance(prompt, str):
             return _refused("prompt: не текст")
+        live = self.live.get(session)
         if live is None or live.proc.stdin.is_closing():
             return web.json_response({"status": "not_running"})
         try:
@@ -297,7 +300,10 @@ class LaneHost:
         return web.json_response({"status": "sent"})
 
     async def stop(self, request: web.Request) -> web.Response:
-        live = self._live(await _body(request))
+        session = (await _body(request)).get("session")
+        if not isinstance(session, str):
+            return _refused("session: не id")
+        live = self.live.get(session)
         if live is None:
             return web.json_response({"status": "not_running"})
         self.journal.event(live.session, live.run, "stopped")

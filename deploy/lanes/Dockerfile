@@ -3,9 +3,10 @@
 FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:0.6.12 /uv /bin/uv
 
-# bubblewrap: the CLI's Bash sandbox, and CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 refuses to start without it.
+# bubblewrap and socat: the CLI's Bash sandbox, which the managed settings require (failIfUnavailable);
+# CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 also refuses to start without bubblewrap.
 # git: the sessions' working trees. curl: fetch-cli.sh.
-RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap git ca-certificates curl \
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap socat git ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 COPY deploy/lanes/fetch-cli.sh deploy/lanes/cli.lock /tmp/cli/
 # The CLI the lane host checks at start-up (cliengine.CLI_VERSION); its npm integrity is checked before unpacking.

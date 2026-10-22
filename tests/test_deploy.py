@@ -739,14 +739,15 @@ def test_the_lanes_managed_settings_deny_the_web_and_hooks_anywhere_but_the_plat
         assert managed["permissions"]["disableBypassPermissionsMode"] == "disable"
         assert managed["allowedHttpHookUrls"] == ["http://platform:9500/hook/*"]
         assert "allowManagedHooksOnly" not in managed, "it would drop the run's own --settings hooks"
-        assert managed["sandbox"] == {"enabled": True, "autoAllowBashIfSandboxed": False,
+        assert managed["sandbox"] == {"enabled": True, "failIfUnavailable": True, "autoAllowBashIfSandboxed": False,
                                       "filesystem": {"denyWrite": ["/lane/config", "/lane/run", "/etc/claude-code"]}}
         assert managed["cleanupPeriodDays"] == 30
 
 
-def test_the_lane_image_installs_the_pinned_cli_with_bubblewrap():
+def test_the_lane_image_installs_the_pinned_cli_with_its_sandbox():
     dockerfile = (ROOT / "deploy" / "lanes" / "Dockerfile").read_text()
-    assert "bubblewrap" in dockerfile.split("apt-get install")[1].split("\n")[0], "the env scrub needs it"
+    packages = dockerfile.split("apt-get install")[1].split("\n")[0].split()
+    assert "bubblewrap" in packages and "socat" in packages, "without either the CLI's sandbox cannot start"
     assert "COPY deploy/lanes/fetch-cli.sh deploy/lanes/cli.lock" in dockerfile
     assert "fetch-cli.sh /opt/claude" in dockerfile, "the version and integrity in cli.lock, where cliengine looks"
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile and "pip install" not in dockerfile

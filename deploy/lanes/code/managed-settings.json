@@ -6,6 +6,7 @@
   "allowedHttpHookUrls": ["http://platform:9500/hook/*"],
   "sandbox": {
     "enabled": true,
+    "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
     "filesystem": {"denyWrite": ["/lane/config", "/lane/run", "/etc/claude-code"]}
   },

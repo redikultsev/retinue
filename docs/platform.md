@@ -61,12 +61,12 @@ add a track with `cwd: <name>`, and `docker compose restart platform`.
   refuses every run if `claude --version` says anything else.
 - Its environment is built from scratch: the subscription token, the proxy, the hook token of the run. Bash runs in
   the CLI's bubblewrap sandbox with the environment scrubbed (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`): a command
-  sees neither the token nor the CLI's own process. If bubblewrap cannot run, the CLI refuses to start — no session
-  runs, and none runs unscrubbed.
+  sees neither the token nor the CLI's own process. If the sandbox cannot start (bubblewrap or socat missing,
+  bubblewrap blocked), the CLI refuses to start — no session runs, and none runs unsandboxed or unscrubbed.
 - The managed settings in the image (`deploy/lanes/<lane>/managed-settings.json`, root's, read-only): `WebSearch`
-  and `WebFetch` denied, bypass mode disabled, hooks only to `http://platform:9500/hook/*`, Bash sandboxed with
-  `/lane/config`, `/lane/run` and `/etc/claude-code` not writable. Settings files a session writes into its
-  directory or home are never read (`--setting-sources ""`).
+  and `WebFetch` denied, bypass mode disabled, hooks only to `http://platform:9500/hook/*`, Bash sandboxed (with
+  `failIfUnavailable`: never unsandboxed) with `/lane/config`, `/lane/run` and `/etc/claude-code` not writable.
+  Settings files a session writes into its directory or home are never read (`--setting-sources ""`).
 - The network: `lane-private` reaches `api.anthropic.com` only; `lane-code` also GitHub, PyPI and npm
   (`deploy/egress/lane-code-hosts.txt`), to clone and install. No lane holds a GitHub, registry or mail credential.
 

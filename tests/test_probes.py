@@ -10,17 +10,25 @@ bubblewrap, which the lane image has and a developer's machine may not.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import re
 import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from aiohttp import ClientSession, web
+from aiohttp.test_utils import TestServer
 
 from fakeapi import FakeApi
-from retinue import cliengine
+from retinue import cliengine, lane_host
+from retinue.config import LaneHostConfig, LaneRef, PlatformConfig, Track
+from retinue.lane_host import LaneHost
+from retinue.platformd import Platform
+from retinue.sessions import PlatformStore
 
 
 def _pinned() -> bool:
@@ -206,3 +214,172 @@ def test_the_lane_cli_is_logged_in_with_the_owners_token(tmp_path):
                           capture_output=True, text=True, timeout=60)
     status = json.loads(done.stdout)
     assert status["loggedIn"] is True and status["authMethod"] == "oauth_token"
+
+
+# --- the platform end to end: the pinned CLI under a real lane host, its hooks answered by the platform's gate ------
+
+
+class Stack:
+    """A lane host and a platform in this process, the CLI between them; either can be torn down and built again
+    from its own files. The platform listens on one port throughout, so the hook address in a run's settings stays
+    the same across a rebuild — and nothing answers there while it is down."""
+
+    def __init__(self, root: Path, api: FakeApi) -> None:
+        self.root, self.api = root, api
+        (root / "work" / "repo").mkdir(parents=True)
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            self.port = s.getsockname()[1]
+        hook_url = f"http://127.0.0.1:{self.port}/hook"
+        self.lane_cfg = LaneHostConfig(token="lane-token", hook_url=hook_url, max_running=2, work=str(root / "work"),
+                                       home=str(root / "home"), config_dir=str(root / "home" / "config"),
+                                       state=str(root / "state"), run_dir=str(root / "run"))
+        (root / "run").mkdir()
+        self.cfg = PlatformConfig(
+            lanes={"code": LaneRef("code", "", hook_url, str(root / "work"), token="lane-token")},
+            tracks=[Track("retinue", "code", "code", "repo")], state_db=str(root / "platform.sqlite"),
+            router_token="router-token", hook_secret="hook-secret")
+        self.host = self.lane_server = self.platform = self.runner = None
+
+    def env(self, host: LaneHost, hook_token: str) -> dict[str, str]:
+        env = cliengine.env("", self.lane_cfg.home, self.lane_cfg.config_dir, "", "", hook_token)
+        for key in ("CLAUDE_CODE_OAUTH_TOKEN", "HTTPS_PROXY", "NO_PROXY"):
+            del env[key]
+        return {**env, cliengine.SCRUB: "0", "ANTHROPIC_API_KEY": "sk-ant-fake", "ANTHROPIC_BASE_URL": self.api.url}
+
+    async def lane_up(self) -> None:
+        self.host = LaneHost(self.lane_cfg, lane_host.Journal(f"{self.lane_cfg.state}/journal.sqlite"))
+        await self.host.start()
+        assert self.host.pinned
+        self.lane_server = TestServer(self.host.app())
+        await self.lane_server.start_server()
+        self.cfg.lanes["code"].url = str(self.lane_server.make_url("")).rstrip("/")
+
+    async def lane_down(self) -> None:
+        await self.lane_server.close()
+        self.host.journal.db.close()
+
+    def platform_object(self) -> None:
+        self.store = PlatformStore(self.cfg.state_db)
+        self.platform = Platform(self.cfg, self.store)
+
+    async def platform_listening(self) -> None:
+        self.runner = web.AppRunner(self.platform.app(), access_log=None)
+        await self.runner.setup()
+        await web.TCPSite(self.runner, "127.0.0.1", self.port).start()
+
+    async def platform_down(self) -> None:
+        await self.runner.cleanup()
+        self.store.db.close()
+
+    async def owner(self, path: str, body: dict) -> dict:
+        async with ClientSession() as http:
+            async with http.post(f"http://127.0.0.1:{self.port}/owner/{path}", json=body,
+                                 headers={"Authorization": "Bearer router-token"}) as response:
+                return await response.json()
+
+    async def settled(self) -> None:
+        """The lane's CLI processes have all ended and the platform has taken every line."""
+        for _ in range(TIMEOUT_S * 10):
+            if not self.host.live:
+                break
+            await asyncio.sleep(0.1)
+        assert not self.host.live, "the CLI did not end"
+        while await self.platform.poll("code"):
+            pass
+
+    def notes(self, kind: str) -> list[dict]:
+        return [n for n in self.store.look(200) if n["kind"] == kind]
+
+    def results(self) -> list[dict]:
+        return [line for line in (json.loads(row[0]) for row in self.store.db.execute("SELECT line FROM raw"))
+                if line.get("type") == "result"]
+
+
+@pytest.fixture
+def stack(tmp_path, api, monkeypatch):
+    stack = Stack(tmp_path, api)
+    monkeypatch.setattr(LaneHost, "_env", lambda host, hook_token: stack.env(host, hook_token))
+    monkeypatch.setattr(cliengine, "SETTINGS_PATH",
+                        re.compile(re.escape(stack.lane_cfg.run_dir) + "/" + cliengine.RUN_ID.pattern + r"\.json"))
+    return stack
+
+
+def test_e4_a_deferred_call_granted_after_both_processes_restarted_runs_exactly_once(stack, api):
+    marker = stack.root / "ran"
+    api.tools = [bash(f"echo ran >> {marker}")]
+
+    async def go():
+        await stack.lane_up()
+        stack.platform_object()
+        await stack.platform_listening()
+        session = (await stack.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "go"}))["session"]
+        await stack.settled()
+        [card] = stack.notes("card")
+        assert stack.store.session(session)["state"] == "waiting" and not marker.exists()
+
+        await stack.platform_down()
+        await stack.lane_down()
+        await stack.lane_up()
+        stack.platform_object()
+        await stack.platform_listening()
+        pressed = await stack.owner("press", {"button": card["data"]["buttons"][0][1]})
+        assert pressed["toast"] == "Разрешено."
+        await stack.settled()
+        assert marker.read_text() == "ran\n"
+        assert stack.store.approval(card["approval"])["state"] == "executed"
+        assert [n["data"]["text"] for n in stack.notes("summary")] == ["done"]
+        assert stack.store.session(session)["state"] == "closed"
+        await stack.platform_down()
+        await stack.lane_down()
+
+    asyncio.run(go())
+
+
+def test_e6_a_push_is_a_courier_card_never_a_grant_and_nothing_runs(stack, api):
+    api.tools = [bash("git push origin main")]
+
+    async def go():
+        await stack.lane_up()
+        stack.platform_object()
+        await stack.platform_listening()
+        session = (await stack.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "go"}))["session"]
+        await stack.settled()
+        [card] = stack.notes("card")
+        assert card["data"]["view"]["body"] == "git push origin main" and card["data"]["buttons"] == []
+        assert stack.store.approvals(session=session, states=("pending", "shown", "granted", "executing",
+                                                              "executed")) == []
+        [result] = stack.results()
+        assert result["stop_reason"] != "tool_deferred"
+        assert [d["tool_name"] for d in result["permission_denials"]] == ["Bash"]
+        await stack.platform_down()
+        await stack.lane_down()
+
+    asyncio.run(go())
+
+
+def test_e12_with_the_platform_away_the_call_is_blocked_and_the_journal_waits_for_it(stack, api):
+    api.tools = [bash("touch marker")]
+
+    async def go():
+        await stack.lane_up()
+        stack.platform_object()
+        session = stack.store.new_session("retinue", "code", "code", 0.0)
+        stack.store.enqueue(session, "go", 0.0)
+        await stack.platform.drain()
+        for _ in range(TIMEOUT_S * 10):
+            if not stack.host.live:
+                break
+            await asyncio.sleep(0.1)
+        assert not (stack.root / "work" / "repo" / "marker").exists(), "no hook answer: blocked"
+        journal = [i["line"] for i in stack.host.journal.look(200)]
+
+        await stack.platform_listening()
+        await stack.settled()
+        stored = [row[0] for row in stack.store.db.execute("SELECT line FROM raw ORDER BY lane_seq")]
+        assert stored == journal and stack.host.journal.look(200) == []
+        assert any(i["kind"] == "tool" for i in stack.store.items(session))
+        await stack.platform_down()
+        await stack.lane_down()
+
+    asyncio.run(go())

@@ -140,7 +140,8 @@ def _shown(text: str) -> tuple[str, bool]:
     return shown, shown != text
 
 
-def _body(approval: dict) -> str:
+def input_text(approval: dict) -> str:
+    """The call's input as the owner reads it: a Bash command as it is, anything else as indented JSON."""
     tool_input = approval["input"]
     if approval["tool"] == "Bash" and isinstance(tool_input.get("command"), str):
         return tool_input["command"]
@@ -150,7 +151,7 @@ def _body(approval: dict) -> str:
 def card(approval: dict, session: str, track: str) -> tuple[courier.CardView, tuple[str, ...]]:
     """The approval card and the buttons it offers: approve and reject, or — for an input too long for one
     message — only «Открыть», which sends it whole."""
-    text = _body(approval)
+    text = input_text(approval)
     body, hidden = _shown(text)
     head = [f"Разрешение · {courier.line(track)} · сессия {session}", f"Инструмент: {courier.line(approval['tool'])}",
             f"Папка: {courier.line(approval['cwd'], 200)}"]
@@ -168,7 +169,7 @@ def card(approval: dict, session: str, track: str) -> tuple[courier.CardView, tu
 
 def courier_card(approval: dict, session: str, track: str, label: str) -> courier.CardView:
     """A never-list call: not run, handed to the owner whole — the command, the session, the directory."""
-    body, hidden = _shown(_body(approval))
+    body, hidden = _shown(input_text(approval))
     head = [f"Курьер · {courier.line(track)} · сессия {session}", f"Хочет: {label}",
             f"Папка: {courier.line(approval['cwd'], 200)}"]
     if hidden:

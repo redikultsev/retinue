@@ -13,6 +13,7 @@
 #     bash deploy/setup.sh                                            # the life hub: pages for your devices only
 #   sudo TELEGRAM_OWNER_ID=123456789 TGBUSINESS=1 bash deploy/setup.sh   # your chosen Telegram chats, replies by card
 #   sudo TELEGRAM_OWNER_ID=123456789 SEND=1 bash deploy/setup.sh     # replies by mail (needs MAIL=1), by card
+#   sudo TELEGRAM_OWNER_ID=123456789 PLATFORM=1 bash deploy/setup.sh # Claude Code sessions in lanes, from Telegram
 #
 # The stack's environment goes to /srv/retinue/stack.env (mode 600). The script prints names, never values:
 # a terminal ends up in logs and transcripts.
@@ -70,6 +71,16 @@ SEND_ON=0
 [[ $SEND == 1 || -d $SEND_DIR ]] && SEND_ON=1
 SEND_UID=10004                          # the sender's own user: the gmail.send tokens are its alone
 SENDER_URL=http://mail-send:9400
+PLATFORM=${PLATFORM:-0}                 # 1: the platform and its lanes; on for good once its folder exists
+PLATFORM_DIR=$ROOT/platform
+PLATFORM_ON=0
+[[ $PLATFORM == 1 || -d $PLATFORM_DIR ]] && PLATFORM_ON=1
+PLATFORM_URL=http://platform:9500
+LANES=(private code)
+if [[ $PLATFORM_ON == 1 && -z $TELEGRAM_OWNER_ID ]]; then
+  echo "PLATFORM=1 needs TELEGRAM_OWNER_ID: the sessions' cards and your replies go through the Telegram bot" >&2
+  exit 1
+fi
 if [[ $TG_ON == 1 && -z $TELEGRAM_OWNER_ID ]]; then
   echo "TGBUSINESS=1 needs TELEGRAM_OWNER_ID: only your own account's connection counts" >&2
   exit 1
@@ -118,6 +129,11 @@ secret RETINUE_BUS_SECRET
 [[ $LIFEHUB_ON == 1 ]] && secret LIFEHUB_KEY   # Traefik adds it to the hub's requests; nginx refuses any without it
 [[ $TG_ON == 1 ]] && secret RETINUE_GATEWAY_TOKEN   # the router signs its calls to the Telegram Business gateway
 [[ $SEND_ON == 1 ]] && secret RETINUE_SENDER_TOKEN  # the router signs its calls to the mail sender
+if [[ $PLATFORM_ON == 1 ]]; then
+  secret RETINUE_PLATFORM_TOKEN         # the router signs its calls to the platform
+  for lane in "${LANES[@]}"; do secret "RETINUE_LANE_TOKEN_$(upper "$lane")"; done   # the platform's, to each lane
+  secret RETINUE_HOOK_SECRET
+fi
 if [[ -n $MATRIX_SERVER_NAME ]]; then
   secret RETINUE_AS_TOKEN
   secret RETINUE_HS_TOKEN
@@ -161,6 +177,9 @@ YAML
   fi
   if [[ $SEND_ON == 1 ]]; then
     printf 'sender_url: %s\n' "$SENDER_URL"        # letters sent by your card
+  fi
+  if [[ $PLATFORM_ON == 1 ]]; then
+    printf 'platform_url: %s\n' "$PLATFORM_URL"    # the lanes' sessions: their cards, your replies and presses
   fi
   if [[ $MEMORY_ON == 1 ]]; then
     printf 'memory:\n  hub: /hub\n  checkout:\n'   # the rest: defaults in config.py (MemoryConfig)
@@ -271,6 +290,17 @@ if [[ $TG_ON == 1 ]]; then
   install -d -m 700 "$TG_DIR" "$TG_DIR/state"   # the gateway's state: its user's alone
   [[ $HOST_SETUP == 1 ]] && chown -R "$TG_UID:$TG_UID" "$TG_DIR"
 fi
+if [[ $PLATFORM_ON == 1 ]]; then
+  # The lanes and the owner's tracks with their always rules: written once from the example, then the owner's.
+  install -d -m 755 "$PLATFORM_DIR"
+  [[ -f $PLATFORM_DIR/platform.yaml ]] || \
+    install -m 644 "$REPO/deploy/platform/platform.example.yaml" "$PLATFORM_DIR/platform.yaml"
+  # Each lane's way out, like the assistant's list: written once, then the owner's.
+  for lane in "${LANES[@]}"; do
+    [[ -f $ROOT/egress/lane-$lane-hosts.txt ]] || \
+      install -m 644 "$REPO/deploy/egress/lane-$lane-hosts.txt" "$ROOT/egress/lane-$lane-hosts.txt"
+  done
+fi
 # The list of allowed hosts belongs to the owner: written once, then edited only by hand.
 [[ -f $ROOT/egress/allowed-hosts.txt ]] || install -m 644 "$REPO/deploy/egress/allowed-hosts.txt" "$ROOT/egress/allowed-hosts.txt"
 
@@ -322,6 +352,7 @@ PROFILES=()
 [[ $LIFEHUB_ON == 1 ]] && PROFILES+=(lifehub)
 [[ $TG_ON == 1 ]] && PROFILES+=(tgbusiness)
 [[ $SEND_ON == 1 ]] && PROFILES+=(send)
+[[ $PLATFORM_ON == 1 ]] && PROFILES+=(platform)
 if (( ${#PROFILES[@]} )); then
   put COMPOSE_PROFILES "$(IFS=,; echo "${PROFILES[*]}")"
 else
@@ -339,6 +370,11 @@ else
   drop RETINUE_GATEWAY_TOKEN "$STACK"
 fi
 if [[ $SEND_ON == 1 ]]; then put RETINUE_SENDER_TOKEN "$RETINUE_SENDER_TOKEN"; else drop RETINUE_SENDER_TOKEN "$STACK"; fi
+PLATFORM_SECRETS=(RETINUE_PLATFORM_TOKEN RETINUE_HOOK_SECRET)
+for lane in "${LANES[@]}"; do PLATFORM_SECRETS+=("RETINUE_LANE_TOKEN_$(upper "$lane")"); done
+for name in "${PLATFORM_SECRETS[@]}"; do
+  if [[ $PLATFORM_ON == 1 ]]; then put "$name" "${!name}"; else drop "$name" "$STACK"; fi
+done
 if [[ $TRAVEL_ON == 1 ]] && ! grep -q '^home_airports:' "$PROFILE"; then
   MISSING+=("$PROFILE: home_airports (your airports, IATA)")
 fi
@@ -378,10 +414,15 @@ if [[ $BACKUP == 1 || -f $BACKUP_ENV ]]; then
   fill AWS_SECRET_ACCESS_KEY "the same key's secret" "$BACKUP_ENV"
   fill AWS_DEFAULT_REGION "the endpoint's region, e.g. eu-luxembourg-1" "$BACKUP_ENV"
   if (( ${#MISSING[@]} == before )); then BACKUP_STATE=on; else BACKUP_STATE=unfilled; fi
-  # With travel on, travel-ops' searches and the owner's watches are backed up too; without it, the script's list.
+  # With travel on, travel-ops' searches and the owner's watches are backed up too; with the platform on, its
+  # database (the sessions' transcripts are there; the lanes' volumes are not backed up: their work trees are the
+  # owner's checkouts). Without either, the script's own list.
   drop RETINUE_VOLUMES "$BACKUP_ENV"
-  if [[ $TRAVEL_ON == 1 ]]; then
-    echo 'RETINUE_VOLUMES="retinue_router-data retinue_assistant-data retinue_travel-data"' >> "$BACKUP_ENV"
+  VOLUMES=(retinue_router-data retinue_assistant-data)
+  [[ $TRAVEL_ON == 1 ]] && VOLUMES+=(retinue_travel-data)
+  [[ $PLATFORM_ON == 1 ]] && VOLUMES+=(retinue_platform-data)
+  if (( ${#VOLUMES[@]} > 2 )); then
+    echo "RETINUE_VOLUMES=\"${VOLUMES[*]}\"" >> "$BACKUP_ENV"
   fi
   if [[ $HOST_SETUP == 1 ]]; then
     install_restic
@@ -418,6 +459,8 @@ if [[ $SEND_ON == 1 ]]; then
   echo "Send: on — keys: $(find "$SEND_DIR/keys" -name '*.send.json' 2>/dev/null | wc -l | tr -d ' ') in $SEND_DIR/keys" \
        "(deploy/mail/login.py --kind send on your Mac; docs/courier.md)"
 fi
+[[ $PLATFORM_ON == 1 ]] && echo "Platform: on — lanes and tracks in $PLATFORM_DIR/platform.yaml; before the first" \
+  "session run the container probe (docs/platform.md)"
 case $BACKUP_STATE in
   on) echo "Backup: on, every night at 03:30 Europe/Moscow; the result goes to $ROOT/status/backup.json" ;;
   unfilled) echo "Backup: off until $BACKUP_ENV is filled; then run this script again, and see docs/backup.md" ;;

@@ -1,6 +1,8 @@
 """What gets deployed: deploy/compose.yml and the files deploy/setup.sh writes. No Docker and no root needed."""
 
+import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -8,7 +10,7 @@ import pytest
 import yaml
 
 from retinue.bus import bus_token
-from retinue.config import AgentConfig, RouterConfig
+from retinue.config import AgentConfig, PlatformConfig, RouterConfig
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = yaml.safe_load((ROOT / "deploy" / "compose.yml").read_text())
@@ -81,9 +83,12 @@ def test_one_assistant_and_nothing_else():
     hub = (ROOT / "docs" / "lifehub.md").read_text()
     assert "LIFEHUB=1" in hub and "LIFEHUB_DEVICES" in hub and "10.8.0.1" in hub and "dig" in hub
     assert "LIFEHUB=1" in (ROOT / "docs" / "install.md").read_text() and "lifehub.md" in (ROOT / "docs" / "install.md").read_text()
-    assert sorted(SERVICES) == ["assistant", "collector", "egress", "lifehub", "lifehub-build", "mail-egress",
-                                "mail-send", "router", "tg-business", "travel-ops", "travel-watch", "tuwunel"]
-    assert sorted(COMPOSE["volumes"]) == ["assistant-data", "router-data", "travel-data", "tuwunel-db"]
+    assert sorted(SERVICES) == ["assistant", "collector", "egress", "lane-code", "lane-code-egress", "lane-private",
+                                "lane-private-egress", "lifehub", "lifehub-build", "mail-egress", "mail-send",
+                                "platform", "router", "tg-business", "travel-ops", "travel-watch", "tuwunel"]
+    assert sorted(COMPOSE["volumes"]) == ["assistant-data", "lane-code-config", "lane-code-state", "lane-code-work",
+                                          "lane-private-config", "lane-private-state", "lane-private-work",
+                                          "platform-data", "router-data", "travel-data", "tuwunel-db"]
 
 
 def test_only_the_router_holds_the_speech_key():
@@ -645,3 +650,157 @@ def test_her_rules_for_the_memory_of_an_exchange():
     courier = (ROOT / "docs" / "courier.md").read_text()
     assert "«Писала, читая»" in courier and "sensitive.txt" in courier and "to_assistant" in (
         ROOT / "docs" / "mail.md").read_text()
+
+
+LANES = ("private", "code")
+PLATFORM_SERVICES = ["lane-code", "lane-code-egress", "lane-private", "lane-private-egress", "platform"]
+
+
+def test_the_platform_and_its_lanes_are_off_until_asked_and_locked_down():
+    assert sorted(name for name, service in SERVICES.items() if "platform" in service.get("profiles", [])) == \
+        PLATFORM_SERVICES
+    for name in ("platform", "lane-private", "lane-code"):
+        service = SERVICES[name]
+        assert service["cap_drop"] == ["ALL"] and service["security_opt"] == ["no-new-privileges:true"], name
+        assert service["read_only"] is True and "ports" not in service and "network_mode" not in service, name
+        assert "seccomp" not in str(service.get("security_opt")), "Docker's default profile: the probe decides"
+    platform = SERVICES["platform"]
+    assert platform["command"] == ["retinue-platform"] and platform["user"] == "10007:10007"
+    assert platform["image"] == SERVICES["router"]["image"], "the platform is code in the router's image"
+    assert platform["stop_grace_period"] == "30s"
+    assert platform["volumes"] == ["platform-data:/platform", "/srv/retinue/platform/platform.yaml:/config/platform.yaml:ro",
+                                   "lane-private-work:/lanes/private:ro", "lane-code-work:/lanes/code:ro"]
+    assert sorted(platform["environment"]) == ["RETINUE_HOOK_SECRET", "RETINUE_LANE_TOKEN_CODE",
+                                               "RETINUE_LANE_TOKEN_PRIVATE", "RETINUE_PLATFORM_TOKEN"], \
+        "no model token, no bot token"
+    assert "install -d -o 10007 -g 10007 /platform" in (ROOT / "Dockerfile").read_text(), \
+        "a new platform-data volume takes the platform user's ownership from the image"
+    for lane, uid in zip(LANES, ("10005", "10006")):
+        service = SERVICES[f"lane-{lane}"]
+        assert service["build"] == {"context": "..", "dockerfile": "deploy/lanes/Dockerfile",
+                                    "args": {"LANE": lane, "LANE_UID": uid}}
+        assert service["volumes"] == [f"lane-{lane}-work:/work", f"lane-{lane}-config:/lane/config",
+                                      f"lane-{lane}-state:/lane/state"]
+        assert all(f"uid={uid}" in mount for mount in service["tmpfs"]) and \
+            sorted(m.split(":")[0] for m in service["tmpfs"]) == ["/lane/run", "/tmp"]
+        assert service["environment"] == {
+            "CLAUDE_CODE_OAUTH_TOKEN": "${CLAUDE_CODE_OAUTH_TOKEN}",
+            "RETINUE_LANE_TOKEN": f"${{RETINUE_LANE_TOKEN_{lane.upper()}:-}}",
+            "RETINUE_LANE_HOOK_URL": "http://platform:9500/hook",
+            "HTTPS_PROXY": f"http://lane-{lane}-egress:3128",
+            "NO_PROXY": "platform"}, "no API key, no base URL, no GitHub or registry credential"
+        assert service["mem_limit"] and service["pids_limit"]
+
+
+def test_each_lane_is_on_its_own_internal_network_and_goes_out_through_its_own_proxy():
+    members = {net: sorted(name for name, service in SERVICES.items() if net in service.get("networks", []))
+               for net in COMPOSE["networks"]}
+    assert members["platform-router"] == ["platform", "router"]
+    assert SERVICES["platform"]["networks"] == ["platform-router", "lane-private", "lane-code"], "no `outside`"
+    for lane in LANES:
+        net = f"lane-{lane}"
+        assert COMPOSE["networks"][net] == {"internal": True} and members[net] == [f"lane-{lane}",
+                                                                                   f"lane-{lane}-egress", "platform"]
+        assert SERVICES[f"lane-{lane}"]["networks"] == [net], "exactly its own network"
+        proxy = SERVICES[f"lane-{lane}-egress"]
+        assert proxy["networks"] == [net, "outside"] and proxy["image"] == SERVICES["egress"]["image"]
+        assert proxy["volumes"] == ["/srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro",
+                                    f"/srv/retinue/egress/lane-{lane}-hosts.txt:/etc/squid/allowed-hosts.txt:ro"]
+    assert COMPOSE["networks"]["platform-router"] == {"internal": True}
+    assert "platform-router" in SERVICES["router"]["networks"]
+    assert SERVICES["router"]["environment"]["RETINUE_PLATFORM_TOKEN"] == "${RETINUE_PLATFORM_TOKEN:-}"
+    assert not {"platform-router", "lane-private", "lane-code"} & set(SERVICES["assistant"]["networks"])
+    assert (ROOT / "deploy" / "egress" / "lane-private-hosts.txt").read_text().split() == ["api.anthropic.com"]
+    assert (ROOT / "deploy" / "egress" / "lane-code-hosts.txt").read_text().split() == [
+        "api.anthropic.com", "github.com", "codeload.github.com", "objects.githubusercontent.com", "pypi.org",
+        "files.pythonhosted.org", "registry.npmjs.org"]
+
+
+def test_no_lane_mounts_another_lanes_or_the_routers_volumes():
+    def named(service):
+        return {mount.split(":")[0] for mount in service.get("volumes", []) if not mount.startswith("/")}
+
+    for lane in LANES:
+        assert named(SERVICES[f"lane-{lane}"]) == {f"lane-{lane}-{kind}" for kind in ("work", "config", "state")}
+        assert not any("/srv/retinue" in mount for mount in SERVICES[f"lane-{lane}"]["volumes"]), "no host folder"
+    for name, service in SERVICES.items():
+        if not name.startswith("lane-"):
+            assert not {v for v in named(service) if v.startswith("lane-")} - {"lane-private-work", "lane-code-work"}, \
+                f"{name}: a lane's config or journal"
+            if name != "platform":
+                assert not {v for v in named(service) if v.startswith("lane-")}, f"{name}: a lane's work"
+    assert "platform-data" not in str({n: s for n, s in SERVICES.items() if n != "platform"})
+
+
+def test_the_lanes_managed_settings_deny_the_web_and_hooks_anywhere_but_the_platform():
+    for lane in LANES:
+        managed = json.loads((ROOT / "deploy" / "lanes" / lane / "managed-settings.json").read_text())
+        assert managed["permissions"]["deny"] == ["WebSearch", "WebFetch"]
+        assert managed["permissions"]["disableBypassPermissionsMode"] == "disable"
+        assert managed["allowedHttpHookUrls"] == ["http://platform:9500/hook/*"]
+        assert "allowManagedHooksOnly" not in managed, "it would drop the run's own --settings hooks"
+        assert managed["sandbox"] == {"enabled": True, "autoAllowBashIfSandboxed": False,
+                                      "filesystem": {"denyWrite": ["/lane/config", "/lane/run", "/etc/claude-code"]}}
+        assert managed["cleanupPeriodDays"] == 30
+
+
+def test_the_lane_image_installs_the_pinned_cli_with_bubblewrap():
+    dockerfile = (ROOT / "deploy" / "lanes" / "Dockerfile").read_text()
+    assert "bubblewrap" in dockerfile.split("apt-get install")[1].split("\n")[0], "the env scrub needs it"
+    assert "COPY deploy/lanes/fetch-cli.sh deploy/lanes/cli.lock" in dockerfile
+    assert "fetch-cli.sh /opt/claude" in dockerfile, "the version and integrity in cli.lock, where cliengine looks"
+    assert "uv sync --frozen --no-dev --no-editable" in dockerfile and "pip install" not in dockerfile
+    assert re.search(r"astral-sh/uv:\d+\.\d+\.\d+ ", dockerfile)
+    assert "COPY --chown=root:root --chmod=0644 deploy/lanes/$LANE/managed-settings.json " \
+           "/etc/claude-code/managed-settings.json" in dockerfile
+    assert "install -d -o lane -g lane /work /lane/config /lane/state /lane/run" in dockerfile
+    assert 'CMD ["retinue-lane"]' in dockerfile and "USER lane" in dockerfile
+
+
+def test_setup_with_the_platform(tmp_path, monkeypatch):
+    def run(target, **env):
+        return subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(target), "RETINUE_HOST_SETUP": "0",
+                                   **env})
+
+    nobody = run(tmp_path / "a", MATRIX_SERVER_NAME="matrix.example.com", MATRIX_OWNER="alice", PLATFORM="1")
+    assert nobody.returncode == 1 and "PLATFORM=1 needs TELEGRAM_OWNER_ID" in nobody.stderr
+    _, before = setup(tmp_path / "plain", TELEGRAM_OWNER_ID="42", BACKUP="1")
+    target, printed = setup(tmp_path / "plain", TELEGRAM_OWNER_ID="42", PLATFORM="1")
+    secrets = ["RETINUE_PLATFORM_TOKEN", "RETINUE_HOOK_SECRET", "RETINUE_LANE_TOKEN_PRIVATE", "RETINUE_LANE_TOKEN_CODE"]
+    assert printed["COMPOSE_PROFILES"] == "platform"
+    assert all(len(printed[name]) == 64 for name in secrets) and len({printed[name] for name in secrets}) == 4
+    for name in ("TELEGRAM_BOT_TOKEN", "RETINUE_PLATFORM_TOKEN"):
+        monkeypatch.setenv(name, printed.get(name) or "t")
+    cfg = RouterConfig.load(target / "router.yaml")
+    assert (cfg.platform_url, cfg.platform_token) == ("http://platform:9500", printed["RETINUE_PLATFORM_TOKEN"])
+    platform_yaml = target / "platform" / "platform.yaml"
+    assert platform_yaml.read_text() == (ROOT / "deploy" / "platform" / "platform.example.yaml").read_text()
+    for name in secrets:
+        monkeypatch.setenv(name, printed[name])
+    platform = PlatformConfig.load(platform_yaml)
+    assert sorted(platform.lanes) == ["code", "private"] and platform.state_db == "/platform/platform.sqlite"
+    assert {(t.name, t.lane, t.kind) for t in platform.tracks} == {("notes", "private", "private"), ("code", "code", "code")}
+    for lane, ref in platform.lanes.items():
+        assert ref.url == f"http://lane-{lane}:9600" and ref.hook_url == SERVICES[f"lane-{lane}"]["environment"][
+            "RETINUE_LANE_HOOK_URL"]
+        assert f"lane-{lane}-work:{ref.work_mount}:ro" in SERVICES["platform"]["volumes"]
+        assert ref.token == printed[f"RETINUE_LANE_TOKEN_{lane.upper()}"]
+        hosts = target / "egress" / f"lane-{lane}-hosts.txt"
+        assert hosts.read_text() == (ROOT / "deploy" / "egress" / f"lane-{lane}-hosts.txt").read_text()
+    assert 'RETINUE_VOLUMES="retinue_router-data retinue_assistant-data retinue_platform-data"' in \
+        (target / "backup.env").read_text(), "the transcripts are in the platform's database; not the lanes' volumes"
+    platform_yaml.write_text(platform_yaml.read_text() + "# the owner's\n")
+    (target / "egress" / "lane-code-hosts.txt").write_text("api.anthropic.com\n")
+    _, again = setup(tmp_path / "plain", TELEGRAM_OWNER_ID="42")
+    assert all(again[name] == printed[name] for name in secrets), "on for good, the same tokens"
+    assert platform_yaml.read_text().endswith("# the owner's\n"), "written once, then the owner's"
+    assert (target / "egress" / "lane-code-hosts.txt").read_text() == "api.anthropic.com\n"
+    travel = run(target, TELEGRAM_OWNER_ID="42", TRAVEL="1")
+    assert travel.returncode == 0, travel.stderr
+    assert 'RETINUE_VOLUMES="retinue_router-data retinue_assistant-data retinue_travel-data retinue_platform-data"' \
+        in (target / "backup.env").read_text()
+    other, _ = setup(tmp_path / "other", TELEGRAM_OWNER_ID="42", BACKUP="1")
+    assert not (other / "platform").exists() and "platform_url" not in (other / "router.yaml").read_text()
+    assert not list((other / "egress").glob("lane-*")) and "RETINUE_VOLUMES" not in (other / "backup.env").read_text()
+    assert not set(secrets) & set(before) and "COMPOSE_PROFILES" not in before, "without it, nothing of it"

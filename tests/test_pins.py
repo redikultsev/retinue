@@ -37,7 +37,7 @@ def test_image_installs_from_the_lock_file():
 LANE_CLI_VERSION = "2.1.304"  # the lanes' own CLI, separate from the SDK's: bump it with the probes run against it
 
 
-def test_the_lane_cli_is_pinned_in_the_engine_and_the_lock_alike():
+def test_the_lane_cli_is_pinned_in_the_engine_the_lock_and_the_lane_image_alike():
     from retinue import cliengine
     assert cliengine.CLI_VERSION == LANE_CLI_VERSION
     lock = [line.split() for line in (ROOT / "deploy" / "lanes" / "cli.lock").read_text().splitlines()]
@@ -47,3 +47,6 @@ def test_the_lane_cli_is_pinned_in_the_engine_and_the_lock_alike():
         assert url == (f"https://registry.npmjs.org/@anthropic-ai/claude-code-{arch}/-/"
                        f"claude-code-{arch}-{LANE_CLI_VERSION}.tgz")
         assert re.fullmatch(r"sha512-[A-Za-z0-9+/]{86}==", integrity), arch
+    dockerfile = (ROOT / "deploy" / "lanes" / "Dockerfile").read_text()
+    assert "deploy/lanes/cli.lock" in dockerfile and f"fetch-cli.sh {Path(cliengine.CLI_PATH).parent}" in dockerfile, \
+        "the image installs the locked CLI where the lane host runs it"

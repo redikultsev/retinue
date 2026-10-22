@@ -49,6 +49,16 @@ def test_a_link_is_followed_as_the_lane_follows_it(tmp_path):
     assert edit("/work/abs.py") != before, "the hash follows the file the lane's link points at"
 
 
+def test_a_links_absolute_target_is_walked_not_normalized(tmp_path):
+    (tmp_path / "deep" / "dir").mkdir(parents=True)
+    (tmp_path / "deep" / "a").write_bytes(b"deep")
+    (tmp_path / "a").write_bytes(b"top")
+    (tmp_path / "sub").symlink_to("deep/dir")
+    (tmp_path / "abs").symlink_to("/work/sub/../a")
+    assert approvals.file_hash("Edit", {"file_path": "/work/abs"}, str(tmp_path)) == \
+        hashlib.sha256(b"deep").hexdigest()
+
+
 def test_a_file_the_platform_cannot_read_binds_no_grant(tmp_path):
     (tmp_path / "escape").symlink_to("/etc")
     (tmp_path / "up").symlink_to("../x")

@@ -78,7 +78,7 @@ def _lane_relative(path: str) -> list[str] | None:
 
 def _in_mount(parts: list[str], root: str) -> str:
     """The platform's path of a file in the lane's /work, its links followed as the lane follows them: an absolute
-    target is a lane path, read back through the mount."""
+    target is a lane path, read back through the mount, and its `..` walks back over the links it has followed."""
     todo, done, links = list(reversed(parts)), [], 0
     while todo:
         part = todo.pop()
@@ -98,9 +98,9 @@ def _in_mount(parts: list[str], root: str) -> str:
             raise Unbindable("too many links")
         link = os.readlink(here)
         if os.path.isabs(link):
-            done, followed = [], _lane_relative(link)
-            if followed is None:
+            if link != WORK and not link.startswith(WORK + "/"):
                 raise Unbindable("a link leads out of /work")
+            done, followed = [], link[len(WORK):].split("/")
         else:
             followed = link.split("/")
         todo += reversed(followed)

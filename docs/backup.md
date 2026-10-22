@@ -125,10 +125,13 @@ sudo TELEGRAM_OWNER_ID=123456789 BACKUP=1 bash /opt/retinue/deploy/setup.sh   # 
 sudo bash -c 'set -a; . /srv/retinue/backup.env; restic restore latest --host retinue --tag retinue --target /var/restore'
 cd /opt/retinue && sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml create
 V=/var/lib/docker/volumes S=/var/restore/var/backups/retinue/staging
-for vol in retinue_router-data retinue_assistant-data; do
+# With travel or the platform on (TRAVEL=1, PLATFORM=1 on the setup.sh line too), add retinue_travel-data:10001,
+# retinue_platform-data:10007.
+for vol in retinue_router-data:10001 retinue_assistant-data:10001; do
+  uid=${vol#*:} vol=${vol%:*}
   sudo cp -a /var/restore$V/$vol/_data/. $V/$vol/_data/     # everything but the databases
   sudo cp -a $S/$vol/. $V/$vol/_data/                       # the consistent copies of the databases
-  sudo chown -R 10001:10001 $V/$vol/_data
+  sudo chown -R $uid:$uid $V/$vol/_data
 done
 sudo cp /var/restore/srv/retinue/egress/allowed-hosts.txt /srv/retinue/egress/
 sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml up -d

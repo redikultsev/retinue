@@ -229,7 +229,7 @@ class PlatformStore:
                 turn += 1
             self.db.execute("INSERT INTO raw (lane, lane_seq, session, run, turn, line, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (lane, lane_seq, session, run, turn, line, now))
-            ended = transcript.ends_turn(_parsed(line))
+            ended = transcript.ends_turn(parsed(line))
             self.db.execute("UPDATE sessions SET turn = ?, turn_run = ? WHERE id = ?",
                             (turn + 1 if ended else turn, None if ended else run, session))
         return turn
@@ -243,12 +243,12 @@ class PlatformStore:
         row = self.db.execute("SELECT line, at FROM raw WHERE session = ? AND (NOT json_valid(line) OR "
                               "json_extract(line, '$.type') IS NOT 'lane') ORDER BY id DESC LIMIT 1",
                               (session,)).fetchone()
-        return (_parsed(row[0]), row[1]) if row else None
+        return (parsed(row[0]), row[1]) if row else None
 
     def _turn_lines(self, session: str, turn: int) -> tuple[list[int], list[dict]]:
         rows = self.db.execute("SELECT id, line FROM raw WHERE session = ? AND turn = ? ORDER BY id",
                                (session, turn)).fetchall()
-        return [row[0] for row in rows], [_parsed(row[1]) for row in rows]
+        return [row[0] for row in rows], [parsed(row[1]) for row in rows]
 
     def _resumed(self, session: str, turn: int) -> dict | None:
         """The call the session's last result before this turn deferred — what a resume finishes first. Read from
@@ -383,7 +383,7 @@ class PlatformStore:
         return cursor.rowcount
 
 
-def _parsed(line: str) -> dict:
+def parsed(line: str) -> dict:
     """A raw line as the projection reads it; one that is not a JSON object projects to nothing."""
     try:
         data = json.loads(line)

@@ -14,7 +14,6 @@ import argparse
 import asyncio
 import dataclasses
 import hmac
-import json
 import logging
 import secrets
 import signal
@@ -29,7 +28,7 @@ from .config import PlatformConfig
 from .gate import Gate, retire
 from .mail import Unavailable
 from .outbox import Neighbour
-from .sessions import PlatformStore
+from .sessions import PlatformStore, parsed
 
 log = logging.getLogger("retinue.platformd")
 
@@ -313,7 +312,7 @@ class Platform:
         now = self.clock()
         # What a line does is done before it is stored: a crash in between does it again, and every effect is a
         # state move that happens once.
-        self._apply(session, run, _parsed(line), now)
+        self._apply(session, run, parsed(line), now)
         if (turn := self.store.add_raw(lane, item["seq"], session_id, run, line, now)) is not None:
             self.store.reproject(session_id, turn)
 
@@ -454,14 +453,6 @@ async def _body(request: web.Request) -> dict:
     except ValueError:
         return {}
     return body if isinstance(body, dict) else {}
-
-
-def _parsed(line: str) -> dict:
-    try:
-        data = json.loads(line)
-    except ValueError:
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 def main() -> None:

@@ -3,8 +3,9 @@ to them go back to it.
 
 The router stays the only Telegram poller; the platform has no bot token. What the platform has for the owner — an
 approval or courier card, a card rewritten, a session's summary — it journals by number, and the bridge pulls it like
-any neighbour's items: shown, then confirmed. A note that did not go out is not confirmed and is tried again on the
-next pull. Every message the bridge sends is mapped in the router's `sent` table under its own channel names
+any neighbour's items: shown, then confirmed. A note that did not go out for a passing reason (Telegram busy, the
+network) is not confirmed and is tried again on the next pull. A note that can never go out — Telegram refuses it, or
+it is malformed — is said to the owner as such and confirmed past, so it does not hold back the notes after it. Every message the bridge sends is mapped in the router's `sent` table under its own channel names
 (`platform`: message → session, `platform-card`: message → approval), never under `telegram`: a reply to it goes to
 its session, and nothing of the platform enters the assistant's archive or her context.
 """
@@ -29,6 +30,9 @@ SESSION, CARD = "platform", "platform-card"  # the router's `sent` channels: mes
 UNAVAILABLE = "Платформа недоступна — попробуй позже."
 # Telegram's answers to an edit that has nothing left to do: the card already reads so, or the owner deleted it.
 SETTLED_EDITS = ("message is not modified", "message to edit not found")
+NOT_SHOWN = "Сообщение платформы не показано: Telegram его не принял или оно испорчено. Подробности — в журнале Роутера."
+# What a note can fail with for good: Telegram's 400 (too long, say) or data not shaped as a note of its kind.
+NOT_SHOWABLE = (TelegramError, KeyError, TypeError, ValueError, AttributeError)
 
 
 class PlatformClient(Neighbour):
@@ -59,17 +63,26 @@ class PlatformBridge:
             await asyncio.sleep(PUMP_S)
 
     async def deliver(self) -> int:
-        """One pull: every note shown in order, then confirmed up to the last one shown. The first that fails stops
-        the pull; it and those after it come again next time. How many notes were shown."""
-        shown = []
+        """One pull: every note shown in order, then confirmed up to the last one done with. The first that fails for a
+        passing reason stops the pull; it and those after it come again next time. How many notes were done with."""
+        done = []
         try:
             for note in await self.neighbour.items(NOTES_PER_PULL):
-                await self._show(note)
-                shown.append(note["seq"])
+                try:
+                    await self._show(note)
+                except NOT_SHOWABLE as exc:
+                    if isinstance(exc, TelegramError) and not refused(exc):
+                        raise
+                    log.exception("platform note %s can never be shown; skipped", note["seq"])
+                    await self.say(f"{NOT_SHOWN} ({type(exc).__name__}: {exc})", str(note.get("session") or ""))
+                done.append(note["seq"])
         finally:
-            if shown:
-                await self.neighbour.confirm(shown[-1])
-        return len(shown)
+            if done:
+                try:
+                    await self.neighbour.confirm(done[-1])
+                except Exception:
+                    log.exception("platform notes up to %s were not confirmed", done[-1])
+        return len(done)
 
     async def _show(self, note: dict) -> None:
         kind, session, data = note.get("kind"), str(note.get("session") or ""), note.get("data") or {}
@@ -137,11 +150,15 @@ class PlatformBridge:
             pressed = {"toast": UNAVAILABLE}
         await self.channel.call("answerCallbackQuery", callback_query_id=query_id, text=str(pressed.get("toast") or ""))
         if isinstance(pressed.get("view"), dict) and native_id is not None:
-            await self.channel._message(tg_card(view_of(pressed["view"])), edit=native_id,
-                                        keyboard=rows_of(pressed.get("keep") or []))
+            await self._edit(tg_card(view_of(pressed["view"])), native_id, rows_of(pressed.get("keep") or []))
         if isinstance(document := pressed.get("document"), dict):
             await self.channel.call("sendDocument", chat_id=str(self.channel.cfg.owner_id),
                                     files={"document": (document["name"], document["text"].encode(), "text/plain")})
+
+
+def refused(exc: TelegramError) -> bool:
+    """Telegram's 400: the same request would be refused again. A 429, a 5xx or the network may pass."""
+    return ": 400 " in str(exc)
 
 
 def view_of(data: dict) -> CardView:

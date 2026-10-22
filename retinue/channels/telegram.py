@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -20,6 +21,9 @@ from ..config import TelegramConfig
 from ..core import AgentFile, Core
 from ..protocol import Store
 from ..render import render_telegram, tg_card, tg_plain
+
+if TYPE_CHECKING:
+    from ..bridge import PlatformBridge
 
 log = logging.getLogger("retinue.telegram")
 
@@ -34,6 +38,7 @@ UNSUPPORTED = {"animation": "гифки", "poll": "опросы", "dice": "ку�
 LOST = "Сообщение не обработано: ошибка на стороне Роутера. Повтори его, пожалуйста."
 POISON = ("Сообщение с файлом не обработано: пока Роутер его разбирал, он перезапустился. Пришли файл ещё раз — "
           "лучше в другом формате.")
+TEXT_ONLY = "В сессии пока принимаю только текст."
 START = ("Пиши сюда — ответит ассистентка. Команды: /new — новый разговор, /compact — сжать разговор, "
          "/check — проверка канала, /mail — почта: ящики и твои правила, /help — справка.")
 
@@ -64,12 +69,16 @@ class TelegramChannel:
     is_record = False
     typing_refresh_s = 4.0  # a chat action lasts 5 s
 
-    def __init__(self, cfg: TelegramConfig, store: Store, link_hosts: list[str] | tuple = ()) -> None:
+    def __init__(self, cfg: TelegramConfig, store: Store, link_hosts: list[str] | tuple = (),
+                 bridge: PlatformBridge | None = None) -> None:
         self.cfg = cfg
         self.store = store
         self.core: Core | None = None
         self.link_hosts = tuple(link_hosts)  # travel-ops' sites: a link there is clickable (render.linkable)
         self.http = httpx.AsyncClient(timeout=POLL_TIMEOUT_S + 15)
+        self.bridge = bridge  # the platform's sessions, when the router has one
+        if bridge:
+            bridge.attach(self)
 
     # --- Bot API -----------------------------------------------------------------------------
 
@@ -150,12 +159,16 @@ class TelegramChannel:
     async def on_callback(self, query: dict) -> None:
         """A button was pressed. Checked here: who pressed and in which chat. The callback data is only a button
         id; what the button means, whether it is still alive and whether it was used already, the core reads
-        from its own tables."""
+        from its own tables; a platform card's button (`p.`), the platform from its own."""
         message = query.get("message") or {}
         if not self.core or (query.get("from") or {}).get("id") != self.cfg.owner_id \
                 or (message.get("chat") or {}).get("id") != self.cfg.owner_id:
             return
-        pressed = await self.core.press(self, str(query.get("data") or ""))
+        data = str(query.get("data") or "")
+        if self.bridge and data.startswith("p."):
+            await self.bridge.press(query["id"], data, message.get("message_id"))
+            return
+        pressed = await self.core.press(self, data)
         await self.call("answerCallbackQuery", callback_query_id=query["id"], text=pressed.toast)
         if pressed.view is not None and "message_id" in message:
             await self._message(tg_card(pressed.view), edit=message["message_id"], keyboard=rows_of(pressed.keep))
@@ -163,6 +176,21 @@ class TelegramChannel:
             # The card is rewritten: the choice stays visible; the buttons are gone, or those still alive stay.
             await self._message(render_telegram(pressed.card)[0], edit=message["message_id"],
                                 keyboard=keyboard_of(pressed.keep))
+
+    async def on_platform_message(self, message: dict, text: str, native_id: str, reply_to: str | None) -> bool:
+        """The owner's own message that belongs to the platform: a reply to a session's message, or `/new <track>
+        [text]`. True when it was the platform's; everything else, bare `/new` too, stays the assistant's."""
+        if session := self.bridge.session_of(reply_to):
+            if message.get("text"):
+                await self.bridge.input(session, text, native_id)
+            else:
+                await self.bridge.say(TEXT_ONLY, session)
+            return True
+        words = text.split(maxsplit=2)
+        if len(words) > 1 and words[0].split("@")[0].lower() == "/new":
+            await self.bridge.new(words[1], words[2] if len(words) > 2 else "", native_id)
+            return True
+        return False
 
     async def on_message(self, message: dict | None) -> None:
         if not message or not self.core:
@@ -176,6 +204,8 @@ class TelegramChannel:
         forwarded_from = self._forwarded_from(message)
         reply = message.get("reply_to_message") or {}
         reply_to = str(reply["message_id"]) if "message_id" in reply else None
+        if self.bridge and not forwarded_from and await self.on_platform_message(message, text, native_id, reply_to):
+            return
         if not text:
             if "animation" not in message and any(key in message for key in MEDIA):
                 await self.core.receive(self, message.get("caption") or "", [self._upload(message)],
@@ -261,10 +291,10 @@ class TelegramChannel:
     # --- outbound ----------------------------------------------------------------------------
 
     async def _message(self, html: str, *, ref: str | None = None, keyboard: dict | None = None,
-                       edit: int | None = None) -> None:
-        """The one way text reaches the owner: a new message, or with `edit` a rewrite of an old one. If
-        Telegram refuses the markup, the same text goes out with no markup except <code> around addresses —
-        on that path too the preview is off and nothing is a link."""
+                       edit: int | None = None) -> str | None:
+        """The one way text reaches the owner: a new message, or with `edit` a rewrite of an old one; its message id
+        comes back. If Telegram refuses the markup, the same text goes out with no markup except <code> around
+        addresses — on that path too the preview is off and nothing is a link."""
         method = "editMessageText" if edit else "sendMessage"
         params = dict(chat_id=self.cfg.owner_id, message_id=edit, parse_mode="HTML", link_preview_options=NO_PREVIEW,
                       reply_markup=keyboard)
@@ -274,8 +304,10 @@ class TelegramChannel:
             if "parse" not in str(exc):
                 raise
             sent = await self.call(method, text=tg_plain(html), **params)
-        if ref and sent.get("message_id"):
-            self.store.save_sent(self.name, str(sent["message_id"]), ref)  # so a reply to it can be traced back
+        native_id = str(sent["message_id"]) if sent.get("message_id") else None
+        if ref and native_id:
+            self.store.save_sent(self.name, native_id, ref)  # so a reply to it can be traced back
+        return native_id
 
     async def typing(self, agent_id: str, active: bool) -> None:
         if active:  # a chat action expires by itself

@@ -15,6 +15,7 @@ import subprocess
 from urllib.parse import urlsplit
 
 from .archive import Archive
+from .bridge import PlatformBridge, PlatformClient
 from .bus import BusServer, bus_token
 from .channels.telegram import TelegramChannel
 from .config import RouterConfig
@@ -29,7 +30,8 @@ from .speech import Scribe
 from .travel import TravelOps
 
 
-def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventLoop) -> list:
+def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventLoop,
+                   bridge: PlatformBridge | None = None) -> list:
     channels = []
     if cfg.matrix:
         # Imported only here: without a `matrix:` section the router never loads the Matrix library.
@@ -38,7 +40,7 @@ def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventL
     if cfg.telegram:
         # A trip page of the life hub is clickable too, and nothing else of it: the path is under /trips/.
         hub = [f"{urlsplit(cfg.lifehub_url).hostname}/trips/"] if cfg.lifehub_url else []
-        channels.append(TelegramChannel(cfg.telegram, store, [*cfg.link_hosts, *hub]))
+        channels.append(TelegramChannel(cfg.telegram, store, [*cfg.link_hosts, *hub], bridge))
     return channels
 
 
@@ -95,7 +97,11 @@ def main() -> None:
                 tz=cfg.owner_tz, backup_status=cfg.backup_status, scribe=Scribe(cfg.stt_key, store=store),
                 travel=TravelOps(cfg.travel_url) if cfg.travel_url else None, memory=memory, mail=mail,
                 lifehub=lifehub, outbox=outbox)
-    loop.run_until_complete(core.start(build_channels(cfg, store, loop)))
+    # The platform's sessions: its cards and summaries reach the owner through Telegram, never through the core.
+    bridge = PlatformBridge(PlatformClient(cfg.platform_url, cfg.platform_token, "платформа"), store) \
+        if cfg.platform_url else None
+    loop.run_until_complete(core.start(build_channels(cfg, store, loop, bridge)))
+    notes = loop.create_task(bridge.pump()) if bridge else None  # the platform's cards and summaries
     if memory_error:
         loop.run_until_complete(core.tell_owner(memory_error))
     ticking = loop.create_task(core.clock())  # reminders, the morning summary, retries after the limit

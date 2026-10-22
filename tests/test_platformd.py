@@ -479,6 +479,68 @@ def test_a_decision_deferred_by_a_shutdown_is_given_after_the_restart(tmp_path, 
     scenario(tmp_path, body)
 
 
+def lose_run_answer(world: World, reached: str | None) -> None:
+    """The next `/run` answer is lost; the request reached the lane, which journaled `reached`, or not."""
+    client = world.platform.lanes["code"]
+    run, lost = client.run, [True]
+
+    async def losing(body: dict) -> dict:
+        if not lost[0]:
+            return await run(body)
+        lost[0] = False
+        if reached:
+            await run(body)
+            event = {"type": "lane", "event": reached, "pid": 7} if reached == "started" else \
+                {"type": "lane", "event": reached, "error": "CLI не запустился"}
+            world.lanes["code"].add(body["session"], body["run"], json.dumps(event))
+        raise platformd.Unavailable("линия code: ReadTimeout")
+    client.run = losing
+
+
+def test_a_run_whose_answer_was_lost_but_started_is_not_sent_again(tmp_path):
+    async def body(world: World):
+        lose_run_answer(world, "started")
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
+        [run] = world.lanes["code"].runs()
+        assert [r["run"] for r in world.store.open_runs()] == [run["run"]], "it holds its room while unknown"
+        await world.platform.drain()
+        assert len(world.lanes["code"].runs()) == 1
+        await world.poll()
+        assert world.store.queued() == [] and world.store.session(session)["state"] == "active"
+        world.lanes["code"].add(session, run["run"], *fixture("reads"))
+        world.lanes["code"].exited(session, run["run"])
+        await world.poll()
+        assert [r["prompt"] for r in world.lanes["code"].runs()] == ["почини"]
+        assert world.store.open_runs() == []
+
+    scenario(tmp_path, body)
+
+
+def test_a_run_whose_lost_answer_never_reached_the_lane_is_sent_again(tmp_path):
+    async def body(world: World):
+        lose_run_answer(world, None)
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
+        assert world.lanes["code"].runs() == [] and len(world.store.open_runs()) == 1
+        await world.poll()
+        [run] = world.lanes["code"].runs()
+        assert (run["session"], run["prompt"]) == (session, "почини")
+        assert world.store.queued() == [] and [r["run"] for r in world.store.open_runs()] == [run["run"]]
+
+    scenario(tmp_path, body)
+
+
+def test_a_lost_answer_the_lane_journaled_as_refused_is_told_and_not_sent_again(tmp_path):
+    async def body(world: World):
+        lose_run_answer(world, "refused")
+        await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"})
+        await world.poll()
+        assert len(world.lanes["code"].runs()) == 1 and world.store.queued() == []
+        [summary] = world.notes("summary")
+        assert summary["data"]["text"] == "Линия не запустила сессию: CLI не запустился"
+
+    scenario(tmp_path, body)
+
+
 def test_a_failed_turn_is_told_as_a_failure_and_the_code_session_stays_open(tmp_path):
     async def body(world: World):
         session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]

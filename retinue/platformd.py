@@ -217,14 +217,14 @@ class Platform:
                 sessions.add(queued["session"])  # the session's later entries wait behind this one
                 if per_lane[session["lane"]] >= self.cfg.lanes[session["lane"]].max_sessions:
                     continue
-                status = await self._start(session, queued["prompt"])
+                status = await self._start(session, queued)
                 if status not in ("unavailable", "busy", "running"):
                     self.store.dequeue(queued["seq"])
-                if status == "started":
+                if status in ("started", "unavailable"):  # an unknown answer's run holds its room
                     per_lane[session["lane"]] += 1
                     total += 1
 
-    async def _start(self, session: dict, prompt: str | None) -> str:
+    async def _start(self, session: dict, queued: dict) -> str:
         now = self.clock()
         track, lane = self.tracks.get(session["track"]), self.cfg.lanes[session["lane"]]
         if track is None:
@@ -236,12 +236,15 @@ class Platform:
         body = {"session": session["id"], "run": run, "cli_session": session["cli_session"] or None,
                 "cwd": track.cwd, "settings": cliengine.settings(lane.hook_url, CLEANUP_DAYS, [m.rule for m in marks]),
                 "allowed": [m.rule for m in marks if m.kind == "allow"],
-                "disallowed": [m.rule for m in marks if m.kind != "allow"], "prompt": prompt, "hook_token": token}
+                "disallowed": [m.rule for m in marks if m.kind != "allow"], "prompt": queued["prompt"],
+                "hook_token": token}
         try:
             answer = await self.lanes[session["lane"]].run(body)
         except Unavailable as exc:
+            # The lane may have started it: the run stays open, holding its session and its room on the lane, until
+            # the lane's journal says (`_apply`, `poll`).
             log.warning("session %s: %s", session["id"], exc)
-            self.store.end_run(run, now)
+            self.store.attempt(queued["seq"], run)
             return "unavailable"
         status = str(answer.get("status") or "")
         if status == "started":
@@ -262,11 +265,19 @@ class Platform:
     async def poll(self, lane: str) -> int:
         """One pull of the lane's journal: every line ingested, then confirmed. How many lines came."""
         client = self.lanes[lane]
+        attempts = self.store.attempts(lane)
         items = await client.items(POLL_LIMIT)
         for item in items:
             self.ingest(lane, item)
         if items:
             await client.confirm(items[-1]["seq"])
+        if len(items) < POLL_LIMIT:
+            # The lane journals a run it started, or refused, before it answers: a lost answer whose run the whole
+            # journal since does not name never reached it, and the entry is sent again.
+            for run in attempts:
+                if (seq := self.store.attempted(run)) is not None:
+                    self.store.end_run(run, self.clock())
+                    self.store.attempt(seq, None)
         await self.drain()
         return len(items)
 
@@ -296,6 +307,12 @@ class Platform:
             event = line.get("event")
             if event in ("exited", "restarted", "refused"):
                 self.store.end_run(run, now)
+            if event in ("started", "refused") and (seq := self.store.attempted(run)) is not None:
+                self.store.dequeue(seq)
+                if event == "started":
+                    self._set_state(session["id"], "active", now)
+                else:
+                    self._refused(session, str(line.get("error") or event), now)
             current = self.store.session(session["id"])["state"]
             if (event in ("stopped", "restarted") and current != "closed") or (event == "exited" and
                                                                                 current == "active"):

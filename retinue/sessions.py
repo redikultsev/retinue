@@ -119,7 +119,9 @@ class PlatformStore:
                 seq INTEGER PRIMARY KEY AUTOINCREMENT,
                 session TEXT NOT NULL,
                 prompt TEXT,                        -- NULL: a resume after the owner's decision
-                at REAL NOT NULL
+                at REAL NOT NULL,
+                attempt TEXT                        -- the run sent for it whose answer was lost: the lane's journal
+                                                    -- tells whether it started
             );
             """)
         self.db.commit()
@@ -199,6 +201,20 @@ class PlatformStore:
     def dequeue(self, seq: int) -> None:
         self.db.execute("DELETE FROM queue WHERE seq = ?", (seq,))
         self.db.commit()
+
+    def attempt(self, seq: int, run: str | None) -> None:
+        self.db.execute("UPDATE queue SET attempt = ? WHERE seq = ?", (run, seq))
+        self.db.commit()
+
+    def attempted(self, run: str) -> int | None:
+        """The queued entry `run` was sent for, while the lane's journal has not yet said what became of it."""
+        row = self.db.execute("SELECT seq FROM queue WHERE attempt = ?", (run,)).fetchone()
+        return row[0] if row else None
+
+    def attempts(self, lane: str) -> list[str]:
+        rows = self.db.execute("SELECT q.attempt FROM queue q JOIN sessions s ON s.id = q.session "
+                               "WHERE q.attempt IS NOT NULL AND s.lane = ? ORDER BY q.seq", (lane,))
+        return [row[0] for row in rows]
 
     # --- raw lines and the projection ---------------------------------------------------------------------------
 

@@ -23,7 +23,8 @@ EVENTS = ("PreToolUse", "PermissionRequest", "PostToolUse", "Stop")
 # A permission rule in the CLI's own syntax: a tool name, optionally `(specifier)`; the specifier holds no
 # parenthesis and no control character, so it can neither nest nor break a line.
 RULE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\([^\x00-\x1f()]{1,200}\))?")
-SETTINGS_PATH = re.compile(re.escape(SETTINGS_DIR) + r"/[A-Za-z0-9_-]{1,64}\.json")
+RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # sessions.PlatformStore.add_run; it names the run's settings file
+SETTINGS_PATH = re.compile(re.escape(SETTINGS_DIR) + "/" + RUN_ID.pattern + r"\.json")
 UUID4 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 PREFIX = ("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
           "--include-hook-events", "--setting-sources", "", "--permission-mode", "manual",

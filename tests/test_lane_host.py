@@ -97,7 +97,8 @@ def lane(tmp_path, monkeypatch):
     fake.write_text(FAKE.format(python=sys.executable))
     fake.chmod(0o755)
     monkeypatch.setenv("RETINUE_LANE_CLI", str(fake))
-    monkeypatch.setattr(cliengine, "SETTINGS_PATH", re.compile(re.escape(lane.cfg.run_dir) + r"/[A-Za-z0-9_-]{1,64}\.json"))
+    monkeypatch.setattr(cliengine, "SETTINGS_PATH",
+                        re.compile(re.escape(lane.cfg.run_dir) + "/" + cliengine.RUN_ID.pattern + r"\.json"))
     return lane
 
 
@@ -362,7 +363,7 @@ def test_the_ids_the_platform_makes_are_the_ids_the_lane_takes(tmp_path):
     store = PlatformStore(str(tmp_path / "platform.sqlite"))
     session = store.new_session("retinue", "code", "code", 0.0)
     run = store.add_run(session, "hash", [], 0.0)
-    assert lane_host.SESSION_ID.fullmatch(session) and lane_host.RUN_ID.fullmatch(run)
+    assert lane_host.SESSION_ID.fullmatch(session) and cliengine.RUN_ID.fullmatch(run)
     assert cliengine.SETTINGS_PATH.fullmatch(f"{LaneHostConfig.run_dir}/{run}.json")
     assert cliengine.SETTINGS_PATH.fullmatch(f"{LaneHostConfig.run_dir}/{'R_-9' * 16}.json")
 

@@ -35,8 +35,6 @@ LINE_CAP = 8 * 1024 * 1024  # a longer stdout line is journaled as its length on
 STOP_GRACE_S = 10           # SIGINT, then SIGTERM after this long
 PROBE_TIMEOUT_S = 15        # `claude --version`, `claude auth status`
 SESSION_ID = re.compile(r"[0-9a-f]{8}")  # sessions.PlatformStore.new_session
-# sessions.PlatformStore.add_run; it names the run's settings file: cliengine.SETTINGS_PATH
-RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 class Journal:
@@ -211,7 +209,7 @@ class LaneHost:
         body = await _body(request)
         session, run = body.get("session"), body.get("run")
         if not isinstance(session, str) or not SESSION_ID.fullmatch(session) or \
-                not isinstance(run, str) or not RUN_ID.fullmatch(run):
+                not isinstance(run, str) or not cliengine.RUN_ID.fullmatch(run):
             return _refused("session/run: не те id")
         async with self.starting:
             if session in self.live:

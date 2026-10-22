@@ -42,6 +42,13 @@ not by a prompt:
   reason; every check is on record. A price drop is told like a reminder: in her words, or by code if she cannot.
 - **Nothing the assistant writes becomes a link.** Every address in its text reaches you as monospace text,
   with link previews off on every path. The one exception: a link to a travel site travel-ops searches.
+- **Claude Code sessions, every unruled call yours to approve.** Optional (`PLATFORM=1`): a separate platform
+  process runs unmodified, version-pinned `claude -p` sessions in lane containers of their own, started with
+  `/new <track>` and answered by replying to their messages. A call your always rules do not decide stops the run
+  and comes as a card; «Разрешить» runs exactly that call once, even after restarts. A push, a pull request, a
+  publish or a letter is never granted: it comes as a courier card for you to run yourself. Bash runs sandboxed,
+  without the token in sight; each lane goes out only through its own proxy. See
+  [docs/platform.md](docs/platform.md).
 - **Reuse over rewrite.** Claude Agent SDK, a2a-sdk, Squid, SQLite FTS5, Pillow, pypdf. Retinue is the thin layer between them.
 
 ## How it works
@@ -50,6 +57,7 @@ not by a prompt:
 You (Telegram) ──► Router ──A2A──► Assistant ──► egress proxy ──► model API, nothing else
                      │   ◄──bus──┘ (search_archive, reminders, get_attachment)
                      │              └──MCP──► travel-ops (own network) ──► travel sites
+                     ├──► platform ──► lanes: Claude Code sessions, every unruled call a card (optional)
                      ├─ Archive (SQLite, append-only, full-text)
                      ├─ Scheduler (reminders, the morning summary, a retry after the subscription limit)
                      └─ Protocol log and model runs (SQLite)

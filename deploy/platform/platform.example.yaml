@@ -1,0 +1,23 @@
+# The platform's lanes and your tracks (setup.sh PLATFORM=1 writes this once; then it is yours to edit, and
+# `docker compose restart platform` reads it again). See docs/platform.md.
+state_db: /platform/platform.sqlite   # on the platform-data volume
+max_sessions: 5                       # running sessions across every lane
+lanes:
+  private:
+    url: http://lane-private:9600
+    hook_url: http://platform:9500/hook
+    work_mount: /lanes/private          # the lane's /work, read-only: the file an approval is bound to
+    max_sessions: 2
+    deny: [WebSearch, WebFetch]
+  code:
+    url: http://lane-code:9600
+    hook_url: http://platform:9500/hook
+    work_mount: /lanes/code
+    max_sessions: 2
+    deny: [WebSearch, WebFetch]
+# A track: `/new <name> [text]` in Telegram starts a session on it. `cwd` is relative to the lane's /work and
+# must exist there. `allow` and `deny` are always rules in Claude Code's own syntax, e.g. 'Bash(make test:*)';
+# anything else a session wants comes to you as a card.
+tracks:
+  - {name: notes, lane: private, kind: private, cwd: "", allow: [], deny: []}
+  - {name: code, lane: code, kind: code, cwd: "", allow: [], deny: []}

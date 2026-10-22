@@ -1,0 +1,7 @@
+api.anthropic.com
+github.com
+codeload.github.com
+objects.githubusercontent.com
+pypi.org
+files.pythonhosted.org
+registry.npmjs.org

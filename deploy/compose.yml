@@ -69,9 +69,11 @@ services:
       RETINUE_COLLECTOR_TOKEN: ${RETINUE_COLLECTOR_TOKEN:-}   # only with `collector_url` in router.yaml
       RETINUE_GATEWAY_TOKEN: ${RETINUE_GATEWAY_TOKEN:-}       # only with `gateway_url`
       RETINUE_SENDER_TOKEN: ${RETINUE_SENDER_TOKEN:-}         # only with `sender_url`
+      RETINUE_PLATFORM_TOKEN: ${RETINUE_PLATFORM_TOKEN:-}     # only with `platform_url`
     # `outside`: Telegram; `travel-router`: price alerts; `mail-router`: what the mail collector found;
-    # `tg-router`: the owner's chosen Telegram chats and replies in them; `send-router`: letters he confirmed
-    networks: [agents, outside, matrix, travel-router, mail-router, tg-router, send-router]
+    # `tg-router`: the owner's chosen Telegram chats and replies in them; `send-router`: letters he confirmed;
+    # `platform-router`: the lanes' sessions — their cards and summaries, his replies and presses
+    networks: [agents, outside, matrix, travel-router, mail-router, tg-router, send-router, platform-router]
 
   assistant:
     image: retinue:local
@@ -276,6 +278,111 @@ services:
       - traefik.http.services.retinue-lifehub.loadbalancer.server.port=8080
     depends_on: [lifehub-build]
 
+  # The platform: Claude Code sessions in the lanes, driven from Telegram through the router (docs/platform.md). Code,
+  # no model and no token of the owner's: it starts runs on the lane hosts, answers their CLIs' hooks, keeps every
+  # line they wrote in its own SQLite and puts each call no rule decides to the owner as a card. It reaches the
+  # router and the lanes, each on an internal network of its own, and nothing else. Off until the owner turns it on
+  # (setup.sh PLATFORM=1).
+  platform:
+    profiles: ["platform"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10007:10007"
+    command: ["retinue-platform"]
+    volumes:
+      - platform-data:/platform                 # sessions, approvals, every line of every run
+      - /srv/retinue/platform/platform.yaml:/config/platform.yaml:ro   # lanes, tracks, always rules: the owner's
+      # The lanes' working trees, read-only: an approval is bound to the file as the lane sees it.
+      - lane-private-work:/lanes/private:ro
+      - lane-code-work:/lanes/code:ro
+    environment:
+      RETINUE_PLATFORM_TOKEN: ${RETINUE_PLATFORM_TOKEN:-}
+      RETINUE_LANE_TOKEN_PRIVATE: ${RETINUE_LANE_TOKEN_PRIVATE:-}
+      RETINUE_LANE_TOKEN_CODE: ${RETINUE_LANE_TOKEN_CODE:-}
+      RETINUE_HOOK_SECRET: ${RETINUE_HOOK_SECRET:-}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    stop_grace_period: 30s                      # waiting hooks answer `defer`, every run is stopped, then it exits
+    networks: [platform-router, lane-private, lane-code]   # all internal: no route out
+    depends_on: [lane-private, lane-code]       # the lanes create their work volumes, owned by their own users
+
+  # A lane: the lane host and the pinned Claude Code CLI, one container per lane, its own user, its own volumes. Its
+  # CLI runs Bash in bubblewrap with its environment scrubbed; the managed settings (root's, in the image) deny the
+  # web tools and hooks to anywhere but the platform. It reaches the platform and its own proxy, nothing else, and
+  # holds the owner's subscription token but no GitHub, registry or mail credential.
+  lane-private:
+    profiles: ["platform"]
+    build: &lane-build
+      context: ..
+      dockerfile: deploy/lanes/Dockerfile
+      args: { LANE: private, LANE_UID: "10005" }
+    restart: unless-stopped
+    volumes:
+      - lane-private-work:/work                 # the sessions' working trees
+      - lane-private-config:/lane/config        # the CLI's home and its transcripts
+      - lane-private-state:/lane/state          # the journal the platform pulls
+    tmpfs:
+      - /lane/run:size=16m,uid=10005,gid=10005  # one settings file per run
+      - /tmp:size=512m,uid=10005,gid=10005
+    environment: &lane-env
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      RETINUE_LANE_TOKEN: ${RETINUE_LANE_TOKEN_PRIVATE:-}
+      RETINUE_LANE_HOOK_URL: http://platform:9500/hook
+      HTTPS_PROXY: http://lane-private-egress:3128
+      NO_PROXY: platform
+    <<: &lane-hardening
+      # No seccomp override: whether bubblewrap runs under Docker's default profile is the container probe's
+      # question (tests/test_lane_container.py). If it cannot, the CLI refuses to start — no session, never an
+      # unscrubbed one.
+      cap_drop: [ALL]
+      security_opt: ["no-new-privileges:true"]
+      read_only: true
+      mem_limit: 4g
+      pids_limit: 512
+    networks: [lane-private]                    # internal: the platform and the lane's proxy
+    depends_on: [lane-private-egress]
+
+  lane-code:
+    profiles: ["platform"]
+    build:
+      <<: *lane-build
+      args: { LANE: code, LANE_UID: "10006" }
+    restart: unless-stopped
+    volumes:
+      - lane-code-work:/work
+      - lane-code-config:/lane/config
+      - lane-code-state:/lane/state
+    tmpfs:
+      - /lane/run:size=16m,uid=10006,gid=10006
+      - /tmp:size=512m,uid=10006,gid=10006
+    environment:
+      <<: *lane-env
+      RETINUE_LANE_TOKEN: ${RETINUE_LANE_TOKEN_CODE:-}
+      HTTPS_PROXY: http://lane-code-egress:3128
+    <<: *lane-hardening
+    networks: [lane-code]
+    depends_on: [lane-code-egress]
+
+  lane-private-egress:            # lane-private's only way out: CONNECT to the model API, nothing else
+    profiles: ["platform"]
+    image: ubuntu/squid:6.6-24.04_beta
+    restart: unless-stopped
+    volumes:
+      - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
+      - /srv/retinue/egress/lane-private-hosts.txt:/etc/squid/allowed-hosts.txt:ro
+    networks: [lane-private, outside]
+
+  lane-code-egress:               # lane-code's only way out: the model API, GitHub, the package registries
+    profiles: ["platform"]
+    image: ubuntu/squid:6.6-24.04_beta
+    restart: unless-stopped
+    volumes:
+      - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
+      - /srv/retinue/egress/lane-code-hosts.txt:/etc/squid/allowed-hosts.txt:ro
+    networks: [lane-code, outside]
+
   egress:
     image: ubuntu/squid:6.6-24.04_beta            # Squid, GPL-2.0; pin a digest after first deploy
     restart: unless-stopped
@@ -289,6 +396,13 @@ volumes:
   router-data:    # the router's state and the archive; never mounted into an agent
   assistant-data: # the assistant's session; only the assistant mounts it
   travel-data:    # travel-ops' searches, watches and limits; only travel-ops mounts it
+  platform-data:  # the platform's SQLite: sessions, approvals, transcripts; only the platform mounts it
+  lane-private-work:    # each lane's working trees: the lane writes them, the platform reads them
+  lane-private-config:  # each lane's CLI home and transcripts; only that lane mounts it
+  lane-private-state:   # each lane's journal; only that lane mounts it
+  lane-code-work:
+  lane-code-config:
+  lane-code-state:
 
 networks:
   agents:       # router <-> agents <-> egress proxy. Internal: containers here have no route to the internet
@@ -309,6 +423,12 @@ networks:
   send-out:     # mail sender <-> the mail proxy only. Internal: the proxy is its only way out
     internal: true
   tg-router:    # router <-> Telegram Business gateway only. Internal: no route out
+    internal: true
+  platform-router:  # router <-> platform only. Internal: no route out
+    internal: true
+  lane-private:     # platform <-> lane-private <-> its proxy. Internal: the proxy is the lane's only way out
+    internal: true
+  lane-code:        # platform <-> lane-code <-> its proxy. Internal: the proxy is the lane's only way out
     internal: true
   dokploy-network:
     external: true

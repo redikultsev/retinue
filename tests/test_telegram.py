@@ -374,3 +374,102 @@ def test_a_courier_card_shows_the_text_verbatim_and_one_button_per_row(tmp_path)
     assert rewritten[1]["text"].endswith('<a href="https://t.me/anna_x?text=%D0%94">Открыть чат</a>')
     assert "reply_markup" not in rewritten[1], "a rewrite without buttons takes them away"
     assert "<a " not in other[1]["text"], "no link but t.me, whatever a view carries"
+
+
+class FakeBridge:
+    """The platform's side as the channel sees it: which messages it claims, and what reached it."""
+
+    def __init__(self, store):
+        self.store, self.calls = store, []
+
+    def attach(self, channel):
+        self.channel = channel
+
+    def session_of(self, reply_to):
+        return self.store.sent_event("platform", reply_to) if reply_to else None
+
+    async def new(self, track, text, native_id):
+        self.calls.append(("new", track, text, native_id))
+
+    async def input(self, session, text, native_id):
+        self.calls.append(("input", session, text, native_id))
+
+    async def say(self, text, session=""):
+        self.calls.append(("say", text, session))
+
+    async def press(self, query_id, button, native_id):
+        self.calls.append(("press", button, native_id))
+
+
+def bridged(tmp_path):
+    ch = make(tmp_path)
+    ch.bridge = FakeBridge(ch.store)
+    ch.store.save_sent("platform", "900", "ab12cd34")
+    ch.store.save_sent("telegram", "901", "ev-1")
+    return ch
+
+
+def test_the_platform_gets_replies_to_its_sessions_and_new_with_a_track(tmp_path):
+    ch = bridged(tmp_path)
+    to_session, to_her = {"reply_to_message": {"message_id": 900}}, {"reply_to_message": {"message_id": 901}}
+    me = {"forward_origin": {"type": "user", "sender_user": {"id": OWNER}}}
+
+    async def run():
+        await ch.on_message(msg("и тесты тоже", message_id=10, **to_session))
+        await ch.on_message(msg("/new retinue fix CI\nи прогони тесты", message_id=11))
+        await ch.on_message(msg("/new@retinue_bot notes", message_id=12))
+        await ch.on_message(msg("/new", message_id=13))
+        await ch.on_message(msg("/new x", message_id=14, forward_origin={"type": "user", "sender_user": {"id": 7}}))
+        await ch.on_message(msg("переслал сам", message_id=15, **to_session, **me))
+        await ch.on_message(msg("а ей", message_id=16, **to_her))
+        await ch.on_message(msg(None, message_id=17, photo=[{"file_id": "x"}], caption="вот", **to_session))
+        await ch.on_message(msg("чужой", sender=7, message_id=18, **to_session))
+
+    asyncio.run(run())
+    assert ch.bridge.calls == [
+        ("input", "ab12cd34", "и тесты тоже", "10"),
+        ("new", "retinue", "fix CI\nи прогони тесты", "11"),
+        ("new", "notes", "", "12"),
+        ("input", "ab12cd34", "переслал сам", "15"),  # his own words, forwarded by himself
+        ("say", "В сессии пока принимаю только текст.", "ab12cd34"),
+    ]
+    assert ch.core.calls == [
+        ("handle", None, "!new", {"native_id": "13", **PLAIN}),  # bare /new still resets her
+        ("handle", None, "/new x", {"native_id": "14", "reply_to": None, "forwarded_from": "неизвестный отправитель"}),
+        ("handle", None, "а ей", {"native_id": "16", "reply_to": "901", "forwarded_from": None}),
+    ], "the platform's messages never reach the core, and hers never reach the platform"
+
+
+def test_platform_buttons_go_to_the_platform_and_the_others_to_the_core(tmp_path):
+    from retinue.sessions import PlatformStore
+
+    ch = bridged(tmp_path)
+    minted = PlatformStore(str(tmp_path / "p.sqlite")).add_button("a1", "approve", "d", expires=10.0)
+
+    async def run():
+        await ch.on_update(press(minted))
+        await ch.on_update(press("btn-live"))
+        await ch.on_update(press(minted, sender=7))
+
+    asyncio.run(run())
+    assert ch.bridge.calls == [("press", minted, 900)], "a button the platform minted is the platform's"
+    assert [c for c in ch.core.calls if c[0] == "press"] == [("press", "btn-live")]
+
+
+def test_a_platform_that_does_not_answer_is_said_and_the_assistant_is_not_asked(tmp_path):
+    from retinue.bridge import UNAVAILABLE, PlatformBridge, PlatformClient
+
+    ch = make(tmp_path)
+    ch.bridge = PlatformBridge(PlatformClient("http://127.0.0.1:9", "t", "платформа"), ch.store)
+    ch.bridge.attach(ch)
+    ch.store.save_sent("platform", "900", "ab12cd34")
+
+    async def run():
+        await ch.on_message(msg("и тесты", message_id=10, reply_to_message={"message_id": 900}))
+        await ch.on_message(msg("/new retinue fix CI", message_id=11))
+        await ch.on_update(press("p.AbCdEfGhIjKlMnOp"))
+
+    asyncio.run(run())
+    assert ch.core.calls == []
+    assert [p["text"] for _, p in ch.sent] == [UNAVAILABLE] * 3
+    assert ch.sent[-1][0] == "answerCallbackQuery"

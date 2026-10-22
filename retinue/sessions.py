@@ -18,6 +18,8 @@ from pathlib import Path
 from . import transcript
 
 RAW_KEEP_S = 90 * 86400
+# A platform button id starts so, and the router routes on it; a core button id (token_urlsafe) never holds a dot.
+BUTTON_PREFIX = "p."
 
 
 def _json(data) -> str:
@@ -100,7 +102,7 @@ class PlatformStore:
             );
             CREATE INDEX IF NOT EXISTS approvals_call ON approvals (tool_use_id);
             CREATE TABLE IF NOT EXISTS buttons (
-                id TEXT PRIMARY KEY,                -- "p." + token_urlsafe(12): never a core button's id
+                id TEXT PRIMARY KEY,                -- BUTTON_PREFIX + token_urlsafe(12)
                 approval TEXT NOT NULL,
                 action TEXT NOT NULL,               -- approve | reject | open
                 digest TEXT NOT NULL,
@@ -346,7 +348,7 @@ class PlatformStore:
         return cursor.rowcount == 1
 
     def add_button(self, approval: str, action: str, digest: str, expires: float) -> str:
-        button = "p." + secrets.token_urlsafe(12)
+        button = BUTTON_PREFIX + secrets.token_urlsafe(12)
         self.db.execute("INSERT INTO buttons (id, approval, action, digest, expires) VALUES (?, ?, ?, ?, ?)",
                         (button, approval, action, digest, expires))
         self.db.commit()

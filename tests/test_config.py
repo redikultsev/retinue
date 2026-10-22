@@ -243,6 +243,21 @@ def test_the_router_reaches_the_gateway_and_the_sender_with_their_tokens(tmp_pat
     assert "draft_reply" in BUS_TOOLS
 
 
+def test_the_router_reaches_the_platform_with_its_token_and_only_through_telegram(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("RETINUE_AS_TOKEN", "as")
+    monkeypatch.setenv("RETINUE_HS_TOKEN", "hs")
+    monkeypatch.delenv("RETINUE_PLATFORM_TOKEN", raising=False)
+    assert load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n").platform_url == "", "off unless the config says so"
+    with pytest.raises(SystemExit, match="RETINUE_PLATFORM_TOKEN"):
+        load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nplatform_url: http://platform:9500\n")
+    monkeypatch.setenv("RETINUE_PLATFORM_TOKEN", "p")
+    with pytest.raises(SystemExit, match="telegram"):
+        load(tmp_path, AGENT + MATRIX + "platform_url: http://platform:9500\n")
+    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nplatform_url: http://platform:9500\n")
+    assert (cfg.platform_url, cfg.platform_token) == ("http://platform:9500", "p")
+
+
 PLATFORM = """\
 lanes:
   code: {url: 'http://lane-code:9600', hook_url: 'http://platform:9500/hook', work_mount: /lanes/code,

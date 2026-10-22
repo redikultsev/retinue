@@ -105,6 +105,8 @@ class RouterConfig:
     gateway_token: str = ""             # from RETINUE_GATEWAY_TOKEN
     sender_url: str = ""                # the mail sender: replies and letters the owner confirmed; empty = none
     sender_token: str = ""              # from RETINUE_SENDER_TOKEN
+    platform_url: str = ""              # the platform (`retinue-platform`): sessions in the lanes; empty = none
+    platform_token: str = ""            # from RETINUE_PLATFORM_TOKEN
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -132,6 +134,10 @@ class RouterConfig:
             cfg.gateway_token = _env("RETINUE_GATEWAY_TOKEN")
         if cfg.sender_url:
             cfg.sender_token = _env("RETINUE_SENDER_TOKEN")
+        if cfg.platform_url:
+            if not cfg.telegram:
+                raise SystemExit("router config: the platform talks to the owner through Telegram — add `telegram:`")
+            cfg.platform_token = _env("RETINUE_PLATFORM_TOKEN")
         if cfg.lifehub_url and not re.fullmatch(r"https://[a-z0-9.-]+", cfg.lifehub_url):
             raise SystemExit(f"router config: lifehub_url {cfg.lifehub_url!r} is not https://<host>")
         try:

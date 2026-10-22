@@ -1,6 +1,6 @@
-"""The platform's own SQLite: its sessions and their runs, what the owner wrote into them, every raw line the lanes
-journaled, the transcript projected from those lines, the approvals with the buttons bound to them, and the notes
-the router takes by number (the journal pattern of `tgbusiness.State`).
+"""The platform's own SQLite: its sessions and their runs, the runs queued for room on a lane, what the owner wrote
+into them, every raw line the lanes journaled, the transcript projected from those lines, the approvals with the
+buttons bound to them, and the notes the router takes by number (the journal pattern of `tgbusiness.State`).
 
 A raw line is stored once — `UNIQUE(lane, lane_seq)` makes a lane's replay after a reconnect a no-op — and is
 numbered into its session's turns as it arrives: a `result` closes a turn, and so does a new run of the session

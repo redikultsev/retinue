@@ -69,6 +69,7 @@ class Platform:
         self.gate = Gate(store, cfg.lanes, cfg.hook_secret, clock)
         self.tasks: list[asyncio.Task] = []
         self._draining = asyncio.Lock()
+        self._sending: set[str] = set()  # runs whose `/run` is awaiting its answer
 
     # --- the HTTP surface ---------------------------------------------------------------------------------------
 
@@ -238,14 +239,24 @@ class Platform:
                 "allowed": [m.rule for m in marks if m.kind == "allow"],
                 "disallowed": [m.rule for m in marks if m.kind != "allow"], "prompt": queued["prompt"],
                 "hook_token": token}
+        # Recorded before the send: the lane journals `started` or `refused` before it answers, and the poller may
+        # pull that line while the answer is still on its way, or after it is lost (`_apply`, `poll`).
+        self.store.attempt(queued["seq"], run)
+        self._sending.add(run)
         try:
             answer = await self.lanes[session["lane"]].run(body)
         except Unavailable as exc:
-            # The lane may have started it: the run stays open, holding its session and its room on the lane, until
-            # the lane's journal says (`_apply`, `poll`).
             log.warning("session %s: %s", session["id"], exc)
-            self.store.attempt(queued["seq"], run)
+            answer = None
+        finally:
+            self._sending.discard(run)
+        if self.store.attempted(run) is None:  # the journal said first
+            return "started" if any(r["run"] == run for r in self.store.open_runs()) else "settled"
+        if answer is None:
+            # The lane may have started it: the run stays open, holding its session and its room on the lane, until
+            # the lane's journal says.
             return "unavailable"
+        self.store.attempt(queued["seq"], None)
         status = str(answer.get("status") or "")
         if status == "started":
             self._set_state(session["id"], "active", now)
@@ -265,15 +276,15 @@ class Platform:
     async def poll(self, lane: str) -> int:
         """One pull of the lane's journal: every line ingested, then confirmed. How many lines came."""
         client = self.lanes[lane]
-        attempts = self.store.attempts(lane)
+        attempts = [run for run in self.store.attempts(lane) if run not in self._sending]
         items = await client.items(POLL_LIMIT)
         for item in items:
             self.ingest(lane, item)
         if items:
             await client.confirm(items[-1]["seq"])
         if len(items) < POLL_LIMIT:
-            # The lane journals a run it started, or refused, before it answers: a lost answer whose run the whole
-            # journal since does not name never reached it, and the entry is sent again.
+            # The lane journals a run it started, or refused, before it answers: a lost answer (not one still awaited,
+            # left out above) whose run the whole journal since does not name never reached it; the entry is sent again.
             for run in attempts:
                 if (seq := self.store.attempted(run)) is not None:
                     self.store.end_run(run, self.clock())

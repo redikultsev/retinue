@@ -37,3 +37,6 @@ retinue-tg-business = "retinue.tgbusiness:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+markers = ["probe: runs the pinned lane CLI (skipped without it)"]

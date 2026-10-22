@@ -32,3 +32,18 @@ def test_image_installs_from_the_lock_file():
     assert "uv sync --frozen" in dockerfile and "COPY pyproject.toml uv.lock" in dockerfile
     assert "pip install" not in dockerfile, "pip would resolve versions again and ignore the lock"
     assert re.search(r"astral-sh/uv:\d+\.\d+\.\d+ ", dockerfile), "uv itself is pinned too"
+
+
+LANE_CLI_VERSION = "2.1.304"  # the lanes' own CLI, separate from the SDK's: bump it with the probes run against it
+
+
+def test_the_lane_cli_is_pinned_in_the_engine_and_the_lock_alike():
+    from retinue import cliengine
+    assert cliengine.CLI_VERSION == LANE_CLI_VERSION
+    lock = [line.split() for line in (ROOT / "deploy" / "lanes" / "cli.lock").read_text().splitlines()]
+    assert sorted(arch for arch, *_ in lock) == ["linux-arm64", "linux-x64"]
+    for arch, version, url, integrity in lock:
+        assert version == LANE_CLI_VERSION
+        assert url == (f"https://registry.npmjs.org/@anthropic-ai/claude-code-{arch}/-/"
+                       f"claude-code-{arch}-{LANE_CLI_VERSION}.tgz")
+        assert re.fullmatch(r"sha512-[A-Za-z0-9+/]{86}==", integrity), arch

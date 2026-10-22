@@ -441,15 +441,18 @@ def test_the_platform_gets_replies_to_its_sessions_and_new_with_a_track(tmp_path
 
 
 def test_platform_buttons_go_to_the_platform_and_the_others_to_the_core(tmp_path):
+    from retinue.sessions import PlatformStore
+
     ch = bridged(tmp_path)
+    minted = PlatformStore(str(tmp_path / "p.sqlite")).add_button("a1", "approve", "d", expires=10.0)
 
     async def run():
-        await ch.on_update(press("p.AbCdEfGhIjKlMnOp"))
+        await ch.on_update(press(minted))
         await ch.on_update(press("btn-live"))
-        await ch.on_update(press("p.AbCdEfGhIjKlMnOp", sender=7))
+        await ch.on_update(press(minted, sender=7))
 
     asyncio.run(run())
-    assert ch.bridge.calls == [("press", "p.AbCdEfGhIjKlMnOp", 900)]
+    assert ch.bridge.calls == [("press", minted, 900)], "a button the platform minted is the platform's"
     assert [c for c in ch.core.calls if c[0] == "press"] == [("press", "btn-live")]
 
 

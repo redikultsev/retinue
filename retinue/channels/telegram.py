@@ -21,6 +21,7 @@ from ..config import TelegramConfig
 from ..core import AgentFile, Core
 from ..protocol import Store
 from ..render import render_telegram, tg_card, tg_plain
+from ..sessions import BUTTON_PREFIX
 
 if TYPE_CHECKING:
     from ..bridge import PlatformBridge
@@ -159,13 +160,13 @@ class TelegramChannel:
     async def on_callback(self, query: dict) -> None:
         """A button was pressed. Checked here: who pressed and in which chat. The callback data is only a button
         id; what the button means, whether it is still alive and whether it was used already, the core reads
-        from its own tables; a platform card's button (`p.`), the platform from its own."""
+        from its own tables; a platform card's button (`BUTTON_PREFIX`), the platform from its own."""
         message = query.get("message") or {}
         if not self.core or (query.get("from") or {}).get("id") != self.cfg.owner_id \
                 or (message.get("chat") or {}).get("id") != self.cfg.owner_id:
             return
         data = str(query.get("data") or "")
-        if self.bridge and data.startswith("p."):
+        if self.bridge and data.startswith(BUTTON_PREFIX):
             await self.bridge.press(query["id"], data, message.get("message_id"))
             return
         pressed = await self.core.press(self, data)

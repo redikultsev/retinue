@@ -454,3 +454,126 @@ def test_rebuild_projection_keeps_what_was_projected(tmp_path, monkeypatch):
     monkeypatch.setattr("sys.argv", ["retinue-platform", "--rebuild-projection"])
     platformd.main()
     assert PlatformStore(cfg.state_db).items(session) == items
+
+
+@pytest.mark.parametrize("press, resumed", [(0, "allow"), (1, "deny")])
+def test_a_decision_deferred_by_a_shutdown_is_given_after_the_restart(tmp_path, press, resumed):
+    """The platform stops between the press and the resumed PreToolUse: the gate defers it, and once the platform is
+    back the CLI is resumed again and hears the decision."""
+    async def body(world: World):
+        session, _, card = await deferred_session(world)
+        await world.owner("press", {"button": card["data"]["buttons"][press][1]})
+        resume = world.lanes["code"].runs()[-1]
+        world.platform.gate.close()
+        assert decision(await world.hook("PreToolUse", resume, pre_tool_use())) == "defer"
+        world.lanes["code"].add(session, resume["run"], *DEFERRED)
+        world.lanes["code"].exited(session, resume["run"])
+        await world.down()
+        await world.up()
+        await world.poll()
+        runs = world.lanes["code"].runs()
+        assert len(runs) == 3 and runs[-1]["prompt"] is None
+        assert decision(await world.hook("PreToolUse", runs[-1], pre_tool_use())) == resumed
+        assert len(world.notes("card")) == 1
+
+    scenario(tmp_path, body)
+
+
+def test_a_failed_turn_is_told_as_a_failure_and_the_code_session_stays_open(tmp_path):
+    async def body(world: World):
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
+        [run] = world.lanes["code"].runs()
+        failed = {"type": "result", "subtype": "error_max_turns", "is_error": True, "stop_reason": None}
+        world.lanes["code"].add(session, run["run"], DEFERRED[0], json.dumps(failed))
+        await world.poll()
+        [summary] = world.notes("summary")
+        assert summary["data"]["text"] == "Ход оборвался ошибкой: error_max_turns"
+        assert world.store.session(session)["state"] == "idle"
+
+    scenario(tmp_path, body)
+
+
+def test_a_code_session_closes_on_its_summary(tmp_path):
+    async def body(world: World):
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
+        [run] = world.lanes["code"].runs()
+        world.lanes["code"].add(session, run["run"], *fixture("reads"))
+        await world.poll()
+        assert world.store.session(session)["state"] == "closed"
+        assert [n["data"]["text"] for n in world.notes("summary")] == ["done"]
+
+    scenario(tmp_path, body)
+
+
+def _later_cli_line(world: World, session: str, run: str) -> None:
+    world.lanes["code"].add(session, run, DEFERRED[1])
+
+
+def _another_call_deferred(world: World, session: str, run: str) -> None:
+    other = {**json.loads(DEFERRED[-1]), "deferred_tool_use": {**CALL, "id": "toolu_other"}}
+    world.store.add_raw("code", 999, session, run, json.dumps(other), world.clock.now + 1)
+
+
+def _owner_wrote_since(world: World, session: str, run: str) -> None:
+    world.store.db.execute("INSERT INTO inputs VALUES ('tg:2', ?, 'x', ?)", (session, world.clock.now + 1))
+    world.store.db.commit()
+
+
+def _session_stopped(world: World, session: str, run: str) -> None:
+    world.lanes["code"].add(session, run, json.dumps({"type": "lane", "event": "stopped"}))
+
+
+@pytest.mark.parametrize("since", [_later_cli_line, _another_call_deferred, _owner_wrote_since, _session_stopped])
+def test_a_card_is_pressable_only_while_its_call_is_what_the_session_waits_on(tmp_path, since):
+    async def body(world: World):
+        session, run, card = await deferred_session(world)
+        since(world, session, run["run"])
+        await world.poll()
+        pressed = await world.owner("press", {"button": card["data"]["buttons"][0][1]})
+        assert pressed == {"toast": "Карточка устарела — решение не принято."}
+        assert len(world.lanes["code"].runs()) == 1
+        assert world.store.approval(card["approval"])["state"] == "shown"
+
+    scenario(tmp_path, body)
+
+
+def test_a_deferred_call_whose_tool_is_gone_expires_its_grant(tmp_path):
+    async def body(world: World):
+        session, _, card = await deferred_session(world)
+        await world.owner("press", {"button": card["data"]["buttons"][0][1]})
+        resume = world.lanes["code"].runs()[-1]
+        gone = {"type": "result", "subtype": "success", "stop_reason": "tool_deferred_unavailable"}
+        world.lanes["code"].add(session, resume["run"], json.dumps(gone))
+        await world.poll()
+        assert world.store.approval(card["approval"])["state"] == "expired"
+        assert world.store.session(session)["state"] == "idle"
+        [summary] = world.notes("summary")
+        assert summary["data"]["text"].startswith("Отложенный вызов продолжить нельзя")
+
+    scenario(tmp_path, body)
+
+
+def test_a_message_to_a_running_session_goes_into_its_run(tmp_path):
+    async def body(world: World):
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
+        answer = await world.owner("input", {"input_id": "tg:2", "session": session, "text": "и тесты"})
+        assert answer == {"say": "Передал в сессию."}
+        assert world.lanes["code"].commands[-1] == ("/answer", {"session": session, "prompt": "и тесты"})
+        assert len(world.lanes["code"].runs()) == 1 and world.store.queued() == []
+
+    scenario(tmp_path, body)
+
+
+def test_a_session_runs_one_queued_entry_at_a_time(tmp_path):
+    async def body(world: World):
+        world.lanes["private"].answers["/run"] = "busy"
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "x"}))["session"]
+        await world.owner("input", {"input_id": "tg:2", "session": session, "text": "y"})
+        assert [q["prompt"] for q in world.store.queued()] == ["x", "y"]
+        tried = len(world.lanes["private"].runs())
+        world.lanes["private"].answers["/run"] = "started"
+        await world.poll()
+        assert [r["prompt"] for r in world.lanes["private"].runs()[tried:]] == ["x"]
+        assert [q["prompt"] for q in world.store.queued()] == ["y"]
+
+    scenario(tmp_path, body)

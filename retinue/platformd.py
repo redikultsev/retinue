@@ -24,7 +24,7 @@ from collections.abc import Callable
 
 from aiohttp import web
 
-from . import approvals, cliengine
+from . import approvals, cliengine, transcript
 from .config import PlatformConfig
 from .gate import Gate, retire
 from .mail import Unavailable
@@ -194,7 +194,7 @@ class Platform:
                 session["state"] != "waiting" or last is None or digest != approval["digest"]:
             return False
         line, at = last
-        deferred = line.get("deferred_tool_use") if line.get("stop_reason") == "tool_deferred" else None
+        deferred = transcript.deferred_of(line)
         wrote = self.store.last_input_at(approval["session"])
         return isinstance(deferred, dict) and deferred.get("id") == approval["tool_use_id"] and \
             (wrote is None or wrote <= at)
@@ -304,24 +304,31 @@ class Platform:
     def _result(self, session: dict, run: str, line: dict, now: float) -> None:
         stop = line.get("stop_reason")
         if stop == "tool_deferred":
-            deferred = line.get("deferred_tool_use") if isinstance(line.get("deferred_tool_use"), dict) else {}
-            call_id = str(deferred.get("id") or "")
+            deferred = transcript.deferred_of(line)
+            call_id = str(deferred.get("id") or "") if isinstance(deferred, dict) else ""
             for approval in self.store.approvals(run=run, kind="approval", states=("pending",)):
                 if approval["tool_use_id"] != call_id:  # parallel calls: the CLI keeps only the last one
                     self.store.move(approval["id"], ("pending",), "dropped", now)
             asked = self.store.approvals(tool_use_id=call_id, kind="approval")
-            if any(self._show(session, a, now) for a in asked if a["state"] == "pending"):
+            shown = [self._show(session, a, now) for a in asked if a["state"] == "pending"]
+            if any(shown) or any(a["state"] == "shown" for a in asked):
                 self._set_state(session["id"], "waiting", now)
                 return
             self._set_state(session["id"], "idle", now)
-            if not asked and not self.store.approvals(tool_use_id=call_id, kind="courier"):
-                self.store.enqueue(session["id"], None, now)  # deferred while the gate shut down: ask again
+            if not self.store.approvals(tool_use_id=call_id, kind="courier"):
+                # The gate deferred while it shut down: the call is asked again, or the owner's decision on it,
+                # which the CLI has not heard yet, is given.
+                self.store.enqueue(session["id"], None, now)
         elif stop == "tool_deferred_unavailable":
             for approval in self.store.approvals(session=session["id"], kind="approval", states=("granted",)):
                 self.store.move(approval["id"], ("granted",), "expired", now)
             self._set_state(session["id"], "idle", now)
             self._summary(session, "Отложенный вызов продолжить нельзя: этого инструмента у сессии больше нет. "
                                    "Напиши, что делать дальше.")
+        elif line.get("is_error") or str(line.get("subtype") or "").startswith("error"):
+            why = str(line.get("result") or "") or str(line.get("subtype") or "") or "без описания"
+            self._summary(session, f"Ход оборвался ошибкой: {why}")
+            self._set_state(session["id"], "idle", now)
         else:
             self._summary(session, str(line.get("result") or "") or "Ход закончен без текста.")
             self._set_state(session["id"], "closed" if session["kind"] == "code" else "idle", now)
@@ -386,7 +393,7 @@ class Platform:
 
     async def shutdown(self) -> None:
         """Every PreToolUse waiting now, and every one after, defers; then every running session is stopped. A call
-        deferred this way is asked again once the platform is back (`_result`)."""
+        deferred this way, granted or not, is resumed once the platform is back (`_result`)."""
         self.gate.close()
         for task in self.tasks:
             task.cancel()

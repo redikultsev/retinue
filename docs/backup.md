@@ -7,9 +7,10 @@ MEGA S4.
 
 What goes in, every night at 03:30 Moscow time:
 
-- every `*.sqlite` of the `router-data` and `assistant-data` volumes, copied with SQLite's backup API (a plain
-  copy taken during a write is torn) and checked with `quick_check`;
-- the rest of both volumes (the assistant's session transcripts) and `/srv/retinue` (configs).
+- every `*.sqlite` of the `router-data` and `assistant-data` volumes (and `travel-data` with travel on,
+  `platform-data` with the platform on), copied with SQLite's backup API (a plain copy taken during a write is
+  torn) and checked with `quick_check`;
+- the rest of those volumes (the assistant's session transcripts) and `/srv/retinue` (configs).
 
 What never leaves the host: the raw database files (their copies are in), Claude Code's `.credentials.json`, and
 every `*.env` file under `/srv/retinue` — `stack.env` holds your subscription token and bot token, `backup.env`

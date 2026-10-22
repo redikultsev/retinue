@@ -48,7 +48,9 @@ Optional parts, each turned on by `setup.sh` with its own switch and its own gui
 price watches; `MEMORY=1` — the knowledge base she writes ([memory.md](memory.md)); `MAIL=1` — your Gmail and
 Google Calendar, read-only ([mail.md](mail.md)); `LIFEHUB=1` — pages for your devices only: now, trips, status
 ([lifehub.md](lifehub.md)); `TGBUSINESS=1` and `SEND=1` — your chosen Telegram chats and replies to people, each
-sent only by your «Отправить» under the exact text ([courier.md](courier.md)).
+sent only by your «Отправить» under the exact text ([courier.md](courier.md)); `PLATFORM=1` — Claude Code sessions
+in lane containers, driven from the same chat, every call your rules do not decide approved by you
+([platform.md](platform.md)).
 
 ## 4. Check
 

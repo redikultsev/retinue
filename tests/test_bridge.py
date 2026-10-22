@@ -4,6 +4,7 @@ platform's own channel names, a note that did not go out is not confirmed, and t
 import asyncio
 
 import httpx
+import pytest
 
 from retinue.bridge import CARD, NOT_SHOWN, SESSION, UNAVAILABLE, PlatformBridge
 from retinue.channels.telegram import TelegramChannel, TelegramError
@@ -194,21 +195,42 @@ def test_an_unknown_track_is_said_and_maps_to_nothing(tmp_path):
     assert ch.store.sent_event(SESSION, "900") is None
 
 
-def test_a_gateway_error_page_from_telegram_leaves_the_note_unconfirmed(tmp_path):
+def real_call(tmp_path, notes, *answers):
+    """A bridge whose channel talks to Telegram through its own `call`, Telegram answering `answers` in turn."""
     store = Store(str(tmp_path / "s.db"))
-    bridge = PlatformBridge(FakePlatform([card(1)]), store)
+    bridge = PlatformBridge(FakePlatform(notes), store)
     ch = TelegramChannel(TelegramConfig(owner_id=OWNER, bot_token="SECRET"), store, bridge=bridge)
-    answers = iter([httpx.Response(502, text="<html>502 Bad Gateway</html>"),
-                    httpx.Response(200, json={"ok": True, "result": {"message_id": 900}})])
+    answers = iter(answers)
     ch.http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: next(answers)))
+    return bridge, store
+
+
+SENT = httpx.Response(200, json={"ok": True, "result": {"message_id": 900}})
+
+
+@pytest.mark.parametrize("passing", [
+    httpx.Response(502, text="<html>502 Bad Gateway</html>"),
+    httpx.Response(429, json={"ok": False, "error_code": 429, "description": "Too Many Requests: retry after 3"}),
+], ids=["gateway-page", "too-many-requests"])
+def test_a_passing_failure_from_telegram_leaves_the_note_unconfirmed(tmp_path, passing):
+    bridge, store = real_call(tmp_path, [card(1)], passing, SENT)
 
     async def run():
         try:
             await bridge.deliver()
         except TelegramError as exc:
-            assert exc.code == 502 and "SECRET" not in str(exc), "the URL carries the token"
+            assert exc.code == passing.status_code and "SECRET" not in str(exc), "the URL carries the token"
         assert bridge.neighbour.confirmed == [], "a passing failure is tried again, not said and confirmed past"
         assert await bridge.deliver() == 1
 
     asyncio.run(run())
     assert bridge.neighbour.confirmed == [1] and store.sent_event(CARD, "900") == "a1"
+
+
+def test_a_card_telegram_refuses_is_said_and_confirmed_past(tmp_path):
+    refused = httpx.Response(400, json={"ok": False, "error_code": 400,
+                                        "description": "Bad Request: message is too long"})
+    bridge, store = real_call(tmp_path, [card(1)], refused, SENT)
+    assert asyncio.run(bridge.deliver()) == 1
+    assert bridge.neighbour.confirmed == [1]
+    assert store.sent_event(SESSION, "900") == "ab12cd34" and store.sent_event(CARD, "900") is None

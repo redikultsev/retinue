@@ -1,0 +1,22 @@
+{{ define "main" }}
+{{- with .Params.trip }}{{ $trip := . }}
+<p class="muted">{{ .start }} — {{ .end }}{{ with .published_ts }} · опубликовано <time data-ago="{{ int . }}">{{ $trip.published }}</time>{{ else }}{{ with .published }} · опубликовано {{ . }}{{ end }}{{ end }}</p>
+<div class="summary">{{ range .paragraphs | default (split .summary "\n") }}{{ with . }}<p>{{ . }}</p>{{ end }}{{ end }}</div>
+{{- with .timeline }}
+{{- range . }}
+<h2 class="day">{{ .label }}</h2>
+{{- range .legs }}
+{{- if ne .kind "stay" }}<p class="leg">{{ partial "icon.html" (index (dict "flight" "plane" "ground" "train-front") .kind | default "link") }}{{ .name }}{{ with .leg }} · {{ . }}{{ end }}</p>{{ end }}
+{{- range .options }}{{ partial "option.html" (index $trip.options (int .)) }}{{ end }}
+{{- end }}
+{{- end }}
+{{- else }}
+{{- range $kind, $name := dict "flight" "Перелёты" "stay" "Жильё" "ground" "Дорога" }}
+{{- with where $trip.options "kind" $kind }}<h2 class="day">{{ $name }}</h2>{{ range . }}{{ partial "option.html" . }}{{ end }}{{ end }}
+{{- end }}
+{{- end }}
+{{- else }}{{ with .Params.review }}{{ partial "review-view.html" . }}{{ else }}
+{{- if .Params.soon }}<p class="empty">Скоро.</p>{{ end }}
+<div class="summary">{{ .Content }}</div>
+{{- end }}{{ end }}
+{{ end }}

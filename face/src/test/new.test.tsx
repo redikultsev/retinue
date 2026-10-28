@@ -1,0 +1,143 @@
+import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { feedSource } from "@/lib/feed";
+import { live } from "@/lib/live";
+import type { Session } from "@/lib/types";
+import { generalTrack, greeting, NO_TRACK, statusLine } from "@/pages/new";
+import { makeRouter } from "@/router";
+import { mountNew } from "./mount-new";
+
+const session = (id: string, over: Partial<Session> = {}): Session => ({
+  id, track: "notes", lane: "private", kind: "private", state: "idle", created: 1, at: 1, title: `Сессия ${id}`, waiting: 0,
+  ...over,
+});
+
+beforeEach(() => {
+  live.meta = {
+    schema: 1, owner_ok: true, face_origin: "", general: "base",
+    tracks: [{ name: "code", lane: "private", kind: "code" }, { name: "notes", lane: "private", kind: "private" }, { name: "base", lane: "private", kind: "private" }],
+    spheres: [{ name: "travel", title: "Путешествия", icon: "✈️", track: "base" }],
+  };
+  live.dispatch({
+    type: "list",
+    snapshot: {
+      schema: 1, cursor: 1,
+      sessions: [session("w1", { state: "waiting", waiting: 1 }), session("r1", { state: "active" }), session("r2", { state: "active" })],
+    },
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  live.stop();
+  live.meta = null;
+  feedSource.feed = null;
+  sessionStorage.clear();
+});
+
+describe("/new, the empty new task", () => {
+  it("greets for the time of day and says how things stand, a tap away from «Сегодня»; no «Кому», no «Продолжить»", async () => {
+    feedSource.feed = {
+      schema: 1, count: 2, groups: [], bot: "", assistant_at: null,
+      deadlines: [
+        { id: "d2", when: "2026-11-03", title: "через 6 дней: договор аренды", sphere: "travel", sphere_title: "Путешествия", sphere_icon: "✈️", path: null },
+        { id: "d1", when: "2026-10-30", title: "через 2 дня: Абонемент в спортзал — действует до", sphere: null, sphere_title: null, sphere_icon: null, path: null },
+      ],
+    };
+    const { router } = await mountNew({ now: new Date(2026, 9, 28, 19, 30) });
+    expect(screen.getByRole("heading", { name: "Добрый вечер" })).toBeTruthy();
+    expect(screen.getByTestId("next-deadline").textContent).toBe("через 2 дня: Абонемент в спортзал — действует до");
+    for (const gone of ["Кому", "Продолжить:", "Новая сессия", "из Базы…", "✈️ Путешествия"]) expect(screen.queryByText(gone)).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: "Сегодня: ждут тебя 2 · работают 2" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/today"));
+  });
+
+  it("sends into a new general session in the root of the Base — no sphere — and opens it", async () => {
+    const newSession = vi.fn().mockResolvedValue({ session: "n1" });
+    const { router } = await mountNew({ newSession });
+    const field = screen.getByRole("textbox", { name: "Что сделать" });
+    expect((screen.getByRole("button", { name: "Отправить" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(field, { target: { value: "найди рейсы AMS→LIS на 2.06" } });
+    fireEvent.change(screen.getByTestId("attach-input"), { target: { files: [new File(["abc"], "plan.txt", { type: "text/plain" })] } });
+    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/s/n1"));
+    const [track, text, id, sphere, files] = newSession.mock.calls[0]!;
+    expect([track, text, String(id).startsWith("face:"), sphere]).toEqual(["base", "найди рейсы AMS→LIS на 2.06", true, null]);
+    expect((files as { name: string }[]).map((f) => f.name)).toEqual(["plan.txt"]);
+    expect(sessionStorage.getItem("retinue-new-draft")).toBeNull();
+  });
+
+  it("refuses with a line when the platform has no track in the root of the Base, and sends nothing before it answers", async () => {
+    const newSession = vi.fn();
+    live.meta = { ...live.meta!, general: null };
+    await mountNew({ newSession });
+    fireEvent.change(screen.getByRole("textbox", { name: "Что сделать" }), { target: { value: "задача" } });
+    expect(screen.getByRole("alert").textContent).toBe(NO_TRACK);
+    const arrow = screen.getByRole("button", { name: "Отправить" }) as HTMLButtonElement;
+    expect([arrow.disabled, arrow.title]).toEqual([true, NO_TRACK]);
+    cleanup();
+    live.meta = null; // not answered yet
+    await mountNew({ newSession });
+    fireEvent.change(screen.getByRole("textbox", { name: "Что сделать" }), { target: { value: "задача" } });
+    expect((screen.getByRole("button", { name: "Отправить" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(newSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps what was typed and not sent for the next visit", async () => {
+    await mountNew();
+    fireEvent.change(screen.getByRole("textbox", { name: "Что сделать" }), { target: { value: "черновик" } });
+    cleanup();
+    await mountNew();
+    expect((screen.getByRole("textbox", { name: "Что сделать" }) as HTMLTextAreaElement).value).toBe("черновик");
+  });
+
+  it("is «Новая задача» on a wide screen: the sidebar's first line, the page in the middle", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("min-width"),
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    vi.spyOn(live, "start").mockResolvedValue(undefined);
+    vi.spyOn(feedSource, "start").mockImplementation(() => undefined);
+    const router = makeRouter(createMemoryHistory({ initialEntries: ["/today"] }));
+    render(<RouterProvider router={router} />);
+    await act(async () => {
+      await router.load();
+    });
+    const nav = screen.getAllByRole("navigation", { name: "Разделы" })[0]!;
+    const first = within(nav).getAllByRole("link")[0]!;
+    expect(first.textContent).toBe("Новая задача");
+    fireEvent.click(first);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/new"));
+    const middle = document.querySelector("main.overflow-y-auto.min-h-0") as HTMLElement;
+    expect(within(middle).getByRole("textbox", { name: "Что сделать" })).toBeTruthy();
+  });
+});
+
+describe("its pieces", () => {
+  it("the greeting by the hour", () => {
+    expect([4, 5, 11, 12, 17, 18, 22, 23, 0].map(greeting)).toEqual([
+      "Доброй ночи", "Доброе утро", "Доброе утро", "Добрый день", "Добрый день", "Добрый вечер", "Добрый вечер", "Доброй ночи", "Доброй ночи",
+    ]);
+  });
+
+  it("the status line", () => {
+    expect(statusLine(2, 1)).toBe("ждут тебя 2 · работают 1");
+    expect(statusLine(0, 3)).toBe("ничего не ждёт · работают 3");
+    expect(statusLine(1, 0)).toBe("ждут тебя 1");
+    expect(statusLine(0, 0)).toBe("Тихо: ничего не ждёт");
+  });
+
+  it("the general track: the platform's word; an older platform — its first track that is not a repository's; else none", () => {
+    const meta = live.meta!;
+    expect(generalTrack(meta)).toBe("base");
+    const { general: _, ...older } = meta; // a platform before `general`
+    expect(generalTrack(older)).toBe("notes");
+    expect(generalTrack({ ...older, tracks: [{ name: "code", lane: "private", kind: "code" }] })).toBeNull();
+    expect(generalTrack({ ...meta, general: null })).toBeNull();
+    expect(generalTrack(null)).toBeNull();
+  });
+});

@@ -1,0 +1,74 @@
+# The platform's lanes and your tracks (setup.sh PLATFORM=1 writes this once; then it is yours to edit, and
+# `docker compose restart platform` reads it again). See docs/platform.md.
+state_db: /platform/platform.sqlite   # on the platform-data volume
+max_sessions: 12                      # running sessions across every lane: you and up to 10 sub-sessions
+owner_tz: UTC                         # your IANA zone (e.g. Europe/Berlin): the times the platform says to you
+# The life hub's address (docs/lifehub.md): «Читать» in the app opens its pages there and nowhere else; without it
+# the router's list of pages is refused (docs/face.md, «Read»).
+# hub_origin: https://hub.in.example.com
+lanes:
+  # The room (docs/platform.md, «The room»): your Base, your repositories under /work/code and the open web through
+  # WebSearch and WebFetch. A fetch whose address looks like it carries data comes to you as a card. lane-code and
+  # lane-web are retired: a lane not named here, or named with `retired: true`, keeps its sessions listed and
+  # readable, and they take nothing in.
+  private:
+    url: http://lane-private:9600
+    hook_url: http://platform:9500/hook
+    work_mount: /lanes/private          # the lane's /work, read-only: the file an approval is bound to
+    max_sessions: 12                    # compose gives the room 11 GiB and 4096 processes for it
+    web: true                           # WebSearch and WebFetch are not denied here, and only here
+    # Your own domains, also refused by its proxy (/srv/retinue/egress/open-deny-domains.txt), e.g.
+    # ['WebFetch(domain:example.com)', 'WebFetch(domain:*.example.com)']
+    deny: []
+# A track: `/new <name> [text]` in Telegram starts a session on it. `cwd` is relative to the lane's /work and
+# must exist there. `allow` and `deny` are always rules in Claude Code's own syntax, e.g. 'Bash(make test:*)';
+# `card` rules always come to you as a card (a lane may have them too), e.g. card: ['Bash(git commit:*)'].
+# Anything else a session wants is decided by Claude Code's auto classifier, and what it blocks comes as a card.
+# Never `WebFetch(domain:*)`, a bare `WebFetch` or `WebSearch` in an `allow` on the room: the classifier is one of the
+# two things between a page the session read and a fetch carrying your data out; the platform refuses to start.
+tracks:
+  - {name: notes, lane: private, kind: private, cwd: base}      # the root of your Base (/work/base)
+  - {name: research, lane: private, kind: private, cwd: base}   # the same room: `/new research <question>`
+  - {name: base, lane: private, kind: private, cwd: base}
+  - {name: code, lane: private, kind: code, cwd: code}           # your repositories, /work/code/<name> (docs/code.md)
+# Spheres of your life — the Spaces of your knowledge base. The app groups sessions by them; `/<name> <text>` in
+# Telegram writes into the sphere's main session (made on the first such message), `/<name>` alone says how it is;
+# `/new <name> <text>` starts another session there. `track`: where a new session of the sphere runs — the root of
+# the Base, like a session on your Mac. A name is also a bot command: a-z, 0-9 and `_`, not a track's name and not one
+# of the bot's own commands. See docs/platform.md.
+spheres:
+  - {name: work, title: Работа, icon: "💼", track: base}
+  - {name: travel, title: Путешествия, icon: "✈️", track: base}
+  - {name: home, title: Дом, icon: "🏠", track: base}
+  - {name: assistant, title: Ассистентка, icon: "🛎", track: base}
+# Your voice in the app (docs/face.md «Голос»): 🎙 dictates into the field, «EN» sends English word for word. Needs
+# ELEVENLABS_API_KEY in stack.env and a way out: `proxy` here, or code's (http://platform-egress:3128). `keyterms`:
+# words Scribe should expect when you dictate — your jargon, names, abbreviations. Each under 50 characters, 5 words
+# at most, none of < > { } [ ] \. They cost +20% a dictation, and past 100 each is billed 20 s at least.
+speech:
+  # proxy: http://platform-egress:3128   # default: code.proxy
+  keyterms: [Retinue, Telegram, Markdown, Claude, Claude Code, PR, pull request, commit, branch, Docker, Python,
+             TypeScript, SQLite]
+# Your repositories in the room (docs/code.md): each at /work/code/<name>, a clone of a mirror the platform
+# fetches with your token; «Запушить» under a session's summary pushes its branch as a new branch and opens a PR
+# (GitHub) or an MR (GitLab) — never the default branch. One token per owner (you, each org; a GitLab project
+# token), put in by `sudo bash deploy/code/set-git-token.sh <key>` — never pasted into a chat. A repository whose
+# token is missing is listed as off. `/new code <name> [task]` starts a session in it (the track `code`, on the
+# lane `private`). To turn it on, remove the `#` at the start of `#code:` and of the lines under it, then
+# `docker compose up -d platform-egress platform lane-private`.
+#code:
+#  lane: private                        # the room: the lane whose /work holds the clones
+#  track: code                          # `/new code <repo>`
+#  proxy: http://platform-egress:3128   # the platform's way out to GitHub and GitLab, nothing else
+#  author: "Your Name <you@example.com>"     # the clones' git identity; needed unless base: (below) names you
+#  repos:
+#    - {name: retinue, url: "https://github.com/you/retinue.git", token: you}
+#    - {name: example-app, url: "https://gitlab.com/group/example-app.git", token: group_gitlab}
+# Your knowledge base in the room (docs/base.md): a clone of the hub's `main` at /work/base, pulled by the platform
+# before each run in it and committed by your «В Базу» button, with your name. Needs MEMORY=1 (the hub) and
+# PLATFORM=1. Without it /work/base is an empty folder. To turn it on, remove the `#` at the start of `#base:` and of
+# the lines under it, name yourself, then `docker compose restart platform`.
+#base:
+#  author: "Your Name <you@example.com>"   # the commits the button makes are yours
+#  tree: base                              # /work/base of the lane
+#  lane: private                           # the room

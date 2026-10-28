@@ -1,0 +1,4 @@
+{{- /* One data file of the router, unmarshalled; nil when it is not there yet. */ -}}
+{{- $data := dict -}}
+{{- with resources.Get . -}}{{- $data = . | transform.Unmarshal -}}{{- end -}}
+{{- return $data -}}

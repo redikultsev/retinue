@@ -1,0 +1,8 @@
+{{ define "main" }}
+<ul class="rows">
+<li class="row">{{ partial "icon.html" "inbox" }}<span class="body"><a class="title" href="/review/">Разбор</a><span class="sub">Что ассистентка решила по каждому письму и сообщению</span></span>{{ partial "icon.html" "chevron-right" }}</li>
+<li class="row">{{ partial "icon.html" "activity" }}<span class="body"><a class="title" href="/status/">Статус</a><span class="sub">Что сломано, лимит подписки, подключения</span></span>{{ partial "icon.html" "chevron-right" }}</li>
+<li class="row">{{ partial "icon.html" "wallet" }}<span class="body"><a class="title" href="/finance/">Финансы</a><span class="sub">Деньги по месяцам</span></span><span class="side"><span class="chip">скоро</span></span></li>
+<li class="row">{{ partial "icon.html" "heart-pulse" }}<span class="body"><a class="title" href="/health/">Здоровье</a><span class="sub">Тренировки и цели</span></span><span class="side"><span class="chip">скоро</span></span></li>
+</ul>
+{{ end }}

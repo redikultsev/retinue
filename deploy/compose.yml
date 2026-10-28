@@ -1,0 +1,697 @@
+# Retinue pilot stack for Dokploy (compose path: ./deploy/compose.yml).
+# Host paths under /srv/retinue are prepared by deploy/setup.sh. Secrets come from the
+# Dokploy "Environment" tab, never from this file.
+name: retinue
+
+# A healthcheck of a service that listens: its port takes a connection (the images have Python, not curl). Docker
+# only reports it (`docker compose ps`, `up --wait`); nothing here waits on it: every service that calls another
+# retries on its own, and the platform and the lanes start in any order.
+x-health: &health
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 60s
+
+# Every image from a registry is pinned by digest: the one running on the server when it was pinned, so a deploy
+# changes nothing until the pin is moved on purpose. Squid serves five proxies, one pin.
+x-squid-image: &squid-image ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+
+# Memory: every service has a ceiling, from `docker stats` and the cgroups' peaks on the server with room on top. The
+# always-on part stays under 8 GiB (tests/test_deploy.py); the lanes and travel-ops are owner-started bursts, on a
+# host shared with other services.
+
+services:
+  tuwunel:
+    profiles: ["matrix"]            # off by default: starts only with COMPOSE_PROFILES=matrix
+    image: jevolk/tuwunel:v1.9.4@sha256:0e86c6164d6c9f5b60291938eb61ad8395021c37fe58d47a963ea7edddbedaec
+    restart: unless-stopped
+    stop_grace_period: 30m
+    mem_limit: 1g
+    volumes:
+      - tuwunel-db:/var/lib/tuwunel
+      - /srv/retinue/tuwunel/appservices:/etc/tuwunel/appservices:ro
+    environment:
+      TUWUNEL_SERVER_NAME: ${MATRIX_SERVER_NAME:-}
+      TUWUNEL_DATABASE_PATH: /var/lib/tuwunel
+      TUWUNEL_ADDRESS: 0.0.0.0
+      TUWUNEL_PORT: 6167
+      TUWUNEL_MAX_REQUEST_SIZE: 20000000
+      TUWUNEL_ALLOW_FEDERATION: "false"
+      TUWUNEL_ALLOW_REGISTRATION: ${MATRIX_ALLOW_REGISTRATION:-false}
+      TUWUNEL_REGISTRATION_TOKEN: ${MATRIX_REGISTRATION_TOKEN:-}
+      TUWUNEL_APPSERVICE_DIR: /etc/tuwunel/appservices
+      TUWUNEL_SHOW_APPSERVICE_USERS_IN_USER_DIRECTORY: "true"
+      TUWUNEL_WELL_KNOWN: |
+        {
+        client=https://${MATRIX_SERVER_NAME:-}
+        }
+    ulimits:
+      nofile: { soft: 1048567, hard: 1048567 }
+    networks: [matrix, dokploy-network]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.retinue-matrix.rule=Host(`${MATRIX_SERVER_NAME:-}`)
+      - traefik.http.routers.retinue-matrix.entrypoints=websecure
+      - traefik.http.routers.retinue-matrix.tls.certresolver=letsencrypt
+      - traefik.http.routers.retinue-matrix.middlewares=vpn-only@file
+      - traefik.http.routers.retinue-matrix-http.rule=Host(`${MATRIX_SERVER_NAME:-}`)
+      - traefik.http.routers.retinue-matrix-http.entrypoints=web
+      - traefik.http.routers.retinue-matrix-http.middlewares=retinue-https@file
+      - traefik.http.services.retinue-matrix.loadbalancer.server.port=6167
+
+  router:
+    build: { context: .., dockerfile: Dockerfile }
+    image: retinue:local
+    restart: unless-stopped
+    command: ["retinue-router", "--config", "/config/router.yaml"]
+    mem_limit: 2g                   # ~120 MiB, plus a file's parse worker, itself capped at 1.5 GiB (attachments.py)
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9100), 3).close()"]
+    volumes:
+      - /srv/retinue/router.yaml:/config/router.yaml:ro
+      - router-data:/data
+      - /srv/retinue/status:/status:ro            # the host's backup result: read here, written only by the host
+      # The knowledge base (setup.sh MEMORY=1): the files she edits, their repository — the router's alone, so a hook
+      # or a config she wrote could never run here — and the hub, whose hooks/ belongs to root.
+      - /srv/retinue/memory/tree:/kb
+      - /srv/retinue/memory/git:/kb-git
+      - /srv/retinue/memory/hub.git:/hub
+      - /srv/retinue/memory/policy.json:/config/memory-policy.json:ro
+      # The life hub (setup.sh LIFEHUB=1): the pages' data, which the router alone writes; how the last build went.
+      - /srv/retinue/lifehub/data:/lifehub
+      - /srv/retinue/lifehub/site:/lifehub-site:ro
+    environment:
+      RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN:-}         # these two only with a `matrix:` section in router.yaml
+      RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}   # only with a `telegram:` section in router.yaml
+      RETINUE_BUS_SECRET: ${RETINUE_BUS_SECRET:-}   # agents ask each other through the router
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}   # speech to text; the router calls it, the assistant never
+      RETINUE_COLLECTOR_TOKEN: ${RETINUE_COLLECTOR_TOKEN:-}   # only with `collector_url` in router.yaml
+      RETINUE_GATEWAY_TOKEN: ${RETINUE_GATEWAY_TOKEN:-}       # only with `gateway_url`
+      RETINUE_SENDER_TOKEN: ${RETINUE_SENDER_TOKEN:-}         # only with `sender_url`
+      RETINUE_PLATFORM_TOKEN: ${RETINUE_PLATFORM_TOKEN:-}     # only with `platform_url`
+    # `outside`: Telegram; `travel-router`: price alerts; `mail-router`: what the mail collector found;
+    # `tg-router`: the owner's chosen Telegram chats and replies in them; `send-router`: letters he confirmed;
+    # `platform-router`: the lanes' sessions — their cards and summaries, his replies and presses
+    networks: [agents, outside, matrix, travel-router, mail-router, tg-router, send-router, platform-router]
+
+  assistant:
+    image: retinue:local
+    restart: unless-stopped
+    command: ["retinue-agent", "--config", "/agent/agent.yaml"]
+    mem_limit: 2g                   # ~90 MiB idle; each run is a Claude Code CLI, up to three at once (bus.py)
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9000), 3).close()"]
+    volumes:
+      - /srv/retinue/agents/assistant:/agent:ro   # config and instructions: nothing here can be written
+      # The session transcript (everything the model read) and the conversation -> session table.
+      - assistant-data:/data
+      # The knowledge base's files and nothing of its repository; what she may write there is the policy's.
+      - /srv/retinue/memory/tree:/kb
+      - /srv/retinue/memory/policy.json:/memory-policy.json:ro
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      HTTPS_PROXY: http://egress:3128             # Claude Code reaches the model API through the proxy only
+      RETINUE_BUS_URL: http://router:9100
+      RETINUE_BUS_TOKEN: ${RETINUE_BUS_TOKEN_ASSISTANT:-}
+      RETINUE_TRAVEL_URL: ${RETINUE_TRAVEL_URL:-}   # travel-ops' MCP; empty = no travel tools
+      RETINUE_MEMORY: ${RETINUE_MEMORY:-}           # /kb: her file tools there; empty = no file tools at all
+      RETINUE_MEMORY_POLICY: /memory-policy.json
+      NO_PROXY: travel-ops,router                 # neighbours on internal networks, never through the proxy
+    networks: [agents, travel-assistant]          # both internal: no route out of either
+    depends_on: [router, egress]
+
+  # travel-ops: live prices from the travel sites, in containers of their own with a way out to the sites. The
+  # assistant calls its MCP over HTTP on `travel-assistant` (every call's arguments checked by the engine's guard),
+  # the router collects price alerts on `travel-router`: one bridge per pair, so the owner's traffic between the
+  # router and the assistant never crosses a bridge travel-ops is on. Off until the owner turns it on (setup.sh
+  # TRAVEL=1): the image is about 5 GB, both browsers inside.
+  travel-ops:
+    profiles: ["travel"]
+    # Your travel-ops checkout at a pinned commit, from stack.env: TRAVEL_OPS_GIT=https://…/travel-ops.git#<sha>
+    # (setup.sh TRAVEL=1 asks for it; docs/install.md). `:-`, not `:?`: compose reads every service, profile or not,
+    # and a missing value would stop the stack without travel too. Its Dockerfile pins the base image by digest.
+    build: { context: "${TRAVEL_OPS_GIT:-}" }
+    image: travel-ops:local
+    restart: unless-stopped
+    volumes: &travel-mounts
+      - travel-data:/data                                           # searches (7 days), watches, request limits
+      - /srv/retinue/travel/profile.yml:/app/profile.yml:ro         # home airports, party: the owner's, not git's
+    shm_size: 1gb                 # Chrome and Firefox keep their pages in shared memory; 64 MB crashes them
+    mem_limit: 3g
+    cpus: 2
+    pids_limit: 512
+    <<: &travel-hardening
+      # Browsers that open strangers' pages: no capabilities and no way to gain any; the image cannot be changed,
+      # only the scratch space (browser profiles, font cache) and the data volume can.
+      cap_drop: [ALL]
+      security_opt: ["no-new-privileges:true"]
+      read_only: true
+      # Where the browsers write at start, as the travel user (10001). Not ~/.cache itself: Camoufox lives there.
+      tmpfs:
+        - /tmp:size=1g
+        - /home/travel/.local:size=16m,uid=10001,gid=10001
+        - /home/travel/.config:size=256m,uid=10001,gid=10001
+        - /home/travel/.cache/google-chrome:size=256m,uid=10001,gid=10001
+        - /home/travel/.cache/fontconfig:size=64m,uid=10001,gid=10001
+        - /home/travel/.cache/camoufox/fontconfig:size=16m,uid=10001,gid=10001
+        - /home/travel/Downloads:size=64m,uid=10001,gid=10001
+        - /home/travel/camoufox:size=256m,uid=10001,gid=10001
+    networks: [travel-assistant, travel-router, travel-out]
+
+  travel-watch:                   # the owner's price watches, checked one search at a time
+    profiles: ["travel"]
+    image: travel-ops:local
+    restart: unless-stopped
+    command: ["travelops", "watch", "run", "--every-minutes", "30"]
+    volumes: *travel-mounts
+    shm_size: 1gb
+    mem_limit: 2g
+    cpus: 1
+    pids_limit: 512
+    <<: *travel-hardening
+    networks: [travel-out]
+    depends_on: [travel-ops]      # its image is built there
+
+  # The mail collector: code, no model. It reads the owner's Gmail and Google Calendar with read-only tokens and
+  # hands what it found to the router by number. Its own user (not the containers' 10001), its own keys folder,
+  # its own way out: a proxy that lets through Google's three hosts. Off until the owner turns it on (setup.sh
+  # MAIL=1); the keys come from his Mac (deploy/mail/login.py).
+  collector:
+    profiles: ["mail"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10002:10002"
+    command: ["retinue-collector"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9200), 3).close()"]
+    volumes:
+      - /srv/retinue/mail/keys:/keys:ro         # client.json and one token per account and kind: the owner's
+      - /srv/retinue/mail/state:/state          # cursors and the items not yet confirmed; nobody else mounts it
+    environment:
+      RETINUE_COLLECTOR_TOKEN: ${RETINUE_COLLECTOR_TOKEN:-}
+      HTTPS_PROXY: http://mail-egress:3128      # Google, through the proxy only
+    cap_drop: [ALL]                             # it parses strangers' letters: nothing to gain, nothing to change
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+    mem_limit: 512m
+    pids_limit: 128
+    networks: [mail-router, mail-out]           # both internal: the router, and the proxy
+    depends_on: [mail-egress]
+
+  mail-egress:                    # the collector's and the sender's only way out: CONNECT to Google's hosts, nothing else
+    profiles: ["mail"]
+    image: *squid-image
+    restart: unless-stopped
+    mem_limit: 128m                 # ~30 MiB: CONNECT only, no cache
+    volumes:
+      - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
+      - /srv/retinue/egress/mail-hosts.txt:/etc/squid/allowed-hosts.txt:ro
+    networks: [mail-out, send-out, outside]
+
+  # The mail sender: code, no model, the only holder of the owner's `gmail.send` tokens. It sends one letter when
+  # the router asks with the key, the envelope and the digest of a card the owner pressed «Отправить» under — each
+  # key once — and reads nothing. Its own user and keys, apart from the collector, which parses strangers' letters.
+  # Off until the owner turns it on (setup.sh SEND=1, which needs MAIL=1); the keys come from his Mac (--kind send).
+  mail-send:
+    profiles: ["send"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10004:10004"
+    command: ["retinue-mail-send"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9400), 3).close()"]
+    volumes:
+      - /srv/retinue/send/keys:/keys:ro         # client.json and one gmail.send token per mailbox: the owner's
+      - /srv/retinue/send/state:/state          # every key it was asked to send; nobody else mounts it
+    environment:
+      RETINUE_SENDER_TOKEN: ${RETINUE_SENDER_TOKEN:-}
+      HTTPS_PROXY: http://mail-egress:3128      # Google, through the proxy only
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    mem_limit: 256m
+    pids_limit: 64
+    networks: [send-router, send-out]           # both internal: the router, and the proxy
+    depends_on: [mail-egress]
+
+  # The Telegram Business gateway: code, no model, the only holder of the Business bot's token — which both reads
+  # the owner's chosen chats and replies in them. The router takes the messages by number and asks it
+  # to send a reply the owner confirmed, each key once. A bot of its own, not the router's. Off until the owner turns
+  # it on (setup.sh TGBUSINESS=1).
+  tg-business:
+    profiles: ["tgbusiness"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10003:10003"
+    command: ["retinue-tg-business"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9300), 3).close()"]
+    volumes:
+      - /srv/retinue/telegram/state:/state      # the offset, the connection, the items, each chat's window, its ledger
+    environment:
+      RETINUE_GATEWAY_TOKEN: ${RETINUE_GATEWAY_TOKEN:-}
+      TELEGRAM_BUSINESS_TOKEN: ${TELEGRAM_BUSINESS_TOKEN:-}
+      TELEGRAM_OWNER_ID: ${TELEGRAM_OWNER_ID:-}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    mem_limit: 256m
+    pids_limit: 64
+    networks: [tg-router, outside]              # the router, and Telegram
+
+  # The life hub: pages about the owner's life, for his devices only. The router writes the data; the builder turns it
+  # into pages with Hugo, with no network, checks them and switches `current`; nginx serves `current` to Traefik,
+  # which lets through the owner's devices only and adds the key nginx checks. Off until the owner turns it on
+  # (setup.sh LIFEHUB=1).
+  lifehub-build:
+    profiles: ["lifehub"]
+    build: { context: ./lifehub }
+    image: retinue-lifehub:local
+    restart: unless-stopped
+    user: "10001:10001"
+    network_mode: none                          # Hugo is in the image; a build reaches nothing
+    read_only: true
+    tmpfs: ["/tmp:size=256m,uid=10001,gid=10001"]  # a copy of the site and the data per build, Hugo's cache
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 64
+    volumes:
+      - /srv/retinue/lifehub/data:/data:ro
+      - /srv/retinue/lifehub/site:/site
+
+  lifehub:
+    profiles: ["lifehub"]
+    image: nginxinc/nginx-unprivileged:1.30.5-alpine-slim@sha256:3af0c10d960cc2502427fe1219c52989d309e7d65596869c60a34fd2fa2406f0
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]                    # nginx's pid and temporary files
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    pids_limit: 64
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    volumes:
+      - /srv/retinue/lifehub/site:/site:ro
+      - /srv/retinue/lifehub/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [dokploy-network]                 # Traefik's; nothing of Retinue is on it
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.retinue-lifehub.rule=Host(`${LIFEHUB_HOST:-}`)
+      - traefik.http.routers.retinue-lifehub.entrypoints=websecure
+      - traefik.http.routers.retinue-lifehub.tls.certresolver=letsencrypt
+      - traefik.http.routers.retinue-lifehub.middlewares=lifehub-owner@file,lifehub-headers@file
+      - traefik.http.routers.retinue-lifehub.service=retinue-lifehub
+      # The owner's own pages under /pages/: the same host and devices, a router of its own, chosen first, that adds
+      # the key and none of the hub's headers — each page's policy (its sandbox) is nginx's (docs/lifehub.md).
+      - traefik.http.routers.retinue-lifehub-pages.rule=Host(`${LIFEHUB_HOST:-}`) && PathPrefix(`/pages/`)
+      - traefik.http.routers.retinue-lifehub-pages.priority=1000
+      - traefik.http.routers.retinue-lifehub-pages.entrypoints=websecure
+      - traefik.http.routers.retinue-lifehub-pages.tls.certresolver=letsencrypt
+      - traefik.http.routers.retinue-lifehub-pages.middlewares=lifehub-owner@file,lifehub-key@file
+      - traefik.http.routers.retinue-lifehub-pages.service=retinue-lifehub
+      - traefik.http.services.retinue-lifehub.loadbalancer.server.port=8080
+    depends_on: [lifehub-build]
+
+  # The platform: Claude Code sessions in the lanes, driven from Telegram through the router (docs/platform.md). Code,
+  # no model: it starts runs on the lane hosts, answers their CLIs' hooks, keeps every line they wrote in its own
+  # SQLite and puts each call no rule decides to the owner as a card. It holds the lanes' subscription token and hands
+  # it to a lane host with each run, so no lane container has it in its environment. It reaches the router and the
+  # lanes, each on an internal network of its own, and nothing else. Off until the owner turns it on (setup.sh
+  # PLATFORM=1).
+  platform:
+    profiles: ["platform"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10007:10007"
+    command: ["retinue-platform"]
+    mem_limit: 768m                 # ~60 MiB: code, plus one parse worker for the owner's pictures (retinue/inbox.py)
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9500), 3).close()"]
+    volumes:
+      - platform-data:/platform                 # sessions, approvals, every line of every run
+      - /srv/retinue/platform/platform.yaml:/config/platform.yaml:ro   # lanes, tracks, always rules: the owner's
+      # The room's working trees, read-only: an approval is bound to the file as the lane sees it. lane-code and
+      # lane-web are retired (profile legacy-lanes): their sessions' transcripts and files are in platform-data.
+      - lane-private-work:/lanes/private:ro
+      - /srv/retinue/skills:/skills:ro            # the owner's skills, as the lanes see them: the gate reads them
+      - /srv/retinue/owner-memory:/owner-memory:ro   # his memory snapshot, as lane-private sees it: the same
+      # The Base (docs/base.md; `base:` in platform.yaml): lane-private's clone of the owner's knowledge base,
+      # read-write here over the read-only lane view, so the platform brings the hub's changes in and commits by the
+      # owner's button. Its repository is in platform-data, never in the lane. The hub: read-only but for what a push
+      # writes; its hooks/ stay root's.
+      - /srv/retinue/base/tree:/lanes/private/base
+      - /srv/retinue/memory/hub.git:/hub:ro
+      - /srv/retinue/memory/hub.git/objects:/hub/objects
+      - /srv/retinue/memory/hub.git/refs:/hub/refs
+      # The owner's repositories (docs/code.md; `code:` in platform.yaml): a clean mirror of each, fetched with his
+      # token and read-only in lane-private; the platform's own repositories (what a card fetched) are in
+      # platform-data.
+      - /srv/retinue/code/mirrors:/code/mirrors
+    # retinue-memory (10001): a push writes the hub's objects/ and refs/; the hub's checks see a uid other than the
+    # router's and take the push for the owner's — his button. retinue-base (10020): the clone's files, shared with
+    # lane-private.
+    group_add: ["10001", "10020"]
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}   # the lanes' login: sent with each run, never stored
+      RETINUE_PLATFORM_TOKEN: ${RETINUE_PLATFORM_TOKEN:-}
+      RETINUE_LANE_TOKEN_PRIVATE: ${RETINUE_LANE_TOKEN_PRIVATE:-}
+      RETINUE_LANE_TOKEN_CODE: ${RETINUE_LANE_TOKEN_CODE:-}
+      RETINUE_LANE_TOKEN_WEB: ${RETINUE_LANE_TOKEN_WEB:-}
+      RETINUE_HOOK_SECRET: ${RETINUE_HOOK_SECRET:-}
+      # The face API (docs/face.md): it listens on the platform's own address on `face-platform` alone — never
+      # 0.0.0.0, which the lanes' networks would reach. Off while RETINUE_FACE_ORIGIN is empty (setup.sh FACE=1).
+      RETINUE_FACE_HOST: 172.16.96.10
+      RETINUE_FACE_ORIGIN: ${RETINUE_FACE_ORIGIN:-}
+      RETINUE_WEBAPP_KEY: ${RETINUE_WEBAPP_KEY:-}   # derived from the bot token by setup.sh; never the token itself
+      TELEGRAM_OWNER_ID: ${TELEGRAM_OWNER_ID:-}
+      # The owner's voice in the app (docs/face.md «Голос»): the platform calls ElevenLabs through platform-egress and
+      # takes the key out of its environment at start; no lane is given it.
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+    # The git tokens, RETINUE_GIT_TOKEN_<KEY> (docs/code.md): root's file, written by deploy/code/set-git-token.sh;
+    # in this container alone. No file yet: no token, every repository off.
+    env_file:
+      - path: /srv/retinue/code/tokens.env
+        required: false
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    init: true                                  # PID 1 is Docker's init: it forwards SIGTERM and reaps orphans
+    stop_grace_period: 30s                      # waiting hooks answer `defer`, every run is stopped, then it exits
+    networks:                                   # all internal: no route out
+      platform-router: {}
+      lane-private: {}
+      face-platform:
+        ipv4_address: 172.16.96.10              # = RETINUE_FACE_HOST and deploy/face/nginx.conf's proxy_pass
+      platform-out: {}                          # its proxy to GitHub and GitLab alone: the mirrors and the push
+    depends_on: [lane-private]                  # the room creates its work volume, owned by its own user
+
+  # The face: the platform's app for the owner's phone (docs/face.md). nginx serves the built app and passes /api/* to
+  # the platform's face API on `face-platform`; Traefik lets through the owner's devices only and adds the key nginx
+  # checks. It holds no secret of the platform's and decides nothing: the face API does. Off until the owner turns it
+  # on (setup.sh FACE=1, which needs PLATFORM=1).
+  face:
+    profiles: ["face"]
+    build: { context: .., dockerfile: deploy/face/Dockerfile }
+    image: retinue-face:local
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]                    # nginx's pid and temporary files
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    init: true
+    mem_limit: 64m
+    pids_limit: 64
+    healthcheck:
+      <<: *health
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/healthz"]   # loopback only, no key
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    volumes:
+      - /srv/retinue/face/key.conf:/etc/nginx/face/key.conf:ro   # the key Traefik adds: root's, rendered by setup.sh
+    networks: [dokploy-network, face-platform]  # Traefik's, and the platform's face API; never a lane's
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.retinue-face.rule=Host(`${FACE_HOST:-}`)
+      - traefik.http.routers.retinue-face.entrypoints=websecure
+      - traefik.http.routers.retinue-face.tls.certresolver=letsencrypt
+      - traefik.http.routers.retinue-face.middlewares=face-owner@file,face-key@file
+      - traefik.http.routers.retinue-face-http.rule=Host(`${FACE_HOST:-}`)
+      - traefik.http.routers.retinue-face-http.entrypoints=web
+      - traefik.http.routers.retinue-face-http.middlewares=face-owner@file,face-https@file
+      - traefik.http.services.retinue-face.loadbalancer.server.port=8080
+
+  # A lane: the lane host and the pinned Claude Code CLI, one container per lane, its own user, its own volumes. Its
+  # CLI runs in auto mode and Bash in bubblewrap, the CLI's secrets denied to it; the managed settings (root's, in the
+  # image) deny that and hooks to anywhere but the platform. It reaches the platform and its own proxy, nothing else.
+  # Its environment holds no login: the platform sends the subscription token with each run, the lane host keeps it in
+  # memory and its CLI reads it from a pipe. No GitHub, registry or mail credential either.
+  #
+  # lane-private is the room (docs/platform.md, «The room»): the Base, the owner's repositories (/work/code) and the
+  # open web through the CLI's WebSearch and WebFetch; Bash reaches the platform, GitHub and the registries only.
+  lane-private:
+    profiles: ["platform"]
+    build: &lane-build
+      context: ..
+      dockerfile: deploy/lanes/Dockerfile
+      args: { LANE: private, LANE_UID: "10005" }
+    restart: unless-stopped
+    # The lane host takes SIGTERM from Docker's init (which also reaps the CLIs' orphaned grandchildren): every run
+    # stopped as /stop stops it (SIGINT, SIGTERM after 10 s, SIGKILL after 5 more) and its end journaled.
+    init: true
+    stop_grace_period: 30s
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9600), 3).close()"]
+    volumes:
+      - lane-private-work:/work                 # the sessions' working trees
+      - lane-private-config:/lane/config        # the CLI's home and its transcripts
+      - lane-private-state:/lane/state          # the journal the platform pulls
+      - /srv/retinue/skills:/lane/skills:ro       # the owner's skills, read-only (docs/instructions.md)
+      - /srv/retinue/owner-memory:/lane/owner-memory:ro   # his memory snapshot, read-only (the same doc)
+      # The Base's clone (docs/base.md): files only — its repository is the platform's. A mount, so no session can
+      # move it away; shared with the platform through the group retinue-base (10020).
+      - /srv/retinue/base/tree:/work/base
+      # The platform's mirrors of the owner's repositories, read-only: each clone's origin in /work/code (docs/code.md).
+      - /srv/retinue/code/mirrors:/lane/mirrors:ro
+    group_add: ["10020"]
+    tmpfs:
+      - /lane/run:size=16m,uid=10005,gid=10005  # one settings file per run
+      - /tmp:size=1g,uid=10005,gid=10005        # builds and tests of its sessions
+    environment:
+      <<: &lane-env
+        RETINUE_LANE_TOKEN: ${RETINUE_LANE_TOKEN_PRIVATE:-}
+        RETINUE_LANE_HOOK_URL: http://platform:9500/hook
+        HTTPS_PROXY: http://lane-private-sni:3128   # the SNI guard, then the open proxy
+        NO_PROXY: platform
+      # The CLI processes the lane host runs at once: the room's `max_sessions` in platform.yaml (the host's own
+      # default is 2, under which a third session only waited, «busy», whatever platform.yaml said).
+      RETINUE_LANE_MAX: "12"
+    <<: &lane-hardening
+      # The CLI's bubblewrap sandbox creates a user namespace and mounts a fresh /proc inside it. Docker's
+      # defaults refuse all three, and Ubuntu 24.04 refuses user namespaces to any process without an AppArmor
+      # profile that allows them. So each lane runs under Docker's own profiles plus exactly that: AppArmor
+      # `retinue-lane` (deploy/lanes/apparmor) and seccomp deploy/lanes/seccomp.json, both put in place by
+      # setup.sh; unmasked system paths, which the AppArmor profile still denies writing. Without them the CLI
+      # refuses to start — no session, never an unsandboxed one (tests/test_lane_container.py).
+      cap_drop: [ALL]
+      security_opt:
+        - no-new-privileges:true
+        - apparmor=retinue-lane
+        - seccomp=/srv/retinue/platform/lane-seccomp.json
+        - systempaths=unconfined
+      read_only: true
+      mem_limit: 4g
+      pids_limit: 512
+    # The room: you and up to 10 sub-sessions with their subagents, builds and tests (platform.yaml: max_sessions 12).
+    # A burst: idle the rest of the time. The platform's own cap across lanes stays the guard.
+    mem_limit: 11g
+    pids_limit: 4096
+    networks: [lane-private]                    # internal: the platform and the lane's proxy (the SNI guard)
+    depends_on: [lane-private-sni]
+
+  # Retired into the room: kept under a profile the stack never starts, for their volumes — the archive.
+  # The platform is on neither network and mounts neither volume; a platform.yaml still naming the lane starts, and
+  # its sessions are listed and readable but take nothing in (docs/platform.md, «Retired lanes»).
+  lane-code:
+    profiles: ["legacy-lanes"]
+    build:
+      <<: *lane-build
+      args: { LANE: code, LANE_UID: "10006" }
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9600), 3).close()"]
+    volumes:
+      - lane-code-work:/work
+      - lane-code-config:/lane/config
+      - lane-code-state:/lane/state
+      - /srv/retinue/skills:/lane/skills:ro       # the owner's skills, read-only (docs/instructions.md)
+    tmpfs:
+      - /lane/run:size=16m,uid=10006,gid=10006
+      - /tmp:size=512m,uid=10006,gid=10006
+    environment:
+      <<: *lane-env
+      RETINUE_LANE_TOKEN: ${RETINUE_LANE_TOKEN_CODE:-}
+      HTTPS_PROXY: http://lane-code-egress:3128
+    <<: *lane-hardening
+    networks: [lane-code]
+    depends_on: [lane-code-egress]
+
+  # The research lane, retired into the room: kept, like lane-code, for its volumes.
+  lane-web:
+    profiles: ["legacy-lanes"]
+    build:
+      <<: *lane-build
+      args: { LANE: web, LANE_UID: "10008" }
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9600), 3).close()"]
+    volumes:
+      - lane-web-work:/work
+      - lane-web-config:/lane/config
+      - lane-web-state:/lane/state
+    tmpfs:
+      - /lane/run:size=16m,uid=10008,gid=10008
+      - /tmp:size=512m,uid=10008,gid=10008
+    environment:
+      <<: *lane-env
+      RETINUE_LANE_TOKEN: ${RETINUE_LANE_TOKEN_WEB:-}
+      HTTPS_PROXY: http://lane-web-egress:3128
+      RETINUE_LANE_WEB: "1"         # no repository rules, no skills: nothing of the owner's (docs/instructions.md)
+    <<: *lane-hardening
+    mem_limit: 2g                   # one session at a time (platform.yaml), no builds: half a code lane
+    networks: [lane-web]
+    depends_on: [lane-web-egress]
+
+  # The room's proxy: a CONNECT tunnel is spliced only when the TLS ClientHello names the CONNECT host itself, so a
+  # command let through to registry.npmjs.org cannot front another site of the same CDN by its SNI
+  # (retinue/sniguard.py). It never opens TLS. Behind it, the open proxy; the room reaches nothing else.
+  lane-private-sni:
+    profiles: ["platform"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10009:10009"
+    command: ["python", "-m", "retinue.sniguard"]
+    mem_limit: 64m                  # a few hundred tunnels, nothing buffered
+    pids_limit: 64
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 3128), 3).close()"]
+    environment:
+      RETINUE_SNI_UPSTREAM: lane-private-egress:3128
+    networks: [lane-private, room-out]
+    depends_on: [lane-private-egress]
+
+  lane-private-egress:            # the room's only way out: CONNECT to 443 of any public host, never an inside one
+    profiles: ["platform"]
+    image: *squid-image
+    restart: unless-stopped
+    mem_limit: 128m                 # ~30 MiB: CONNECT only, no cache
+    volumes: &open-proxy
+      - /srv/retinue/egress/open-squid.conf:/etc/squid/squid.conf:ro
+      - /srv/retinue/egress/open-deny-nets.txt:/etc/squid/deny-nets.txt:ro
+      - /srv/retinue/egress/open-deny-ips.txt:/etc/squid/deny-ips.txt:ro
+      - /srv/retinue/egress/open-deny-domains.txt:/etc/squid/deny-domains.txt:ro
+    networks: [room-out, outside]   # the SNI guard is its only client
+
+  lane-code-egress:               # retired with lane-code: the model API, GitHub, the package registries
+    profiles: ["legacy-lanes"]
+    image: *squid-image
+    restart: unless-stopped
+    mem_limit: 128m                 # ~30 MiB: CONNECT only, no cache
+    volumes:
+      - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
+      - /srv/retinue/egress/lane-code-hosts.txt:/etc/squid/allowed-hosts.txt:ro
+    networks: [lane-code, outside]
+
+  lane-web-egress:                # retired with lane-web: the same open proxy as the room's
+    profiles: ["legacy-lanes"]
+    image: *squid-image
+    restart: unless-stopped
+    mem_limit: 128m                 # ~30 MiB: CONNECT only, no cache
+    volumes: *open-proxy
+    networks: [lane-web, outside]
+
+  # The platform's only way out: CONNECT to GitHub and GitLab (deploy/egress/platform-hosts.txt) for the mirrors, the
+  # owner's pushes and pull requests — with his token, which never enters a lane — and to api.elevenlabs.io for what
+  # he dictates in the app. Nothing else of the platform's goes out: it reaches the proxy only through the proxy of
+  # those git, API and speech calls (`code.proxy`, `speech.proxy` in platform.yaml).
+  platform-egress:
+    profiles: ["platform"]
+    image: *squid-image
+    restart: unless-stopped
+    mem_limit: 64m                  # ~12 MiB: CONNECT to a handful of hosts, no cache
+    volumes:
+      - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
+      - /srv/retinue/egress/platform-hosts.txt:/etc/squid/allowed-hosts.txt:ro
+    networks: [platform-out, outside]
+
+  egress:
+    image: *squid-image                           # Squid, GPL-2.0
+    restart: unless-stopped
+    mem_limit: 128m
+    volumes:
+      - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
+      - /srv/retinue/egress/allowed-hosts.txt:/etc/squid/allowed-hosts.txt:ro
+    networks: [agents, outside]
+
+volumes:
+  tuwunel-db:
+  router-data:    # the router's state and the archive; never mounted into an agent
+  assistant-data: # the assistant's session; only the assistant mounts it
+  travel-data:    # travel-ops' searches, watches and limits; only travel-ops mounts it
+  platform-data:  # the platform's SQLite: sessions, approvals, transcripts; only the platform mounts it
+  lane-private-work:    # each lane's working trees: the lane writes them, the platform reads them
+  lane-private-config:  # each lane's CLI home and transcripts; only that lane mounts it
+  lane-private-state:   # each lane's journal; only that lane mounts it
+  lane-code-work:
+  lane-code-config:
+  lane-code-state:
+  lane-web-work:
+  lane-web-config:
+  lane-web-state:
+
+networks:
+  agents:       # router <-> agents <-> egress proxy. Internal: containers here have no route to the internet
+    internal: true
+  outside:      # ordinary bridge: the router (Telegram) and the egress proxy (model API) go out through it
+  matrix:       # homeserver <-> router only
+  travel-assistant:  # assistant <-> travel-ops only. Internal: no route out
+    internal: true
+  travel-router:     # router <-> travel-ops only (price alerts). Internal: no route out
+    internal: true
+  travel-out:   # travel-ops' way to the travel sites; nobody else is on it
+  mail-router:  # router <-> collector only. Internal: no route out
+    internal: true
+  mail-out:     # collector <-> its proxy only. Internal: the proxy is its only way out
+    internal: true
+  send-router:  # router <-> mail sender only. Internal: no route out
+    internal: true
+  send-out:     # mail sender <-> the mail proxy only. Internal: the proxy is its only way out
+    internal: true
+  tg-router:    # router <-> Telegram Business gateway only. Internal: no route out
+    internal: true
+  platform-router:  # router <-> platform only. Internal: no route out
+    internal: true
+  lane-private:     # platform <-> the room <-> its SNI guard. Internal: the guard is the lane's only way out
+    internal: true
+  room-out:         # the SNI guard <-> the open proxy only. Internal: the proxy is the only member on `outside`
+    internal: true
+  lane-code:        # retired: lane-code <-> its proxy, the platform no longer on it
+    internal: true
+  lane-web:         # retired: lane-web <-> its proxy, the platform no longer on it
+    internal: true
+  platform-out:     # platform <-> its proxy to GitHub and GitLab only. Internal: the proxy is its only way out
+    internal: true
+  face-platform:    # face (nginx) <-> the platform's face API only. Internal: no route out; no lane is on it. A fixed
+    internal: true  # subnet outside Docker's default pools (172.17-31/16, 192.168/16): the platform's address is static
+    ipam:
+      config:
+        - subnet: 172.16.96.0/28
+  dokploy-network:
+    external: true

@@ -1,0 +1,4 @@
+# The owner's own domains, which the open proxy refuses by name: the hub, the face, the mail. A leading dot is the
+# zone itself and every name under it, e.g.
+#   .example.com
+# Written once by setup.sh; then it is yours. Restart lane-private-egress after an edit.

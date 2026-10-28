@@ -1,0 +1,33 @@
+{
+ "_about": "What a published page may load, served by the hub under /pages/_vendor/. The lifehub image fetches every file at build time and checks its sha256 (Dockerfile); build.py rewrites a page's exact CDN address to the local one, with no network. fonts.css is ours: it names the fontsource files.",
+ "files": [
+  {"file": "highlight-11.11.1.min.js", "from": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js", "sha256": "c4a399dd6f488bc97a3546e3476747b3e714c99c57b9473154c6fb8d259b9381"},
+  {"file": "mermaid-11.4.1.min.js", "from": "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js", "sha256": "a43bc1afd446f9c4cc66ac5dd45d02e8d65e26fc5344ec0ef787f88d6ddb6f9e"},
+  {"file": "fonts/geologica-latin-wght-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/geologica@5.2.8/files/geologica-latin-wght-normal.woff2", "sha256": "b14f1edee95a57f8782d505232e54584c80c673acbd25a0e7c6366332977b47d"},
+  {"file": "fonts/jetbrains-mono-latin-wght-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.8/files/jetbrains-mono-latin-wght-normal.woff2", "sha256": "18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e"},
+  {"file": "fonts/literata-latin-opsz-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/literata@5.2.8/files/literata-latin-opsz-normal.woff2", "sha256": "29de894c768689feef6ab4ef274a9a16d19bfc5b0c3cbfcdac80ef220816210c"},
+  {"file": "fonts/jetbrains-mono-latin-wght-italic.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.8/files/jetbrains-mono-latin-wght-italic.woff2", "sha256": "a8afa085e9ca5e53434e2ee918ba6b65c7dd4dda56509976b36591478c99d62e"},
+  {"file": "fonts/literata-latin-opsz-italic.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/literata@5.2.8/files/literata-latin-opsz-italic.woff2", "sha256": "97bc5aa317653eb249d66782c8533e5f1bd7d27a97b5265155a3d1700e785b7b"},
+  {"file": "fonts/geologica-latin-ext-wght-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/geologica@5.2.8/files/geologica-latin-ext-wght-normal.woff2", "sha256": "85ea5e8563c66d7fc38c97e7fabf398643c719e76ce058704b3690317d6d0993"},
+  {"file": "fonts/jetbrains-mono-latin-ext-wght-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.8/files/jetbrains-mono-latin-ext-wght-normal.woff2", "sha256": "79bfdab9ba467e26eea4122e6f2567e188dd8a09a8c730d501fc487c4ab99c6e"},
+  {"file": "fonts/literata-latin-ext-opsz-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/literata@5.2.8/files/literata-latin-ext-opsz-normal.woff2", "sha256": "1160835f4cdae6a86572ed501c13b62b341480cc7c13fc88ba0c21efdf1fcd73"},
+  {"file": "fonts/jetbrains-mono-latin-ext-wght-italic.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.8/files/jetbrains-mono-latin-ext-wght-italic.woff2", "sha256": "60652c78382d7e5021ce4c3ed8985fc41d8f3d1b1a3bedcec2a44ed8979fe5eb"},
+  {"file": "fonts/literata-latin-ext-opsz-italic.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/literata@5.2.8/files/literata-latin-ext-opsz-italic.woff2", "sha256": "09e48237261b84a90f2d6011c050d10d4bacd060cd884a10fe4edf69c0bf3870"},
+  {"file": "fonts/geologica-cyrillic-wght-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/geologica@5.2.8/files/geologica-cyrillic-wght-normal.woff2", "sha256": "a7dc739efa0c2d4066164b40b15276440978d8efb6003b5f10a6b9c3e5c1cd30"},
+  {"file": "fonts/jetbrains-mono-cyrillic-wght-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.8/files/jetbrains-mono-cyrillic-wght-normal.woff2", "sha256": "d274604c40757f98f07df623a8b8fb5194508a6fa4f5413a7a107f09e3b7452a"},
+  {"file": "fonts/literata-cyrillic-opsz-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/literata@5.2.8/files/literata-cyrillic-opsz-normal.woff2", "sha256": "a9054771acc03576b03c0f18daf6f4785dfd65f1427863d14610be7a647a4373"},
+  {"file": "fonts/jetbrains-mono-cyrillic-wght-italic.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.8/files/jetbrains-mono-cyrillic-wght-italic.woff2", "sha256": "8df3ca627bd8e1cb0e5414f7429fe7a2cf82732b0fc43f2d05bc2c471b64fcfc"},
+  {"file": "fonts/literata-cyrillic-opsz-italic.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/literata@5.2.8/files/literata-cyrillic-opsz-italic.woff2", "sha256": "37c470b724396cf95e39c99ce27d9fd02b5b552672c90cbdc603bdc9145139e7"},
+  {"file": "fonts/geologica-cyrillic-ext-wght-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/geologica@5.2.8/files/geologica-cyrillic-ext-wght-normal.woff2", "sha256": "73249ccb96d45b9fb3cc3a5fb531b045e990d841216f63e63430ea920f686206"},
+  {"file": "fonts/jetbrains-mono-cyrillic-ext-wght-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.8/files/jetbrains-mono-cyrillic-ext-wght-normal.woff2", "sha256": "593ccd6fe36e299e151aeae4521be9bfe83ac487d96d7cdb44f50be4a04041c7"},
+  {"file": "fonts/literata-cyrillic-ext-opsz-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/literata@5.2.8/files/literata-cyrillic-ext-opsz-normal.woff2", "sha256": "777c82bd95a9e0a51cf8ca579be4a667aa800bd41ba29e8490d99a39f728d391"},
+  {"file": "fonts/jetbrains-mono-cyrillic-ext-wght-italic.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.8/files/jetbrains-mono-cyrillic-ext-wght-italic.woff2", "sha256": "1b53536573e8f2e886848fee9a53c278a8f92b02ac794a83437ad9277120df47"},
+  {"file": "fonts/literata-cyrillic-ext-opsz-italic.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource-variable/literata@5.2.8/files/literata-cyrillic-ext-opsz-italic.woff2", "sha256": "fd71d598ad1f4304c2a8acef7ae66574a2e74dac6157044c8cec87e3234b226f"},
+  {"file": "fonts/noto-sans-math-latin-400-normal.woff2", "from": "https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-math@5.2.9/files/noto-sans-math-latin-400-normal.woff2", "sha256": "c39a9444f95747345dcbde1032ec0ea2af1db63dccf53a31b38a957bdcf4a01f"}
+ ],
+ "rewrite": {
+  "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js": "/pages/_vendor/highlight-11.11.1.min.js",
+  "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js": "/pages/_vendor/mermaid-11.4.1.min.js"
+ },
+ "fonts": {"css": "/pages/_vendor/fonts.css", "families": ["Geologica", "JetBrains Mono", "Literata", "Noto Sans Math"]}
+}

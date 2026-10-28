@@ -1,0 +1,14 @@
+{{- /* The tracker's rows as rows that open: the item and its detail, the state as a coloured chip, the score; the
+     notes and their addresses (a button with its host) under the fold. */ -}}
+<div class="rows">
+{{- range . }}
+<details class="row">
+<summary>{{ partial "icon.html" "circle-check" }}<span class="body"><span class="title">{{ .item }}</span><span class="sub">{{ .detail }}</span><span class="sub faint">№ {{ .n }}{{ with .score }} · {{ . }}{{ end }} · {{ .date }}{{ with .report }} · отчёт {{ . }}{{ end }}</span></span><span class="side"><span class="chip tone-{{ .tone | default "other" }}">{{ .status }}</span></span></summary>
+<div class="more">
+{{- with .notes }}<p>{{ . }}</p>{{ end }}
+{{- with .links }}<div class="links">{{ range . }}{{ partial "link.html" (dict "url" .url "ok" true "kind" "base") }}{{ end }}</div>{{ end }}
+{{- if not (or .notes .links) }}<p class="faint">Заметок нет.</p>{{ end }}
+</div>
+</details>
+{{- end }}
+</div>

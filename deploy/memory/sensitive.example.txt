@@ -1,0 +1,3 @@
+# Spaces of the knowledge base that are closed: when a draft to a person was written by a run that read one of them,
+# its card says so louder. One Space (top folder) per line. «*» — every Space; a file at the top is always closed.
+*

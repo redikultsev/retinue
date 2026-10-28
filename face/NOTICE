@@ -1,0 +1,46 @@
+Retinue face (face/) — third-party pieces
+
+The face's own code is under the repository's LICENSE. It contains, or ships in its built bundle, the following
+third-party work.
+
+Copied into the source tree
+---------------------------
+- shadcn/ui component code and theme tokens (src/components/ui/*, src/index.css) — MIT License,
+  Copyright (c) 2023 shadcn. https://github.com/shadcn-ui/ui
+  Button, Badge, Card, Textarea and Input are copied with small changes; Dialog and Tabs keep shadcn's look on
+  native elements instead of Radix.
+- Icon paths drawn after Lucide (src/components/icons.tsx) — ISC License, Copyright (c) for portions of Lucide are
+  held by Cole Bemis 2013-2022 as part of Feather (MIT); all other copyright (c) Lucide Contributors 2022.
+  https://lucide.dev
+- The app icon (public/icons/*) is drawn by scripts/icons.ts for this project.
+
+Bundled at build time (direct dependencies, exact versions in package.json / pnpm-lock.yaml)
+-------------------------------------------------------------------------------------------
+- react, react-dom 19.3.0 — MIT, Meta Platforms, Inc. and affiliates
+- @tanstack/react-router 1.170.42 (+ @tanstack/router-core, history, store) — MIT, Tanner Linsley
+- streamdown 2.7.0 (+ remend) — Apache-2.0, Vercel, Inc.
+- @pierre/diffs 1.5.2 (+ @pierre/theme, @pierre/theming) — Apache-2.0, The Pierre Computer Company
+- react-resizable-panels 4.14.4 — MIT, Brian Vaughn
+- class-variance-authority 0.7.1 — Apache-2.0, Joe Bell
+- clsx 2.1.1 — MIT, Luke Edwards
+- tailwind-merge 3.7.0 — MIT, Dany Castillo
+- Tailwind CSS 4.3.3 (generates src/index.css output) — MIT, Tailwind Labs, Inc.
+
+Pulled in by those (transitive, bundled)
+----------------------------------------
+- Shiki and @shikijs/* (syntax highlighting inside @pierre/diffs; grammars and themes) — MIT, Pine Wu, Anthony Fu
+  and contributors. The TextMate grammars bundled by Shiki carry their own permissive licenses (see
+  node_modules/@shikijs/langs).
+- unified, remark-*, rehype-*, micromark*, mdast-util-*, hast-util-*, unist-util-*, vfile*, and the small
+  wooorm/syntax-tree helpers — MIT
+- marked — MIT; parse5 — MIT; entities — BSD-2-Clause; diff (jsdiff) — BSD-3-Clause; lru_map — MIT;
+  oniguruma-to-es, regex, regex-recursion, regex-utilities — MIT; seroval — MIT; isbot — Unlicense;
+  @ungap/structured-clone — ISC; debug, ms — MIT; scheduler, use-sync-external-store — MIT.
+
+The full list with licenses: `pnpm -C face licenses list --prod`.
+
+Not shipped
+-----------
+Development tools (Vite, Vitest, Testing Library, jsdom, TypeScript, Biome, @vitejs/plugin-react,
+@tailwindcss/vite) are used only to build and test; none of their code is in the bundle.
+Telegram's telegram-web-app.js is not used: the Mini App's init data is read from the launch URL.

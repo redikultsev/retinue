@@ -1,0 +1,4 @@
+github.com
+api.github.com
+gitlab.com
+api.elevenlabs.io

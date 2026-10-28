@@ -1,0 +1,3 @@
+# face/ is its own pnpm project (not a workspace of the Python repo).
+# Nothing younger than two weeks is resolved, transitive dependencies included.
+minimumReleaseAge: 20160

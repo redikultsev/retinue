@@ -1,0 +1,17 @@
+{{- /* One event of the timeline: local time, title, where (an icon by the kind of place) and «войти» with the
+     meeting's host. The address of a meeting is only ever the button's target, never text. */ -}}
+<li class="row">
+<span class="time">{{ if .all_day }}весь день{{ else }}{{ .time }}<small>{{ .until }}</small>{{ end }}</span>
+<span class="body">
+<span class="title">{{ .title }}</span>
+{{- if or .place .unanswered }}
+<span class="sub">
+{{- if in (slice "zoom" "meet" "teams" "online") .place }}{{ partial "icon.html" "video" }} {{ .join_host }}
+{{- else if eq .place "address" }}{{ partial "icon.html" "map-pin" }} {{ .where }}
+{{- else if eq .place "link" }}{{ partial "icon.html" "link" }} {{ .where }}{{ end }}
+{{- if .unanswered }}{{ if .place }} · {{ end }}<span class="overdue">приглашение без ответа</span>{{ end -}}
+</span>
+{{- end }}
+</span>
+{{- with .join }}<span class="side">{{ partial "link.html" (dict "url" . "ok" true "kind" "meet" "text" "войти" "icon" "video" "class" "quiet") }}</span>{{ end }}
+</li>

@@ -1,0 +1,15 @@
+# Installed by deploy/setup.sh. Run by hand: systemctl start retinue-health; log: journalctl -u retinue-health
+[Unit]
+Description=Retinue health: the stack's containers, for the router to tell the owner
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=RETINUE_ROOT=/srv/retinue
+ExecStart=/usr/bin/python3 /usr/local/lib/retinue/retinue-health.py
+TimeoutStartSec=150
+# It reads Docker and writes one file: nothing else on the host is its to change.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/retinue/status

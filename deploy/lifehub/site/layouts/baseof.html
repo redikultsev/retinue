@@ -1,0 +1,41 @@
+{{- $at := partial "where.html" . -}}
+{{- $tracker := (partial "data.html" "tracker.json").title | default "Трекер" -}}
+{{- $title := cond (eq $at "tracker") $tracker .Title -}}
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="dark light">
+<title>{{ $title }} · Хаб</title>
+<link rel="stylesheet" href="/css/lifehub.css">
+<script src="/js/hub.js" defer></script>
+</head>
+<body>
+{{- $now := partial "data.html" "now.json" }}
+<nav class="nav" aria-label="Разделы">
+<span class="brand">Хаб жизни</span>
+<a href="/" class="tab{{ if eq $at "now" }} on{{ end }}"{{ if eq $at "now" }} aria-current="page"{{ end }}>{{ partial "icon.html" "sun" }}<span>Сейчас</span></a>
+<a href="/trips/" class="tab{{ if eq $at "trips" }} on{{ end }}"{{ if eq $at "trips" }} aria-current="page"{{ end }}>{{ partial "icon.html" "plane" }}<span>Поездки</span></a>
+<a href="/tracker/" class="tab{{ if eq $at "tracker" }} on{{ end }}"{{ if eq $at "tracker" }} aria-current="page"{{ end }}>{{ partial "icon.html" "circle-check" }}<span>{{ $tracker }}</span></a>
+<a href="/library/" class="tab{{ if eq $at "library" }} on{{ end }}"{{ if eq $at "library" }} aria-current="page"{{ end }}>{{ partial "icon.html" "library" }}<span>Библиотека</span></a>
+<a href="/review/" class="wide{{ if eq $at "review" }} on{{ end }}"{{ if eq $at "review" }} aria-current="page"{{ end }}>{{ partial "icon.html" "inbox" }}<span>Разбор</span></a>
+<a href="/status/" class="wide{{ if eq $at "status" }} on{{ end }}"{{ if eq $at "status" }} aria-current="page"{{ end }}>{{ partial "icon.html" "activity" }}<span>Статус</span></a>
+<a href="/more/" class="tab{{ if eq $at "more" }} on{{ end }}{{ if in (slice "review" "status") $at }} on-narrow{{ end }}"{{ if eq $at "more" }} aria-current="page"{{ end }}>{{ partial "icon.html" "ellipsis" }}<span>Ещё</span></a>
+</nav>
+<div class="page">
+<header class="top">
+<div class="top-side">
+{{- with $now.ts }}<time class="fresh" datetime="{{ (time.AsTime (int .)).UTC.Format "2006-01-02T15:04:05Z" }}" data-ago="{{ . }}" data-stale="900" data-prefix="обновлено ">данные на {{ $now.at }}</time>{{ end }}
+<button class="icon-btn" type="button" data-glasses hidden aria-pressed="false" aria-label="Тема для очков">{{ partial "icon.html" "glasses" }}</button>
+</div>
+<h1>{{ $title }}</h1>
+</header>
+<main>
+{{ block "main" . }}{{ end }}
+</main>
+</div>
+</body>
+</html>

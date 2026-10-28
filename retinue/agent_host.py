@@ -1,0 +1,245 @@
+"""Agent host: exposes one agent over A2A. One host = one agent = one container (its trust boundary)."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import base64
+import hmac
+import json
+import logging
+import mimetypes
+import sqlite3
+import time
+from collections import defaultdict
+from pathlib import Path
+
+import uvicorn
+from a2a.helpers import get_message_text, new_raw_part, new_task_from_user_message, new_text_message, new_text_part
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, TaskState
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+
+from .config import AgentConfig
+from .engine import Engine, EngineResult, Prompt, make_engine
+
+log = logging.getLogger("retinue.agent")
+
+TURN_KEY = "retinue/turn"  # set by the router; passed back when the agent uses the bus
+CONTROL_KEY = "retinue/control"  # set by the router for its own requests: "compact", "oneshot", "bare"
+SCHEMA_KEY = "retinue/schema"    # set by the router: the JSON schema the answer must follow
+
+OUTBOX = "out"  # files the agent writes here during a turn go to the owner as attachments
+MAX_FILES = 10
+MAX_FILE_BYTES = 15 * 1024 * 1024
+PROGRESS_INTERVAL_S = 0.8  # how often a partial reply is pushed to the router
+IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}  # what the API takes as an image block
+
+
+def prompt_of(message) -> Prompt:
+    """The turn as the engine takes it: the text alone, or — when the router sent files — content blocks: each file
+    after a line with its name (the router names it by its mark, «вложение #12: фото»), then the text."""
+    text = get_message_text(message)
+    files = [part for part in message.parts if part.raw]
+    if not files:
+        return text
+    blocks = []
+    for part in files:
+        data = base64.b64encode(part.raw).decode()
+        if part.media_type in IMAGE_TYPES:
+            block = {"type": "image", "source": {"type": "base64", "media_type": part.media_type, "data": data}}
+        elif part.media_type == "application/pdf":
+            block = {"type": "document", "source": {"type": "base64", "media_type": part.media_type, "data": data}}
+        else:
+            blocks.append({"type": "text", "text": f"[файл «{part.filename}» не передан: тип {part.media_type}]"})
+            continue
+        blocks += [{"type": "text", "text": f"[{part.filename}]"}, block]
+    return blocks + [{"type": "text", "text": text}]
+
+
+class Outbox:
+    """Finds files created or changed in <workspace>/out during one engine turn."""
+
+    def __init__(self, workspace: str) -> None:
+        self.root = Path(workspace) / OUTBOX
+
+    def snapshot(self) -> dict[Path, tuple[int, int]]:
+        if not self.root.is_dir():
+            return {}
+        return {f: (f.stat().st_mtime_ns, f.stat().st_size) for f in self.root.rglob("*")
+                if f.is_file() and not f.is_symlink()}
+
+    def changed(self, before: dict[Path, tuple[int, int]]) -> tuple[list[Path], list[str]]:
+        """Return (files to send, names skipped for size or count)."""
+        after = self.snapshot()
+        fresh = sorted(f for f, sig in after.items() if before.get(f) != sig)
+        send, skipped = [], []
+        for f in fresh:
+            if len(send) < MAX_FILES and after[f][1] <= MAX_FILE_BYTES:
+                send.append(f)
+            else:
+                skipped.append(f.name)
+        return send, skipped
+
+
+class SessionMap:
+    """A2A context id (one conversation) -> engine session id. The only source of `resume` values."""
+
+    def __init__(self, path: str) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(path)
+        self.db.execute("CREATE TABLE IF NOT EXISTS sessions (context_id TEXT PRIMARY KEY, session_id TEXT NOT NULL)")
+        self.db.commit()
+
+    def get(self, context_id: str) -> str | None:
+        row = self.db.execute("SELECT session_id FROM sessions WHERE context_id = ?", (context_id,)).fetchone()
+        return row[0] if row else None
+
+    def set(self, context_id: str, session_id: str) -> None:
+        self.db.execute("INSERT INTO sessions VALUES (?, ?) "
+                        "ON CONFLICT(context_id) DO UPDATE SET session_id = excluded.session_id", (context_id, session_id))
+        self.db.commit()
+
+
+def run_metadata(result: EngineResult) -> dict:
+    """What the router learns about a run besides the answer: usage for the status page, the subscription limit,
+    and whether the session was compacted or started over (then the router sends the «now» block again)."""
+    return {"num_turns": result.num_turns, "cost_usd": result.cost_usd, "duration_ms": result.duration_ms,
+            "session_id": result.session_id,  # the CLI's cost is the session's: the router counts each run's part
+            "compacted": result.compacted, "new_session": result.new_session, "limit": result.limit,
+            "limit_until": result.limit_until, "usage": result.usage, "rate_limit": result.rate_limit}
+
+
+class EngineExecutor(AgentExecutor):
+    def __init__(self, engine: Engine, sessions: SessionMap, outbox: Outbox | None = None) -> None:
+        self.engine = engine
+        self.sessions = sessions
+        self.outbox = outbox
+        self.locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        task = context.current_task
+        if task is None:
+            task = new_task_from_user_message(context.message)
+            await event_queue.enqueue_event(task)
+        updater = TaskUpdater(event_queue=event_queue, task_id=task.id, context_id=task.context_id)
+        if not context.message or not get_message_text(context.message).strip():
+            await updater.update_status(TaskState.TASK_STATE_REJECTED, message=new_text_message("Пустое сообщение."))
+            return
+        prompt = prompt_of(context.message)
+        await updater.update_status(TaskState.TASK_STATE_WORKING)
+        # One turn at a time per conversation: a session is not safe to run twice at once.
+        async with self.locks[task.context_id]:
+            before = self.outbox.snapshot() if self.outbox else {}
+            last = 0.0
+
+            async def on_text(draft: str) -> None:
+                # The partial reply travels as a WORKING status message; the final answer is the artifact.
+                nonlocal last
+                if time.monotonic() - last >= PROGRESS_INTERVAL_S:
+                    last = time.monotonic()
+                    await updater.update_status(TaskState.TASK_STATE_WORKING, message=new_text_message(draft))
+
+            metadata = context.message.metadata if context.message else {}
+            turn_id = str(metadata[TURN_KEY]) if TURN_KEY in metadata else None
+            session_id = self.sessions.get(task.context_id)
+            control = metadata[CONTROL_KEY] if CONTROL_KEY in metadata else None
+            # The answer's schema: the router's, never the message's text. Passed on only when there is one.
+            shaped = {"schema": json.loads(str(metadata[SCHEMA_KEY]))} if SCHEMA_KEY in metadata else {}
+            if control == "compact":
+                result = await self.engine.compact(session_id)
+            elif control == "bare":
+                # Somebody else's letter, one per run: a fresh session with no tool at all, never kept.
+                result = await self.engine.run(prompt, None, on_text, None, bare=True, **shaped)
+            elif control == "oneshot":
+                # A background run outside the conversation (the morning summary, the mail): a fresh session.
+                result = await self.engine.run(prompt, None, on_text, turn_id, **shaped)
+            else:
+                result = await self.engine.run(prompt, session_id, on_text, turn_id)
+                if session_id is None:  # nothing to resume (a new conversation, or the table was lost)
+                    result.new_session = True
+            if result.session_id and control not in ("oneshot", "bare"):
+                self.sessions.set(task.context_id, result.session_id)
+            files, skipped = self.outbox.changed(before) if self.outbox else ([], [])
+        metadata = run_metadata(result)
+        if result.is_error:
+            await updater.update_status(TaskState.TASK_STATE_FAILED, message=new_text_message(result.text), metadata=metadata)
+            return
+        text = result.text
+        if skipped:
+            text += f"\n\nНе отправлены (больше {MAX_FILES} файлов или {MAX_FILE_BYTES // 2**20} МБ): {', '.join(skipped)}"
+        await updater.add_artifact(parts=[new_text_part(text=text, media_type="text/markdown")], name="answer")
+        for f in files:
+            media_type = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+            await updater.add_artifact(parts=[new_raw_part(f.read_bytes(), media_type=media_type, filename=f.name)],
+                                       name=f.name)
+        await updater.update_status(TaskState.TASK_STATE_COMPLETED, metadata=metadata)
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise NotImplementedError("cancel is not supported yet")
+
+
+def build_card(cfg: AgentConfig) -> AgentCard:
+    return AgentCard(
+        name=cfg.name,
+        description=cfg.description,
+        version="0.1.0",
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/markdown"],
+        capabilities=AgentCapabilities(streaming=True),
+        supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=cfg.public_url, protocol_version="1.0")],
+        skills=[
+            AgentSkill(id=s.id, name=s.name, description=s.description, tags=[cfg.trust_class], examples=s.examples)
+            for s in cfg.skills
+        ],
+    )
+
+
+class RouterOnly:
+    """Answer only the router: every request but the card must carry the agent's own bus token, which only the
+    router and this agent know. Needed since a neighbour that is not the router shares a network with the agent
+    (travel-ops on `travel`): an unsigned message would land in the agent's session like the owner's."""
+
+    def __init__(self, app, token: str) -> None:
+        self.app, self.token = app, token
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and not (scope["method"] == "GET" and scope["path"].startswith("/.well-known/")):
+            header = dict(scope.get("headers") or []).get(b"authorization", b"").decode("latin-1")
+            if not hmac.compare_digest(header.removeprefix("Bearer ").strip(), self.token):
+                await PlainTextResponse("unauthorized", status_code=401)(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+def app_of(card: AgentCard, handler: DefaultRequestHandler, token: str):
+    """The agent's A2A app; with a token, it answers only requests signed with it."""
+    app = Starlette(routes=[*create_agent_card_routes(card), *create_jsonrpc_routes(handler, "/")])
+    return RouterOnly(app, token) if token else app
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Retinue agent host")
+    parser.add_argument("--config", default="/agent/agent.yaml")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    cfg = AgentConfig.load(args.config)
+    card = build_card(cfg)
+    handler = DefaultRequestHandler(
+        agent_executor=EngineExecutor(make_engine(cfg.engine, cfg.workspace, cfg.bus_url, cfg.bus_token,
+                                                  cfg.travel_url, cfg.memory, cfg.memory_policy),
+                                      SessionMap(cfg.state_db), Outbox(cfg.workspace)),
+        task_store=InMemoryTaskStore(),
+        agent_card=card,
+    )
+    log.info("agent %s (%s) on %s:%s", cfg.id, cfg.trust_class, cfg.listen_host, cfg.listen_port)
+    uvicorn.run(app_of(card, handler, cfg.bus_token), host=cfg.listen_host, port=cfg.listen_port)
+
+
+if __name__ == "__main__":
+    main()

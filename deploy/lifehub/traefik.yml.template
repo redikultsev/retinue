@@ -1,0 +1,26 @@
+# The life hub's middlewares. setup.sh renders this file to /etc/dokploy/traefik/dynamic/lifehub.yml (root, 600):
+# it carries the key nginx checks. Only the owner's devices (their WireGuard addresses, one each) get through;
+# everyone else gets 404, as if there were no site.
+http:
+  middlewares:
+    lifehub-owner:
+      ipAllowList:
+        sourceRange: [${LIFEHUB_RANGES}]
+        rejectStatusCode: 404
+    lifehub-headers:
+      headers:
+        contentSecurityPolicy: "default-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+        referrerPolicy: "no-referrer"
+        contentTypeNosniff: true
+        frameDeny: true
+        customResponseHeaders:
+          X-Robots-Tag: "noindex, nofollow"
+        customRequestHeaders:
+          X-Lifehub-Key: "${LIFEHUB_KEY}"
+    # The hub's /pages/ (the router `retinue-lifehub-pages`): the key and nothing else — no policy of the hub's. A
+    # browser applies every CSP header it gets: the hub's `default-src 'self'` next to a page's own would stop the
+    # page's scripts, and its missing `sandbox` would not matter — nginx sets each page's policy, sandbox included.
+    lifehub-key:
+      headers:
+        customRequestHeaders:
+          X-Lifehub-Key: "${LIFEHUB_KEY}"

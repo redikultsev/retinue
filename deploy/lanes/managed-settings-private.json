@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "deny": [
+      "WebFetch(domain:lane-private)", "WebFetch(domain:lane-private-egress)",
+      "WebFetch(domain:localhost)", "WebFetch(domain:127.0.0.1)",
+      "Read(//proc/**)", "Read(//lane/state/**)", "Read(//lane/run/**)", "Read(//lane/config/*.json)",
+      "Read(//lane/config/claude/*.json)", "Read(//lane/config/claude/**/*.jsonl)",
+      "Read(//lane/config/claude/shell-snapshots/**)"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  },
+  "disableSkillShellExecution": true,
+  "allowedHttpHookUrls": ["http://platform:9500/hook/*"],
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": false,
+    "allowUnsandboxedCommands": false,
+    "credentials": {"envVars": [
+      {"name": "RETINUE_HOOK_RUN", "mode": "deny"},
+      {"name": "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "mode": "deny"},
+      {"name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny"},
+      {"name": "ANTHROPIC_API_KEY", "mode": "deny"}
+    ]},
+    "filesystem": {"denyWrite": ["/lane/config", "/lane/run", "/etc/claude-code"]},
+    "network": {"strictAllowlist": true, "allowManagedDomainsOnly": true, "allowedDomains": [
+      "platform",
+      "github.com", "codeload.github.com", "objects.githubusercontent.com",
+      "pypi.org", "files.pythonhosted.org", "registry.npmjs.org"
+    ]}
+  },
+  "cleanupPeriodDays": 30
+}

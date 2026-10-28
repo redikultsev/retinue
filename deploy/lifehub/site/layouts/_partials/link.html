@@ -1,0 +1,31 @@
+{{- /* A link to somewhere else: a button with the host's name, never an address as text. It is a link only when
+     the address parses, is https and its host is one this kind of link may lead to — `travel`: travel-ops' sites
+     (site.json link_hosts); `meet`: a meeting service; `base`: an address the owner's own base holds (his
+     tracker); `local`: a path on the hub itself (the owner's pages too, /pages/…). An address from a letter
+     (`mail`) is never a link: its host on a chip, to copy. An address that does not parse is not even named — and
+     does not stop the build (`try`). */ -}}
+{{- $site := partial "data.html" "site.json" -}}
+{{- $parsed := try (urls.Parse .url) -}}
+{{- if not $parsed.Err -}}
+{{- $u := $parsed.Value -}}
+{{- $name := lower $u.Hostname -}}
+{{- $host := strings.TrimPrefix "www." $name -}}
+{{- $kind := .kind | default "travel" -}}
+{{- $ok := false -}}
+{{- if and .ok (eq $u.Scheme "https") (not $u.User) -}}
+  {{- if eq $kind "travel" -}}
+    {{- $ok = in ($site.link_hosts | default slice) $name -}}
+  {{- else if eq $kind "meet" -}}
+    {{- $ok = or (in (slice "zoom.us" "zoom.com" "meet.google.com" "teams.microsoft.com" "teams.live.com" "whereby.com" "meet.jit.si" "webex.com") $name) (strings.HasSuffix $name ".zoom.us") (strings.HasSuffix $name ".zoom.com") (strings.HasSuffix $name ".webex.com") (strings.HasSuffix $name ".whereby.com") -}}
+  {{- else if eq $kind "base" -}}
+    {{- $ok = true -}}
+  {{- end -}}
+{{- else if and .ok (eq $kind "local") (findRE "^/[A-Za-z0-9/_.-]*$" .url) (not (hasPrefix .url "//")) -}}
+  {{- $ok = true -}}
+{{- end -}}
+{{- if $ok -}}
+<a class="btn{{ with .class }} {{ . }}{{ end }}" href="{{ .url }}" rel="noopener noreferrer">{{ partial "icon.html" (.icon | default "external-link") }}<span>{{ .text | default $host }}</span></a>
+{{- else if $host -}}
+<span class="chip">{{ if eq $kind "mail" }}{{ partial "icon.html" "link" }} {{ end }}{{ $host }}</span>
+{{- end -}}
+{{- end -}}

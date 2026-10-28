@@ -1,0 +1,21 @@
+# Hosts travel-ops links to (its sources' `Link(…)` and its tests' recorded answers): a link to one of them is
+# clickable in Telegram, every other address stays monospace (retinue/render.py, `linkable`). Each line is an
+# exact host — not its subdomains — optionally with a path the link must stay under. trivago links only to
+# www.trivago.com in what travel-ops recorded; a country domain it may give stays monospace until it is listed.
+# Update together with travel-ops' commit.
+www.aviasales.ru
+avia.tutu.ru
+bus.tutu.ru
+www.tutu.ru
+www.onetwotrip.com
+www.kupibilet.ru
+www.wildberries.ru
+travel.wildberries.ru
+kiwi.com
+www.google.com/travel/
+www.trip.com
+www.booking.com
+www.airbnb.com
+www.trivago.com
+12go.asia
+shop.global.flixbus.com

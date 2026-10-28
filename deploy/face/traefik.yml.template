@@ -1,0 +1,17 @@
+# The face's middlewares. setup.sh renders this file to /etc/dokploy/traefik/dynamic/face.yml (root, 600): it carries
+# the key nginx checks. Only the owner's devices (their WireGuard addresses, one each: the life hub's list when the
+# hub is on) get through; everyone else gets 404, as if there were no site — over plain HTTP too.
+http:
+  middlewares:
+    face-owner:
+      ipAllowList:
+        sourceRange: [${FACE_RANGES}]
+        rejectStatusCode: 404
+    face-key:
+      headers:
+        customRequestHeaders:
+          X-Face-Key: "${FACE_KEY}"
+    face-https:
+      redirectScheme:
+        scheme: https
+        permanent: true

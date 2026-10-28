@@ -1,0 +1,91 @@
+{{ define "main" }}
+{{- $s := partial "data.html" "status.json" -}}
+{{- if not $s.updated }}<p class="empty">Данных ещё нет: Роутер пишет их раз в пять минут.</p>{{ else }}
+
+{{- /* What is broken, first. */}}
+{{- with $s.problems }}
+<section class="card" aria-label="Что сломано">
+<div class="label"><span class="overdue">{{ partial "icon.html" "triangle-alert" }} Что сломано · {{ len . }}</span></div>
+<ul class="rows">
+{{- range . }}
+<li class="row"><span class="dot bad"></span><span class="body"><span class="title">{{ .name }}</span><span class="sub">{{ with .detail }}{{ . }} · {{ end }}{{ .state }}</span></span></li>
+{{- end }}
+</ul>
+</section>
+{{- else }}
+<section class="card"><div class="label"><span>{{ partial "icon.html" "circle-check" }} Всё работает</span></div></section>
+{{- end }}
+
+<h2>Лимит подписки</h2>
+{{- with $s.limit }}
+{{- range . }}
+<div class="card">
+<div class="label"><span>{{ .window }}</span><span class="num">{{ if .resets_in }}сброс через {{ .resets_in }}{{ else if .resets }}сброс {{ .resets }}{{ end }}</span></div>
+<div class="big num">{{ .share }} %</div>
+<svg class="meter" viewBox="0 0 100 4" preserveAspectRatio="none" role="img" aria-label="израсходовано {{ .share }} %"><rect class="track" x="0" y="0" width="100" height="4" rx="2"/><rect class="fill {{ .level }}" x="0" y="0" width="{{ .share }}" height="4" rx="2"/></svg>
+<div class="sub faint">известно на {{ .seen }}</div>
+</div>
+{{- end }}
+<p class="faint">Доля окна — весь аккаунт, с Mac тоже; токены ниже — только сервер.</p>
+{{- else }}<p class="empty">Доля лимита неизвестна: CLI ещё не сообщал окна.</p>{{ end }}
+
+{{- with $s.build }}
+<h2>Сборка хаба</h2>
+<ul class="rows"><li class="row"><span class="dot {{ if .ok }}ok{{ else }}bad{{ end }}"></span><span class="body"><span class="title">{{ if .ok }}собран {{ .ago }} назад{{ else }}не обновлён{{ end }}</span><span class="sub">{{ with .error }}{{ . }}{{ else }}релиз {{ .release }}{{ end }}</span></span></li></ul>
+{{- end }}
+
+<h2>За сутки</h2>
+<div class="tiles">
+<div class="tile"><b>{{ $s.day.owner }}</b><span>ты написал</span></div>
+<div class="tile"><b>{{ $s.day.answers }}</b><span>ответов ассистентки</span></div>
+<div class="tile"><b>{{ $s.day.notices }}</b><span>сообщений системы</span></div>
+<div class="tile"><b>{{ $s.day.reminders }}</b><span>напоминаний</span></div>
+<div class="tile"><b>{{ $s.day.letters.kept }} / {{ $s.day.letters.dropped }}</b><span>писем оставлено / отсеяно</span></div>
+{{- range $s.day.runs }}<div class="tile"><b>{{ index . 1 }}</b><span>запусков: {{ index . 0 }}</span></div>{{ end }}
+</div>
+
+{{ with $s.sent }}
+<h2>Отправлено людям</h2>
+<table>
+<tr><th>Канал</th><th>За сутки</th><th>За 7 дней</th></tr>
+{{- range . }}<tr><td>{{ index . 0 }}</td><td>{{ index . 1 }}</td><td>{{ index . 2 }}</td></tr>{{ end }}
+</table>
+<p class="faint">Только то, что ушло по твоей кнопке «Отправить»; что ты отправил сам, здесь не считается.</p>
+{{- end }}
+
+{{- range $s.charts }}
+<h2>{{ .title }}</h2>
+{{- partial "chart.html" . }}
+{{- end }}
+
+<details class="fold"><summary>Токены и оценка в долларах</summary>
+<div class="scroll">
+<table>
+<tr><th>Вид</th><th>Запусков</th><th>Вход</th><th>Выход</th><th>Кеш: чтение</th><th>Кеш: запись</th><th>Оценка, $</th></tr>
+{{- range $s.tokens }}<tr>{{ range .cells }}<td>{{ . }}</td>{{ end }}</tr>{{ end }}
+</table>
+</div>
+<p class="faint">Доллары — оценка CLI по ценам API, не счёт: подписка платится помесячно. Каждый запуск считается тем, что он добавил к своей сессии.</p>
+</details>
+
+<h2>Подключения</h2>
+<ul class="rows">
+{{- range $s.connectors }}
+<li class="row"><span class="dot {{ if .ok }}ok{{ else }}bad{{ end }}"></span><span class="body"><span class="title">{{ .name }}</span><span class="sub">{{ with .detail }}{{ . }} · {{ end }}{{ .state }}</span></span></li>
+{{- end }}
+</ul>
+
+{{- with $s.mail }}
+<h2>Почта</h2>
+{{- range $period, $label := dict "day" "За сутки" "week" "За 7 дней" }}{{ with index $s.mail $period }}
+<h3>{{ $label }}</h3>
+<p class="muted">Оставлено: {{ range $i, $k := .kept }}{{ if $i }}, {{ end }}{{ index $k 0 }} — {{ index $k 1 }}{{ else }}ничего{{ end }}.</p>
+<p class="muted">Отсеяно: {{ range $i, $k := .dropped }}{{ if $i }}, {{ end }}{{ index $k 0 }} — {{ index $k 1 }}{{ else }}ничего{{ end }}.</p>
+{{- with .blocked }}<p class="muted">По твоему списку: {{ range $i, $k := . }}{{ if $i }}, {{ end }}{{ index $k 0 }} — {{ index $k 1 }}{{ end }}.</p>{{ end }}
+{{- end }}{{ end }}
+<h3>Твои правила</h3>
+{{- with .rules }}<ul class="rows">{{ range . }}<li class="row wrap"><span class="body"><span class="title">{{ . }}</span></span></li>{{ end }}</ul>
+{{- else }}<p class="empty">Правил нет: их ставят кнопки под письмами.</p>{{ end }}
+{{- end }}
+{{- end }}
+{{ end }}

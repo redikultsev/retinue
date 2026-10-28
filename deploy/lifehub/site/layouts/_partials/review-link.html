@@ -1,0 +1,4 @@
+{{- /* A link to one page of the review: /review/ for «all», page 1; otherwise the page the adapter made. */ -}}
+{{- $page := site.GetPage "/review" -}}
+{{- if ne .path "all" -}}{{- $page = site.GetPage (printf "/review/%s" .path) -}}{{- end -}}
+{{- with $page -}}<a class="{{ $.class }}{{ if $.on }} on{{ end }}" href="{{ .RelPermalink }}">{{ $.text }}</a>{{- end -}}

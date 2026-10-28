@@ -1,0 +1,24 @@
+{{ define "main" }}
+{{- $now := partial "data.html" "now.json" -}}
+{{- $today := $now.date | default (now.Format "2006-01-02") -}}
+{{- with .Pages.ByParam "trip.start" }}
+{{- $ahead := slice }}{{ $past := slice }}
+{{- range . }}{{ if ge .Params.trip.end $today }}{{ $ahead = $ahead | append . }}{{ else }}{{ $past = $past | append . }}{{ end }}{{ end }}
+<h2>Впереди</h2>
+{{- with $ahead }}
+{{- range . }}
+<a class="card trip-card" href="{{ .RelPermalink }}">
+<div class="label"><span>{{ partial "icon.html" "plane" }} {{ .Params.trip.start }} — {{ .Params.trip.end }}</span>{{ $days := div (sub (time .Params.trip.start).Unix (time $today).Unix) 86400 }}<span class="chip{{ if le $days 7 }} accent{{ end }}">{{ if gt $days 0 }}через {{ $days }} дн{{ else }}идёт{{ end }}</span></div>
+<div class="big">{{ .Title }}</div>
+<div class="sub faint">{{ len .Params.trip.options }} {{ cond (eq (len .Params.trip.options) 1) "вариант" "вариантов" }}{{ with .Params.trip.published_ts }} · опубликовано <time data-ago="{{ int . }}">{{ $.Params.trip.published }}</time>{{ end }}</div>
+</a>
+{{- end }}
+{{- else }}<p class="empty">Впереди поездок нет.</p>{{ end }}
+{{- with $past }}
+<h2>Прошедшие</h2>
+<ul class="rows">
+{{- range sort . "Params.trip.start" "desc" }}<li class="row">{{ partial "icon.html" "plane" }}<span class="body"><a class="title" href="{{ .RelPermalink }}">{{ .Title }}</a><span class="sub">{{ .Params.trip.start }} — {{ .Params.trip.end }}</span></span></li>{{ end }}
+</ul>
+{{- end }}
+{{- else }}<p class="empty">Страниц поездок ещё нет: ассистентка публикует их, когда подобрала варианты.</p>{{ end }}
+{{ end }}

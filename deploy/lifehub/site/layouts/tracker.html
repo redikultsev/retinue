@@ -1,0 +1,56 @@
+{{ define "main" }}
+{{- $w := partial "data.html" "tracker.json" -}}
+{{- if not $w.updated }}<p class="empty">Данных ещё нет: Роутер пишет их раз в пять минут.</p>{{ else }}
+{{- if not $w.tracker }}<p class="empty">Трекера в базе нет: {{ $w.path }}.</p>{{ end }}
+
+{{- with $w.funnel }}
+<div class="tiles">
+{{- range . }}<div class="tile"><b class="tone-{{ .tone }}">{{ int .count }}</b><span>{{ .state }}</span></div>{{ end }}
+</div>
+{{- end }}
+
+<h2>Встречи · две недели</h2>
+{{- with $w.meetings }}
+<ul class="rows">
+{{- range . }}
+<li class="row"><span class="time">{{ .time }}<small>{{ with .date }}{{ substr . 8 2 }}.{{ substr . 5 2 }}{{ end }}</small></span><span class="body"><span class="title">{{ .title }}</span>
+{{- if in (slice "zoom" "meet" "teams" "online") .place }}<span class="sub">{{ partial "icon.html" "video" }} {{ .join_host }}</span>{{ else if .where }}<span class="sub">{{ partial "icon.html" "map-pin" }} {{ .where }}</span>{{ end }}</span>
+{{- with .join }}<span class="side">{{ partial "link.html" (dict "url" . "ok" true "kind" "meet" "text" "войти" "icon" "video" "class" "quiet") }}</span>{{ end }}</li>
+{{- end }}
+</ul>
+{{- else }}<p class="empty">В календаре нет встреч по трекеру.</p>{{ end }}
+
+<h2>Ждут ответа{{ with $w.letters }} <span class="count">{{ len . }}</span>{{ end }}</h2>
+{{- with $w.letters }}
+<div class="rows">
+{{- range . }}
+<details class="row">
+<summary>{{ partial "icon.html" "mail" }}<span class="body"><span class="title">{{ .who }}</span><span class="sub">{{ .text | default "—" }}</span><span class="sub faint">ждёт {{ .age }}</span></span>{{ with .needs }}<span class="side"><span class="chip accent">{{ . }}</span></span>{{ end }}</summary>
+<div class="more"><p>{{ .text | default "—" }}</p><p class="faint">{{ .domain | default .who }} · {{ .when }}</p>
+{{- with .links }}<div class="links">{{ range . }}{{ partial "link.html" (dict "url" .url "ok" true "kind" "mail") }}{{ end }}</div>{{ end }}</div>
+</details>
+{{- end }}
+</div>
+{{- else }}<p class="empty">Неотвеченных писем о личном нет.</p>{{ end }}
+{{- with $w.notices }}
+<details class="fold"><summary>Уведомления сервисов · {{ len . }}</summary>
+<div class="rows">{{ range . }}
+<details class="row"><summary>{{ partial "icon.html" "bell" }}<span class="body"><span class="title">{{ .text | default "—" }}</span><span class="sub faint">{{ .domain | default .who }} · {{ .age }} назад</span></span></summary>
+{{- with .links }}<div class="more"><div class="links">{{ range . }}{{ partial "link.html" (dict "url" .url "ok" true "kind" "mail") }}{{ end }}</div></div>{{ end }}
+</details>{{ end }}</div>
+</details>
+{{- end }}
+
+{{- if $w.rows }}
+{{- range $w.groups }}
+{{- if eq .key "closed" }}
+<details class="fold"><summary>{{ .title }} · {{ len .rows }}</summary>{{ partial "tracker-rows.html" .rows }}</details>
+{{- else }}
+<h2>{{ .title }} <span class="count">{{ len .rows }}</span></h2>
+{{- partial "tracker-rows.html" .rows }}
+{{- end }}
+{{- end }}
+<p class="faint">Отчёты лежат в трекере, здесь — их номера.</p>
+{{- else }}<p class="empty">Строк в трекере пока нет.</p>{{ end }}
+{{- end }}
+{{ end }}

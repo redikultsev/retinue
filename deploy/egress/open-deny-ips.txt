@@ -1,0 +1,5 @@
+# This server's own public addresses, which the open proxy refuses: from outside, Traefik answers there for every
+# service of the owner's. One address or range per line, e.g.
+#   203.0.113.7/32
+#   2001:db8:1:2::/64
+# setup.sh writes this file once, with the host's public addresses (`ip addr`, scope global); then it is yours.

@@ -1,0 +1,227 @@
+// «Ждут тебя»: one queue grouped by what the owner does — answer a question, decide a card, choose a reply, read a
+// finished turn, and the assistant's items — not by where it came from. Each row: where it came from (icon), its
+// sphere, its title, how long it waits and its one line; the action itself in place where it is small (a question's
+// buttons, «Разрешить» / «Отказать», the suggested replies), so the home screen is a peek, not a way elsewhere. The
+// assistant's items open the bot's chat: sending and deciding them stays in Telegram, under her cards' buttons.
+import { Link } from "@tanstack/react-router";
+import { useState } from "react";
+import { ApprovalCard } from "@/components/approval-card";
+import { BaseButton } from "@/components/base-card";
+import { PushButton } from "@/components/push-card";
+import { ReplyButtons } from "@/components/reply-buttons";
+import {
+  Clock,
+  Database,
+  GitBranch,
+  ListTodo,
+  Mail,
+  MessageCircle,
+  MessageQuestion,
+  Package,
+  Pencil,
+  Terminal,
+} from "@/components/icons";
+import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api";
+import { type Feed as FeedData, type FeedRow, feedSource, STALE_DIGEST_S, useFeed, waited } from "@/lib/feed";
+import { inputText, when } from "@/lib/format";
+import { useLiveState } from "@/lib/live";
+import type { Approval, Summary } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+const ICONS: Record<string, (props: React.SVGProps<SVGSVGElement>) => React.ReactNode> = {
+  question: MessageQuestion,
+  approval: Terminal,
+  courier: Package,
+  session: ListTodo,
+  letter: Mail,
+  chat: MessageCircle,
+  draft: Pencil,
+  deadline: Clock,
+  base: Database,
+  push: GitBranch,
+};
+const SMALL_CHARS = 240;
+const SMALL_LINES = 4;
+const SOURCE_WORDS: Record<string, string> = {
+  question: "вопрос",
+  approval: "разрешение",
+  courier: "курьер",
+  session: "сессия",
+  letter: "письмо",
+  chat: "Telegram",
+  draft: "черновик",
+  deadline: "срок",
+  base: "В Базу",
+  push: "Запушить",
+};
+
+/** The card as the app knows it now: a press here or in Telegram may be newer than the feed's copy. */
+function useCurrent(approval: Approval): Approval {
+  const { approvals } = useLiveState();
+  const live = approvals[approval.id];
+  return live && live.at >= approval.at ? live : approval;
+}
+
+/** A card in place. A question, or a call short enough to read at a glance, shows whole; a longer call shows its
+ * one line, and the whole card — the input as it is, both buttons — opens under it: nothing is decided unseen. */
+function CardAction({ approval, essence }: { approval: Approval; essence: string }) {
+  const current = useCurrent(approval);
+  const text = inputText(current);
+  const small = current.kind === "question" || (text.length <= SMALL_CHARS && text.split("\n").length <= SMALL_LINES);
+  const [open, setOpen] = useState(small);
+  if (open) return <ApprovalCard approval={current} onDecided={() => void feedSource.refresh()} />;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="line-clamp-2 font-mono text-[13px] break-all text-muted-foreground">{essence}</p>
+      <Button variant="outline" className="w-fit" aria-expanded={false} onClick={() => setOpen(true)}>
+        {current.kind === "courier" ? "Показать команду" : "Показать и решить"}
+      </Button>
+    </div>
+  );
+}
+
+/** A ping's suggested replies, pressed exactly as under the summary (`ReplyButtons`, `{reply: {seq, n}}`): once,
+ * whichever place pressed it; the ping as it now is goes into the store, and the feed reads itself again. */
+function Replies({ row, reply = api.reply }: { row: FeedRow; reply?: typeof api.reply }) {
+  if (!row.session || typeof row.summary !== "number" || !row.replies?.length) return null;
+  const summary: Summary = { session: row.session, seq: row.summary, head: "", text: row.essence, at: row.since,
+    kind: "decision", replies: row.replies };
+  return <ReplyButtons summary={summary} reply={reply} />;
+}
+
+function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
+  const Icon = ICONS[row.source] ?? ListTodo;
+  const where = row.sphere_title || row.track;
+  const title = row.session ? (
+    <Link to="/s/$id" params={{ id: row.session }} className="min-w-0 truncate font-medium hover:underline">
+      {row.title}
+    </Link>
+  ) : (
+    <span className="min-w-0 truncate font-medium">{row.title}</span>
+  );
+  return (
+    <li data-testid="feed-row" className="flex flex-col gap-2 rounded-lg border bg-background p-3">
+      <div className="flex items-start gap-2.5">
+        <span
+          className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+          title={SOURCE_WORDS[row.source] ?? row.source}
+        >
+          <Icon aria-label={SOURCE_WORDS[row.source] ?? row.source} />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex min-w-0 items-baseline gap-2 text-[15px] md:text-sm">
+            {title}
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+              {row.source === "deadline" ? "" : waited(row.since, now)}
+            </span>
+          </div>
+          {where && (
+            <span className="truncate text-xs text-muted-foreground">
+              {row.sphere_icon ? `${row.sphere_icon} ` : ""}
+              {where}
+            </span>
+          )}
+          {row.essence && !row.approval && <p className="line-clamp-2 text-sm break-words text-muted-foreground">{row.essence}</p>}
+        </div>
+      </div>
+      {row.approval && <CardAction approval={row.approval} essence={row.essence} />}
+      {row.source === "base" && row.session && <BaseButton session={row.session} count={row.base ?? 0} />}
+      {row.source === "push" && row.session && (
+        <PushButton session={row.session} count={row.push ?? 0} repo={row.repos?.length === 1 ? undefined : row.repos?.[0]} />
+      )}
+      {row.action === "choose" && <Replies row={row} />}
+      {row.action === "choose" && !row.replies?.length && row.session && (
+        <Link to="/s/$id" params={{ id: row.session }} className="text-sm text-primary underline-offset-4 hover:underline">
+          Открыть и ответить
+        </Link>
+      )}
+      {row.action === "assistant" &&
+        (bot ? (
+          <a
+            href={`https://t.me/${bot}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-fit text-sm text-primary underline-offset-4 hover:underline"
+          >
+            Открыть в Telegram
+          </a>
+        ) : (
+          <span className="text-sm text-muted-foreground">в Telegram</span>
+        ))}
+    </li>
+  );
+}
+
+export function FeedView({
+  feed,
+  now = Date.now() / 1000,
+  empty = "Ничего не ждёт тебя.",
+  className,
+  skip,
+  heading = "h1",
+}: {
+  feed: FeedData | null;
+  now?: number;
+  empty?: string;
+  className?: string;
+  /** Rows shown elsewhere on the same screen (by `key`): left out here, and out of the count. */
+  skip?: (row: FeedRow) => boolean;
+  heading?: "h1" | "h2";
+}) {
+  const groups = (feed?.groups ?? [])
+    .map((g) => (skip ? { ...g, rows: g.rows.filter((r) => !skip(r)) } : g))
+    .filter((g) => g.rows.length > 0);
+  const count = skip ? groups.reduce((n, g) => n + g.rows.length, 0) : (feed?.count ?? 0);
+  const Heading = heading;
+  const Sub = heading === "h1" ? "h2" : "h3";
+  return (
+    <section aria-label="Ждут тебя" className={cn("flex flex-col gap-3", className)}>
+      <Heading className={cn("px-1 font-semibold", heading === "h1" ? "text-xl" : "text-base")}>
+        Ждут тебя {feed && count > 0 && <span className="tabular-nums">({count})</span>}
+      </Heading>
+      {!feed ? (
+        <p className="px-1 text-sm text-muted-foreground">Загружаю…</p>
+      ) : count === 0 ? (
+        <p className="px-1 text-sm text-muted-foreground">{empty}</p>
+      ) : (
+        groups.map((group) => (
+          <section key={group.action} aria-label={group.title} className="flex flex-col gap-2">
+            <Sub className="px-1 pt-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              {group.title} <span className="tabular-nums">({group.rows.length})</span>
+            </Sub>
+            {group.action === "assistant" && feed.assistant_at !== null && now - feed.assistant_at > STALE_DIGEST_S && (
+              <p className="px-1 text-xs text-warning-foreground">Список ассистентки от {when(feed.assistant_at, now)}: новее не приходил.</p>
+            )}
+            <ul className="flex flex-col gap-2">
+              {group.rows.map((row) => (
+                <Row key={row.key} row={row} bot={feed.bot} now={now} />
+              ))}
+            </ul>
+          </section>
+        ))
+      )}
+    </section>
+  );
+}
+
+export function Feed(props: { empty?: string; className?: string }) {
+  const feed = useFeed();
+  return <FeedView feed={feed} {...props} />;
+}
+
+/** The count in the header: what waits for the owner, a tap away. Nothing while nothing waits. */
+export function FeedCount() {
+  const feed = useFeed();
+  if (!feed || feed.count === 0) return null;
+  return (
+    <Link
+      to="/today"
+      aria-label={`Ждут тебя: ${feed.count}`}
+      title="Ждут тебя"
+      className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-warning px-2 text-xs font-semibold text-warning-foreground tabular-nums"
+    >
+      {feed.count}
+    </Link>
+  );
+}

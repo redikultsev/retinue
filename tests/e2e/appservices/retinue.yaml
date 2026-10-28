@@ -1,0 +1,9 @@
+id: retinue
+url: http://router:29400
+as_token: e2e-as
+hs_token: e2e-hs
+sender_localpart: retinue
+namespaces:
+  users:
+    - exclusive: true
+      regex: '^@agent_[a-z0-9_]+:test\.local$'

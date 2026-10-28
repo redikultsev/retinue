@@ -1,0 +1,82 @@
+# The life hub: the builder's live release, read-only. setup.sh renders this file with the key (LIFEHUB_KEY from
+# secrets.env) and the hub's name (LIFEHUB_HOST): Traefik adds the key to every request after its own check of the
+# owner's devices; a neighbour on dokploy-network that reaches this container directly does not have it and gets 404.
+server {
+    listen 8080 default_server;
+    server_name _;
+    root /site/current/hub;
+    index index.html;
+    charset utf-8;
+    server_tokens off;
+    autoindex off;
+
+    if ($http_x_lifehub_key != "${LIFEHUB_KEY}") { return 404; }
+
+    add_header Content-Security-Policy "default-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header Cache-Control "no-cache" always;
+
+    location ~ /\. { return 404; }
+    location / { try_files $uri $uri/ =404; }
+
+    # The owner's own HTML pages (docs/lifehub.md, «Страницы»), on the hub's own origin — so the one barrier between
+    # a page's script and the hub is the `sandbox` in each response's policy: the document gets an opaque origin, so
+    # the hub's pages are another origin to it (no CORS anywhere but /pages/_vendor/), and no storage or cookies.
+    # Behind it: no network (`connect-src 'none'`), loads only from /pages/_vendor/. Every location here sets all its
+    # headers itself, `always` — on a 404 too: an add_header here drops the server's, the hub's policy among them,
+    # and a response under /pages/ without the sandbox would be a document of the hub's origin. A page the assistant
+    # ever wrote — or one whose scripts hit a tripwire — lies in pages/<id>.html and runs no script; one only the
+    # owner wrote lies in pages/scripts/<id>.html, reached by the same address, and runs its inline scripts.
+    location ^~ /pages/ {
+        root /site/current;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'none'; style-src https://${LIFEHUB_HOST}/pages/_vendor/ 'unsafe-inline'; img-src https://${LIFEHUB_HOST}/pages/_vendor/ data:; font-src https://${LIFEHUB_HOST}/pages/_vendor/ data:; connect-src 'none'; worker-src 'none'; frame-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-DNS-Prefetch-Control "off" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), clipboard-read=()" always;
+        add_header Cache-Control "no-cache" always;
+
+        location ~ "^/pages/(?<page>[a-z0-9][a-z0-9-]{0,63})\.html$" {
+            if (-f $document_root/pages/scripts/$page.html) { rewrite ^ /pages/scripts/$page.html last; }
+            add_header Content-Security-Policy "default-src 'none'; script-src 'none'; style-src https://${LIFEHUB_HOST}/pages/_vendor/ 'unsafe-inline'; img-src https://${LIFEHUB_HOST}/pages/_vendor/ data:; font-src https://${LIFEHUB_HOST}/pages/_vendor/ data:; connect-src 'none'; worker-src 'none'; frame-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox" always;
+            add_header Referrer-Policy "no-referrer" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-Frame-Options "DENY" always;
+            add_header X-DNS-Prefetch-Control "off" always;
+            add_header X-Robots-Tag "noindex, nofollow" always;
+            add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), clipboard-read=()" always;
+            add_header Cache-Control "no-cache" always;
+            try_files $uri =404;
+        }
+        location ^~ /pages/scripts/ {
+            internal;
+            add_header Content-Security-Policy "default-src 'none'; script-src https://${LIFEHUB_HOST}/pages/_vendor/ 'unsafe-inline'; style-src https://${LIFEHUB_HOST}/pages/_vendor/ 'unsafe-inline'; img-src https://${LIFEHUB_HOST}/pages/_vendor/ data:; font-src https://${LIFEHUB_HOST}/pages/_vendor/ data:; connect-src 'none'; worker-src 'none'; frame-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox allow-scripts" always;
+            add_header Referrer-Policy "no-referrer" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-Frame-Options "DENY" always;
+            add_header X-DNS-Prefetch-Control "off" always;
+            add_header X-Robots-Tag "noindex, nofollow" always;
+            add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), clipboard-read=()" always;
+            add_header Cache-Control "no-cache" always;
+            try_files $uri =404;
+        }
+        # The vendored libraries and fonts: a sandboxed page's origin is opaque, so even a font from here is a
+        # cross-origin fetch — it needs CORS, and this is the only place on the hub that sends it. Versioned names:
+        # cached for good (not a 404).
+        location ^~ /pages/_vendor/ {
+            add_header Access-Control-Allow-Origin "*" always;
+            add_header Cache-Control "public, max-age=31536000, immutable";
+            add_header Content-Security-Policy "default-src 'none'; script-src 'none'; style-src https://${LIFEHUB_HOST}/pages/_vendor/ 'unsafe-inline'; img-src https://${LIFEHUB_HOST}/pages/_vendor/ data:; font-src https://${LIFEHUB_HOST}/pages/_vendor/ data:; connect-src 'none'; worker-src 'none'; frame-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox" always;
+            add_header Referrer-Policy "no-referrer" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-Robots-Tag "noindex, nofollow" always;
+            try_files $uri =404;
+        }
+        return 404;   # no index, no listing, nothing else
+    }
+}

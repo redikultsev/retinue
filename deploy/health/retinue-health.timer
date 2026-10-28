@@ -1,0 +1,12 @@
+# Every two minutes. The router counts a container bad after two checks in a row, and calls a status older than
+# ten minutes a stopped timer.
+[Unit]
+Description=Retinue health every two minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

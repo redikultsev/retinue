@@ -1,0 +1,7 @@
+# The face image's build context (BuildKit reads this file for deploy/face/Dockerfile): the app's sources and this
+# folder's nginx.conf, nothing of the Python repository.
+*
+!face
+face/node_modules
+face/dist
+!deploy/face/nginx.conf

@@ -1,0 +1,181 @@
+# Install (pilot)
+
+Target: one Linux server with Docker and [Dokploy](https://dokploy.com) (or plain `docker compose`). The owner
+talks to one assistant in Telegram. Nothing listens on a public port: the bot polls Telegram, the assistant
+reaches only the model API, and only through a proxy.
+
+## 1. Telegram bot
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and keep the token. Leave **Threaded Mode**
+   off: there is one chat and one stream.
+2. Find your Telegram user id (for example, send any message to [@userinfobot](https://t.me/userinfobot)).
+   The bot answers this id and nobody else.
+3. In your own Telegram account turn on the cloud password (*Settings → Privacy and Security → Two-Step
+   Verification*) and look through *Devices*. Whoever takes over the account talks to the assistant as you.
+
+## 2. Prepare the host
+
+```bash
+git clone https://github.com/<you>/retinue /opt/retinue
+sudo TELEGRAM_OWNER_ID=123456789 bash /opt/retinue/deploy/setup.sh
+```
+
+Your time zone is UTC unless you say otherwise: add `OWNER_TZ=Europe/Berlin` (any IANA name) to the command; a
+later run without it keeps the zone you gave. Every time the assistant sees, every reminder, the 09:00 morning
+summary and the nightly backup follow it. Later you change
+it in words («я в Энске»): the router keeps your word over this setting ([proactive.md](proactive.md)).
+
+The script creates `/srv/retinue`: `router.yaml`, the assistant's config and instructions
+(`agents/assistant/`, mounted read-only), the proxy config (`egress/`), `secrets.env` with generated tokens, and
+`stack.env` (mode 600) — the stack's environment. It prints names, never values: which it wrote and which you fill
+in. Run it again after every `git pull`; it keeps what you filled in. If a secret ever leaks, run it with
+`ROTATE_BUS_SECRET=1` and redeploy: a new bus secret and new agent tokens.
+
+## 3. Deploy the stack
+
+Fill in `TELEGRAM_BOT_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`: your own subscription,
+personal use) in `/srv/retinue/stack.env`. `ELEVENLABS_API_KEY` is optional: voice notes, audio and the sound of
+videos are transcribed by [ElevenLabs](https://elevenlabs.io) Scribe; without the key they are refused aloud. Use
+a paid plan or pay-as-you-go (the free tier blocks datacenter addresses), turn off the use of your data for
+training in the account settings, and create a key with the `speech_to_text` permission only and a credit
+limit. Audio goes to ElevenLabs in the US; the router deletes each transcript there right after reading it. Then either `sudo docker compose -p retinue --env-file
+/srv/retinue/stack.env -f deploy/compose.yml up -d --build` from `/opt/retinue`, or Dokploy → project →
+*Compose* from your Git repo, compose path `./deploy/compose.yml`, with the file's lines in *Environment*. Do not set `ANTHROPIC_API_KEY`: when it is present, Claude Code bills the
+key instead of the subscription. Deploy.
+
+Three containers start: `router` (Telegram, the archive, the bus), `assistant` (the model; internal network
+only, no volume, config mounted read-only) and `egress` (Squid: the only way out of the internal network).
+
+Optional parts, each turned on by `setup.sh` with its own switch and its own guide: `TRAVEL=1` — trip search and
+price watches; `MEMORY=1` — the knowledge base she writes ([memory.md](memory.md)); `MAIL=1` — your Gmail and
+Google Calendar, read-only ([mail.md](mail.md)); `LIFEHUB=1` — pages for your devices only: now, trips, status
+([lifehub.md](lifehub.md)); `TGBUSINESS=1` and `SEND=1` — your chosen Telegram chats and replies to people, each
+sent only by your «Отправить» under the exact text ([courier.md](courier.md)); `PLATFORM=1` — Claude Code sessions
+in lane containers, driven from the same chat, in auto mode: what its classifier blocks approved by you
+([platform.md](platform.md)); `FACE=1 FACE_HOST=app.in.<your domain>` — the platform's app on your phone, over WireGuard only ([face.md](face.md)).
+
+## 4. Check
+
+Send the bot `/check`: a message written by the system arrives with two buttons; press one — the buttons
+disappear and the choice stays. Then ask anything, and later ask what was said before: the assistant searches
+the archive. Ask it to remind you of something in five minutes: it names the day and time back, and the reminder
+arrives on time, written by the assistant. The morning summary comes every day at 09:00 your time.
+
+Before sending your own files, run the multimodal probe in the assistant's container: a picture and a PDF it
+makes itself go through the assistant's engine, then a question with `resume`, `/compact` and a question after
+it. Every step must have `"ok": true`; `broken_photo` must answer without an error.
+
+```bash
+sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml exec -T assistant python - < tests/e2e/multimodal.py
+```
+
+Then send the bot a photo, a PDF, a voice note: she answers on substance. Files over 20 MB are refused aloud —
+the Bot API serves bots nothing bigger.
+
+The assistant's container has no way out except the model API:
+
+```bash
+sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml exec assistant python -c "import socket; socket.create_connection(('1.1.1.1', 443), timeout=5)"
+# OSError: Network is unreachable
+sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml exec egress cat /var/log/squid/access.log | grep -c TCP_DENIED
+# refused requests, if any: see "Hosts the proxy lets through"
+```
+
+## 5. Backup
+
+Add `BACKUP=1` to the `setup.sh` command and follow [backup.md](backup.md): a nightly restic backup to S3 storage
+at another provider, with a server key that cannot delete, a monthly check and test restore from your own
+computer, and a line about it in the morning summary.
+
+The containers' health needs nothing: `setup.sh` installs a host timer that looks at them every two minutes, and
+the router tells you when one goes bad and when it is well again ([health.md](health.md)).
+
+## 6. Travel (optional)
+
+Trip search and price watches come from travel-ops, a separate MCP server, built by compose from your
+travel-ops checkout at a pinned commit into an image of about 5 GB: Google Chrome and Camoufox are inside. Add
+`TRAVEL=1` to the `setup.sh` command once; from then on it stays on. The source is required with travel on and is
+yours, not this repository's: `TRAVEL_OPS_GIT` in `stack.env`, a git URL with the commit after `#` (the script asks
+for it until it is filled).
+
+```bash
+sudo TELEGRAM_OWNER_ID=123456789 TRAVEL=1 bash /opt/retinue/deploy/setup.sh
+echo 'TRAVEL_OPS_GIT=https://github.com/<you>/travel-ops.git#<40-hex commit>' | sudo tee -a /srv/retinue/stack.env
+sudo nano /srv/retinue/travel/profile.yml   # home_airports, travellers, currency: profile.example.yml in travel-ops
+docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml up -d --build
+```
+
+Two containers run: `travel-ops` (the MCP server, on the internal network `travel` with the assistant and the
+router) and `travel-watch` (the price watches, every 30 minutes). Both reach the travel sites through their own
+network; the assistant does not. She calls travel-ops' tools herself and reads its whole answer; the arguments
+of each call are checked by the engine before they leave, and every check is a line in the router's protocol.
+Links to the sites in `deploy/travel/link-hosts.txt` are clickable; every other address stays monospace. Sites
+may limit automated requests: use it for your own trips, as travel-ops' README says.
+
+Both browsers in the travel-ops image are pinned (its `Dockerfile`: `CHROME_VERSION`, `CHROME_SHA256`,
+`CAMOUFOX_VERSION`). Once a month: move the pins in travel-ops (its README says where the current values are),
+commit and push it, put the new SHA in `deploy/compose.yml` (`tests/test_deploy.py` refuses the old base), and
+rebuild without the cache: `docker compose … build --no-cache travel-ops && docker compose … up -d`. Google keeps
+only recent Chrome packages, so a build with an old pin fails — that failure is the reminder.
+
+## Hosts the proxy lets through
+
+`/srv/retinue/egress/allowed-hosts.txt` starts with one line, `api.anthropic.com`. If a run fails and the proxy
+log shows `TCP_DENIED` for another host, decide whether that host is needed (the list of hosts Claude Code uses
+is in its [network configuration docs](https://code.claude.com/docs/en/network-config)), add it to the file and
+restart `egress`. `setup.sh` never overwrites this file.
+
+## Versions
+
+`pyproject.toml` pins `claude-agent-sdk` to an exact version; the SDK wheel carries its own `claude` CLI, and
+the image installs everything from `uv.lock`. To update: change the pin, run `uv lock`, update `CLI_VERSION` in
+`tests/test_pins.py`, rebuild, and repeat the trial run below before trusting the new image.
+
+```bash
+sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml exec -T assistant python - < tests/e2e/coldstart.py
+```
+
+Every line must have `"is_error": false`; the first line must show `"api_key_in_env": false`.
+
+Every image `deploy/compose.yml` pulls from a registry is pinned by digest — Squid once, as `x-squid-image` in `deploy/compose.yml`, Tuwunel,
+the life hub's nginx, and dnsmasq in `deploy/split-dns/compose.yml` — and `tests/test_deploy.py` refuses a bare tag.
+To move a pin, pull the tag on the server, take its digest and put it in:
+
+```bash
+sudo docker pull ubuntu/squid:<tag> && sudo docker image inspect --format '{{index .RepoDigests 0}}' ubuntu/squid:<tag>
+```
+
+Every service has a `mem_limit`, sized from `docker stats --no-stream` and the cgroups' `memory.peak` on the server
+with room on top. What runs all the time is capped at under 8 GiB in total; the room and travel-ops, which work when
+you use them, have their own ceilings. A container that reaches its ceiling is killed by the kernel and restarted by Docker, and the owner hears of it (`docs/health.md`).
+
+## Matrix (optional)
+
+The Matrix adapter is still in the code and is off by default. To run it you also need a WireGuard VPN on
+`10.8.0.0/24` with the server at `10.8.0.1`, a public `A` record for the homeserver name (for Let's Encrypt)
+and TCP 80/443 open.
+
+```bash
+sudo TELEGRAM_OWNER_ID=123456789 MATRIX_SERVER_NAME=matrix.example.com MATRIX_OWNER=alice \
+  bash /opt/retinue/deploy/setup.sh
+```
+
+The script then also writes the appservice registration, installs the Traefik middleware `vpn-only` and starts
+split DNS (dnsmasq on `10.8.0.1`), and adds the Matrix variables to `stack.env`: `COMPOSE_PROFILES=matrix`
+starts Tuwunel. Create your account with `sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml exec router retinue-admin register --username alice`,
+then set `MATRIX_ALLOW_REGISTRATION=false` in `stack.env` and redeploy. Sign in with Element X.
+
+## Tests
+
+```bash
+uv run --frozen --with pytest pytest -q
+uv run --with ruff ruff check .        # the rules are in pyproject.toml: pyflakes and pycodestyle's errors
+```
+
+Smoke test with a real homeserver and an echo agent, no model:
+
+```bash
+docker build -t retinue:local .
+docker compose -f tests/e2e/compose.yml up -d && python3 tests/e2e/smoke.py
+docker compose -f tests/e2e/compose.yml down -v
+```

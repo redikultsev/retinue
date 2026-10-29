@@ -68,6 +68,8 @@ WAITING_LOOK_S = 30.0        # the assistant's digest («Ждут тебя») is
 WAITING_PUSH_S = 3600.0      # …pushed when it changed, and at least this often anyway
 WAITING_TIMEOUT_S = 10.0     # a push waits no longer: it runs beside the notes' pump, never in its way
 DECIDE_HINT = "Реши кнопками её карточки или в приложении."
+STALE_PRESS = "Нажатие не применилось: список устарел."
+FAILED_PRESS = "Нажатие не применилось: сбой на сервере. Попробуй ещё раз."
 # `/wait`: what each row's icon is, by where it came from.
 ICONS = {"question": "❓", "approval": "⚠️", "courier": "📦", "session": "💬", "letter": "✉️", "chat": "💬",
          "draft": "📝", "deadline": "⏳", "base": "🗂", "push": "⬆️"}
@@ -128,6 +130,9 @@ class PlatformBridge:
         # What waits for the owner in the assistant's world (`waiting.digest`), given by the router once its core is up.
         self.waiting: Callable[[float], list[dict]] | None = None
         self.chips: Callable[[float], list[dict]] | None = None  # the hub's status chips, pushed with it
+        self.counts: Callable[[float], dict] | None = None  # its two numbers: closed today, run out in the week
+        # A press on a row of it in the app (`waiting.press`): the row's token and the mark; False — not known.
+        self.press_waiting: Callable[[str, str, float], bool] | None = None
         self._looked, self._pushed, self._pushed_mark = 0.0, 0.0, ""
         self._pushing: asyncio.Task | None = None
         # The hub's pages for the face's «Читать» (`Lifehub.library`): None until the hub has read them.
@@ -213,6 +218,8 @@ class PlatformBridge:
         body = {"items": self.waiting(now), "bot": getattr(self.channel, "username", "") or ""}
         if self.chips is not None:
             body["chips"] = self.chips(now)
+        if self.counts is not None:
+            body.update(self.counts(now))
         mark = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         if mark == self._pushed_mark and now - self._pushed < WAITING_PUSH_S:
             return False
@@ -221,6 +228,10 @@ class PlatformBridge:
             log.warning("the platform refused the assistant's digest: %s", answer["error"])
         self._pushed, self._pushed_mark = now, mark
         return True
+
+    def poke(self) -> None:
+        """The digest changed by the owner's hand: looked at and pushed on the push loop's next turn, not in 30 s."""
+        self._looked = 0.0
 
     async def push_library(self, now: float) -> bool:
         """The hub's pages to the platform (`/owner/library`), replacing the list there whole, by the digest's rules:
@@ -268,8 +279,29 @@ class PlatformBridge:
             await self.say(f"{data['head']}\n\n{data['text']}", session)
         elif kind == "file":
             await self._file(session, str(data["id"]), data)
+        elif kind == "waiting-press":
+            await self._waiting_press(data)
         else:
             log.warning("platform note %s of an unknown kind %r skipped", note.get("seq"), kind)
+
+    async def _waiting_press(self, data: dict) -> None:
+        """«Сделано», «Не дело», «Завтра» or «Вернуть» on a row of «Ждут тебя» in the app: marked by the router's own
+        record of the row's token, then the digest goes again at once. A token it does not know marks nothing, and
+        the owner is told. Whatever fails here is logged, the owner is told it did not apply, and the note is done
+        with: a press never holds back the cards behind it."""
+        try:
+            if self.press_waiting is None:
+                return
+            if self.press_waiting(str(data.get("t") or ""), str(data.get("action") or ""), time.time()):
+                self.poke()
+            else:
+                await self.say(STALE_PRESS)
+        except Exception:
+            log.exception("a press on «Ждут тебя» was not applied")
+            try:
+                await self.say(FAILED_PRESS)
+            except Exception:
+                log.exception("the owner was not told a press failed")
 
     async def _ping(self, seq: int, session: str, data: dict) -> None:
         """The end of a turn (`pings`): its header and text, split as any text is, each message answering into the

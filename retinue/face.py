@@ -44,7 +44,7 @@ from urllib.parse import parse_qsl, quote
 
 from aiohttp import web
 
-from . import changes, inbox, pings, spaces, tobase, topush
+from . import changes, feed, inbox, pings, spaces, tobase, topush
 from .cliengine import UUID4
 from .sessions import PlatformStore
 from .speech import Scribe, SpeechError
@@ -314,6 +314,8 @@ class Face:
             *self.spaces.routes(),
             # «Читать» (`library.py`): the hub's pages, what was opened and finished.
             web.get("/api/library", self.library), web.post("/api/library/{id}/{action:open|done}", self.library_act),
+            # «Ждут тебя»: a press on the assistant's row, for the router to apply (`feed.PRESSES`).
+            web.post("/api/waiting/press", self.waiting_press),
             # The owner's voice (`speech.py`): a recording in, its text out.
             web.post("/api/speech", self.speech)])
         app.on_startup.append(self._sweep)
@@ -409,6 +411,17 @@ class Face:
         """«Ждут тебя»: one queue by action across the sessions and the assistant's world (`feed.Feed`). Built on
         each read; the app reads it again when a session, a card or a summary changes, and once a minute."""
         return web.json_response({"schema": SCHEMA, **self.platform.feed.face(self.clock())})
+
+    async def waiting_press(self, request: web.Request) -> web.Response:
+        """«Сделано», «Не дело», «Завтра» or «Вернуть» (`open`) on a row of «От ассистентки» `{t, action}`: only its
+        shape is checked here — the router alone knows what the row's token names — and it goes to the router as a
+        note (`waiting-press`), which the bridge pulls like any other."""
+        body = await _body(request)
+        token, action = body.get("t"), body.get("action")
+        if not isinstance(token, str) or not feed.TOKEN.fullmatch(token) or action not in feed.PRESSES:
+            return _error(400, "Нужны t — токен строки — и action: done, dismissed, later или open.")
+        self.store.add_note("waiting-press", "", {"t": token, "action": action})
+        return web.json_response({"ok": True})
 
     async def library(self, request: web.Request) -> web.Response:
         """«Читать»: the hub's pages as the router last pushed them, with what the owner opened and finished."""

@@ -105,18 +105,20 @@ the notes' pump and with a 10 s wait, so a platform that hangs on it holds back 
 What the router counts (`retinue/waiting.py`), each by a rule it already had:
 
 - **letter / chat** — what her judgement said asks you to act (`needs` reply, decide, pay, attend, act; «read» is
-  only to know) in the last 7 days, as the hub's «now» page reads it (`MailStore.needing`). A chat you wrote in after
-  it is seen, unless she asked you to do or decide something (the morning summary's rule). One row per person; the
-  letters you keep private are one row with a count and no name.
+  only to know) and is still open (`MailStore.asks`, [mail.md](mail.md#closing-what-waits)): not closed by your
+  «Сделано» or «Не дело», not put off by «Завтра», not answered as code sees it, not run out. One row per person
+  and ask — «оплатить» and «решить» of one sender are two rows, so a press closes exactly what its row says; the
+  letters you keep private are one row with a count, no name and no ask.
 - **draft** — a reply card whose «Отправить» still means something (`outbox.LIVE`, not expired); its letter is not
-  counted again, nor a letter a draft already answered (queued, sending, sent).
+  counted again.
 - **deadline** — a `deadline` of any Record or an `until` of a profile Record at most 7 days away (the face's «Сроки»),
   from the heartbeat's last reading of the base; an overdue `deadline` up to 3 days. Its `since` is three days before
   its day — the heartbeat's own push rule — so one further off has a `since` ahead: the platform keeps it out of «Ждут
   тебя» (and `/wait`) until then and shows it only under «Сроки». It also carries its day (`when`, `YYYY-MM-DD`) and,
   when the path is a plain one, the Record's path in the base (`path`) — never the Record's text.
 
-The digest is minimal: `{items: [{id, kind, who, title, since, sphere?, when?, path?}], bot, chips?}` — an id made with an HMAC under the
+The digest is minimal: `{items: [{id, kind, who, title, since, sphere?, t?, when?, path?}], bot, chips?,
+closed_today?, expired_week?}` — an id made with an HMAC under the
 router's own random salt (its kv `waiting.salt`; never sent), so it names no one and cannot be checked against a guess;
 `letter`, `chat`, `draft` or `deadline`; a display name (never an address); a one-line title — the action and at most
 80 characters of her words with every address, link, phone number and run of four digits or more masked
@@ -126,6 +128,22 @@ and under 32 KB, the least pressing left out. The platform checks it again (`fee
 e-mail address written as ‹адрес›, then cut to 60 and 160 characters; `when` and `path` only on a deadline — a real
 date; a Space, at most two folders and a `*.md` name, no dot-led part; one item off the contract refuses the whole
 push (400) and the last one stays.
+
+A person's row (`letter`, `chat`; not the private matter's) also carries **`t`**, 32 hex characters: an HMAC under the
+same salt of its items' numbers, which never leave the router. The router keeps `t → numbers` in its kv
+(`waiting.rows`) for 24 hours after it last sent the row; the same items give the same token, so neither a restart
+of the router nor a digest the platform refused can make a press name items you did not see. Beside the items go two
+counts, `closed_today` (rows with an ask closed since your midnight, by your press or by your answer) and
+`expired_week` (rows with an ask that ran out with no mark in the last 7 days) — numbers only, no list. The platform takes `t` only on a `letter` or a
+`chat`, and each count as a whole number from 0 to 100 000 (0 when absent).
+
+**A press in the app** — «Сделано», «Не дело», «Завтра», «Вернуть» — comes back the way every answer to the router does:
+the face takes `POST /api/waiting/press {t, action}` (`done`, `dismissed`, `later`, `open`), checks only its shape and
+journals a `waiting-press` note; the bridge pulls it with the cards and the router marks the items its own kv names
+for that token (`waiting.press`), then pushes the digest again at once. A token it does not know marks nothing and you
+get «Нажатие не применилось: список устарел.». Applying it is wrapped on its own: a failure is logged, you get
+«Нажатие не применилось: сбой на сервере. Попробуй ещё раз.», and the note is confirmed, so a press never holds back
+the cards behind it.
 
 The same push carries the hub's **status chips** (`waiting.chips`, the hub's own «now» chips): `[{key, text, level}]`,
 `key` one of `health`, `backup`, `limit`, `build` at most once each, `level` `ok`, `warn` or `bad`, the text folded and

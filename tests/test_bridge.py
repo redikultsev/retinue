@@ -900,3 +900,28 @@ def test_a_sphere_command_is_answered_and_the_answer_maps_to_the_main_session(tm
     platform.down = True
     asyncio.run(bridge.sphere("travel", "", "78"))
     assert ch.sent[-1][1]["text"] == UNAVAILABLE
+
+
+def test_a_press_in_the_app_is_marked_by_the_router_and_never_holds_back_the_cards_behind_it(tmp_path):
+    press = lambda seq, t, action="done": {"seq": seq, "kind": "waiting-press", "session": "",  # noqa: E731
+                                           "data": {"t": t, "action": action}}
+    notes = [press(1, "a" * 32), press(2, "b" * 32), press(3, "c" * 32), {"seq": 4, "kind": "waiting-press",
+                                                                         "session": "", "data": "битая"}, card(5)]
+    ch, bridge, platform = make(tmp_path, notes)
+    pressed = []
+
+    def apply(t, action, now):
+        pressed.append((t, action))
+        if t == "c" * 32:
+            raise RuntimeError("the router's tables are locked")
+        return t == "a" * 32
+
+    bridge.press_waiting, bridge._looked = apply, 1e12
+    assert asyncio.run(bridge.deliver()) == 5
+    assert pressed == [("a" * 32, "done"), ("b" * 32, "done"), ("c" * 32, "done")]
+    assert bridge._looked == 0.0, "applied: the digest goes again at once"
+    said = [p["text"] for m, p, _ in ch.sent if m == "sendMessage"]
+    assert said.count(bridge_module.STALE_PRESS) == 1, "the token the router does not know: nothing applied"
+    assert said.count(bridge_module.FAILED_PRESS) == 2, "the fault and the malformed note: told, no details"
+    assert said[-1].startswith("Разрешение"), "the card behind a failed press went out"
+    assert platform.confirmed == [5]

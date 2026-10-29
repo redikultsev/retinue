@@ -288,10 +288,10 @@ class Platform:
         try:
             body = await _body(request)
             items, bot = feed.clean(body, now)
-            chips = feed.clean_chips(body)
+            chips, counts = feed.clean_chips(body), feed.clean_counts(body)
         except feed.Refused as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        self.feed.keep(items, bot, now, chips)
+        self.feed.keep(items, bot, now, chips, counts)
         return web.json_response({"ok": True, "items": len(items)})
 
     async def owner_library(self, request: web.Request) -> web.Response:

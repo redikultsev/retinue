@@ -31,7 +31,7 @@ from .proactive import Proactive
 from .protocol import Store
 from .speech import Scribe
 from .travel import TravelOps
-from .waiting import chips, digest
+from .waiting import chips, counts, digest, press
 
 
 def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventLoop,
@@ -112,6 +112,10 @@ def main() -> None:
     if bridge:  # what waits in the assistant's world, pushed for the face's «Ждут тебя»
         bridge.waiting = lambda now: digest(core, now)
         bridge.chips = lambda now: chips(core, now)
+        bridge.counts = lambda now: counts(core, now)
+        bridge.press_waiting = lambda token, action, now: press(core, token, action, now)
+        if mail:  # a mark by his Telegram button shows in the app at once too
+            mail.changed = bridge.poke
     if bridge and lifehub:  # the hub's pages, for the face's «Читать»
         bridge.library = lifehub.library
     loop.run_until_complete(core.start(build_channels(cfg, store, loop, bridge)))

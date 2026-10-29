@@ -541,17 +541,21 @@ class Lifehub:
 
     def waiting(self, now: float) -> dict:
         """What waits for the owner — letters and chats she judged ask something of him — by person: one group per
-        sender with how many, the most pressing ask, how long the oldest has waited and the newest words. What only
-        asks to be read comes after what asks to act. The private matter's letters are one group that names nothing
-        and points at the tracker page."""
+        sender with how many, the most pressing ask, how long the oldest has waited and the newest words. What asks
+        him to act is what is still open of it, as «Ждут тебя» has it (`MailStore.asks`: not marked, not answered,
+        not run out); what only asks to be read comes after it, from the last MAIL_DAYS. The private matter's letters
+        are one group that names nothing and points at the tracker page."""
         from . import clock
-        from .mail import PRIVATE
+        from .mail import ASKS, PRIVATE
 
         out = {"count": 0, "act": 0, "groups": []}
         if not self.core.mail:
             return out
         groups: dict[str, dict] = {}
-        for item in self.core.mail.store.needing(now - MAIL_DAYS * DAY, WAITING_ITEMS):
+        store = self.core.mail.store
+        sent = self.core.outbox.store.answered() if self.core.outbox else {}
+        read = store.needing(now - MAIL_DAYS * DAY, WAITING_ITEMS, besides=ASKS)
+        for item in sorted(store.asks(now, sent) + read, key=lambda i: (i["at"], i["seq"])):
             card, data = item["card"] or {}, item["data"] or {}
             sender = str(item["sender"] or "")
             chat = item["source"] == "telegram" or sender.startswith("tg:")

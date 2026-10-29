@@ -80,12 +80,15 @@ it as for live mail.
 - **A message now** — when she judged that something is asked of you and waiting costs much. About your private
   matter (kind `private`, below) it says only «Почта: 1 важное»; the words come on «Показать». Several urgent letters of one sender within an hour
   are one message.
+- Under each that asks you to act: **«Сделано»**, **«Не дело»**, **«Завтра»** — they close it in «Ждут тебя»
+  ([below](#closing-what-waits)); under the private matter's they come with its words, on «Показать».
 - Under each: **«Не уведомлять о таком»** — this sender's letters of this kind go to the summary from then on;
   **«Всегда отсеивать …»** — the address and how many letters it sent in 30 days; its letters are dropped by code,
   unread. Only these buttons change the rules; the assistant has no tool for them. `!mail` lists the mailboxes
   and your rules, with a button to take each rule back.
 - **The morning summary** names today's meetings (with what the base knows for the important ones) and the mail
-  that could wait. Its health line says «почта N из N» with each mailbox's last sync, the calendar, what the day
+  that could wait. A line in code's words says «Истекло без отметки за неделю: N; закрыто за сутки: M» when either is
+  not zero. Its health line says «почта N из N» with each mailbox's last sync, the calendar, what the day
   kept and dropped by kind, your blocks' counts, and what is still waiting.
 - **A login Google refused** (`invalid_grant`, usually after a password change) is told at once, with the command
   to log in again.
@@ -102,6 +105,35 @@ it as for live mail.
 ```bash
 sudo docker exec "$(sudo docker ps -qf name=router)" python -c "import sqlite3; db = sqlite3.connect('file:/data/router.sqlite?mode=ro', uri=True); [print(r) for r in db.execute('select datetime(ts, \'unixepoch\'), sender, subject, kind, why from mail_dropped order by ts desc limit 30')]"
 ```
+
+## Closing what waits
+
+What her judgement said asks you to act — reply, decide, pay, attend, act — waits for you in «Ждут тебя» (the app,
+`/wait`, the hub's «Сейчас») until something closes it. Nothing about it is stored but your last press
+(`ask_marks` in the router's database, `MailStore.asks`); the rest is read from the router's rows each time.
+
+- **Your buttons**, under its urgent message in Telegram and on its row in the app: «Сделано» and «Не дело» close it,
+  «Завтра» puts it off till 09:00 tomorrow in your zone. Your last press wins. After one, the message says
+  «✓ Сделано» and gets «Вернуть», which takes that press back — only the press: what your answer had closed stays
+  closed. The buttons live 24 hours, like every button of the bot. `/wait` has no buttons.
+- **Your answer, as code sees it** — only an answer newer than your last standing press counts, so a list shown
+  before your answer and pressed after it is not undone by that answer:
+  - «ответить» to a letter: your letter (from Sent) in its thread in the same mailbox, or naming it in In-Reply-To or
+    References (by the ids in them, whatever is around) — from your other mailbox too, where the thread has another
+    id — sent to its sender or its Reply-To (To or Cc). A letter forwarded to somebody else answers nothing. What
+    tells it is kept with each letter as it is read; for letters read before that, the router fills it in from the
+    archive when it starts (the last 21 days);
+  - «ответить» in a Telegram chat: your message in that chat after it;
+  - «ответить», «решить», «сделать»: her draft for it that went (queued, sending or sent), as of your «Отправить».
+    Paying or going is not proved by a letter or a draft.
+- **Its time**: 7 days for «ответить», «решить», «сделать», 14 for «оплатить», «прийти», from when she judged it (kept
+  with her judgement; for one judged before that, its last change of state) — not from the letter's date, so a
+  mailbox's first sync is not born run out. After any press of yours it waits at least 7
+  days more (after «Завтра»: from its morning). Her words set no date, so none of them can hide an ask. What runs out
+  leaves «Ждут тебя» and is counted: «Истекло без отметки за неделю: N» in the app and the morning summary. The
+  router reads asks judged or pressed in the last 21 days: the longest wait, 14, and the week that count looks at.
+- **The counts** — «Сегодня закрыто», «Истекло без отметки» — count rows as you see them (a person and an ask; the
+  private matter one row), not letters.
 
 ## Your private matter
 

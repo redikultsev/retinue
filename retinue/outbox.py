@@ -158,6 +158,14 @@ class OutboxStore:
         """The state of the latest draft answering each archive message: the review page's «what became of it»."""
         return dict(self.db.execute("SELECT reply_to, state FROM drafts WHERE reply_to IS NOT NULL ORDER BY created"))
 
+    def answered(self) -> dict[str, float]:
+        """The archive messages whose latest draft went out — queued, sending or sent — and when he pressed
+        «Отправить» (the hold's end, set once; a later state change of the draft is not a new answer): an answer
+        that closes what the message asked (`MailStore.asks`)."""
+        latest = {reply: (state, at) for reply, state, at in self.db.execute(
+            "SELECT reply_to, state, COALESCE(send_after, created) FROM drafts WHERE reply_to != '' ORDER BY created")}
+        return {reply: at for reply, (state, at) in latest.items() if state in ("queued", "sending", "sent")}
+
     def sent(self, since: float, channel: str) -> int:
         """Sent for certain since `since` on this channel: what the status page counts."""
         return self.db.execute("SELECT COUNT(*) FROM drafts WHERE state = 'sent' AND channel = ? AND at >= ?",

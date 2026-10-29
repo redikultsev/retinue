@@ -137,6 +137,7 @@ class Pressed:
     card: str = ""  # the card's text after the press (Markdown); empty when the press changed nothing
     keep: list[tuple[str, str]] = field(default_factory=list)  # (label, button id) still alive on the card
     view: object = None  # a courier's card after the press (`courier.CardView`): rewritten as a card, not Markdown
+    add: list[Button] = field(default_factory=list)  # a handler's buttons put on the card by the press («Вернуть»)
 
 
 class Channel(Protocol):
@@ -644,6 +645,14 @@ class Core:
                             ref=card.id)
         handler = self.actions.get(action)
         toast = await handler(value) if handler else label
+        if isinstance(toast, Pressed) and toast.add:  # buttons the press puts on its card, once each
+            alive = {name for name, _ in self.store.card_buttons(card.id, time.time())[0]}
+            for button in toast.add:
+                if button.label not in alive:
+                    self.store.add_button(card.id, button.label, button.action, button.value,
+                                          time.time() + BUTTON_TTL_S, button.alone)
+            keep, _ = self.store.card_buttons(card.id, time.time())
+            return Pressed(toast.ok, toast.toast, f"{card.text}\n\n✓ {label}", keep)
         if isinstance(toast, Pressed):  # the handler rewrote its card itself (the courier's)
             return toast
         if alone:
@@ -840,12 +849,14 @@ class Core:
                 log.exception("morning summary failed")
             self._account(agent, context_id, "summary", status, meta)
         probed = self.mail.probed(now) if self.mail else ""  # code's words, after hers: never in her prompt
+        asked = self.mail.asked(now) if self.mail else ""  # «Ждут тебя»: what ran out unmarked, what closed
         counted = await self.proactive.summary_lines(now) if self.proactive else []  # «Сроки», the tracker, Mac
         if status == "done" and answer.strip():
-            text = "\n\n".join([answer.strip(), *([probed] if probed else []), *counted, self.health(now)])
+            text = "\n\n".join([answer.strip(), *([probed] if probed else []), *([asked] if asked else []), *counted,
+                                 self.health(now)])
         else:
             text = "\n".join(["Утренняя сводка — без ассистентки: её запуск не удался.", "Напоминания на сегодня:",
-                              *plans, *day, *waited, *(["", probed] if probed else []),
+                              *plans, *day, *waited, *(["", probed] if probed else []), *(["", asked] if asked else []),
                               *(line for block in counted for line in ("", block)), "", self.health(now)])
         if now - job.due > LATE_S:
             text += f"\n\n_Сводка опоздала на {clock.ago(now - job.due)}: Роутер не работал._"

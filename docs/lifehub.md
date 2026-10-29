@@ -93,7 +93,8 @@ The morning summary's health line says «хаб собран N мин назад
   seller, the times, the rating and when the price was seen from there; stay photos come from travel-ops
   (`stay_photos`) and are re-encoded as JPEG by the router's file worker. A page's address is random.
 - **«Сейчас».** The next meeting with a countdown; who waits for your answer, by person — three, the rest folded —
-  with how long; today, the evening (from 18:00) and tomorrow as a timeline in your local time; deadlines overdue
+  with how long (what asks you to act is what is still open of it, as «Ждут тебя» has it: not marked, answered or
+  run out — [mail.md](mail.md#closing-what-waits)); today, the evening (from 18:00) and tomorrow as a timeline in your local time; deadlines overdue
   first, documents (`until`) apart from facts to re-check (`stale_after`); upcoming trips; a row of chips — broken
   or not, the backup, the limit, the build — that leads to «Статус». Your own recurring blocks with nobody else
   and nowhere to be («Блок», four hours or longer) are one line «Фоном», not meetings.

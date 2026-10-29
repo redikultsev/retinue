@@ -4,12 +4,12 @@
 Read from the router's own tables, by the rules they already have — nothing new is judged here:
 
 - **letter / chat**: what her judgement said asks him to do something (`needs` reply, decide, pay, attend or act;
-  «read» is only to know) in the last MAIL_DAYS — the «now» page's `MailStore.needing`. A chat he wrote in after it
-  is seen, unless she asked him to do or decide something, which a reply does not prove done (the morning summary's
-  rule, `mailroom.STILL_OPEN`). One row per person; the owner's private matter (`mail.Private`) is one row that
-  names nothing but a count, in the sphere his config gives it.
+  «read» is only to know) and is still open — `MailStore.asks`: not marked «Сделано» or «Не дело» by him, not put off
+  till tomorrow, not answered as code sees it, not run out. One row per person and ask: «оплатить» and «решить» of one
+  sender are two rows, so a button closes exactly what the row says. The owner's private matter (`mail.Private`) is
+  one row that names nothing but a count, in the sphere his config gives it.
 - **draft**: a reply card whose «Отправить» still means something (`outbox.LIVE`, not expired). Its letter is not
-  counted again, nor a letter a draft already answered (queued, sending or sent).
+  counted again.
 - **deadline**: a `deadline` of any Record, or an `until` of a profile Record, at most SOON_DAYS away (the face's
   «Сроки» on «Сегодня»), from the heartbeat's last reading of the base; overdue `deadline`s up to PUSH_DAYS. Each
   carries its day (`when`) and the Record's path in the base (`path`), never its text; it waits for the owner
@@ -20,6 +20,12 @@ The digest is minimal by contract: an id keyed by the router's own salt (it name
 (never an address), a one-line title — the action and at most 80 characters of her words, with addresses, links,
 phone numbers and runs of four digits masked (`said`) — a time, a sphere (the base's Space). No text of a letter or a
 message. The platform checks it again.
+
+A person's row also carries `t`, the token of its items: an HMAC under the same salt of their numbers, which never
+leave the router. The router keeps `t → numbers` in its kv for ROW_S since it last showed the row, so a press in the
+app (`press`) marks exactly the items the owner saw, whatever the router or the platform did since; a token it does
+not know is refused. Beside the rows go two numbers (`counts`): asks closed today and asks that ran out unmarked in
+the week — no list of them.
 """
 
 from __future__ import annotations
@@ -35,21 +41,22 @@ from datetime import timedelta
 from . import clock
 from .courier import line
 from .feed import CHIP_CHARS, DIGEST_BYTES, DIGEST_ITEMS, EMAIL, RECORD, SPHERE
-from .lifehub import MAIL_DAYS, NEEDS, WAITING_ITEMS, midnight, named, plural
-from .mail import PRIVATE, Private
-from .mailroom import STILL_OPEN
+from .lifehub import NEEDS, midnight, named, plural
+from .mail import ASKS, MARKS, PRIVATE, Private, ask_row, later_until
 from .outbox import LIVE
 from .proactive import FIELDS, PUSH_DAYS
 
 DAY = 86400
-ASKS = ("reply", "decide", "pay", "attend", "act")  # her `needs` that ask him to act; «read» does not
 URGENCY = {need: n for n, need in enumerate(ASKS)}
 PRIVATE_WHO = "Личное"       # the private matter's one row: no name, no sender
 TEXT_CHARS = 120             # a Record's title
 SOON_DAYS = 7                # «Сроки» on the face's «Сегодня»: a Record's date this many days ahead at most
 SAID_CHARS = 80              # her words about somebody's message: a hint of what it is, not what it says
-SENT = ("queued", "sending", "sent")  # a draft that answered its letter: the letter waits no more
 SALT_KEY = "waiting.salt"    # the router's kv: the key the digest's ids are made with; never leaves the router
+ROWS_KEY = "waiting.rows"    # the router's kv: each row's token and its items' numbers, as JSON
+ROW_S = 86400                # a token is known this long after the digest last showed its row…
+ROW_SEEN_S = 3600            # …which is written down again at most this often
+TOKEN_CHARS = 32
 BYTES_ROOM = 1024            # the digest is cut this far below the platform's limit: the envelope and `bot`
 URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:/\S*)?")
 PHONE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
@@ -87,15 +94,79 @@ def said(text: str) -> str:
 def digest(core, now: float) -> list[dict]:
     """The rows, the most pressing first: drafts (they expire within hours), then people by what they ask, then the
     base's dates by day — cut to what the platform takes (DIGEST_ITEMS, DIGEST_BYTES), the least pressing left
-    out."""
+    out. The tokens of the people's rows sent are remembered for their presses."""
     drafts = _drafts(core, now)
-    answered = {d.pop("_reply") for d in drafts} - {""}
-    if core.outbox:  # a letter a draft answered is done, not waiting
-        answered |= {reply for reply, state in core.outbox.store.by_reply().items() if state in SENT}
-    rows = (drafts + _people(core, now, answered) + _deadlines(core, now))[:DIGEST_ITEMS]
+    shown = {d.pop("_reply") for d in drafts} - {""}  # a letter whose draft waits is that draft's row
+    people = _people(core, now, shown)
+    seqs = {row["t"]: row.pop("_seqs") for row in people if "t" in row}
+    rows = (drafts + people + _deadlines(core, now))[:DIGEST_ITEMS]
     while rows and len(json.dumps({"items": rows}, ensure_ascii=False).encode()) > DIGEST_BYTES - BYTES_ROOM:
         rows.pop()
+    _remember(core, {row["t"]: seqs[row["t"]] for row in rows if "t" in row}, now)
     return rows
+
+
+def counts(core, now: float) -> dict:
+    """The two numbers beside the rows: asks closed since the owner's midnight — by his buttons or by what code saw
+    him do — and asks that ran out with no mark in the last 7 days."""
+    if not core.mail:
+        return {"closed_today": 0, "expired_week": 0}
+    today = midnight(clock.local(now, core.tz).date(), core.tz)
+    closed, expired = core.mail.store.ask_counts(now, today, now - 7 * DAY, _sent(core))
+    return {"closed_today": closed, "expired_week": expired}
+
+
+def press(core, token: str, action: str, now: float) -> bool:
+    """A press on a person's row in the app (the platform's `waiting-press` note): the owner's mark on the items the
+    token names, by the router's own record of it. False — nothing applied — when the token is not known: the list
+    he pressed in is older than ROW_S, or the token is not one of the router's. A mark that is none of his buttons, or
+    no mail here, is a fault (ValueError), not an old list."""
+    if action not in MARKS or not core.mail:
+        raise ValueError(f"no such press here: {action}")
+    seqs = _rows(core, now).get(token)
+    if not seqs:
+        return False
+    core.mail.store.mark(seqs, action, now, later_until(now, core.tz) if action == "later" else None)
+    return True
+
+
+def _token(core, seqs: list[int]) -> str:
+    """A row's token: its items' numbers under the router's salt — the same items, the same token, after a restart
+    too; other items, another."""
+    key = "row:" + ",".join(str(seq) for seq in sorted(seqs))
+    return hmac.new(_salt(core), key.encode(), hashlib.sha256).hexdigest()[:TOKEN_CHARS]
+
+
+def _rows(core, now: float) -> dict[str, list[int]]:
+    """The tokens the router showed in the last ROW_S, and their items."""
+    try:
+        known = json.loads(core.store.get(ROWS_KEY) or "{}")
+    except ValueError:
+        return {}
+    return {token: [int(seq) for seq in row["seqs"]] for token, row in known.items() if isinstance(row, dict)
+            and isinstance(row.get("seqs"), list) and now - float(row.get("at") or 0) < ROW_S} \
+        if isinstance(known, dict) else {}
+
+
+def _remember(core, shown: dict[str, list[int]], now: float) -> None:
+    """The tokens just sent, kept with their items; written only when a token is new, is due to be seen again or has
+    run out — not on every look."""
+    try:
+        known = json.loads(core.store.get(ROWS_KEY) or "{}")
+    except ValueError:
+        known = {}
+    known = known if isinstance(known, dict) else {}
+    kept = {token: row for token, row in known.items()
+            if isinstance(row, dict) and now - float(row.get("at") or 0) < ROW_S}
+    for token, seqs in shown.items():
+        if token not in kept or now - float(kept[token].get("at") or 0) >= ROW_SEEN_S:
+            kept[token] = {"seqs": seqs, "at": now}
+    if kept != known:
+        core.store.set(ROWS_KEY, json.dumps(kept))
+
+
+def _sent(core) -> dict[str, float]:
+    return core.outbox.store.answered() if core.outbox else {}
 
 
 def _sphere(core) -> str | None:
@@ -120,29 +191,28 @@ def _drafts(core, now: float) -> list[dict]:
     return rows
 
 
-def _people(core, now: float, answered: set[str]) -> list[dict]:
+def _people(core, now: float, shown: set[str]) -> list[dict]:
     if not core.mail:
         return []
-    store, groups = core.mail.store, {}
-    for item in store.needing(now - MAIL_DAYS * DAY, WAITING_ITEMS):
+    groups = {}
+    for item in core.mail.store.asks(now, _sent(core)):
         card, data = item["card"] or {}, item["data"] or {}
         need, sender = card.get("needs_now"), str(item["sender"] or "")
-        if need not in ASKS or (item["event_id"] or "") in answered:
+        if (item["event_id"] or "") in shown:
             continue
         chat = item["source"] == "telegram"
         ts = float(item["ts"] or item["at"] or now)
-        if chat and need not in STILL_OPEN and store.answered_after(sender, ts):
-            continue
-        private = item["kind"] == PRIVATE or bool(card.get(PRIVATE))
-        key = PRIVATE if private else f"{item['source']}:{sender or card.get('who') or '?'}"
+        key = ask_row(item)
+        private = key == PRIVATE
         letter = private or not chat
         group = groups.setdefault(key, {
             "id": _id(core, "letter" if letter else "chat", key), "kind": "letter" if letter else "chat",
             "who": PRIVATE_WHO if private else named(str(data.get("name") or ""), "") if chat
             else named(str(card.get("who") or ""), sender),
             "since": ts, "sphere": _sphere(core) if private else None, "count": 0, "need": need, "last": ts,
-            "text": "", "deadline": "", "private": private})
+            "text": "", "deadline": "", "private": private, "seqs": []})
         group["count"] += 1
+        group["seqs"].append(item["seq"])
         group["since"] = min(group["since"], ts)
         if URGENCY[need] < URGENCY[group["need"]]:
             group["need"] = need
@@ -153,14 +223,16 @@ def _people(core, now: float, answered: set[str]) -> list[dict]:
     rows = []
     for group in sorted(groups.values(), key=lambda g: (URGENCY[g["need"]], g["since"])):
         count = group["count"]
-        if group["private"]:
-            title = f"{count} {plural(count, 'письмо', 'письма', 'писем')} о личном ждут ответа"
+        row = {"id": group["id"], "kind": group["kind"], "who": group["who"], "since": group["since"],
+               "sphere": group["sphere"]}
+        if group["private"]:  # no buttons in the app: its words and marks are behind «Показать» in Telegram
+            row["title"] = f"{count} {plural(count, 'письмо', 'письма', 'писем')} о личном ждут ответа"
         else:
             title = f"{NEEDS[group['need']]}: {said(group['text'])}"
             title += f" · срок {said(group['deadline'])}" if group["deadline"] else ""
             title += f" (+{count - 1})" if count > 1 else ""
-        rows.append({"id": group["id"], "kind": group["kind"], "who": group["who"], "title": title,
-                     "since": group["since"], "sphere": group["sphere"]})
+            row.update(title=title, t=_token(core, group["seqs"]), _seqs=group["seqs"])
+        rows.append(row)
     return rows
 
 

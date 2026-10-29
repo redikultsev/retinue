@@ -2,8 +2,9 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Router
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FeedView } from "@/components/feed";
+import { Toaster } from "@/components/toaster";
 import { api } from "@/lib/api";
-import { DEBOUNCE_MS, type Feed, type FeedRow, FeedSource, POLL_MS, waited } from "@/lib/feed";
+import { DEBOUNCE_MS, type Feed, type FeedRow, FeedSource, feedSource, POLL_MS, PRESSED_HIDE_S, waited } from "@/lib/feed";
 import { live } from "@/lib/live";
 import { initialState, type State } from "@/lib/store";
 import type { Approval } from "@/lib/types";
@@ -129,6 +130,54 @@ describe("FeedView", () => {
   });
 });
 
+describe("Her row in the feed", () => {
+  const T = "0123456789abcdef0123456789abcdef";
+  const hers = (rows: FeedRow[], over: Partial<Feed> = {}): Feed => ({
+    ...FEED,
+    count: rows.length,
+    groups: [{ action: "assistant", title: "От ассистентки", rows }],
+    ...over,
+  });
+
+  it("closes from here: the row's token goes with the press, and the toast takes it back", async () => {
+    const press = vi.spyOn(api, "waitingPress").mockResolvedValue({ ok: true });
+    const hide = vi.spyOn(feedSource, "hide");
+    const unhide = vi.spyOn(feedSource, "unhide");
+    const feed = hers([row({ key: "w", action: "assistant", source: "letter", session: null, title: "Анна Петрова", essence: "оплатить: хостинг", t: T })]);
+    mount(
+      <>
+        <FeedView feed={feed} now={NOW} />
+        <Toaster />
+      </>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Сделано" }));
+    await waitFor(() => expect(press).toHaveBeenCalledWith(T, "done"));
+    expect(hide).toHaveBeenCalledWith(T);
+    const toast = await screen.findByRole("status");
+    expect(toast.textContent).toBe("СделаноВернуть");
+    fireEvent.click(within(toast).getByRole("button", { name: "Вернуть" }));
+    await waitFor(() => expect(press).toHaveBeenLastCalledWith(T, "open"));
+    await waitFor(() => expect(unhide).toHaveBeenCalledWith(T));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("has no buttons on the private matter's row, and counts what closed and what ran out", async () => {
+    const feed = hers([row({ key: "p", action: "assistant", source: "letter", session: null, title: "Личное", essence: "2 письма о личном ждут ответа" })], {
+      closed_today: 5,
+      expired_week: 2,
+    });
+    mount(<FeedView feed={feed} now={NOW} />);
+    const section = await screen.findByRole("region", { name: "От ассистентки" });
+    expect(within(section).queryByRole("button", { name: "Сделано" })).toBeNull();
+    expect(within(section).getByText("Сегодня закрыто: 5 · Истекло без отметки за неделю: 2")).toBeTruthy();
+  });
+
+  it("still counts when nothing of hers waits", async () => {
+    mount(<FeedView feed={{ ...FEED, count: 0, groups: [], closed_today: 3, expired_week: 0 }} now={NOW} />);
+    expect(await screen.findByText("Сегодня закрыто: 3 · Истекло без отметки за неделю: 0")).toBeTruthy();
+  });
+});
+
 describe("A choice in the feed", () => {
   it("presses a ping's reply by its place, as under the summary, and shows what went in", async () => {
     const reply = vi.spyOn(api, "reply").mockResolvedValue({
@@ -188,6 +237,40 @@ describe("FeedSource", () => {
     await vi.advanceTimersByTimeAsync(POLL_MS * 3);
     expect(load).toHaveBeenCalledTimes(4);
     expect(source.feed).toBeNull();
+  });
+});
+
+describe("A pressed row", () => {
+  it("stays hidden while the feed has it, at most ten minutes, and is back on «Вернуть»", async () => {
+    const T = "0123456789abcdef0123456789abcdef";
+    const withRow: Feed = {
+      ...FEED,
+      count: 2,
+      groups: [{ action: "assistant", title: "От ассистентки", rows: [row({ key: "w", action: "assistant", t: T }), row({ key: "x", action: "assistant" })] }],
+    };
+    let clock = NOW * 1000;
+    const load = vi.fn().mockResolvedValue(withRow);
+    const source = new FeedSource({ load, setTimer: () => 0 as unknown as ReturnType<typeof setTimeout>, clearTimer: () => {}, now: () => clock });
+    await source.refresh();
+    source.hide(T);
+    expect(source.feed?.count).toBe(1);
+    expect(source.feed?.groups[0]?.rows.map((r) => r.key)).toEqual(["x"]);
+    await source.refresh();
+    expect(source.feed?.count, "the router has not pushed yet: still hidden").toBe(1);
+    source.unhide(T);
+    expect(source.feed?.count).toBe(2);
+
+    source.hide(T);
+    clock += (PRESSED_HIDE_S + 1) * 1000;
+    await source.refresh();
+    expect(source.feed?.count, "ten minutes on and still there: the press did not go through").toBe(2);
+
+    source.hide(T);
+    load.mockResolvedValueOnce({ ...withRow, count: 1, groups: [{ ...withRow.groups[0], rows: [row({ key: "x", action: "assistant" })] }] });
+    await source.refresh();
+    expect(source.feed?.count).toBe(1);
+    await source.refresh();
+    expect(source.feed?.count, "the row came back (another «Вернуть»): it shows, the press is forgotten").toBe(2);
   });
 });
 

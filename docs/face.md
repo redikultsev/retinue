@@ -197,7 +197,8 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/files/{id}` | a handed-over file's bytes, as a download — see below |
 | `GET /api/files/{id}/view` | a handed-over HTML file, for the app's sandboxed frame — see below |
 | `GET /api/files/{id}/meta` | `{file}` — one file's row, for the page `/f/<id>` that Telegram's «Открыть» opens |
-| `GET /api/feed` | `{schema, count, groups: [{action, title, rows}], bot, assistant_at, deadlines, chips}` — «Ждут тебя», «Сроки» and the status chips, [below](#the-feed) |
+| `GET /api/feed` | `{schema, count, groups: [{action, title, rows}], bot, assistant_at, deadlines, chips, closed_today, expired_week}` — «Ждут тебя», «Сроки» and the status chips, [below](#the-feed) |
+| `POST /api/waiting/press {t, action: done\|dismissed\|later\|open}` | `{ok}`: «Сделано», «Не дело», «Завтра» or «Вернуть» on a row of «От ассистентки», by its token; the router applies it ([platform.md](platform.md#the-assistants-digest)) |
 | `POST /api/sessions/{id}/base` | `{toast, card}`: «В Базу» — the session's card opened, or its open one brought up to date ([base.md](base.md#the-button)); `card` null and the reason when it has nothing to commit |
 | `GET /api/base/{id}` | `{card}` — one card, for the link a Telegram copy's «Открыть в приложении» opens (`/b/<id>`) |
 | `GET /api/base/{id}/diff` | `{diff, truncated}`: the files turned on, as the clone has them now, at most 1 MB |
@@ -524,14 +525,18 @@ session, a card or a summary changes on the stream (once per burst) and once a m
 | «Решить» | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted («В Базу: N файлов», since the first of them) | «Разрешить» / «Отказать»; a courier's «Скопировать команду»; «В Базу · N», the card in a dialog. A call longer than 4 lines or 240 characters shows its one line and «Показать и решить» first: nothing is decided unseen |
 | «Выбрать» | a ping of the last 7 days whose suggested replies are still open ([platform.md](platform.md#pings): none pressed, nothing written into the session after it, no newer ping); a session waiting with no card shown | its replies as under the summary (`{reply: {seq, n}}`): pressed here or in Telegram, one goes in once and the ping closes in both places; no replies — «Открыть и ответить» |
 | «Прочитать» | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
-| «От ассистентки» | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | «Открыть в Telegram» (`https://t.me/<bot>`): sending and deciding stay there, under her cards' buttons |
+| «От ассистентки» | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | «Открыть в Telegram» (`https://t.me/<bot>`): sending and deciding stay there, under her cards' buttons. A person's row also has «Сделано», «Не дело», «Завтра» ([mail.md](mail.md#closing-what-waits)); the private matter's has none — its buttons come after «Показать» in Telegram |
 
 Each row: an icon of where it came from, its sphere (or track), the session's title (her rows: who), how long it has
 waited and its one line — the question, the command, the summary's first line, her title. A card is the same object
 as everywhere (`approval`), decided by the same rules; the app shows its newest copy, so a press in Telegram shows at
 once. A row is `{key, action, source, session, track, sphere, sphere_title, sphere_icon, title, since, essence, ref}`
 plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row, `replies` and `summary` on a choice's,
-`base` (the count) on a «В Базу» row (`source: base`).
+`base` (the count) on a «В Базу» row (`source: base`), `t` (the row's token) on a person's row of hers.
+A pressed row leaves the feed at once and stays hidden while the feed still has its `t`, ten minutes at most — a press
+that did not go through brings it back; the toast «Сделано · Вернуть» stays 10 seconds, and «Вернуть» sends `open`
+with the same `t`. Under her rows: «Сегодня закрыто: M · Истекло без отметки за неделю: N» (`closed_today`,
+`expired_week`), at the feed's end when none of her rows waits and either is not zero.
 `bot` is the bot's username as the router last pushed it; `assistant_at` when it last pushed — a list older than two
 hours says so. `deadlines`: the digest's dates, `{id, when, title, sphere, sphere_title, sphere_icon, path}` by day —
 the next week's and the overdue, also those days ahead that wait for no one yet («Сроки» on «Сегодня»). `chips`: the

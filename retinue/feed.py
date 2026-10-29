@@ -16,8 +16,11 @@ The digest is the one thing kept. The router knows what waits in her world — a
 something of him, a draft waiting for «Отправить», a deadline of the base — and pushes it here (`POST /owner/waiting`)
 whole each time it changes and at least hourly; the platform never calls the router. It is minimal by contract:
 an id, a kind, a display name, a one-line title, a time, a sphere — no text of a letter, no address; a deadline also
-its day and its Record's path. What the face does with it is one link to the bot's chat: sending and deciding stay
-in Telegram, where an outward action is a button under its card. A deadline whose time has not come yet (`since`
+its day and its Record's path; a person's row its token `t`. What the face does with it is one link to the bot's
+chat: sending and deciding stay in Telegram, where an outward action is a button under its card. A person's row can
+be closed in the face — «Сделано», «Не дело», «Завтра», «Вернуть»: the press goes back to the router as a note by its
+token (`waiting-press`), and only the router knows what the token names. Beside the items, two counts: what closed
+today, what ran out unmarked in the week. A deadline whose time has not come yet (`since`
 ahead) is no one's queue: the face shows it only under «Сроки». The same push carries the hub's status chips
 (`chips`: the backup, the limit, the hub's build), for the face's «Сегодня».
 """
@@ -53,6 +56,10 @@ PUSH_HINT = "Нажми «Запушить» под её итогом или о�
 DIGEST_KINDS = ("letter", "chat", "draft", "deadline")
 DIGEST_KEYS = {"id", "kind", "who", "title", "since", "sphere"}
 DEADLINE_KEYS = {"when", "path"}  # a deadline's own, both optional: its day and its Record's path in the base
+TOKEN = re.compile(r"[0-9a-f]{32}")  # a person's row's `t`: what a press in the app names the row by (`waiting`)
+PRESSES = ("done", "dismissed", "later", "open")  # «Сделано», «Не дело», «Завтра», «Вернуть»
+COUNTS = ("closed_today", "expired_week")  # the digest's two numbers
+COUNT_MAX = 100_000
 DIGEST_ITEMS = 50
 DIGEST_BYTES = 32 * 1024
 DIGEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._/-]{0,95}")
@@ -94,8 +101,9 @@ def clean(body: object, now: float) -> tuple[list[dict], str]:
         raise Refused(f"items: больше {DIGEST_ITEMS}")
     items, seen = [], set()
     for n, item in enumerate(body["items"]):
-        allowed = DIGEST_KEYS | DEADLINE_KEYS if isinstance(item, dict) and item.get("kind") == "deadline" \
-            else DIGEST_KEYS
+        kind = item.get("kind") if isinstance(item, dict) else None
+        allowed = DIGEST_KEYS | DEADLINE_KEYS if kind == "deadline" else \
+            DIGEST_KEYS | {"t"} if kind in ("letter", "chat") else DIGEST_KEYS
         if not isinstance(item, dict) or not allowed >= set(item) or not DIGEST_KEYS - {"sphere"} <= set(item):
             raise Refused(f"items[{n}]: поля не те")
         if not isinstance(item["id"], str) or not DIGEST_ID.fullmatch(item["id"]) or item["id"] in seen:
@@ -110,11 +118,25 @@ def clean(body: object, now: float) -> tuple[list[dict], str]:
             raise Refused(f"items[{n}].sphere: не имя сферы")
         if not isinstance(item["who"], str) or not isinstance(item["title"], str):
             raise Refused(f"items[{n}]: who и title — строки")
+        if "t" in item and (not isinstance(item["t"], str) or not TOKEN.fullmatch(item["t"])):
+            raise Refused(f"items[{n}].t: не токен")
         seen.add(item["id"])
         items.append({"id": item["id"], "kind": item["kind"], "who": _text(item["who"], WHO_CHARS),
                       "title": _text(item["title"], TITLE_CHARS), "since": float(since), "sphere": sphere,
-                      **_deadline(item, n)})
+                      **({"t": item["t"]} if "t" in item else {}), **_deadline(item, n)})
     return items, bot
+
+
+def clean_counts(body: object) -> dict:
+    """The digest's two numbers: asks closed today and asks run out unmarked in the week, each a count — 0 when the
+    router sends none. One off the contract refuses the whole push (`Refused`)."""
+    out = {}
+    for key in COUNTS:
+        value = body.get(key, 0) if isinstance(body, dict) else 0
+        if type(value) is not int or not 0 <= value <= COUNT_MAX:
+            raise Refused(f"{key}: не число")
+        out[key] = value
+    return out
 
 
 def _deadline(item: dict, n: int) -> dict:
@@ -197,22 +219,32 @@ class Feed:
         self.store, self.cfg = store, cfg
         store.db.execute("CREATE TABLE IF NOT EXISTS assistant_digest (id INTEGER PRIMARY KEY CHECK (id = 1), "
                          "items TEXT NOT NULL, bot TEXT NOT NULL DEFAULT '', at REAL NOT NULL)")
-        if "chips" not in {row[1] for row in store.db.execute("PRAGMA table_info(assistant_digest)")}:
+        columns = {row[1] for row in store.db.execute("PRAGMA table_info(assistant_digest)")}
+        if "chips" not in columns:
             store.db.execute("ALTER TABLE assistant_digest ADD COLUMN chips TEXT NOT NULL DEFAULT '[]'")
+        if "counts" not in columns:
+            store.db.execute("ALTER TABLE assistant_digest ADD COLUMN counts TEXT NOT NULL DEFAULT '{}'")
         store.db.commit()
 
     # --- the assistant's digest ---------------------------------------------------------------------------------
 
-    def keep(self, items: list[dict], bot: str, now: float, chips: list[dict] | None = None) -> None:
-        """The digest as pushed, replacing the one before it whole — its chips too."""
-        self.store.db.execute("INSERT OR REPLACE INTO assistant_digest (id, items, bot, at, chips) VALUES "
-                              "(1, ?, ?, ?, ?)", (json.dumps(items, ensure_ascii=False), bot, now,
-                                                  json.dumps(chips or [], ensure_ascii=False)))
+    def keep(self, items: list[dict], bot: str, now: float, chips: list[dict] | None = None,
+             counts: dict | None = None) -> None:
+        """The digest as pushed, replacing the one before it whole — its chips and numbers too."""
+        self.store.db.execute("INSERT OR REPLACE INTO assistant_digest (id, items, bot, at, chips, counts) VALUES "
+                              "(1, ?, ?, ?, ?, ?)", (json.dumps(items, ensure_ascii=False), bot, now,
+                                                     json.dumps(chips or [], ensure_ascii=False),
+                                                     json.dumps(counts or {})))
         self.store.db.commit()
 
     def chips(self) -> list[dict]:
         row = self.store.db.execute("SELECT chips FROM assistant_digest WHERE id = 1").fetchone()
         return json.loads(row[0]) if row else []
+
+    def counts(self) -> dict:
+        """The digest's two numbers as last pushed; 0 each before."""
+        row = self.store.db.execute("SELECT counts FROM assistant_digest WHERE id = 1").fetchone()
+        return {key: 0 for key in COUNTS} | (json.loads(row[0]) if row else {})
 
     def digest(self) -> tuple[list[dict], str, float | None]:
         row = self.store.db.execute("SELECT items, bot, at FROM assistant_digest WHERE id = 1").fetchone()
@@ -291,7 +323,8 @@ class Feed:
         items, _, _ = self.digest()
         out["assistant"] = [{"key": f"assistant:{i['id']}", "action": "assistant", "source": i["kind"],
                              "session": None, "track": None, **self._sphere(i.get("sphere")), "title": i["who"],
-                             "since": i["since"], "essence": i["title"], "ref": i["id"]}
+                             "since": i["since"], "essence": i["title"], "ref": i["id"],
+                             **({"t": i["t"]} if i.get("t") else {})}
                             for i in items if i["since"] <= now]  # a deadline days ahead waits under «Сроки» only
         return [row for action, _ in ACTIONS for row in out[action]]
 
@@ -317,7 +350,7 @@ class Feed:
                              "path": i.get("path")} for i in items if i["kind"] == "deadline" and i.get("when")),
                            key=lambda d: d["when"])
         return {"count": len(rows), "groups": [g for g in groups if g["rows"]], "bot": bot, "assistant_at": at,
-                "deadlines": deadlines, "chips": self.chips()}
+                "deadlines": deadlines, "chips": self.chips(), **self.counts()}
 
     def telegram(self, now: float) -> dict:
         """`POST /owner/feed`: the first TELEGRAM_ROWS rows for `/wait`, without the cards' inputs, and how many

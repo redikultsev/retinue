@@ -928,6 +928,29 @@ your repositories (`code:` in platform.yaml), a `git push` or a `gh pr create` s
 default branch ([code.md](code.md)). Each entry is also a
 deny rule of every run, so not even a mistaken grant could run it.
 
+## How the work went
+
+The platform counts its own week, in code and in words that are its own rather than the CLI's (`retinue/signals.py`).
+A row is a kind, a time, a session, at most a tool and a short note — never an input, a command or a message:
+
+| Kind | Where it comes from | Its note |
+|---|---|---|
+| `gate` | every hook the gate answers | `allow` (your grant), `deny` or `defer` with the gate's reason, `rule` / `rule_deny` (an always or deny rule decides), `classifier` (nothing named it), `blocked` with the classifier's `[tag]` only, `asked` (a fallback run's ask) |
+| `tool_error` | a tool result the CLI marks as an error | the call's id: the tool is the one the gate saw for it |
+| `compaction` | the CLI's `compact_boundary` line | — |
+| `run_error` | a turn the platform told you ended in an error («Ход оборвался ошибкой») | once a run |
+| `owner_stop` | «Стоп» in the app | — |
+
+`tool_error` and `compaction` are read by the engine's adapter (`signals.from_line`), the one place that knows the
+CLI's stream-json, keyed by the lane's line so a line given again counts once; another engine gets its own adapter
+and the kinds stay. What the platform's tables already hold is read there, not copied: your messages, runs, sessions,
+and cards with how you decided them. Rows older than 400 days go when the platform starts.
+
+`POST /owner/stats` (the router's token, as every `/owner/*` call) with `{since, until}` answers the tally: sessions
+and sub-sessions started, runs, your messages and stops, tool errors by tool, compactions, failed turns, the gate's
+calls by how they went and its five most frequent reasons, and cards by how they ended. The weekly review puts it
+in words at its end, «Как шла неделя» ([proactive.md](proactive.md#how-the-week-went)).
+
 ## Probes
 
 The CLI behaviour the platform rests on — defer, resume, marker hooks, settings that do not load — is pinned by

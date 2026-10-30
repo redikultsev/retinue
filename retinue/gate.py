@@ -40,7 +40,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from . import approvals, exfil, questions, subs
+from . import approvals, exfil, questions, signals, subs
 from .approvals import Mark, Unbindable
 from .config import LaneRef
 from .sessions import PlatformStore
@@ -136,6 +136,7 @@ class Gate:
         if not secret:
             raise SystemExit("the platform needs RETINUE_HOOK_SECRET: hook tokens are kept only as its HMAC")
         self.store, self.lanes, self.secret, self.clock = store, lanes, secret.encode(), clock
+        signals.prepare(store, clock())  # its journal of every answer (`_journal`)
         self.skills_mount = skills_mount  # the owner's skills as the platform reads them (approvals.SKILLS)
         self.memory_mount = memory_mount  # and his memory snapshot (approvals.OWNER_MEMORY)
         self.push_lanes: frozenset[str] = frozenset()  # lanes whose `git push` is the owner's «Запушить» (topush)
@@ -188,14 +189,26 @@ class Gate:
         if event == "PreToolUse":
             answer = await self.pre_tool_use(run, body)
             self._remember(run, body, answer)
+            marks = [m.kind for m in self._call(str(body.get("tool_use_id") or "")).marks]
+            self._journal(run, body, signals.gate_what(answer, marks))
             return answer
         if event == "PermissionRequest":
+            self._journal(run, body, "asked")
             return self.permission_request(run, body)
         if event == "PermissionDenied":
+            self._journal(run, body, signals.blocked_what(str(body.get("reason") or "")))
             return self.permission_denied(run, body)
         if event == "PostToolUse":
             self.post_tool_use(run, body)
         return {}
+
+    def _journal(self, run: Run, body: dict, what: str) -> None:
+        """Every answer of the gate, for the week's tally (`signals`): the tool and how it went, never its input."""
+        try:
+            signals.add(self.store, signals.GATE, run.session, self.clock(), str(body.get("tool_name") or ""), what,
+                        str(body.get("tool_use_id") or ""))
+        except Exception:  # noqa: BLE001 — a tally that failed never holds a call back
+            log.exception("gate journal not written")
 
     def _remember(self, run: Run, body: dict, answer: dict) -> None:
         """A call of the platform's own tools this gate let through — to the CLI's rules or classifier, or allowed —

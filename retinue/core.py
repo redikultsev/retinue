@@ -373,6 +373,9 @@ class Core:
         self.proactive = proactive
         if proactive:
             proactive.attach(self)
+        # The platform's `/owner/<call>` (`bridge.PlatformClient.owner`), set by the router when there is one: the
+        # weekly review asks it for the week's tally.
+        self.platform: Callable[[str, dict, float], Awaitable[dict]] | None = None
 
     async def start(self, channels: list[Channel]) -> None:
         for agent_id in self.agents:
@@ -920,12 +923,16 @@ class Core:
             await self._fresh_base()
         goals = self.goals()
         counted = await self.proactive.weekly_line(now) if self.proactive else ""  # «<трекер> за неделю: N (цель …)»
+        work = await self.proactive.work_week(now) if self.proactive else ""  # «Как шла неделя»: sessions, gate, errors
         if not goals:
-            await self.tell_owner("\n\n".join(filter(None, [NO_GOALS.format(path=GOALS), counted])),
+            await self.tell_owner("\n\n".join(filter(None, [NO_GOALS.format(path=GOALS), counted, work])),
                                   meta={"job": job.key})
             return
         agent = self.agents[self.default_agent]
         facts = await self.week_facts(now) + ([f"- {counted} Эту строку Роутер добавит в конце сам."] if counted else [])
+        if work:
+            facts += ["- Блок «Как шла неделя» Роутер добавит в конце сам; можешь заметить в нём одно главное:",
+                      *(f"  {line}" for line in work.splitlines()[1:])]
         context_id = f"weekly-{job.key}"
         status, answer, meta = "error", "", {}
         if self.limit_until <= now:
@@ -944,7 +951,7 @@ class Core:
             text = answer.strip()
         else:
             text = "\n".join(["Недельный обзор — без ассистентки: её запуск не удался. Факты недели:", *facts])
-        await self.tell_owner("\n\n".join(filter(None, [text, counted])), meta={"job": job.key})
+        await self.tell_owner("\n\n".join(filter(None, [text, counted, work])), meta={"job": job.key})
 
     async def digest(self, job: Job, now: float) -> None:
         """The evening list of what the assistant committed to the base in a day: written by code, with a button to

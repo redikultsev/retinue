@@ -109,6 +109,8 @@ def main() -> None:
     # The platform's sessions: its cards and summaries reach the owner through Telegram, never through the core.
     bridge = PlatformBridge(PlatformClient(cfg.platform_url, cfg.platform_token, "платформа"), store, cfg.face_url) \
         if cfg.platform_url else None
+    if bridge:  # the week's tally of the platform's sessions, for the weekly review
+        core.platform = bridge.neighbour.owner
     if bridge:  # what waits in the assistant's world, pushed for the face's «Ждут тебя»
         bridge.waiting = lambda now: digest(core, now)
         bridge.chips = lambda now: chips(core, now)

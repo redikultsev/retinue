@@ -81,6 +81,38 @@ memory:
     meetings: [встреча, meeting]      # a calendar event with one of these (or an item's name) is the tracker's
 ```
 
+## How the week went
+
+The weekly review ends with a block of code's own, after her words — «Как шла неделя»: the platform's tally of the
+last seven days (`POST /owner/stats`, [platform.md](platform.md#how-the-work-went)) and the assistant's own runs
+(the router's `runs`):
+
+```
+Как шла неделя:
+- Сессий начато: 4 и подсессий 2; запусков: 11; твоих сообщений в них: 30; «Стоп»: 1.
+- Карточек разрешения: 6 — разрешил 4, отказал 1, истекли или устарели 1; вопросов: 2, отвечено 2.
+- Шлюз: ответов 200 — по правилам 150, решил классификатор 40 (остановил 2), к тебе 6, отказал сам 2. …
+- Ошибок инструментов: 5 (Bash — 4, Edit — 1); сжатий контекста: 2; ходов оборвалось ошибкой: 1.
+- Ассистентка: запусков 23, неудачных 1, упёрлась в лимит 2.
+```
+
+She gets the same lines among the week's facts and may remark on one; she never counts. A platform that does not
+answer within 10 s is said so («Платформа не ответила — счёта сессий нет.»); no platform — her runs only. The block
+comes with a review that has no goals to read too.
+
+## The base's health, on Mondays
+
+Monday's summary also says what in the base wants tending, by the base's own rules, counted by code from the
+files — one line each, the first three Records named and the rest counted, nothing when all is well:
+
+- Records with `practice: unknown` — a rule whose practice nobody has checked (closed ones left out);
+- open Tasks (`type: task`, `status: open`) whose `date` is more than 28 days ago;
+- showcases (`<Space>/AGENTS.md`) longer than 200 lines — loaded whole into every talk about the Space;
+- folders of Records holding more than 30;
+- relative links to a `.md` that is not there (a link inside code is an example, not a link).
+
+Once a week, not every morning: the same list each day would be read by nobody.
+
 ## «Mac не пушил N дней»
 
 The summary says so when the hub's last commit not made by the router (`memory.author`) is more than 3 days old.

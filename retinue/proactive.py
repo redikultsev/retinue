@@ -1,5 +1,6 @@
 """What the router says to the owner unasked, beyond his reminders: the zone that follows him, the deadlines in his
-base, the week of his tracker, a Mac that has not pushed, and the assistant speaking first now and then.
+base, the week of his tracker, a Mac that has not pushed, the base's health on Mondays, how the week of work went,
+and the assistant speaking first now and then.
 
 Everything here is counted by code. The heartbeat (`HEARTBEAT_S`) runs a checklist — a deadline three days off, a
 failed backup, nothing moved in the tracker by Thursday, a new zone in the base — and writes to the owner only when
@@ -16,10 +17,12 @@ import asyncio
 import json
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import unquote
 
 from . import clock
 from .lifehub import Tracker, front_matter, plural
@@ -40,6 +43,14 @@ NATURES = ("knowledge", "profile", "journal", "artifacts")
 CLOSED = ("superseded", "done", "retired")  # a Record in one of these states has no deadline left
 FIELDS = {"until": "действует до", "stale_after": "перепроверить", "deadline": "срок"}
 LOCATION = "profile/location.md"  # a Record whose header field `tz` names the zone he lives in; `memory.location`
+SHOWCASE = "AGENTS.md"     # a Space's showcase: one in each top folder of the base
+SHOWCASE_LINES = 200       # a showcase longer than this is loaded whole into every talk about its Space: split it
+FOLDER_RECORDS = 30        # a folder with more Records than this is no longer seen at a glance: group it
+TASK_OLD_DAYS = 28         # an open Task older than this is named
+HEALTH_NAMED = 3           # Records named under each line of the base's health; the rest are counted
+STATS_TIMEOUT_S = 10.0     # the platform's tally for the weekly review waits no longer
+LINK = re.compile(r"\]\(([^)\s#]+\.md)(?:#[^)\s]*)?\)")  # a relative link to a Record or a showcase
+CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)  # an example in code is no link
 
 ZONE_KEY, LEVEL_KEY, QUIET_KEY = "owner.tz", "initiative.level", "initiative.quiet"
 SEEDED_KEY = "proactive.seeded"  # the day the first heartbeat with the base took stock
@@ -123,6 +134,98 @@ def deadline_line(item: Deadline, today: date) -> str:
     when = ("сегодня" if days == 0 else f"просрочено {-days} {plural(-days, 'день', 'дня', 'дней')}" if days < 0
             else f"через {days} {plural(days, 'день', 'дня', 'дней')}")
     return f"- {when} ({item.day.day} {clock.MONTHS[item.day.month - 1]}): {item.title} — {FIELDS[item.field]} · {item.path}"
+
+
+def base_health(tree: str | Path, today: date) -> list[str]:
+    """What in the base wants tending, by its own rules and counted by code: facts whose practice nobody knows, Tasks
+    left open, showcases and folders grown past their limits, links that lead nowhere. One line each, empty when
+    nothing does. Read from the files, never from git: the tree as the hub has it now."""
+    root = Path(tree)
+    if not root.is_dir():
+        return []
+    unknown, old_tasks, broken, folders = [], [], [], {}
+    for path in sorted(root.glob("*/**/*.md")):
+        relative = path.relative_to(root)
+        if any(p.startswith(".") for p in relative.parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        broken += [f"{relative.as_posix()} → {target}" for target in LINK.findall(CODE.sub("", text))
+                   if "://" not in target and not (path.parent / unquote(target)).exists()]
+        if len(relative.parts) < 3 or relative.parts[1] not in NATURES:
+            continue
+        folders[relative.parent.as_posix()] = folders.get(relative.parent.as_posix(), 0) + 1
+        head = front_matter(path) or {}
+        if str(head.get("status", "")).strip() in CLOSED:
+            continue
+        if str(head.get("practice", "")).strip() == "unknown":
+            unknown.append(relative.as_posix())
+        if str(head.get("type", "")).strip() == "task" and str(head.get("status", "")).strip() == "open" and \
+                (day := _day(head.get("date"))) is not None and (today - day).days > TASK_OLD_DAYS:
+            old_tasks.append((day, relative.as_posix()))
+    long_showcases = []
+    for path in sorted(root.glob(f"*/{SHOWCASE}")):
+        try:
+            n = len(path.read_text(encoding="utf-8", errors="replace").splitlines())
+        except OSError:
+            continue
+        if n > SHOWCASE_LINES:
+            long_showcases.append(f"{path.relative_to(root).as_posix()} — {n}")
+
+    def line(what: str, found: list[str]) -> str:
+        named = ", ".join(found[:HEALTH_NAMED]) + (f" и ещё {len(found) - HEALTH_NAMED}" if len(found) > HEALTH_NAMED
+                                                   else "")
+        return f"- {what}: {len(found)} — {named}"
+
+    lines = []
+    if unknown:
+        lines.append(line("Практика неизвестна (practice: unknown)", unknown))
+    if old_tasks:
+        lines.append(line(f"Задачи открыты дольше {TASK_OLD_DAYS} дней", [p for _, p in sorted(old_tasks)]))
+    if long_showcases:
+        lines.append(line(f"Витрины длиннее {SHOWCASE_LINES} строк — пора дробить", long_showcases))
+    if crowded := [f"{folder} — {n}" for folder, n in sorted(folders.items()) if n > FOLDER_RECORDS]:
+        lines.append(line(f"Папки больше {FOLDER_RECORDS} Записей — пора группировать", crowded))
+    if broken:
+        lines.append(line("Битые ссылки", broken))
+    return lines
+
+
+def week_lines(stats: dict, runs: dict[str, int]) -> list[str]:
+    """«Как шла неделя»: the platform's tally (`signals.tally`) and the assistant's own runs, in words. Numbers only:
+    what they mean is the owner's to read, and the assistant's to remark on."""
+    owner, engine, gate, cards = (stats.get(k) or {} for k in ("owner", "engine", "gate", "cards"))
+    approval, question = cards.get("approval") or {}, cards.get("question") or {}
+    by = gate.get("by_decision") or {}
+    lines = [f"- Сессий начато: {stats.get('sessions', 0)}"
+             + (f" и подсессий {stats['sub_sessions']}" if stats.get("sub_sessions") else "")
+             + f"; запусков: {stats.get('runs', 0)}; твоих сообщений в них: {owner.get('messages', 0)}"
+             + (f"; «Стоп»: {owner['stops']}" if owner.get("stops") else "") + "."]
+    if approval.get("shown") or question.get("shown") or cards.get("courier"):
+        lines.append(f"- Карточек разрешения: {approval.get('shown', 0)} — разрешил {approval.get('granted', 0)}, "
+                     f"отказал {approval.get('rejected', 0)}, истекли или устарели {approval.get('lapsed', 0)}"
+                     + (f", ждут {approval['open']}" if approval.get("open") else "")
+                     + f"; вопросов: {question.get('shown', 0)}, отвечено {question.get('answered', 0)}"
+                     + (f"; только для тебя (курьер): {cards['courier']}" if cards.get("courier") else "") + ".")
+    if gate.get("calls"):
+        reasons = gate.get("reasons") or {}
+        lines.append(f"- Шлюз: ответов {gate['calls']} — по правилам {by.get('rule', 0) + by.get('rule_deny', 0)}, "
+                     f"решил классификатор {by.get('classifier', 0)} (остановил {by.get('blocked', 0)}), "
+                     f"к тебе {by.get('defer', 0)}, отказал сам {by.get('deny', 0)}"
+                     + (". Чаще всего: " + "; ".join(f"«{w}» — {n}" for w, n in list(reasons.items())[:2])
+                        if reasons else "") + ".")
+    errors = engine.get("tool_errors_by_tool") or {}
+    lines.append(f"- Ошибок инструментов: {engine.get('tool_errors', 0)}"
+                 + (" (" + ", ".join(f"{tool} — {n}" for tool, n in errors.items()) + ")" if errors else "")
+                 + f"; сжатий контекста: {engine.get('compactions', 0)}; ходов оборвалось ошибкой: "
+                 f"{engine.get('run_errors', 0)}.")
+    if runs:
+        failed = sum(n for status, n in runs.items() if status not in ("done", "limit"))
+        lines.append(f"- Ассистентка: запусков {sum(runs.values())}, неудачных {failed}"
+                     + (f", упёрлась в лимит {runs['limit']}" if runs.get("limit") else "") + ".")
+    return lines
 
 
 def counted_rows(text: str | None, tracker: Tracker) -> set[str]:
@@ -414,8 +517,8 @@ class Proactive:
     # --- the morning summary and the weekly review -------------------------------------------------------------
 
     async def summary_lines(self, now: float) -> list[str]:
-        """Code's part of the morning summary, after her words: «Сроки», on Monday the tracker's last week, a
-        Mac that has not pushed. Empty without the base."""
+        """Code's part of the morning summary, after her words: «Сроки», on Monday the tracker's last week and the
+        base's health, a Mac that has not pushed. Empty without the base."""
         core = self.core
         if not core.memory:
             return []
@@ -435,6 +538,11 @@ class Proactive:
             log.exception("deadlines not read")
         if clock.local(now, core.tz).weekday() == 0:
             lines.append(await self.week_line(self.week_start(now, back=1), self.week_start(now)))
+            try:  # once a week: the same list every morning would be read by nobody
+                if health := await asyncio.to_thread(base_health, core.memory.tree, clock.local(now, core.tz).date()):
+                    lines.append("\n".join(["Здоровье Базы:", *health]))
+            except Exception:
+                log.exception("the base's health not read")
         if mac := await self.mac_line(now):
             lines.append(mac)
         return [line for line in lines if line]
@@ -454,6 +562,26 @@ class Proactive:
 
     async def weekly_line(self, now: float) -> str:
         return await self.week_line(self.week_start(now))
+
+    async def work_week(self, now: float) -> str:
+        """«Как шла неделя» for the weekly review: the platform's tally of its sessions and the assistant's own runs
+        over the last seven days. Without the platform — her runs only; a platform that does not answer is said."""
+        core, since = self.core, now - 7 * 86400
+        runs = dict(core.store.db.execute("SELECT status, COUNT(*) FROM runs WHERE ts >= ? GROUP BY status",
+                                          (since,)).fetchall())
+        stats: dict = {}
+        if core.platform is not None:
+            try:
+                stats = await core.platform("stats", {"since": since, "until": now}, STATS_TIMEOUT_S)
+            except Exception as exc:  # noqa: BLE001 — the review goes out whatever the platform does
+                log.warning("the platform's tally not read: %s", exc)
+                stats = {"error": str(exc)}
+        hers = week_lines({}, runs)[-1:] if runs else []  # her runs' line is the last one
+        if "error" in stats:
+            lines = ["- Платформа не ответила — счёта сессий нет.", *hers]
+        else:
+            lines = week_lines(stats, runs) if stats else hers
+        return "\n".join(["Как шла неделя:", *lines]) if lines else ""
 
     # --- her own thought ---------------------------------------------------------------------------------------
 

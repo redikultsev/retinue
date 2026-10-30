@@ -29,8 +29,8 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, cliengine, courier, face, feed, inbox, outfiles, pings, questions, subs, tobase,
-               topush, transcript)
+from . import (approvals, attachments, cliengine, courier, face, feed, inbox, outfiles, pings, questions, signals, subs,
+               tobase, topush, transcript)
 from .base import BaseRepo, under
 from . import library as library_mod
 from . import code as code_mod
@@ -132,7 +132,7 @@ class Platform:
                         web.post("/owner/file", self.owner_file), web.post("/owner/sphere", self.owner_sphere),
                         web.post("/owner/spheres", self.owner_spheres),
                         web.post("/owner/waiting", self.owner_waiting), web.post("/owner/feed", self.owner_feed),
-                        web.post("/owner/library", self.owner_library),
+                        web.post("/owner/library", self.owner_library), web.post("/owner/stats", self.owner_stats),
                         web.post("/items", self.items),
                         web.post("/items/confirm", self.confirm)])
         return app
@@ -306,6 +306,14 @@ class Platform:
             log.warning("library: page %s dropped: %s", page["id"], page["why"])
         self.library.keep(pages, self.clock())
         return web.json_response({"ok": True, "pages": len(pages), "dropped": dropped})
+
+    async def owner_stats(self, request: web.Request) -> web.Response:
+        """How the work went between `since` and `until` (`signals.tally`): the weekly review's «Как шла неделя»."""
+        body = await _body(request)
+        since, until = body.get("since"), body.get("until", self.clock())
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (since, until)) or since >= until:
+            return web.json_response({"error": "since, until: числа, since раньше until"}, status=400)
+        return web.json_response(signals.tally(self.store, float(since), float(until)))
 
     async def owner_feed(self, request: web.Request) -> web.Response:
         """`/wait` in the owner's chat: the queue's first rows, as the router words them."""
@@ -495,6 +503,7 @@ class Platform:
         session = self.store.session(session_id)
         if session is None:
             return False
+        signals.add(self.store, signals.OWNER_STOP, session_id, self.clock())
         stopped = await self._stop_family(session)  # a parent's sub-sessions stop with it, a run of its own or not
         if session["lane"] not in self.lanes:
             return stopped
@@ -964,6 +973,8 @@ class Platform:
         # What a line does is done before it is stored: a crash in between does it again, and every effect is a
         # state move that happens once.
         self._apply(session, run, data, now)
+        for n, (kind, call) in enumerate(signals.from_line(data)):  # keyed by the line: a replay adds none
+            signals.add(self.store, kind, session_id, now, call=call, key=f"{lane}:{item['seq']}:{n}")
         if (turn := self.store.add_raw(lane, item["seq"], session_id, run, line, now)) is not None:
             self.store.reproject(session_id, turn)
 
@@ -1039,6 +1050,7 @@ class Platform:
             pass  # the shutdown's own interrupt: the run's end resumes the session (`_continue`)
         elif self._failed(line):
             why = str(line.get("result") or "") or str(line.get("subtype") or "") or "без описания"
+            signals.add(self.store, signals.RUN_ERROR, session["id"], now, key=f"run:{run}")
             self._summary(session, f"Ход оборвался ошибкой: {why}", pings.FAILED, run)
             self._set_state(session["id"], "idle", now)
             self._owe_look(session)

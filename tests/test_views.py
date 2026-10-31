@@ -140,6 +140,7 @@ def test_a_board_shows_the_days_in_a_column_and_turns_rotten_past_the_forms_thre
         await add(store, "leads", {"company": "Globex"}, NOW)
         board = (await shown(store))["leads"]["funnel"]
         assert board["group"] == "stage" and board["rot"] == 7 and board["dropped"] == 0
+        assert board["fields"] == ["company", "role", "close_reason"], "the view's fields, in its order"
         columns = {c["value"]: c for c in board["columns"]}
         assert [c["value"] for c in board["columns"]] == ["evaluated", "applied", "responded", "interview", "closed",
                                                           None], "the enum's order, the unknown last"
@@ -168,7 +169,8 @@ def test_a_queue_lists_the_longest_silent_first_and_turns_rotten_past_the_thresh
         queue = (await shown(store))["touches"]["my_move"]
         assert queue["count"] == 3 and queue["rot"] == 2 and queue["dropped"] == 0
         assert [(r["days"], r["rotten"]) for r in queue["rows"]] == [(5, True), (1, False), (None, False)]
-        assert set(queue["rows"][0]["fields"]) == {"lead", "channel"}
+        assert set(queue["rows"][0]["fields"]) == {"lead", "channel"} and queue["fields"] == ["lead", "channel"]
+        assert queue["rows"][0]["refs"] == {"lead": "Acme"}, "a ref by the words of the record it names, not its id"
         await store.close()
 
     run(body)

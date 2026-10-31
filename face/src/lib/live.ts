@@ -9,7 +9,7 @@
 import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
 import { type Action, initialState, reduce, type State, waitsOnOwner } from "./store";
-import { type Approval, EVENT_KINDS, type Meta, SCHEMA, type StreamEvent } from "./types";
+import { type Approval, type CollectionEvent, EVENT_KINDS, type Meta, SCHEMA, type StreamEvent } from "./types";
 import type { Upload } from "./uploads";
 
 export const HIDDEN_RECONNECT_MS = 45_000;
@@ -43,6 +43,7 @@ export class Live {
   private listeners = new Set<() => void>();
   private cardListeners = new Set<(approval: Approval) => void>();
   private uploadListeners = new Set<(file: Upload) => void>();
+  private collectionListeners = new Set<(event: CollectionEvent) => void>();
   private resyncListeners = new Set<() => void>();
   private source: EventSource | null = null;
   private watched = new Set<string>();
@@ -191,6 +192,10 @@ export class Live {
       const file = JSON.parse((e as MessageEvent<string>).data) as Upload;
       for (const l of this.uploadListeners) l(file);
     });
+    source.addEventListener("collection", (e) => {
+      const event = JSON.parse((e as MessageEvent<string>).data) as CollectionEvent;
+      for (const l of this.collectionListeners) l(event);
+    });
     source.addEventListener("delta", (e) => {
       const data = JSON.parse((e as MessageEvent<string>).data) as { session: string; text: string };
       this.dispatch({ type: "delta", session: data.session, text: data.text });
@@ -232,6 +237,12 @@ export class Live {
   onUpload(listener: (file: Upload) => void): () => void {
     this.uploadListeners.add(listener);
     return () => this.uploadListeners.delete(listener);
+  }
+
+  /** Told of each change to a collection while the app is open: its name and its newest `rev`. */
+  onCollection(listener: (event: CollectionEvent) => void): () => void {
+    this.collectionListeners.add(listener);
+    return () => this.collectionListeners.delete(listener);
   }
 
   isWatched(id: string): boolean {

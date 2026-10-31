@@ -6,6 +6,9 @@ import { PageHeader, PAGE_X } from "@/components/page-header";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { BaseMarkdown } from "@/components/base-markdown";
+import { Board } from "@/components/views/board";
+import { Queue } from "@/components/views/queue";
+import { StatStrip } from "@/components/views/stat";
 import { ArrowLeft, ChevronRight, MessageCircle, Plus } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,10 +16,12 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
+import { collectionsApi, layout, type Placed, useSpaceViews } from "@/lib/collections";
 import { plural, sessionStateWord, when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { listed } from "@/lib/store";
 import {
+  day,
   discussText,
   headWords,
   NATURE_WORDS,
@@ -379,8 +384,26 @@ function Records({ space, view }: { space: string; view: SpaceView }) {
   );
 }
 
-export function SpacePage({ space, read = spacesApi.space }: { space: string; read?: typeof spacesApi.space }) {
+/** A board or a queue in its own section; one the platform could not make says why in its place. */
+function Shown({ placed }: { placed: Placed }) {
+  const { collection, view } = placed;
+  return (
+    <Section title={view.title} count={view.error === undefined && view.kind === "queue" ? view.count : undefined}>
+      {view.error !== undefined ? (
+        <Empty>{`Not shown: ${view.error}`}</Empty>
+      ) : view.kind === "queue" ? (
+        <Queue collection={collection} view={view} />
+      ) : view.kind === "board" ? (
+        <Board collection={collection} view={view} />
+      ) : null}
+    </Section>
+  );
+}
+
+export function SpacePage({ space, read = spacesApi.space, views = collectionsApi }: { space: string; read?: typeof spacesApi.space; views?: typeof collectionsApi }) {
   const { sessions } = useLiveState();
+  const shown = useSpaceViews(space, views);
+  const placed = useMemo(() => layout(shown.data), [shown.data]);
   const spheres = useSpheres();
   const sphere = sphereOf(spheres, space);
   const { data, error } = useRead(`space:${space}`, () => read(space));
@@ -403,6 +426,18 @@ export function SpacePage({ space, read = spacesApi.space }: { space: string; re
       <Header up={{ label: "To the Spaces" }} title={`${sphere?.icon ? `${sphere.icon} ` : ""}${spaceTitle(space, sphere, view?.title)}`} />
       <main className={cn("mx-auto flex w-full max-w-3xl flex-col gap-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]", PAGE_X)}>
         {summary.length > 0 && <p className="px-1 text-sm text-muted-foreground">{summary.join(" · ")}</p>}
+        {shown.error && !shown.data && <Empty>{`The views did not load: ${shown.error}`}</Empty>}
+        {placed.queues.map((p) => (
+          <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
+        ))}
+        {placed.stats.length > 0 && shown.data && (
+          <Section
+            title="Numbers"
+            action={<span className="text-xs text-muted-foreground">{`as of ${day(shown.data.today)} · ${shown.data.tz}`}</span>}
+          >
+            <StatStrip stats={placed.stats} />
+          </Section>
+        )}
         <Section
           title="Sessions"
           count={mine.length}
@@ -423,6 +458,9 @@ export function SpacePage({ space, read = spacesApi.space }: { space: string; re
             <Empty>No sessions here.</Empty>
           )}
         </Section>
+        {placed.boards.map((p) => (
+          <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
+        ))}
         {error && !view && <Empty>{error}</Empty>}
         {!error && !view && <Empty>Loading the Showcase…</Empty>}
         {view && (

@@ -154,4 +154,17 @@ describe("Live", () => {
       vi.useRealTimers();
     }
   });
+
+  it("tells each collection change to who listens, and keeps none of it in the state", async () => {
+    const { live } = setup();
+    await live.start();
+    const told: unknown[] = [];
+    const off = live.onCollection((e) => told.push(e));
+    const before = live.getState();
+    FakeSource.all[0]!.emit("collection", { name: "deals", rev: "01J8ZQ4Y7Z5G0000000000000A" }, 11);
+    off();
+    FakeSource.all[0]!.emit("collection", { name: "deals", rev: "01J8ZQ4Y7Z5G0000000000000B" }, 12);
+    expect(told).toEqual([{ name: "deals", rev: "01J8ZQ4Y7Z5G0000000000000A" }]);
+    expect(live.getState()).toBe(before);
+  });
 });

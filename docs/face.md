@@ -576,11 +576,25 @@ is as of opening the session.
 - **“Spaces”** (`/spaces`, `pages/spaces.tsx`): the Base, read only ([base.md](base.md#reading-the-base-in-the-app)).
   The grid has a tile per Space — the sphere's icon and title when a sphere has its name, else the Showcase's title —
   with “N waiting”, “N working” (from the live sessions, as the list counts them) and “N questions” (its Open questions).
-  A Space (`/spaces/<space>`) is its Showcase as a screen, in this order: the sphere's sessions (waiting first, then
-  working, then the rest of the week) with “＋ New”; the Open questions, each with “Discuss”; the Tasks; the Records
+  A Space (`/spaces/<space>`) is its Showcase as a screen, in this order: its collections' views, read only
+  ([collections.md](collections.md#views), `components/views/`) — each `queue` (“My move (5)”: the longest silent
+  first, a `ref` by its record's words, days of silence and, past the form's threshold, “overdue · 4 days” in red; a
+  phone shows three and “Show all 5”), then the numbers, a tile per `stat` of every collection (“3 of 10” with a bar
+  to the goal and “met” once it is, “this week, 26.10–01.11”, “last week: 7”; two to a row on a phone, four on a wide
+  screen; “as of 31.10 · Europe/Berlin” once above them); the sphere's sessions (waiting first, then
+  working, then the rest of the week) with “＋ New”; each `board` — its columns side by side with each card's days
+  in it (“stuck · 9 days” past the threshold), the folded values below as closed lists; on a phone a switch of
+  columns, opened at the first with a stuck card; fewer than three records are a list, each with its column's name;
+  then the Open questions, each with “Discuss”; the Tasks; the Records
   by nature (Knowledge, Profile, Journal, Artifacts; a subfolder as a small label), each with the two or three words that
   matter for it (“verified 21.09 · practice diverges”; a Profile's “until 01.03.2030”; “stale since” when it is), and a
-  search over their titles; then the Showcase's other sections and its rules, folded. A Record
+  search over their titles; then the Showcase's other sections and its rules, folded. A view the platform could not
+  make says why in its place (“Not counted: field not found: 'amount'”); an empty one says since when its collection
+  is quiet (“Nothing here — no change since 28.10.”, “No data yet: nothing was written here.”), never nothing. The
+  views are read with the Showcase, again when the app comes back to the front and after a resync; the stream's
+  `collection` event reads that collection's views again once its `rev` is past the one shown, and a collection the
+  screen did not have (a define brought it in) reads the Space anew. A Space without views — or a platform without
+  the route — shows its Showcase alone, as before. A Record
   (`/spaces/<space>/r/<path>`) opens to read: its title, its head in words — “Knowledge · verified 21.09 · practice
   diverges · stale after 21.12 · written by Claude Code”, then “created · updated · id” smaller, “Source” folded, the
   fields the app does not know raw at the bottom — and its body as markdown under the transcript's rules (no raw

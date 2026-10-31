@@ -478,6 +478,14 @@ export const EVENT_KINDS: readonly EventKind[] = [
   "proposal",
 ];
 
+/** The stream's `collection` event: a collection changed — its records, its form, its views or its rights — and
+`rev` is the newest change it has now (a ULID: compare as strings). Not kept in the state: a Space's screen that
+shows the collection reads its views again (lib/collections.ts). */
+export interface CollectionEvent {
+  name: string;
+  rev: string;
+}
+
 /** One seven-day span of the platform's tally (`GET /api/stats`, signals.tally). */
 export interface Tally {
   since: number;

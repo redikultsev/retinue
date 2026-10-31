@@ -24,7 +24,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiohttp import web
 
-from .collections import HISTORY, NAME, RECORD_COLUMNS, SPACE, Collections, Refused, Rejected, _json, _record
+from .collections import (HISTORY, NAME, RECORD_COLUMNS, SPACE, Collections, Refused, Rejected, _json, _path,
+                          _record)
 
 if TYPE_CHECKING:
     from .platformd import Platform
@@ -172,6 +173,30 @@ def _shown(form: dict, view: dict) -> list[str] | None:
         _field(form, name)
     return view.get("fields") or None
 
+def _refs(store: Collections, form: dict, records: list[dict], fields: list[str] | None) -> dict:
+    """For each record, the `ref` fields a view shows by the words of what they name: the first `text` field of the
+    form it is in, as that record has it now, a deleted one too — so a row says «Acme», not an id. A record without one: none."""
+    words: dict = {}
+    for name in fields or form["fields"]:
+        spec = form["fields"][name]
+        ids = sorted({r["fields"][name] for r in records if spec["type"] == "ref" and name in r["fields"]})
+        target = store._db.execute("SELECT form FROM schemas WHERE collection = ?",
+                                   (spec.get("to"),)).fetchone() if ids else None
+        text = next((k for k, s in json.loads(target[0])["fields"].items() if s["type"] == "text"),
+                    None) if target else None
+        if text is None:
+            continue
+        said = {}
+        for at in range(0, len(ids), 500):
+            chunk = ids[at:at + 500]
+            said.update(store._db.execute(
+                f"SELECT id, {_path(text)} FROM records WHERE collection = ? AND id IN ({', '.join('?' * len(chunk))})"
+                f" AND {_path(text)} IS NOT NULL", (spec["to"], *chunk)).fetchall())
+        for record in records:
+            if record["fields"].get(name) in said:
+                words.setdefault(record["id"], {})[name] = said[record["fields"][name]]
+    return words
+
 
 def _records(store: Collections, collection: str, form: dict, conditions: list) -> list[dict]:
     where, params = store._where(collection, form, conditions or None, False)
@@ -195,13 +220,14 @@ def _marks(store: Collections, collection: str, field: str | None, when: When) -
     return days, srcs
 
 
-def _row(record: dict, fields: list[str] | None, since: dt.date | None, src: str | None, when: When,
+def _row(record: dict, fields: list[str] | None, refs: dict, since: dt.date | None, src: str | None, when: When,
          rot: int | None, budget: list[int]) -> dict | None:
     """A record as a view shows it — or None when it would take the answer past its size."""
     days = (when.today - since).days if since is not None else None
     row = {"id": record["id"], "version": record["version"],
            "fields": {k: v for k, v in record["fields"].items() if fields is None or k in fields},
-           "src": src, "days": days, "rotten": rot is not None and days is not None and days > rot}
+           "refs": refs.get(record["id"], {}), "src": src, "days": days,
+           "rotten": rot is not None and days is not None and days > rot}
     size = len(_json(row).encode()) + 1
     if size > budget[0]:
         return None
@@ -221,21 +247,24 @@ def _board(store: Collections, collection: str, form: dict, view: dict, when: Wh
         raise Rejected(f"{group!r} has no value {', '.join(map(repr, lost))}")
     days, srcs = _marks(store, collection, group, when)
     columns: dict = {value: [] for value in spec["values"]}
-    for record in _records(store, collection, form, _conditions(form, view)):
+    records = _records(store, collection, form, _conditions(form, view))
+    for record in records:
         columns.setdefault(record["fields"].get(group), []).append(record)
+    refs = _refs(store, form, records, fields)
     folded = set(view.get("folded", []))
     shown, dropped = {}, 0
     for value in sorted(columns, key=lambda v: (v in folded, v is None)):  # what is folded takes what is left
         rows = []
         for record in sorted(columns[value], key=_longest(days)):
-            row = _row(record, fields, days.get(record["id"]), srcs.get(record["id"]), when, rot, budget)
+            row = _row(record, fields, refs, days.get(record["id"]), srcs.get(record["id"]), when, rot, budget)
             if row is None:
                 dropped += 1
             else:
                 rows.append(row)
         shown[value] = {"value": value, "count": len(columns[value]), "folded": value in folded, "rows": rows}
     order = [*spec["values"], *([None] if columns.get(None) else [])]
-    return {"group": group, "rot": rot, "columns": [shown[v] for v in order], "dropped": dropped}
+    return {"group": group, "rot": rot, "fields": fields or list(form["fields"]), "columns": [shown[v] for v in order],
+            "dropped": dropped}
 
 
 def _queue(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
@@ -246,14 +275,15 @@ def _queue(store: Collections, collection: str, form: dict, view: dict, when: Wh
     records = _records(store, collection, form, _conditions(form, view))
     if since is not None:
         days = {r["id"]: dt.date.fromisoformat(r["fields"][since]) for r in records if since in r["fields"]}
-    rows, dropped = [], 0
+    rows, dropped, refs = [], 0, _refs(store, form, records, fields)
     for record in sorted(records, key=_longest(days)):
-        row = _row(record, fields, days.get(record["id"]), srcs.get(record["id"]), when, rot, budget)
+        row = _row(record, fields, refs, days.get(record["id"]), srcs.get(record["id"]), when, rot, budget)
         if row is None:
             dropped += 1
         else:
             rows.append(row)
-    return {"rot": rot, "count": len(records), "rows": rows, "dropped": dropped}
+    return {"rot": rot, "fields": fields or list(form["fields"]), "count": len(records), "rows": rows,
+            "dropped": dropped}
 
 
 KINDS = {"stat": _stat, "board": _board, "queue": _queue}

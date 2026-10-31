@@ -5,9 +5,11 @@
 // Mock-only endpoints (not in the contract), for trying the edges by hand:
 //   POST /api/_mock/approval {session?}  a new shown approval card arrives (an `approval` event)
 //   POST /api/_mock/prune                old events are pruned and streams cut: clients get 410 and resync
+//   POST /api/_mock/collection           a deal of the «work» Space moves a column on (a `collection` event)
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as fx from "./fixtures.ts";
+import { mockCollections, moveDeal } from "./collections.ts";
 import { mockSpaces } from "./spaces.ts";
 import type { Approval, Input, Item, Proposal, Session, Summary } from "../src/lib/types.ts";
 
@@ -383,6 +385,15 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     else if (typeof b.done === "boolean") page.done = b.done ? now() : null;
     else return json(res, 400, { error: "done: true or false." });
     return json(res, 200, { page });
+  }
+
+  // «Views»: a Space's collections as the platform computes them, made up here.
+  const views = method === "GET" ? mockCollections(path, url.searchParams) : null;
+  if (views) return json(res, views.status, views.data);
+  if (path === "/api/_mock/collection" && method === "POST") {
+    const moved = moveDeal();
+    emit("collection", moved.name, moved);
+    return json(res, 200, moved);
   }
 
   // «Uploads»: the bytes read whole (the real limit is nginx's and the platform's), a new file told to every stream.

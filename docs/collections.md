@@ -242,11 +242,13 @@ characters. A `filter` is the one [Reading](#reading) takes.
 | Kind | Takes | Shows |
 |---|---|---|
 | `stat` | `count`: `records` (the default) — those the filter matches, by their `date` field when there is a window — or `changed` — those the filter matches now whose `field` a change gave a value (one of `to`, when it names some); `window`: `week` (Monday to Sunday) or `month`, none for all the time; `goal`: a name of the form's `goals` | `{value, goal, previous, window, first, last}`: the number in this week or month, the same for the one before, the window's first and last day |
-| `board` | `group`: an enum; `folded`: its values shown folded; `fields`; `rot`: a name of the form's `rot` | `{group, rot, columns: [{value, count, folded, rows}], dropped}`: a column per value, in the enum's order, then one for the records it is unknown in; in each, the longest in it first |
-| `queue` | `since`: a date field, else the record's last change; `fields`; `rot` | `{rot, count, rows, dropped}`: the longest silent first |
+| `board` | `group`: an enum; `folded`: its values shown folded; `fields`; `rot`: a name of the form's `rot` | `{group, rot, fields, columns: [{value, count, folded, rows}], dropped}`: a column per value, in the enum's order, then one for the records it is unknown in; in each, the longest in it first |
+| `queue` | `since`: a date field, else the record's last change; `fields`; `rot` | `{rot, fields, count, rows, dropped}`: the longest silent first |
 
-A row is `{id, version, fields, src, days, rotten}`: only the view's `fields` when it names some; `src` that of the
-record's last change that had one; `days` since the day the group's field last changed (a board), since its `since`
+A board's and a queue's `fields` are the names its rows show, in order: the view's `fields`, else the form's. A row
+is `{id, version, fields, refs, src, days, rotten}`: only the view's `fields` when it names some; `refs` the words of
+each `ref` it shows — the first `text` field of the record it names, so a row reads “Acme”, not an id; `src` that of
+the record's last change that had one; `days` since the day the group's field last changed (a board), since its `since`
 date or its last change (a queue) — `null` when there is none, below zero for a date ahead — and `rotten` when
 `days` is past the `rot` threshold. A change is dated by its `as_of`, else by the day it was made: so an import of
 what happened in March counts in March, and a stage set today for last Monday counts last week.

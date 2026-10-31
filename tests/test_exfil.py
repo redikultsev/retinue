@@ -165,12 +165,12 @@ def test_an_address_that_carries_data_cards_with_the_reason(url):
 
 
 @pytest.mark.parametrize("query", [
-    "China travel eSIM Hong Kong IP ChatGPT Claude Gemini blocked Singapore exit IP which eSIM",
-    "Airalo Holafly Nomad China eSIM Google WhatsApp Telegram without VPN Reddit 2026",
+    "Acme travel eSIM Example City IP ChatGPT Claude Gemini blocked Example exit IP which eSIM",
+    "Acme Example Nomad eSIM Google WhatsApp Telegram without VPN Reddit 2026",
     "Claude Code GitHub Actions TypeScript monorepo pnpm cache not working YouTube OpenAI API",
 ])
 def test_a_search_of_names_and_acronyms_is_not_a_joined_block(query):
-    """A real search that carded: Title Case names and acronyms, joined, are a long run with many capitals."""
+    """Title Case names and acronyms, joined, are a long run with many capitals: not base64."""
     assert exfil.why("WebSearch", {"query": query}) == ""
 
 

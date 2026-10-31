@@ -66,7 +66,7 @@ type Loaded = { state: "loading" } | { state: "ok"; detail: WaitingDetail } | { 
 export function useDetail(row: FeedRow | null, load = api.waitingDetail): [Loaded | null, () => void] {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [attempt, setAttempt] = useState(0);
-  // a person's row and the private matter's by their token; a draft by its id, unless it is the private matter's
+  // a person's row by its token; a draft by its id, unless it is the private matter's
   const asks = !!row && (!!row.t || (row.source === "draft" && !row.private));
   // biome-ignore lint/correctness/useExhaustiveDependencies: one request per opened row and per «Try again»
   useEffect(() => {
@@ -118,14 +118,11 @@ function Ask({
   now,
   single,
   link,
-  onPress,
 }: {
   ask: DetailAsk;
   now: number;
   single: boolean;
   link: boolean;
-  /** The private matter's letters: each closes on its own (its `t`). */
-  onPress?: (t: string, action: Press, label: string) => void;
 }) {
   return (
     <li className="flex flex-col gap-1">
@@ -150,16 +147,6 @@ function Ask({
         >
           {ask.open.label === "Open in Gmail" ? "This letter in Gmail" : ask.open.label}
         </a>
-      )}
-      {onPress && ask.t && (
-        <div className="-ml-2 flex flex-wrap gap-0.5">
-          {PRESSES.map(([action, label]) => (
-            <Button key={action} variant="ghost" size="sm" onClick={() => ask.t && onPress(ask.t, action, label)}>
-              {action === "done" ? <Check /> : action === "later" ? <Clock /> : <Ban />}
-              {label}
-            </Button>
-          ))}
-        </div>
       )}
     </li>
   );
@@ -205,12 +192,6 @@ function Skeleton() {
 }
 
 function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null; retry: () => void; now: number }) {
-  // the private matter's letters closed here, out of the list at once; back when the press did not go through
-  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
-  const close = async (t: string, action: Press, label: string) => {
-    setClosed((s) => new Set(s).add(t));
-    if (!(await pressRow(t, action, label))) setClosed((s) => new Set([...s].filter((x) => x !== t)));
-  };
   if (row.private && !row.t)
     return (
       <p className="text-sm text-muted-foreground">
@@ -245,7 +226,7 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
       </div>
     );
   const { detail } = loaded;
-  const asks = detail.asks.filter((a) => !a.t || !closed.has(a.t));
+  const asks = detail.asks;
   const many = asks.length > 1;
   return (
     <div className="flex flex-col gap-4">
@@ -268,23 +249,21 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
           <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             {detail.draft ? "What it answers" : many ? `What they ask (${asks.length + detail.more})` : "What they ask"}
           </h3>
-          <ul className={cn("flex flex-col", row.private ? "divide-y [&>li]:py-3 [&>li:first-child]:pt-0" : "gap-3")}>
+          <ul className="flex flex-col gap-3">
             {asks.map((ask) => (
               <Ask
                 key={ask.t ?? `${ask.at}:${ask.need}`}
                 ask={ask}
                 now={now}
                 single={!many}
-                link={row.private ? true : many && ask.open?.url !== detail.open?.url}
-                onPress={row.private ? (t, action, label) => void close(t, action, label) : undefined}
+                link={many && ask.open?.url !== detail.open?.url}
               />
             ))}
           </ul>
-          {row.private && asks.length === 0 && <p className="text-sm text-muted-foreground">All closed.</p>}
           {detail.more > 0 && <p className="text-xs text-muted-foreground">And {detail.more} older — in Telegram.</p>}
         </section>
       )}
-      {!detail.draft && !row.private && asks[0] && NEXT[asks[0].need] && (
+      {!detail.draft && asks[0] && NEXT[asks[0].need] && (
         <p className="text-sm text-muted-foreground">{NEXT[asks[0].need]}</p>
       )}
       {!linkOk(detail.open) && detail.kind === "chat" && (
@@ -309,9 +288,8 @@ export function WaitingSheet({
 }) {
   const [loaded, retry] = useDetail(row, load);
   const detail = loaded?.state === "ok" ? loaded.detail : null;
-  // her chat with the owner, only where the thing itself is there: a draft's «Send», the private matter's «Show»
-  const botLabel = row?.source === "draft" ? "Send in Telegram" : "Open in Telegram";
-  const botLink: DetailLink | null = bot && (row?.source === "draft" || row?.private) ? { url: `https://t.me/${bot}`, label: botLabel } : null;
+  // her chat with the owner, only where the thing itself is there: a draft's «Send» (a private one's behind «Show»)
+  const botLink: DetailLink | null = bot && row?.source === "draft" ? { url: `https://t.me/${bot}`, label: "Send in Telegram" } : null;
   const open = linkOk(detail?.open) ? detail.open : null;
   const press = async (action: Press, label: string) => {
     if (!row?.t) return;
@@ -356,12 +334,11 @@ export function WaitingSheet({
               ) : (
                 <>
                   {open && <Out link={open} primary />}
-                  {botLink && <Out link={botLink} primary={!open} />}
-                  {!row.private && <AskButton row={row} detail={detail} primary={!open} onClose={onClose} />}
+                  <AskButton row={row} detail={detail} primary={!open} onClose={onClose} />
                 </>
               )}
             </div>
-            {row.t && !row.private && !(loaded?.state === "error" && loaded.status === 410) && (
+            {row.t && !(loaded?.state === "error" && loaded.status === 410) && (
               <div className="flex flex-wrap gap-1">
                 {PRESSES.map(([action, label]) => (
                   <Button key={action} variant="ghost" size="sm" onClick={() => void press(action, label)}>

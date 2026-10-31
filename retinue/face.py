@@ -300,6 +300,7 @@ class Face:
             web.get("/api/sessions/{id}/diff", self.diff), web.get("/api/approvals/{id}", self.approval),
             web.get("/api/sessions/{id}/inputs/{input}/{n:\\d{1,2}}", self.thumb),
             web.post("/api/approvals/{id}/decide", self.decide), web.post("/api/approvals/{id}/answer", self.answer),
+            web.post("/api/approvals/{id}/done", self.courier_done),
             web.get("/api/files/{id}", self.file), web.get("/api/files/{id}/view", self.view),
             web.get("/api/files/{id}/meta", self.file_meta), web.get("/api/feed", self.feed),
             web.get("/api/stats", self.stats),
@@ -717,6 +718,17 @@ class Face:
         toast = await self.platform.answer(approval, body["question"], body.get("labels"), body.get("text"),
                                            body["digest"])
         return web.json_response({"toast": toast, "approval": self.store.face_approval(approval_id)})
+
+    async def courier_done(self, request: web.Request) -> web.Response:
+        """«Done» on a courier card: the owner did it himself or will not — the card leaves «Waiting for you»."""
+        approval_id = request.match_info["id"]
+        if (approval := self.store.approval(approval_id)) is None or self.store.face_approval(approval_id) is None:
+            return _error(404, "No such card.")
+        if approval["kind"] != "courier":
+            return _error(400, "Only a courier card is closed this way.")
+        closed = self.store.move(approval_id, ("dropped",), "done", self.clock())
+        return web.json_response({"toast": "Closed." if closed else "Already closed.",
+                                  "approval": self.store.face_approval(approval_id)})
 
     # --- the owner's voice -------------------------------------------------------------------------------------------
 

@@ -6,8 +6,9 @@ Read from the router's own tables, by the rules they already have — nothing ne
 - **letter / chat**: what her judgement said asks him to do something (`needs` reply, decide, pay, attend or act;
   «read» is only to know) and is still open — `MailStore.asks`: not marked «Done» or «Not a task» by him, not put off
   till tomorrow, not answered as code sees it, not run out. One row per person and ask: «pay» and «decide» of one
-  sender are two rows, so a button closes exactly what the row says. The owner's private matter (`mail.Private`) is
-  one row that names nothing but a count, in the sphere his config gives it.
+  sender are two rows, so a button closes exactly what the row says. A letter of the owner's private matter
+  (`mail.Private`) is a row like any other, marked `private` and in the sphere his config gives it: the app, behind
+  his login, names it; Telegram's `/wait` never does (`feed.Feed.telegram`).
 - **draft**: a reply card whose «Send» still means something (`outbox.LIVE`, not expired). Its letter is not
   counted again.
 - **deadline**: a `deadline` of any Record, or an `until` of a profile Record, at most SOON_DAYS away (the face's
@@ -30,7 +31,7 @@ the week — no list of them.
 What a row is about goes only when the owner opens it in the app (`detail`), one row at a time and to that request
 alone — the digest itself never widens: her words and a draft's text masked as the title is (`masked`), and where the
 thing is, built from the ids the router holds — the Gmail thread in the mailbox it came to, the chat by the person's
-@username. Never the letter's text, its verbatim quote or the sender's address; nothing of the private matter.
+@username. Never the letter's text, its verbatim quote or the sender's address; nothing of a private matter's draft.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ from . import clock
 from .courier import INVISIBLE, line
 from .feed import CHIP_CHARS, DIGEST_BYTES, DIGEST_ITEMS, EMAIL, PRIVATE_WHO, RECORD, SPHERE
 from .pages import NEEDS, midnight, named, plural
-from .mail import ASKS, MARKS, PRIVATE, Private, ask_row, later_until
+from .mail import ASKS, MARKS, Private, ask_row, is_private, later_until
 from .outbox import LIVE
 from .proactive import FIELDS, PUSH_DAYS
 
@@ -150,9 +151,8 @@ def detail(core, ref: str, token: str, now: float) -> dict | None:
     that request and to nothing else. A person's row by its token — those of the items the router showed under it that
     still ask, newest first; a draft by its id. Her judgement and a draft's text with codes, numbers, links and
     addresses masked as in the digest (`masked`), and where the thing is (`open`: the Gmail thread, the Telegram chat by
-    its @username) — never the letter's text, its verbatim quote or the sender's address. The private matter's row —
-    nameless on the list — opens as its letters one by one (`_private_detail`). None when the token is not known,
-    nothing under it asks any more, or the draft no longer waits or is the private matter's."""
+    its @username) — never the letter's text, its verbatim quote or the sender's address. None when the token is not
+    known, nothing under it asks any more, or the draft no longer waits or is the private matter's."""
     if match := DRAFT_REF.fullmatch(ref):
         return _draft_detail(core, match[1], now)
     seqs = set(_rows(core, now).get(token) or ()) if token and core.mail else set()
@@ -160,8 +160,6 @@ def detail(core, ref: str, token: str, now: float) -> dict | None:
     if not items:
         return None
     items.sort(key=lambda i: -float(i["ts"] or i["at"] or 0))
-    if any(ask_row(item) == PRIVATE for item in items):
-        return _private_detail(core, items, now)
     first = items[0]
     chat = first["source"] == "telegram"
     card, data = first["card"] or {}, first["data"] or {}
@@ -169,17 +167,6 @@ def detail(core, ref: str, token: str, now: float) -> dict | None:
     return {"kind": "chat" if chat else "letter", "who": who, "account": "" if chat else line(first["account"], ADDRESS_CHARS),
             "asks": [_ask(item, now) for item in items[:DETAIL_ASKS]], "more": max(0, len(items) - DETAIL_ASKS),
             **({"open": link} if (link := _open(first)) else {})}
-
-def _private_detail(core, items: list[dict], now: float) -> dict:
-    """The private matter's letters, newest first: each its sender's name, her ask and words, and its own token — so
-    «Done», «Not a task», «Tomorrow» close one letter (`press`), kept as any row's token is."""
-    shown = items[:DETAIL_ASKS]
-    tokens = {item["seq"]: _token(core, [item["seq"]]) for item in shown}
-    _remember(core, {token: [seq] for seq, token in tokens.items()}, now)
-    return {"kind": "letter", "who": PRIVATE_WHO, "account": "",
-            "asks": [{**_ask(item, now), "who": named(str((item["card"] or {}).get("who") or ""),
-                                                      str(item["sender"] or "")), "t": tokens[item["seq"]]}
-                     for item in shown], "more": max(0, len(items) - DETAIL_ASKS)}
 
 def _ask(item: dict, now: float, link: bool = True) -> dict:
     card = item["card"] or {}
@@ -194,7 +181,7 @@ def _draft_detail(core, draft_id: str, now: float) -> dict | None:
         return None
     envelope, mail = found["envelope"] or {}, found["channel"] == "mail"
     answered = core.mail.store.by_event(str(found["reply_to"] or "")) if core.mail else None
-    if answered and ask_row(answered) == PRIVATE:
+    if answered and is_private(answered):
         return None
     link = _open(answered) if answered else \
         _mail_link(str(envelope.get("account") or ""), str(envelope.get("thread") or "")) if mail else None
@@ -311,11 +298,11 @@ def _people(core, now: float, shown: set[str]) -> list[dict]:
         chat = item["source"] == "telegram"
         ts = float(item["ts"] or item["at"] or now)
         key = ask_row(item)
-        private = key == PRIVATE
+        private = is_private(item)
         letter = private or not chat
         group = groups.setdefault(key, {
             "id": _id(core, "letter" if letter else "chat", key), "kind": "letter" if letter else "chat",
-            "who": PRIVATE_WHO if private else named(str(data.get("name") or ""), "") if chat
+            "who": named(str(data.get("name") or ""), "") if chat and not private
             else named(str(card.get("who") or ""), sender),
             "since": ts, "sphere": _sphere(core) if private else None, "count": 0, "need": need, "last": ts,
             "text": "", "deadline": "", "private": private, "seqs": []})
@@ -333,14 +320,11 @@ def _people(core, now: float, shown: set[str]) -> list[dict]:
         count = group["count"]
         row = {"id": group["id"], "kind": group["kind"], "who": group["who"], "since": group["since"],
                "sphere": group["sphere"]}
-        if group["private"]:  # names nothing on the list: who and what only in its sheet, a letter at a time
-            row.update(title=f"{count} {plural(count, 'private letter waits', 'private letters wait')} for a reply",
-                       t=_token(core, group["seqs"]), _seqs=group["seqs"], private=True)
-        else:
-            title = f"{NEEDS[group['need']]}: {said(group['text'])}"
-            title += f" · deadline {said(group['deadline'])}" if group["deadline"] else ""
-            title += f" (+{count - 1})" if count > 1 else ""
-            row.update(title=title, t=_token(core, group["seqs"]), _seqs=group["seqs"])
+        title = f"{NEEDS[group['need']]}: {said(group['text'])}"
+        title += f" · deadline {said(group['deadline'])}" if group["deadline"] else ""
+        title += f" (+{count - 1})" if count > 1 else ""
+        row.update(title=title, t=_token(core, group["seqs"]), _seqs=group["seqs"],
+                   **({"private": True} if group["private"] else {}))
         rows.append(row)
     return rows
 

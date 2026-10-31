@@ -64,13 +64,14 @@ def test_people_who_ask_something_come_once_each_without_an_address_or_their_wor
             ("telegram", {}, {"state": "own", "kind": "chat", "sender": "tg:8", "ts": NOW - 4 * HOUR}))
     rows = waiting.digest(c, NOW)
     assert [(r["kind"], r["who"], r["title"]) for r in rows] == [
-        ("letter", "Private", "1 private letter waits for a reply"),
+        ("letter", "acme.example", "reply: Клиника Acme ждёт в среду"),
         ("chat", "Мария", "reply: И когда рейс? (+1)"),
         ("letter", "Банк", "do: Подтвердить адрес. · deadline пт"),
     ], "reply before act; «read» only to know; Пётр was answered in his chat"
-    assert rows[0]["sphere"] == "home" and rows[1]["since"] == NOW - 3 * HOUR
+    assert rows[0]["sphere"] == "home" and rows[0]["private"] is True and rows[1]["since"] == NOW - 3 * HOUR
+    assert "private" not in rows[1] and "private" not in rows[2]
     said = json.dumps(rows, ensure_ascii=False)
-    assert "@" not in said and "Acme" not in said and "tg:7" not in said, "no address, no private details, no handle"
+    assert "@" not in said and "tg:7" not in said, "no address, no handle"
     assert feed.clean({"items": rows}, NOW)[0], "the platform takes it as it is"
     assert waiting.digest(c, NOW + 60) == rows, "stable: the same digest is not pushed again"
 
@@ -375,24 +376,20 @@ def test_an_unknown_or_outdated_token_applies_nothing(tmp_path):
     assert opened(c.mail.store) == [ask]
 
 
-def test_the_private_matter_is_one_nameless_row_that_opens_as_its_letters_each_closed_on_its_own(tmp_path):
+def test_a_private_letter_is_a_row_of_its_own_named_in_the_app_and_closed_on_its_own(tmp_path):
     c = core(tmp_path)
     attend, pay = put(c.mail.store, *({**asking(need, message_id=f"<{need}@example.org>", ts=NOW - n * HOUR),
                                        "fields": {**asking(need, ts=NOW - n * HOUR)["fields"], "kind": "private",
                                                   "event_id": need}}
                                       for n, need in ((2, "attend"), (1, "pay"))))
-    [row] = waiting.digest(c, NOW)
-    assert (row["who"], row["title"], row["sphere"], row["private"]) == \
-        ("Private", "2 private letters wait for a reply", "home", True)
-    assert "Анна" not in json.dumps(row, ensure_ascii=False), "the list names no one"
-    assert "attend" not in row["title"] and "pay" not in row["title"]
-    assert feed.clean({"items": [row]}, NOW)[0][0]["private"] is True
-    sheet = waiting.detail(c, row["id"], row["t"], NOW)
-    assert sheet["who"] == "Private" and [(a["who"], a["need"]) for a in sheet["asks"]] == \
-        [("Анна Петрова", "pay"), ("Анна Петрова", "attend")], "each letter by its sender, newest first"
-    assert all(len(a["t"]) == 32 for a in sheet["asks"]) and len({a["t"] for a in sheet["asks"]}) == 2
+    rows = waiting.digest(c, NOW)
+    assert [(r["who"], r["title"].split(":")[0], r["sphere"], r["private"]) for r in rows] == \
+        [("Анна Петрова", "pay", "home", True), ("Анна Петрова", "attend", "home", True)], "one row per ask, as any"
+    assert all(r["private"] is True for r in feed.clean({"items": rows}, NOW)[0])
+    sheet = waiting.detail(c, rows[0]["id"], rows[0]["t"], NOW)
+    assert sheet["who"] == "Анна Петрова" and [a["need"] for a in sheet["asks"]] == ["pay"]
     assert feed.clean_detail(sheet) == sheet, "the platform takes it as it is"
-    assert waiting.press(c, sheet["asks"][0]["t"], "done", NOW), "a letter's own token is known to the router"
+    assert waiting.press(c, rows[0]["t"], "done", NOW), "the row's token closes its letter"
     assert opened(c.mail.store, NOW + 60) == [attend], "one letter closed, the other still asks"
 
 

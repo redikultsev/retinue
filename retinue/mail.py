@@ -621,7 +621,7 @@ class MailStore:
 
     def ask_counts(self, now: float, closed_since: float, expired_since: float,
                    sent: dict[str, float] | None = None) -> tuple[int, int]:
-        """How many rows of «Waiting for you» (`ask_row`: a person and an ask, the private matter one) had an ask closed since
+        """How many rows of «Waiting for you» (`ask_row`: a person and an ask) had an ask closed since
         `closed_since` — by his press or by what code saw him do — and how many had one run out with nothing closing
         it since `expired_since`: the numbers count what he sees, not letters."""
         closed, expired = set(), set()
@@ -822,11 +822,14 @@ def message_ids(*headers) -> set[str]:
 
 
 def ask_row(item: dict) -> str:
-    """Which row of «Waiting for you» an ask is on: its sender and her ask; the owner's private matter is one row."""
+    """Which row of «Waiting for you» an ask is on: its sender and her ask — the private matter's too."""
     card = item["card"] or {}
-    if item["kind"] == PRIVATE or card.get(PRIVATE):
-        return PRIVATE
     return f"{item['source']}:{item['sender'] or card.get('who') or '?'}:{card.get('needs_now')}"
+
+
+def is_private(item: dict) -> bool:
+    """An ask about the owner's private matter: named in the app behind his login, never in Telegram."""
+    return item["kind"] == PRIVATE or bool((item["card"] or {}).get(PRIVATE))
 
 
 def later_until(now: float, tz: str) -> float:

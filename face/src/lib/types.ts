@@ -88,6 +88,8 @@ export type ApprovalState =
   | "stale"
   | "expired"
   | "dropped"
+  /** A courier card the owner closed («Done»): done by hand, or not to be done. */
+  | "done"
   /** A question: every question has its answer; the session resumes with them. */
   | "answered";
 

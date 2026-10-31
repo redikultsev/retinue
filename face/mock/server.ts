@@ -26,10 +26,10 @@ const ASKS = [
   { key: "assistant:chat:3", source: "chat", sphere: null, sphere_title: null, title: "Ivan Example", since: now() - 9 * 86400, essence: "decide: which of the two venues to book for the team dinner, the one by the river or the one near the office, before both stop holding the date", ref: "chat:3", t: "c".repeat(32) },
   { key: "assistant:letter:4", source: "letter", sphere: null, sphere_title: null, title: "Example Bank", since: now() - 4 * 86400, essence: "decide: confirm a sign-in from a new device · deadline today", ref: "letter:4", t: "d".repeat(32) },
 ];
-/** The others of hers: a draft waiting for «Send», and the private matter's row (no token, no sheet). */
+/** The others of hers: a draft waiting for «Send», and a letter of the private matter (named here, never in Telegram). */
 const OTHERS = [
   { key: "assistant:draft:0000000c", source: "draft", sphere: null, sphere_title: null, title: "Anna Petrova", since: now() - 1800, essence: "a reply draft waits for «Send»", ref: "draft:0000000c" },
-  { key: "assistant:letter:5", source: "letter", sphere: "home", sphere_title: "home", title: "Private", since: now() - 5 * 86400, essence: "2 private letters wait for a reply", ref: "letter:5", private: true, t: "e".repeat(32) },
+  { key: "assistant:letter:5", source: "letter", sphere: "home", sphere_title: "home", title: "Example Studio", since: now() - 86400, essence: "reply: a second call next week · deadline Monday", ref: "letter:5", private: true, t: "e".repeat(32) },
 ];
 const GMAIL = (thread: string) => ({ url: `https://mail.google.com/mail/?authuser=me@example.com#all/${thread}`, label: "Open in Gmail" });
 /** A row's sheet (`/api/waiting/detail`), as the router would say it: a moment later, invented. Ivan's router is
@@ -43,10 +43,9 @@ const DETAILS: Record<string, unknown> = {
       { need: "pay", text: "A reminder of the same invoice.", deadline: "Friday", at: now() - 86400, open: GMAIL("18c2f0a1b2c3d4e6") },
       { need: "pay", text: "The invoice for May: ‹number›. Pay by card in the account's billing page.\nThe server is suspended if it is not paid by Friday.", deadline: "Friday", at: now() - 2 * 86400, open: GMAIL("18c2f0a1b2c3d4e5") },
     ] },
-  "letter:5": { kind: "letter", who: "Private", account: "", more: 0,
+  "letter:5": { kind: "letter", who: "Example Studio", account: "me@example.com", more: 0, open: GMAIL("18c2f0a1b2c3d4f1"),
     asks: [
-      { need: "reply", who: "Example Studio", text: "They invite you to a second call next week and ask which two slots suit you.", deadline: "Monday", at: now() - 86400, open: GMAIL("18c2f0a1b2c3d4f1"), t: "1".repeat(32) },
-      { need: "decide", who: "Acme Talent", text: "An offer of a call about a new role; they ask whether to send the details.", deadline: "", at: now() - 5 * 86400, open: GMAIL("18c2f0a1b2c3d4f2"), t: "2".repeat(32) },
+      { need: "reply", text: "They invite you to a second call next week and ask which two slots suit you.", deadline: "Monday", at: now() - 86400, open: GMAIL("18c2f0a1b2c3d4f1") },
     ] },
   "draft:0000000c": { kind: "draft", who: "Anna Petrova", account: "", more: 0, open: { url: "https://t.me/anna_example", label: "Open the chat" },
     asks: [{ need: "reply", text: "Anna asks about the flight time.", deadline: "", at: now() - 7200 }],
@@ -488,6 +487,17 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   if (m && method === "GET") {
     const a = approvals.get(m[1]!);
     return a && a.state !== "pending" ? json(res, 200, { approval: a }) : json(res, 404, { error: "No such card." });
+  }
+
+  m = /^\/api\/approvals\/([0-9a-f]{8})\/done$/.exec(path);
+  if (m && method === "POST") {
+    const a = approvals.get(m[1]!);
+    if (!a) return json(res, 404, { error: "No such card." });
+    if (a.kind !== "courier") return json(res, 400, { error: "Only a courier card is closed this way." });
+    if (a.state !== "dropped") return json(res, 200, { toast: "Already closed.", approval: a });
+    const closed: Approval = { ...a, state: "done", at: now() };
+    putApproval(closed);
+    return json(res, 200, { toast: "Closed.", approval: closed });
   }
 
   m = /^\/api\/approvals\/([0-9a-f]{8})\/decide$/.exec(path);

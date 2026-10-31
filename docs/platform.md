@@ -116,8 +116,9 @@ What the router counts (`retinue/waiting.py`), each by a rule it already had:
   only to know) and is still open (`MailStore.asks`, [mail.md](mail.md#closing-what-waits)): not closed by your
   «Done» or «Not a task», not put off by «Tomorrow», not answered as code sees it, not run out. One row per person
   and ask — «pay» and «decide» of one sender are two rows, so a press closes exactly what its row says; the
-  letters you keep private are one row with a count, no name and no ask, marked `private: true` — it opens as its
-  letters one by one in the app's sheet.
+  letters you keep private are rows like these, marked `private: true` and in the sphere `memory.private` gives:
+  the app, behind your login, names them; Telegram's `/wait` says only «Private — a private letter waits for a
+  reply» for each (`feed.Feed.telegram`).
 - **draft** — a reply card whose «Send» still means something (`outbox.LIVE`, not expired); its letter is not
   counted again.
 - **deadline** — a `deadline` of any Record or an `until` of a profile Record at most 7 days away (the face's «Deadlines»),
@@ -961,7 +962,9 @@ its turns come there in full again.
 `sendmail`, `mail`, `mailx` (`NEVER` in
 `retinue/approvals.py`). Such a call is refused in the session and comes to you as a courier card: «Courier · <track> ·
 session <id>», what the session wants, the directory, the exact command, and «Not running it: you do this yourself —
-the whole command is above.» There is no button: run it yourself, where you hold the credential. On the lane that holds
+the whole command is above.» There is no button that runs it: run it yourself, where you hold the credential. In
+the app the card has «Done» beside «Copy command» (`POST /api/approvals/{id}/done`, state `done`): you did it, or
+will not, and it leaves «Waiting for you» — where it otherwise waits a day, or until you write to its session. On the lane that holds
 your repositories (`code:` in platform.yaml), a `git push` or a `gh pr create` says instead «press «Push» under
 the session's result», and the session is told the platform pushes by your button: a branch and a pull request, never the
 default branch ([code.md](code.md)). Each entry is also a

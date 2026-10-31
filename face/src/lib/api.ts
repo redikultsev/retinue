@@ -139,6 +139,8 @@ export const api = {
       action,
       digest: approval.digest,
     }),
+  /** «Done» on a courier card: the owner did it himself or will not; it leaves «Waiting for you». */
+  courierDone: (id: string) => request<DecideResponse>(`/api/approvals/${encodeURIComponent(id)}/done`, {}),
   answer: (approval: Pick<Approval, "id" | "digest">, question: number, reply: QuestionReply) =>
     request<DecideResponse>(`/api/approvals/${encodeURIComponent(approval.id)}/answer`, {
       digest: approval.digest,

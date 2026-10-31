@@ -174,6 +174,21 @@ def test_a_sheet_is_taken_only_in_its_shape_with_links_of_the_routers_own_shapes
     assert draft["draft"]["text"] == "Hello,\nyes." and draft["draft"]["state"] == "link"
 
 
+
+def test_a_private_letter_is_named_in_the_app_and_never_in_telegrams_wait(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        secret = item(2, id="letter:000000000002", kind="letter", who="Анна Петрова", title="reply: созвон", private=True)
+        assert (await world.owner("waiting", {"items": [item(1), secret]}))["ok"]
+        rows = {r["ref"]: r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]}
+        assert (rows["letter:000000000002"]["title"], rows["letter:000000000002"]["private"]) == ("Анна Петрова", True)
+        said = await world.owner("feed", {})
+        wait = {r["essence"]: r for r in said["rows"]}
+        assert wait[feed.PRIVATE_ESSENCE]["title"] == feed.PRIVATE_WHO and "Мария" in {r["title"] for r in said["rows"]}
+        assert "Анна" not in json.dumps(said, ensure_ascii=False) and "созвон" not in json.dumps(said, ensure_ascii=False)
+    faced(tmp_path, body)
+
+
 def test_a_sheet_is_asked_of_the_router_by_its_long_call_and_relayed_never_kept(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
@@ -365,6 +380,26 @@ def test_a_courier_card_waits_a_day_or_until_he_writes_into_its_session(tmp_path
         world.clock.now -= DAY
         await world.owner("input", {"input_id": "tg:2", "session": session, "text": "запушил сам"})
         assert (await world.get("/api/feed"))["count"] == 0, "he wrote into the session after it"
+
+    faced(tmp_path, body)
+
+
+
+def test_done_closes_a_courier_card_and_takes_it_out_of_waiting(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "запушь"}))["session"]
+        card = world.store.add_approval(session, "run", "toolu_push", "courier", "Bash", {"command": "git push"},
+                                        "/work/repo", "", "", world.clock.now, state="dropped",
+                                        view={"head": ["Courier · retinue"], "body": "git push"})
+        assert (await world.get("/api/feed"))["count"] == 1
+        status, data, _ = await world.call("POST", f"/api/approvals/{card}/done", {})
+        assert status == 200 and data["toast"] == "Closed." and data["approval"]["state"] == "done"
+        assert (await world.get("/api/feed"))["count"] == 0
+        assert (await world.call("POST", f"/api/approvals/{card}/done", {}))[1]["toast"] == "Already closed."
+        other, _, _ = await deferred_session(world)
+        approval = world.store.approvals(session=other, kind="approval")[0]
+        assert (await world.call("POST", f"/api/approvals/{approval['id']}/done", {}))[0] == 400, "a courier's only"
 
     faced(tmp_path, body)
 

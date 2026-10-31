@@ -19,6 +19,8 @@ interface Props {
   approval: Approval;
   live?: Live;
   decide?: typeof api.decide;
+  /** A courier card's «Done». */
+  courierDone?: typeof api.courierDone;
   /** A question card's answer (QuestionCard). */
   answer?: typeof api.answer;
   className?: string;
@@ -34,8 +36,8 @@ export function ApprovalCard(props: Props) {
   return <DecisionCard {...props} />;
 }
 
-function DecisionCard({ approval, live = defaultLive, decide = api.decide, className, onDecided }: Props) {
-  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+function DecisionCard({ approval, live = defaultLive, decide = api.decide, courierDone = api.courierDone, className, onDecided }: Props) {
+  const [busy, setBusy] = useState<"approve" | "reject" | "done" | null>(null);
   const courier = approval.kind === "courier";
   const pressable = !courier && approval.state === "shown";
   const [title, ...head] = approval.view.head.length ? approval.view.head : [`Approval · ${approval.tool}`];
@@ -52,6 +54,21 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
       // No event id: the store keeps a newer copy the stream may already have brought.
       if (res.approval) live.dispatch({ type: "event", id: null, event: { kind: "approval", data: res.approval } });
       if (res.approval && res.approval.state !== "shown" && res.approval.state !== "stale") onDecided?.(res.approval);
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** A courier card closed: done by hand, or not to be done. */
+  async function close() {
+    setBusy("done");
+    try {
+      const res = await courierDone(approval.id);
+      toast(res.toast);
+      if (res.approval) live.dispatch({ type: "event", id: null, event: { kind: "approval", data: res.approval } });
+      if (res.approval?.state === "done") onDecided?.(res.approval);
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
     } finally {
@@ -140,10 +157,15 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
         </CardFooter>
       )}
       {courier && (
-        <CardFooter>
+        <CardFooter className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={copy}>
             Copy command
           </Button>
+          {approval.state === "dropped" && (
+            <Button variant="ghost" disabled={busy !== null} onClick={() => void close()} title="Done by hand, or not to be done: it leaves «Waiting for you»">
+              {busy === "done" ? "Closing…" : "Done"}
+            </Button>
+          )}
         </CardFooter>
       )}
     </Card>

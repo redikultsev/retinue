@@ -132,7 +132,7 @@ function Counts({ feed }: { feed: FeedData }) {
 }
 
 /** Where a row of hers goes at a tap: a base's date to its Record; a person's row or a draft to its sheet, which asks
- * the router where the thing is; the private matter's to the bot (its words are behind «Show» there). */
+ * the router where the thing is; a private matter's draft to the bot (its words are behind «Show» there). */
 function Way({ row, bot, record, onOpen }: { row: FeedRow; bot: string; record: (() => void) | null; onOpen: () => void }) {
   if (row.source === "deadline")
     return record ? (
@@ -173,7 +173,7 @@ function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: 
   const actions =
     row.action === "assistant" ? (
       <div className="flex shrink-0 items-center gap-0.5 self-end sm:self-center">
-        {row.t && !row.private && <PressButtons t={row.t} />}
+        {row.t && <PressButtons t={row.t} />}
         <Way row={row} bot={bot} record={record} onOpen={() => onOpen(row)} />
       </div>
     ) : null;
@@ -232,7 +232,7 @@ function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: 
           Open and answer
         </Link>
       )}
-      {row.action === "assistant" && row.private && !bot && <span className="text-xs text-muted-foreground">in Telegram</span>}
+      {row.action === "assistant" && row.private && !row.t && !bot && <span className="text-xs text-muted-foreground">in Telegram</span>}
     </li>
   );
 }

@@ -100,4 +100,19 @@ describe("ApprovalCard", () => {
     expect(screen.getByRole("button", { name: "Copy command" })).toBeTruthy();
     expect(screen.getByText(/you do this yourself/)).toBeTruthy();
   });
+
+  it("closes a courier card by «Done», and a closed one offers it no more", async () => {
+    const courier = approval({ kind: "courier", state: "dropped", input: { command: "git push" } });
+    const courierDone = vi.fn().mockResolvedValue({ toast: "Closed.", approval: { ...courier, state: "done", at: courier.at + 1 } });
+    const onDecided = vi.fn();
+    const live = fakeLive();
+    const { unmount } = render(<ApprovalCard approval={courier} live={live} courierDone={courierDone} onDecided={onDecided} />);
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(onDecided).toHaveBeenCalled());
+    expect(courierDone).toHaveBeenCalledWith(courier.id);
+    expect(live.getState().approvals[courier.id]?.state).toBe("done");
+    unmount();
+    render(<ApprovalCard approval={{ ...courier, state: "done" }} live={fakeLive()} />);
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+  });
 });

@@ -304,31 +304,21 @@ describe("Her row's sheet", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the private matter's nameless row as its letters, each closed on its own", async () => {
-    const one = "1".repeat(32);
-    const two = "2".repeat(32);
+  it("shows a private letter as any letter of hers: named, with its own buttons, and no Telegram link", async () => {
     vi.spyOn(api, "waitingDetail").mockResolvedValue({
-      detail: { kind: "letter", who: "Private", account: "", more: 0, asks: [
-        { need: "reply", who: "Example Studio", text: "A second call next week?", deadline: "Monday", at: NOW - 3600, open: { url: GMAIL, label: "Open in Gmail" }, t: one },
-        { need: "decide", who: "Acme Talent", text: "Send the details?", deadline: "", at: NOW - 7200, t: two },
-      ] },
+      detail: { kind: "letter", who: "Example Studio", account: "", more: 0, asks: [
+        { need: "reply", text: "A second call next week?", deadline: "Monday", at: NOW - 3600, open: { url: GMAIL, label: "Open in Gmail" } },
+      ], open: { url: GMAIL, label: "Open in Gmail" } },
     });
-    const press = vi.spyOn(api, "waitingPress").mockResolvedValue({ ok: true });
-    const secret = row({ key: "p", action: "assistant", source: "letter", session: null, track: null, title: "Private", essence: "2 private letters wait for a reply", ref: "letter:5", t: T, private: true });
-    mount(<FeedView feed={hers([secret])} now={NOW} />);
+    const secret = row({ key: "p", action: "assistant", source: "letter", session: null, track: null, title: "Example Studio", essence: "reply: A second call next week?", ref: "letter:5", t: T, private: true });
+    mount(<FeedView feed={hers([secret], { bot: "retinue_bot" })} now={NOW} />);
     const section = await screen.findByRole("region", { name: "From the assistant" });
-    expect(within(section).queryByRole("button", { name: "Done" })).toBeNull();
-    fireEvent.click(within(section).getByRole("button", { name: /Private/ }));
-    const sheet = await screen.findByRole("dialog", { name: "Private" });
-    expect(await within(sheet).findByText("Example Studio")).toBeTruthy();
-    expect(within(sheet).getByText("Acme Talent")).toBeTruthy();
-    expect(within(sheet).getByRole("link", { name: "This letter in Gmail" }).getAttribute("href")).toBe(GMAIL);
-    expect(within(sheet).getAllByRole("button", { name: "Done" })).toHaveLength(2);
-    fireEvent.click(within(sheet).getAllByRole("button", { name: "Not a task" })[0]!);
-    await waitFor(() => expect(press).toHaveBeenCalledWith(one, "dismissed"));
-    expect(within(sheet).queryByText("Example Studio")).toBeNull();
-    expect(within(sheet).getByText("Acme Talent")).toBeTruthy();
-    expect(within(sheet).getByRole("link", { name: /Open in Telegram/ })).toBeTruthy();
+    expect(within(section).getByRole("button", { name: "Done" })).toBeTruthy();
+    fireEvent.click(within(section).getByRole("button", { name: /Example Studio/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Example Studio" });
+    expect(await within(sheet).findByText("A second call next week?")).toBeTruthy();
+    expect(within(sheet).getByRole("button", { name: "Ask the assistant" })).toBeTruthy();
+    expect(within(sheet).queryByRole("link", { name: /Telegram/ })).toBeNull();
   });
 
   it("opens a base's date in its Record, with no sheet", async () => {

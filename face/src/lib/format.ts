@@ -45,6 +45,7 @@ const STATE_WORDS: Record<string, string> = {
   stale: "Stale",
   expired: "Expired",
   dropped: "Withdrawn",
+  done: "Done",
   answered: "Answered",
 };
 export const approvalStateWord = (state: string) => STATE_WORDS[state] ?? state;

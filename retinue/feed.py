@@ -5,8 +5,8 @@ the router as text for `/wait` (`POST /owner/feed`).
 Built by code on every read from the platform's own rows — never a copy kept beside them that could drift:
 
 - «Answer the question»: a question card (AskUserQuestion) shown and not answered;
-- «Decide»: an approval card shown, a courier card of the last day whose session he has not written to since, and a
-  session with Base files not committed yet («To the Base», `tobase`);
+- «Decide»: an approval card shown, a courier card of the last day he has not closed («Done») nor written to its session
+  since, and a session with Base files not committed yet («To the Base», `tobase`);
 - «Reply»: a session waiting for his message with no card shown;
 - «Read»: a session whose finished turn he has not read (the session's `unread`; nothing without it);
 - «From the assistant»: the assistant's digest.
@@ -92,7 +92,8 @@ DRAFT_STATES = ("shown", "hidden", "link")
 LINKS = {"Open in Gmail": re.compile(r"https://mail\.google\.com/mail/\?authuser=[^\s@/?#&]{1,64}@[^\s@/?#&]{1,190}"
                                      r"#all/[0-9a-f]{10,24}"),
          "Open the chat": re.compile(r"https://t\.me/[A-Za-z][A-Za-z0-9_]{3,31}")}
-PRIVATE_WHO = "Private"      # who the owner's private matter's row names: no one (`waiting`)
+PRIVATE_WHO = "Private"      # who a private matter's draft names, and every private row in Telegram: no one
+PRIVATE_ESSENCE = "A private letter waits for a reply — open it in the app"
 
 
 class Refused(ValueError):
@@ -379,8 +380,8 @@ def spheres(cfg) -> dict[str, dict]:
 
 
 def _private(item: dict) -> bool:
-    """The owner's private matter in her digest: its letters' row (`private`), which names no one on the list and opens
-    as its letters one by one, or a draft that names no one, whose text waits behind «Show» in Telegram."""
+    """The owner's private matter in her digest: a letter's row (`private`), named in the app and never in Telegram,
+    or a draft that names no one, whose text waits behind «Show» in Telegram."""
     return item.get("private") is True or (item["kind"] == "draft" and item["who"] == PRIVATE_WHO)
 
 
@@ -431,7 +432,7 @@ class Feed:
         busy = set()
         cards = db.execute(
             "SELECT id FROM approvals a WHERE (a.kind IN ('approval', 'question') AND a.state = 'shown') OR "
-            "(a.kind = 'courier' AND a.created >= ? AND NOT EXISTS (SELECT 1 FROM inputs i WHERE i.session = a.session"
+            "(a.kind = 'courier' AND a.state = 'dropped' AND a.created >= ? AND NOT EXISTS (SELECT 1 FROM inputs i WHERE i.session = a.session"
             " AND i.at > a.created)) ORDER BY a.created, a.rowid", (now - COURIER_S,)).fetchall()
         for (approval_id,) in cards:
             approval = self.store.face_approval(approval_id)
@@ -525,7 +526,10 @@ class Feed:
         titles = dict(ACTIONS)
         shown = [{"action": r["action"], "group": titles[r["action"]], "source": r["source"],
                   "session": r["session"], "approval": r["approval"]["id"] if r.get("approval") else None,
-                  "card": r.get("card"), "where": r["sphere_title"] or r["track"] or "", "title": r["title"],
-                  "since": r["since"], "essence": r["essence"], **({"hint": r["hint"]} if r.get("hint") else {})}
+                  "card": r.get("card"), "where": r["sphere_title"] or r["track"] or "",
+                  # a letter of the private matter is named in the app only: Telegram says no more than that it waits
+                  "title": PRIVATE_WHO if r.get("private") else r["title"], "since": r["since"],
+                  "essence": PRIVATE_ESSENCE if r.get("private") and r["source"] != "draft" else r["essence"],
+                  **({"hint": r["hint"]} if r.get("hint") else {})}
                  for r in rows[:TELEGRAM_ROWS]]
         return {"count": len(rows), "rows": shown, "more": max(0, len(rows) - TELEGRAM_ROWS)}

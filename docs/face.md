@@ -204,6 +204,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `POST /api/sessions/{id}/base` | `{toast, card}`: “To the Base” — the session's card opened, or its open one brought up to date ([base.md](base.md#the-button)); `card` null and the reason when it has nothing to commit |
 | `GET /api/base/{id}` | `{card}` — one card, for the link a Telegram copy's “Open in the app” opens (`/b/<id>`) |
 | `GET /api/base/{id}/diff` | `{diff, truncated}`: the files turned on, as the clone has them now, at most 1 MB |
+| `POST /api/approvals/{id}/done` | `{toast, approval}`: “Done” on a courier card — `dropped → done`, out of “Waiting for you”; 400 for any other card |
 | `POST /api/base/{id}/toggle {path, on}` · `/subject {subject}` · `/commit` · `/cancel` · `/discard` | `{toast, card}`: by the rules of a Telegram press; every Telegram copy is rewritten. “Discard” is the app's alone: “Discard…” at the card's foot asks once, then puts the files turned on back as the Base has them ([base.md](base.md)) |
 | `POST /api/sessions/{id}/push {repo?}` | `{toast, card}`: “Push” — a repository's push card opened, or its open one brought up to date ([code.md](code.md#the-button)); `card` null and the reason when there is nothing to push |
 | `GET /api/push/{id}` · `/diff` | `{card}` for the page `/p/<id>`; `{diff, truncated}`: merge-base → the card's tip, at most 1 MB |
@@ -558,7 +559,7 @@ session, a card or a summary changes on the stream (once per burst) and once a m
 | “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted (“To the Base: N files”, since the first of them) | “Allow” / “Deny”; a courier's “Copy command”; “To the Base · N”, the card in a dialog. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first: nothing is decided unseen |
 | “Reply” | a session waiting for your message with no card shown | “Open and answer” |
 | “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
-| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and the way to the thing. A person's row or a draft — its words, or › “Details” — opens [its sheet](#her-rows-sheet); a base's date — its words, or ↗ “Open the Record” — opens the Record in Spaces; the private matter's row names no one and has no buttons on the list; its words, or › “Details”, open its sheet: its letters one by one, each with its own “Done”, “Not a task” and “Tomorrow”. A draft of it has only ↗ “Open in Telegram” (`https://t.me/<bot>`): its text and «Send» come after “Show” there. Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |
+| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and the way to the thing. A person's row or a draft — its words, or › “Details” — opens [its sheet](#her-rows-sheet); a base's date — its words, or ↗ “Open the Record” — opens the Record in Spaces; a letter of the private matter is a row like any other here (named only in the app, never in Telegram's `/wait`). A draft of the private matter has only ↗ “Open in Telegram” (`https://t.me/<bot>`): its text and «Send» come after “Show” there. Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |
 
 Each row: an icon of where it came from, its sphere (or track), the session's title (her rows: who), how long it has
 waited and its one line — the question, the command, the summary's first line, her title. A card is the same object
@@ -566,7 +567,7 @@ as everywhere (`approval`), decided by the same rules; the app shows its newest 
 once. A row is `{key, action, source, session, track, sphere, sphere_title, sphere_icon, title, since, essence, ref}`
 plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row,
 `base` (the count) on a “To the Base” row (`source: base`), `t` (the row's token) on a person's row of hers, `private:
-true` on the private matter's row of hers (its letters' row, or a draft that names no one).
+true` on a row of hers about the private matter (a letter's, or a draft that names no one).
 A pressed row leaves the feed at once and stays hidden while the feed still has its `t`, ten minutes at most — a press
 that did not go through brings it back; the toast “Done · Undo” stays 10 seconds, and “Undo” sends `open`
 with the same `t`. Under her rows: “Closed today: M · Ran out unmarked this week: N” (`closed_today`,
@@ -604,10 +605,8 @@ has one by that name, else “Auto” (`startNew`: this tab's sessionStorage, li
 “Not a task” and “Tomorrow”, as on the row. Inside the Mini App a t.me link goes to Telegram itself (`web_app_open_tg_link`) and
 Gmail to its browser (`web_app_open_link`), each from the tap itself.
 
-The private matter's row — nameless on the list — opens as its letters, newest first: each its sender's name, her ask
-and words (masked), “This letter in Gmail”, and its own “Done”, “Not a task”, “Tomorrow” by its own token, so one
-press closes one letter; a closed letter leaves the sheet at once. A draft of the private matter is never asked for,
-and is refused on both sides. When the router is
+A letter of the private matter opens as any letter does. A draft of the private matter is never asked for, and is
+refused on both sides. When the router is
 silent the sheet says “The assistant's side did not answer in time.” with “Try again”; when the row is out of date
 it says so, drops the buttons and reads the feed again. Nothing of the sheet is kept: not by the platform (it relays
 the router's answer to the request that waits for it — [platform.md](platform.md#the-assistants-digest)), not by the

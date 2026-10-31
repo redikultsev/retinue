@@ -175,6 +175,20 @@ describe("sub-sessions, as Claude Code's sidebar has them", () => {
 });
 
 describe("SessionMenu", () => {
+  it("opens its dialog outside the row, so a row's hover-only actions going away do not take it with them", async () => {
+    const s = session("a1b2c3d4");
+    const calls = { setSphere: vi.fn(), setMain: vi.fn(), fork: vi.fn() };
+    mount(
+      <span data-testid="hover-only" style={{ display: "none" }}>
+        <SessionMenu s={s} calls={calls} />
+      </span>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Menu: Session a1b2c3d4", hidden: true }));
+    const dialog = screen.getByRole("dialog");
+    expect(screen.getByTestId("hover-only").contains(dialog)).toBe(false);
+    expect(dialog.parentElement).toBe(document.body);
+  });
+
   it("moves the session to a sphere, marks it main and forks it with a first message", async () => {
     const s = session("a1b2c3d4", { sphere: "travel" });
     const calls = {

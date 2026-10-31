@@ -1,7 +1,10 @@
 // shadcn/ui Dialog's look (MIT) on the native <dialog> element instead of Radix: focus trap, Esc and the top layer
 // come from the browser, one dependency fewer. `sheet`: a bottom sheet on a phone (a centred panel on a wide screen),
-// its own header with «Close», its body scrolling above the home indicator.
+// its own header with «Close», its body scrolling above the home indicator. Rendered into <body>: a dialog opened from
+// a control shown only on hover (a session row's menu) would otherwise go when the hover does — its ancestor hidden,
+// the top layer shows nothing.
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import type * as React from "react";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +23,7 @@ function Dialog({ open, onClose, title, sheet = false, className, children, ...p
     if (open && !dialog.open) dialog.showModal?.() ?? dialog.setAttribute("open", "");
     if (!open && dialog.open) dialog.close?.() ?? dialog.removeAttribute("open");
   }, [open]);
-  return (
+  return createPortal(
     <dialog
       ref={ref}
       aria-label={title}
@@ -58,7 +61,8 @@ function Dialog({ open, onClose, title, sheet = false, className, children, ...p
           {children}
         </div>
       )}
-    </dialog>
+    </dialog>,
+    document.body,
   );
 }
 

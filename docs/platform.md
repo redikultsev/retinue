@@ -101,7 +101,13 @@ to nothing. The first 10 rows; «N more — in the app.».
 of every list at once, with its sub-sessions and side questions and theirs. Each one still open ends where it stands, as
 a stopped sub-session does: its queued runs dropped, its running turn interrupted, its cards stale («Expired: you
 archived the session»), closed. Nothing is deleted: its link still opens it, and the row carries `archived` until a turn
-of it begins again — a message from you brings it back to the list.
+of it begins again — a message from you brings it back to the list. It asks nothing first: the toast «Archived.» has
+«Undo» for ten seconds (`POST /api/sessions/{id}/unarchive`, `PlatformStore.unarchive`), which brings back the session
+and the kin archived with it — not their stopped turns — and its main mark when its sphere has no other main session
+by then. Later, «Archived» — the last of the session list's filters (`GET /api/archived`, `PlatformStore.face_archived`)
+— lists what you archived, the latest first, 200 at most; a sub-session or side question archived with its session is
+not listed apart, restoring that one brings it. Its «Restore» is the same call without the main mark: set it again in
+the session's menu.
 
 ### The assistant's digest
 

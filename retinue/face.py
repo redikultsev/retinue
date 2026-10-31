@@ -293,10 +293,11 @@ class Face:
             web.post("/api/auth/code", self.auth_code), web.post("/api/auth/telegram", self.auth_telegram),
             web.post("/api/auth/logout", self.logout),
             web.get("/api/meta", self.meta), web.get("/api/sessions", self.sessions),
+            web.get("/api/archived", self.archived),
             web.post("/api/sessions", self.new), web.get("/api/sessions/{id}", self.session),
             web.post("/api/sessions/{id}/input", self.input), web.post("/api/sessions/{id}/stop", self.stop),
             web.post("/api/sessions/{id}/pin", self.pin), web.post("/api/sessions/{id}/side", self.side),
-            web.post("/api/sessions/{id}/archive", self.archive),
+            web.post("/api/sessions/{id}/archive", self.archive), web.post("/api/sessions/{id}/unarchive", self.unarchive),
             web.get("/api/sessions/{id}/diff", self.diff), web.get("/api/approvals/{id}", self.approval),
             web.get("/api/sessions/{id}/inputs/{input}/{n:\\d{1,2}}", self.thumb),
             web.post("/api/approvals/{id}/decide", self.decide), web.post("/api/approvals/{id}/answer", self.answer),
@@ -401,6 +402,10 @@ class Face:
     async def sessions(self, request: web.Request) -> web.Response:
         return web.json_response({"schema": SCHEMA, "cursor": self.store.cursor(),
                                   "sessions": self.store.face_sessions(self.clock())})
+
+    async def archived(self, request: web.Request) -> web.Response:
+        """«Archived»: what the owner archived, the latest first, for his «Restore» (`unarchive`)."""
+        return web.json_response({"schema": SCHEMA, "sessions": self.store.face_archived()})
 
     async def session(self, request: web.Request) -> web.Response:
         session_id = request.match_info["id"]
@@ -663,6 +668,16 @@ class Face:
         session_id = request.match_info["id"]
         if not await self.platform.archive(session_id):
             return _error(404, "No such session.")
+        return web.json_response({"session": self.store.face_session(session_id)})
+
+    async def unarchive(self, request: web.Request) -> web.Response:
+        """«Undo» under «Archived»: the session and its kin back in the list; `main` — it was its sphere's main one."""
+        body, session_id = await _body(request), request.match_info["id"]
+        if type(body.get("main", False)) is not bool:
+            return _error(400, "main: true | false")
+        if self.store.session(session_id) is None:
+            return _error(404, "No such session.")
+        self.store.unarchive(session_id, body.get("main", False))
         return web.json_response({"session": self.store.face_session(session_id)})
 
     async def sphere(self, request: web.Request) -> web.Response:

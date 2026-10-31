@@ -1,7 +1,7 @@
 // A session's menu: its sphere, whether it is the sphere's main session, «To the Base» while its runs left Base files
 // uncommitted (retinue/tobase.py), and «Fork» — a new session from a copy of this one's conversation, with the
 // track's full rights (retinue/spheres.py); «Pin» too, since a phone's row shows its pin only once pinned; «Archive»
-// ends it and its kin and takes them out of every list until a message brings it back (asked once first). Each
+// ends it and its kin and takes them out of every list at once, with «Undo» in its toast for ten seconds. Each
 // change is the platform's: the answer's row goes into the store as the session's event, and every device shows it.
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
@@ -18,12 +18,13 @@ import { toast } from "@/lib/toast";
 import type { Session } from "@/lib/types";
 import { cn, inputId } from "@/lib/utils";
 
-type Api = Pick<typeof api, "setSphere" | "setMain" | "fork"> & Partial<Pick<typeof api, "pin" | "archive">>;
+type Api = Pick<typeof api, "setSphere" | "setMain" | "fork"> & Partial<Pick<typeof api, "pin" | "archive" | "unarchive">>;
+const UNDO_MS = 10_000;
 
 export function SessionMenu({ s, calls = api, className }: { s: Session; calls?: Api; className?: string }) {
   const pin = calls.pin ?? api.pin;
   const archive = calls.archive ?? api.archive;
-  const [archiving, setArchiving] = useState(false);
+  const unarchive = calls.unarchive ?? api.unarchive;
   const here = useRouterState({ select: (r) => r.location.pathname });
   const spheres = live.meta?.spheres ?? [];
   const [open, setOpen] = useState(false);
@@ -38,22 +39,32 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
   function close() {
     setOpen(false);
     setForking(false);
-    setArchiving(false);
   }
 
+  /** At once, no question: a press by mistake is one «Undo» away — the row back in the list, and the page too. */
   async function archiveIt() {
-    await change(() => archive(s.id));
+    const opened = here.startsWith(`/s/${s.id}`);
+    if (!(await change(() => archive(s.id)))) return;
     close();
-    if (here.startsWith(`/s/${s.id}`)) await navigate({ to: "/sessions" });
+    if (opened) await navigate({ to: "/sessions" });
+    toast("Archived.", "info", UNDO_MS, undefined, {
+      label: "Undo",
+      run: async () => {
+        if ((await change(() => unarchive(s.id, Boolean(s.main)))) && opened)
+          await navigate({ to: "/s/$id", params: { id: s.id } });
+      },
+    });
   }
 
-  async function change(call: () => Promise<{ session: Session }>) {
+  async function change(call: () => Promise<{ session: Session }>): Promise<boolean> {
     setBusy(true);
     try {
       const res = await call();
       live.dispatch({ type: "event", id: null, event: { kind: "session", data: res.session } });
+      return true;
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -103,22 +114,8 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
       >
         <More />
       </Button>
-      <Dialog open={open} onClose={close} title={forking ? "Fork" : archiving ? "Archive this session?" : s.title || "Session"}>
-        {archiving ? (
-          <div className="flex flex-col gap-3">
-            <p className="text-sm text-muted-foreground">
-              It stops, and its cards and sub-sessions go with it. Writing to it brings it back.
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setArchiving(false)}>
-                Back
-              </Button>
-              <Button disabled={busy} onClick={() => void archiveIt()}>
-                {busy ? "Archiving…" : "Archive"}
-              </Button>
-            </div>
-          </div>
-        ) : forking ? (
+      <Dialog open={open} onClose={close} title={forking ? "Fork" : s.title || "Session"}>
+        {forking ? (
           <form
             className="flex flex-col gap-3"
             onSubmit={(e) => {
@@ -202,7 +199,13 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
               </Button>
             )}
             <div className="flex items-center justify-between gap-2">
-              <Button variant="ghost" className="text-muted-foreground" onClick={() => setArchiving(true)}>
+              <Button
+                variant="ghost"
+                className="text-muted-foreground"
+                disabled={busy}
+                title="It stops, its cards and sub-sessions with it; «Undo» brings it back"
+                onClick={() => void archiveIt()}
+              >
                 <Archive />
                 Archive
               </Button>

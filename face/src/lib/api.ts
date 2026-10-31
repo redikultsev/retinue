@@ -1,6 +1,7 @@
 // The face API over fetch: the session cookie rides along (same origin), every POST carries `X-Retinue: 1`.
 import type {
   Approval,
+  ArchivedSession,
   BaseCard,
   BaseResponse,
   DecideResponse,
@@ -94,6 +95,8 @@ export const api = {
   /** The last eight seven-day spans of the platform's tally, the newest first («Week»). */
   stats: () => request<{ now: number; weeks: Tally[] }>("/api/stats"),
   sessions: () => request<SessionsSnapshot>("/api/sessions"),
+  /** «Archived»: what the owner archived, the latest first. */
+  archived: () => request<{ sessions: ArchivedSession[] }>("/api/archived"),
   session: (id: string) => request<SessionSnapshot>(`/api/sessions/${encodeURIComponent(id)}`),
   approval: (id: string) => request<{ approval: Approval }>(`/api/approvals/${encodeURIComponent(id)}`),
   file: (id: string) => request<{ file: OutFile }>(`/api/files/${encodeURIComponent(id)}/meta`),
@@ -128,6 +131,9 @@ export const api = {
   /** «Archive»: the session and its kin end and leave the list; a message to it brings it back. */
   archive: (session: string) =>
     request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/archive`, {}),
+  /** «Undo» under «Archived»: back in the list (its stopped turn stays stopped); `main` — it was the sphere's main one. */
+  unarchive: (session: string, main: boolean) =>
+    request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/unarchive`, { main }),
   side: (session: string, text: string, id = inputId()) =>
     request<{ session: string; say: string }>(`/api/sessions/${encodeURIComponent(session)}/side`, {
       input_id: id,

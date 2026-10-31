@@ -1,13 +1,15 @@
 // The sessions grouped by sphere (lib/spheres.ts), as Claude Code's sidebar has them: sphere → its main session first
 // → what hangs under it (sub-sessions, forks, side questions), indented; a sphere and a session with rows under it fold,
-// and the device remembers it. «Waiting» / «Working» / «Done» / «Pinned» are filters. A waiting session shows
+// and the device remembers it. «Waiting» / «Working» / «Done» / «Pinned» are filters; «Archived», last, lists what
+// was archived, with «Restore» (components/archived-list.tsx), for this visit only. A waiting session shows
 // its cards under its row, with the full input and both buttons, when `cards` is set. A row opens inline (a peek):
 // the session's last words and a reply box, without leaving the list. A dot marks what came since the owner looked.
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
+import { ArchivedList } from "@/components/archived-list";
 import { Composer } from "@/components/composer";
-import { ArrowUp, ChevronDown, Clock, Columns, Database, Fork, GitPullRequest, Pin, Plus, Star } from "@/components/icons";
+import { Archive, ArrowUp, ChevronDown, Clock, Columns, Database, Fork, GitPullRequest, Pin, Plus, Star } from "@/components/icons";
 import { NewSession } from "@/components/new-session";
 import { SessionMenu } from "@/components/session-menu";
 import { Markdown } from "@/components/transcript/item";
@@ -365,6 +367,7 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
   const { sessions, approvals } = state;
   const spheres = live.meta?.spheres ?? NO_SPHERES;
   const [filter, setFilter] = useState<Filter>(savedFilter);
+  const [archived, setArchived] = useState(false);
   const [starting, setStarting] = useState<string | null | undefined>(undefined); // a sphere's «＋»: its name
   const [folded, fold] = useFolded();
   const { groups } = useMemo(
@@ -373,6 +376,7 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
   );
   function pick(value: Filter) {
     setFilter(value);
+    setArchived(false);
     try {
       localStorage.setItem(FILTER_KEY, value);
     } catch {
@@ -410,12 +414,12 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
           <button
             key={f.value}
             type="button"
-            aria-pressed={filter === f.value}
+            aria-pressed={!archived && filter === f.value}
             title={f.label}
             onClick={() => pick(f.value)}
             className={cn(
               "flex h-6 min-w-0 flex-auto items-center justify-center rounded px-1.5 text-xs pointer-coarse:h-9",
-              filter === f.value ? "bg-background font-medium text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
+              !archived && filter === f.value ? "bg-background font-medium text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
               f.value === "pinned" && "flex-none px-2",
             )}
           >
@@ -429,14 +433,28 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
             )}
           </button>
         ))}
+        <button
+          type="button"
+          aria-pressed={archived}
+          title="Archived"
+          onClick={() => setArchived(true)}
+          className={cn(
+            "flex h-6 flex-none items-center justify-center rounded px-2 pointer-coarse:h-9",
+            archived ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Archive className="size-3" />
+          <span className="sr-only">Archived</span>
+        </button>
       </fieldset>
       <div className={cn("flex flex-col gap-1", fill && "min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4")}>
-      {groups.length === 0 && (
+      {archived && <ArchivedList />}
+      {!archived && groups.length === 0 && (
         <p className="px-3 py-8 text-center text-sm text-muted-foreground">
           {filter === "all" ? "No sessions. Start one with “+”." : "Nothing here right now."}
         </p>
       )}
-      {groups.map((g) => (
+      {!archived && groups.map((g) => (
         <Group
           key={g.key}
           title={g.title}

@@ -321,6 +321,9 @@ export interface SessionsSnapshot {
   sessions: Session[];
 }
 
+/** A row of «Archived» (`GET /api/archived`): the session as listed, and when the owner archived it. */
+export type ArchivedSession = Session & { archived_at: number };
+
 export interface SessionSnapshot {
   schema: number;
   cursor: number;

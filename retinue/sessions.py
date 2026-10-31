@@ -370,6 +370,24 @@ class PlatformStore:
         self.db.commit()
         return ids
 
+    def unarchive(self, session: str, main: bool = False) -> list[str]:
+        """«Undo» of «Archive»: the session and the kin archived with it back in the face's list — not their turns,
+        which stay ended. `main`: it was its sphere's main session, and is again unless another one is by now. Its ids;
+        empty when it is not archived."""
+        row = self.db.execute("SELECT archived FROM sessions WHERE id = ?", (session,)).fetchone()
+        if row is None or row[0] is None:
+            return []
+        rows = self.db.execute("""WITH RECURSIVE kin(id) AS (SELECT id FROM sessions WHERE id = ?
+            UNION SELECT s.id FROM sessions s JOIN kin ON s.sub_of = kin.id OR s.parent = kin.id)
+            SELECT s.id FROM sessions s JOIN kin ON s.id = kin.id WHERE s.archived = ?""", (session, row[0])).fetchall()
+        for (id_,) in rows:
+            self.db.execute("UPDATE sessions SET archived = NULL WHERE id = ?", (id_,))
+            self._session_event(id_)
+        self.db.commit()
+        if main:
+            self.claim_main(session)
+        return [id_ for (id_,) in rows]
+
     def face_about(self, session: str) -> dict:
         """What the face's «Summary» says of a session besides its row — only what the platform was told: the directory
         it ran in, the context its main conversation's last request carried, and from its newest top-level `init` line
@@ -876,6 +894,18 @@ class PlatformStore:
                                "ORDER BY s.at DESC",
                                (now - FACE_CLOSED_S,))
         return [self._based(self._face_session(row)) for row in rows]
+
+    ARCHIVED_MAX = 200
+
+    def face_archived(self) -> list[dict]:
+        """«Archived» in the app: the sessions the owner archived, the latest first, each with `archived_at` — a
+        sub-session or side question archived with its session is not listed apart: restoring that one brings it."""
+        rows = self.db.execute(f"""{self.FACE_SESSION} WHERE s.archived IS NOT NULL AND NOT EXISTS (SELECT 1 FROM
+            sessions k WHERE k.id IN (s.sub_of, s.parent) AND k.archived = s.archived)
+            ORDER BY s.archived DESC LIMIT ?""", (self.ARCHIVED_MAX,)).fetchall()
+        at = dict(self.db.execute(f"SELECT id, archived FROM sessions WHERE id IN ({','.join('?' * len(rows))})",
+                                  [row[0] for row in rows]).fetchall()) if rows else {}
+        return [{**self._based(self._face_session(row)), "archived_at": at[row[0]]} for row in rows]
 
     def _based(self, row: dict) -> dict:
         return row if self.base_shown() else {**row, "base": 0}

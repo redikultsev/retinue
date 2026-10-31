@@ -188,6 +188,8 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `POST /api/sessions/{id}/stop` | `{ok}`: the lane interrupts the running turn |
 | `POST /api/sessions/{id}/pin {pinned}` | `{session}`: the pin is the session's row (`pinned`), so every device agrees; its `at` stays |
 | `POST /api/sessions/{id}/archive` | `{session}`: “Archive” — the session, its sub-sessions and side questions end where they stand (queue dropped, run stopped, cards stale) and leave every list (`archived`); a turn of it beginning again, a message from you, brings it back ([platform.md](platform.md#archive)) |
+| `GET /api/archived` | `{schema, sessions}` — “Archived”: the archived sessions, the latest first, 200 at most, each a session row with `archived_at`; kin archived with its session is not listed apart |
+| `POST /api/sessions/{id}/unarchive {main?}` | `{session}`: “Undo” in the toast “Archived.” — the session and the kin archived with it back in every list; their stopped turns stay stopped. `main: true`: it was its sphere's main session, and is again unless another one is by now |
 | `POST /api/sessions/{id}/side {input_id, text}` | `{session, say}`: a side question — see below |
 | `POST /api/sessions/{id}/sphere {sphere}` | `{session}`: a sphere's name, or `null` for none; the session is no sphere's main session after it |
 | `POST /api/sessions/{id}/main {main}` | `{session}`: the sphere's main session — marking one unmarks the sphere's previous one; 400 without a sphere |
@@ -483,7 +485,10 @@ is as of opening the session.
   30 px line (44 px on a touch screen): a state dot (waiting, working), its title cut to the line, and on the right
   small marks — “waiting”, ↑N commits not pushed (a PR icon once a push opened one), the Base files N, a queued clock, the
   unread dot; pin, peek, menu and “Open beside” show on hover with a mouse and stay on a touch screen (the pin there only once
-  pinned; “Pin” is in the menu; “Archive” at its foot asks once, then takes the session out of every list). A sphere's heading (small, muted) folds
+  pinned; “Pin” is in the menu; “Archive” at its foot takes the session out of every list at once, no question — the toast “Archived.” has “Undo”
+  for ten seconds, which brings it back, and the page too if it was open). The last of the list's filters, an archive
+  box, shows **“Archived”** for this visit: each archived session with its sphere and when it was archived, its title
+  opening it, and “Restore”, which puts it back in every list (the main mark is set again in its menu). A sphere's heading (small, muted) folds
   the sphere; «⑂ N ⌄» on a row with rows under it folds them (the tooltip adds the open sub-sessions, `children`); the
   device remembers both. A fold never hides what waits on you — a folded row and a folded heading say “N waiting” — nor
   the session on screen (its sphere and parent stay open), and under “Waiting” nothing is folded. A row is “side question: …”

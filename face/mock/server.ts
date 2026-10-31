@@ -369,6 +369,8 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
 
   if (path === "/api/sessions" && method === "GET") return json(res, 200, { schema: 1, cursor: lastId, sessions: [...sessions.values()] });
+  if (path === "/api/archived" && method === "GET")
+    return json(res, 200, { schema: 1, sessions: [...sessions.values()].filter((s) => s.archived).map((s) => ({ ...s, archived_at: s.at })).sort((a, b) => b.archived_at - a.archived_at) });
 
   if (path === "/api/sessions" && method === "POST") {
     const b = await body(req);
@@ -493,7 +495,14 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     }
     if (sub === "/archive" && method === "POST") {
       for (const a of approvals.values()) if (a.session === id && a.state === "shown") approvals.set(a.id, { ...a, state: "stale" });
-      setSession(id, { state: "closed", archived: true, waiting: 0 });
+      setSession(id, { state: "closed", archived: true, main: false, waiting: 0 });
+      return json(res, 200, { session: sessions.get(id) });
+    }
+    if (sub === "/unarchive" && method === "POST") {
+      const b = await body(req);
+      const { archived: _, ...back } = sessions.get(id)!;
+      sessions.set(id, { ...back, main: b.main === true, at: now() });
+      emit("session", id, sessions.get(id));
       return json(res, 200, { session: sessions.get(id) });
     }
     if (sub === "/pin" && method === "POST") {

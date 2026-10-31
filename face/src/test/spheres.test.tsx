@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionList } from "@/components/session-list";
 import { SessionMenu } from "@/components/session-menu";
+import { Toaster } from "@/components/toaster";
 import { live } from "@/lib/live";
 import { useMarkSeen } from "@/lib/seen";
 import { foldRows } from "@/lib/spheres";
@@ -213,23 +214,30 @@ describe("SessionMenu", () => {
     expect(calls.fork).toHaveBeenCalledWith("a1b2c3d4", "by train?", expect.stringMatching(/^face:/));
   });
 
-  it("archives only once asked, and an archived session leaves every list", async () => {
-    const s = session("a1b2c3d4");
+  it("archives at once, no question, and «Undo» in its toast brings it back — the main mark too", async () => {
+    const s = session("a1b2c3d4", { sphere: "travel", main: true });
     const calls = {
       setSphere: vi.fn(),
       setMain: vi.fn(),
       fork: vi.fn(),
-      archive: vi.fn().mockResolvedValue({ session: { ...s, state: "closed", archived: true, at: 2 } }),
+      archive: vi.fn().mockResolvedValue({ session: { ...s, state: "closed", main: false, archived: true, at: 2 } }),
+      unarchive: vi.fn().mockResolvedValue({ session: { ...s, state: "closed", at: 3 } }),
     };
-    mount(<SessionMenu s={s} calls={calls} />);
+    mount(
+      <>
+        <SessionMenu s={s} calls={calls} />
+        <Toaster />
+      </>,
+    );
     fireEvent.click(await screen.findByRole("button", { name: "Menu: Session a1b2c3d4" }));
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Archive" }));
-    expect(calls.archive).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog").textContent).toContain("Archive this session?");
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Archive" }));
     await waitFor(() => expect(calls.archive).toHaveBeenCalledWith("a1b2c3d4"));
     await waitFor(() => expect(live.getState().sessions.a1b2c3d4?.archived).toBe(true));
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(listed(live.getState().sessions).map((x) => x.id)).not.toContain("a1b2c3d4");
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(calls.unarchive).toHaveBeenCalledWith("a1b2c3d4", true));
+    await waitFor(() => expect(live.getState().sessions.a1b2c3d4?.archived).toBeUndefined());
   });
 
   it("offers no fork for a side question", async () => {

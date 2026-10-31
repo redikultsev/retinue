@@ -1,4 +1,0 @@
----
-title: More
-layout: more
----

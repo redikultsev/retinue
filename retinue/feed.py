@@ -21,8 +21,8 @@ chat: sending and deciding stay in Telegram, where an outward action is a button
 be closed in the face — «Done», «Not a task», «Tomorrow», «Undo»: the press goes back to the router as a note by its
 token (`waiting-press`), and only the router knows what the token names. Beside the items, two counts: what closed
 today, what ran out unmarked in the week. A deadline whose time has not come yet (`since`
-ahead) is no one's queue: the face shows it only under «Deadlines». The same push carries the hub's status chips
-(`chips`: the backup, the limit, the hub's build), for the face's «Today».
+ahead) is no one's queue: the face shows it only under «Deadlines». The same push carries the status chips
+(`chips`: the backup, the limit, the pages' build), for the face's «Today».
 """
 
 from __future__ import annotations

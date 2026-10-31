@@ -13,7 +13,7 @@ engine:
   tools: []                         # no built-in tool at all: no Bash, no files, no WebSearch, no WebFetch.
   # With a knowledge base (RETINUE_MEMORY) the engine adds Read, Grep, Glob, Edit, Write, every call path-checked.
   disallowed_tools: [Bash, WebSearch, WebFetch]   # said twice on purpose: these three never, whatever `tools` says
-  # The archive, the owner's reminders and his zone, what he sent, a trip page in the life hub, a draft reply to a person (it
+  # The archive, the owner's reminders and his zone, what he sent, a trip page among his pages, a draft reply to a person (it
   # leaves only by his button under the card); ask_agent is not given at this stage. travel-ops is an MCP server of
   # its own (RETINUE_TRAVEL_URL), every call checked by the engine's guard.
   bus_tools: [search_archive, set_reminder, list_reminders, cancel_reminder, move_reminder, set_timezone, get_attachment,

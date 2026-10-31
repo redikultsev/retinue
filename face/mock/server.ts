@@ -78,7 +78,7 @@ function mockFeed() {
     { key: "health", text: "all working", level: "ok" },
     { key: "backup", text: "backup 3 h ago", level: "ok" },
     { key: "limit", text: "limit 74 %", level: "warn" },
-    { key: "build", text: "hub built", level: "ok" },
+    { key: "build", text: "pages built", level: "ok" },
   ];
   return { schema: 1, count: groups.reduce((n, g) => n + g.rows.length, 0), groups, bot: "retinue_mock_bot", assistant_at: now() - 600, deadlines, chips, closed_today: closedToday, expired_week: 2 };
 }
@@ -91,14 +91,14 @@ const approvals = new Map<string, Approval>(fx.approvals.map((a) => [a.id, { ...
 // keyed `<session>/<note seq>`, as the platform keys summary events
 const summaries = new Map<string, Summary>(fx.summaries.map((s) => [`${s.session}/${s.seq}`, s]));
 let noteSeq = 100;
-const MOCK_HUB = "https://hub.example.test";
+const MOCK_PAGES = "https://pages.in.example.test";
 const library = new Map(
   [
     { id: "regex-course", title: "Regex in an evening", section: "education", section_title: "Study", section_icon: "🎓", minutes: 95, updated: "2026-10-27" },
     { id: "sql-cheatsheet", title: "SQL: cheat sheet", section: "education", section_title: "Study", section_icon: "🎓", minutes: 40, updated: "2026-10-20" },
     { id: "ensk-notes", title: "Ensk: notes for the trip", section: "travel", section_title: "Travel", section_icon: "✈️", minutes: 6, updated: "2026-10-22" },
     { id: "loose-page", title: "A page with no section", section: null, section_title: null, section_icon: null, minutes: null, updated: "2026-09-30" },
-  ].map((p) => [p.id, { ...p, url: `${MOCK_HUB}/pages/${p.id}.html`, opened: null as number | null, done: null as number | null }]),
+  ].map((p) => [p.id, { ...p, url: `${MOCK_PAGES}/${p.id}`, opened: null as number | null, done: null as number | null }]),
 );
 const cookies = new Set<string>();
 const seenInputs = new Map<string, unknown>();
@@ -342,8 +342,8 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
   const space = method === "GET" ? mockSpaces(path) : null;
   if (space) return json(res, space.status, space.data);
-  // «Pages»: synthetic pages on a made-up hub; `open` and `done` kept in memory like the platform's table.
-  if (path === "/api/library" && method === "GET") return json(res, 200, { schema: 1, hub: MOCK_HUB, at: now() - 120, pages: [...library.values()] });
+  // «Pages»: synthetic pages on a made-up pages service; `open` and `done` kept in memory like the platform's table.
+  if (path === "/api/library" && method === "GET") return json(res, 200, { schema: 1, origin: MOCK_PAGES, at: now() - 120, pages: [...library.values()] });
   const reading = /^\/api\/library\/([a-z0-9-]+)\/(open|done)$/.exec(path);
   if (reading && method === "POST") {
     const page = library.get(reading[1] ?? "");

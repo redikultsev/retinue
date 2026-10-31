@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from retinue import cliengine, lane_host
+from retinue import cliengine, lane_host, pagesd
 from retinue.bus import bus_token
 from retinue.config import AgentConfig, PlatformConfig, RouterConfig
 
@@ -85,19 +85,19 @@ def test_one_assistant_and_nothing_else():
     assert "Only if\nthe sender is known" in guide and "MAIL=1" in (ROOT / "docs" / "install.md").read_text()
     trips = instructions.split("## Trips")[1].split("\n## ")[0]
     assert "`publish_trip`" in trips and "[details](" in trips and "trip_id" in trips and "Not published" in trips
-    assert "The hub is not connected" in trips and "outside the VPN" in trips, "the answer stays whole; the page only adds to it"
-    hub = (ROOT / "docs" / "lifehub.md").read_text()
-    assert "LIFEHUB=1" in hub and "LIFEHUB_DEVICES" in hub and "10.8.0.1" in hub and "dig" in hub
-    assert "LIFEHUB=1" in (ROOT / "docs" / "install.md").read_text() and "lifehub.md" in (ROOT / "docs" / "install.md").read_text()
+    assert "Pages are not connected" in trips and "outside the VPN" in trips, "the answer stays whole; the page only adds to it"
+    pages = (ROOT / "docs" / "pages.md").read_text()
+    assert "PAGES=1" in pages and "DEVICES=" in pages and "10.8.0.1" in pages and "dig" in pages
+    assert "PAGES=1" in (ROOT / "docs" / "install.md").read_text() and "pages.md" in (ROOT / "docs" / "install.md").read_text()
     assert sorted(SERVICES) == ["assistant", "collector", "egress", "face", "lane-code", "lane-code-egress",
                                 "lane-private", "lane-private-egress", "lane-private-sni", "lane-web",
-                                "lane-web-egress", "lifehub", "lifehub-build", "mail-egress", "mail-send", "platform",
-                                "platform-egress", "router", "tg-business",
+                                "lane-web-egress", "mail-egress", "mail-send", "pages", "pages-build", "pages-public",
+                                "platform", "platform-egress", "router", "tg-business",
                                 "travel-ops", "travel-watch", "tuwunel"]
     assert sorted(COMPOSE["volumes"]) == ["assistant-data", "lane-code-config", "lane-code-state", "lane-code-work",
                                           "lane-private-config", "lane-private-state", "lane-private-work",
                                           "lane-web-config", "lane-web-state", "lane-web-work",
-                                          "platform-data", "router-data", "travel-data", "tuwunel-db"]
+                                          "pages-data", "platform-data", "router-data", "travel-data", "tuwunel-db"]
 
 
 def test_only_the_router_and_the_platform_hold_the_speech_key():
@@ -524,63 +524,42 @@ def test_setup_with_mail(tmp_path, monkeypatch):
     assert "RETINUE_COLLECTOR_TOKEN" not in printed and not (plain / "egress" / "mail-hosts.txt").exists()
 
 
-def test_the_lifehub_is_built_with_no_network_and_served_read_only_to_traefik_alone():
-    """The builder has no network and its own scratch space; nginx reads the live release and nothing else, on
-    Traefik's network only, and answers only with the key Traefik adds after its check of the owner's devices. The
-    router writes the data; the assistant sees none of it."""
-    build, serve = SERVICES["lifehub-build"], SERVICES["lifehub"]
-    assert build["profiles"] == serve["profiles"] == ["lifehub"], "off until the owner turns it on"
-    assert build["network_mode"] == "none" and "networks" not in build and "ports" not in build
-    assert build["user"] == "10001:10001" and build["read_only"] is True and build["cap_drop"] == ["ALL"]
-    assert build["security_opt"] == ["no-new-privileges:true"] and build["tmpfs"][0].startswith("/tmp:")
-    assert build["volumes"] == ["/srv/retinue/lifehub/data:/data:ro", "/srv/retinue/lifehub/site:/site"]
-    assert build["build"] == {"context": "./lifehub"} and build["image"] == "retinue-lifehub:local"
-    assert serve["image"].startswith("nginxinc/nginx-unprivileged:") and "@sha256:" in serve["image"], "pinned"
-    assert serve["networks"] == ["dokploy-network"] and "ports" not in serve and serve["read_only"] is True
-    assert serve["cap_drop"] == ["ALL"] and serve["volumes"] == [
-        "/srv/retinue/lifehub/site:/site:ro", "/srv/retinue/lifehub/nginx.conf:/etc/nginx/conf.d/default.conf:ro"]
-    labels = dict(label.split("=", 1) for label in serve["labels"])
-    assert labels["traefik.http.routers.retinue-lifehub.rule"] == "Host(`${LIFEHUB_HOST:-}`)"
-    assert labels["traefik.http.routers.retinue-lifehub.entrypoints"] == "websecure"
-    assert labels["traefik.http.routers.retinue-lifehub.tls.certresolver"] == "letsencrypt"
-    assert labels["traefik.http.routers.retinue-lifehub.middlewares"] == "lifehub-owner@file,lifehub-headers@file"
-    assert labels["traefik.http.services.retinue-lifehub.loadbalancer.server.port"] == "8080"
-    assert labels["traefik.http.routers.retinue-lifehub.service"] == "retinue-lifehub"
-    # The owner's pages: the hub's host under /pages/, chosen before the hub's router, the same devices and key,
-    # none of the hub's headers — so the hub's CSP never reaches a page, and only nginx sets a page's.
-    assert labels["traefik.http.routers.retinue-lifehub-pages.rule"] == \
-        "Host(`${LIFEHUB_HOST:-}`) && PathPrefix(`/pages/`)"
-    assert int(labels["traefik.http.routers.retinue-lifehub-pages.priority"]) > len(
-        labels["traefik.http.routers.retinue-lifehub.rule"]), "it wins over the hub's router, whose priority is its length"
-    assert "traefik.http.routers.retinue-lifehub.priority" not in labels
-    assert labels["traefik.http.routers.retinue-lifehub-pages.entrypoints"] == "websecure"
-    assert labels["traefik.http.routers.retinue-lifehub-pages.tls.certresolver"] == "letsencrypt"
-    assert labels["traefik.http.routers.retinue-lifehub-pages.middlewares"] == "lifehub-owner@file,lifehub-key@file", \
-        "never lifehub-headers: two CSPs are both enforced, and a page's scripts die"
-    assert labels["traefik.http.routers.retinue-lifehub-pages.service"] == "retinue-lifehub"
-    assert not [label for label in labels if "PAGES_HOST" in labels[label]], "no name of their own any more"
-    assert "/srv/retinue/lifehub/data:/lifehub" in SERVICES["router"]["volumes"]
-    assert "/srv/retinue/lifehub/site:/lifehub-site:ro" in SERVICES["router"]["volumes"], "build.json, read only"
-    assert "lifehub" not in str(SERVICES["assistant"]), "she publishes through the router's bus, never a file"
-    docker = (ROOT / "deploy" / "lifehub" / "Dockerfile").read_text()
-    assert "HUGO_VERSION=0.167.0" in docker and \
-        "HUGO_SHA256=4d84519b9f619e6d4c3fb45a50157abeabeb724f859c60605f44c23def6e1169" in docker
-    assert "hashlib.sha256" in docker and "USER 10001" in docker and 'CMD ["python3", "-I", "/app/build.py"]' in docker
-    assert "COPY build.py /app/build.py" in docker and "COPY site /app/site" in docker
+def test_the_pages_are_built_with_no_network_kept_behind_the_key_and_shared_by_a_static_nginx():
+    """The builder has no network; the service reads the release, keeps its store on a volume of its own and answers
+    Traefik alone (the owner's devices, the key); the public sites are an nginx with the shared files only, no key and
+    no store. The router writes the data; the assistant sees none of it."""
+    docker = (ROOT / "deploy" / "pages" / "Dockerfile").read_text()
+    assert "hugo" not in docker.lower() and "USER 10001" in docker and 'CMD ["python3", "-I", "/app/build.py"]' in docker
     assert docker.index("COPY vendor.json /app/vendor.json") < docker.index("RUN python3 -I /app/build.py vendor") \
         < docker.index("USER 10001"), "what pages may load is fetched and checked when the image is built"
-    nginx = (ROOT / "deploy" / "lifehub" / "nginx.conf.template").read_text()
-    hub = server_level(nginx)
-    assert "root /site/current/hub;" in hub and 'if ($http_x_lifehub_key != "${LIFEHUB_KEY}") { return 404; }' in hub
-    for header in (HUB_CSP, 'Referrer-Policy "no-referrer" always',
-                   'X-Content-Type-Options "nosniff" always', 'X-Frame-Options "DENY" always'):
-        assert f"add_header {header};" in hub, header
-    assert "listen 8080 default_server;" in hub, "a request for any other name is the hub's: 404 without the key"
-    assert nginx.count("server {") == 1, "one server: the pages are the hub's /pages/"
-
-
-HUB_CSP = ("Content-Security-Policy \"default-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; "
-           "object-src 'none'\" always")
+    build, serve, public = SERVICES["pages-build"], SERVICES["pages"], SERVICES["pages-public"]
+    assert build["profiles"] == serve["profiles"] == public["profiles"] == ["pages"], "off until the owner turns it on"
+    assert build["network_mode"] == "none" and build["read_only"] and build["user"] == "10001:10001"
+    assert build["volumes"] == ["/srv/retinue/pages/data:/data:ro", "/srv/retinue/pages/site:/site"]
+    assert serve["image"] == "retinue:local" and serve["command"] == ["retinue-pages"] and serve["user"] == "10021:10021"
+    assert serve["volumes"] == ["/srv/retinue/pages/site:/site:ro", "pages-data:/store", "/srv/retinue/pages/public:/public"]
+    assert serve["networks"] == public["networks"] == ["dokploy-network"], "Traefik's alone: no Retinue network"
+    assert serve["read_only"] and serve["cap_drop"] == ["ALL"] and public["read_only"] and public["cap_drop"] == ["ALL"]
+    assert set(serve["environment"]) == {"PAGES_ORIGIN", "PAGES_KEY", "PAGES_PUBLIC_HOSTS", "PAGES_APP_ORIGIN"}
+    labels = dict(label.split("=", 1) for label in serve["labels"])
+    assert labels["traefik.http.routers.retinue-pages.rule"] == "Host(`${PAGES_HOST:-}`)"
+    assert labels["traefik.http.routers.retinue-pages.middlewares"] == "pages-owner@file,pages-key@file"
+    assert labels["traefik.http.services.retinue-pages.loadbalancer.server.port"] == "8080"
+    labels = dict(label.split("=", 1) for label in public["labels"])
+    assert labels["traefik.http.routers.retinue-pages-public.rule"] == "${PAGES_PUBLIC_RULE:-Host(`pages.invalid`)}"
+    assert labels["traefik.http.routers.retinue-pages-public.middlewares"] == \
+        "pages-public-limit@file,pages-public-inflight@file,pages-no-key@file", "at a pace, and never with the key"
+    assert public["volumes"] == ["/srv/retinue/pages/public:/public:ro", "./pages/public.conf:/etc/nginx/conf.d/default.conf:ro"]
+    assert "pages-data" not in str(public) and "/site" not in str(public), "the public nginx sees the shared files only"
+    assert "/srv/retinue/pages/data:/pages" in SERVICES["router"]["volumes"]
+    assert "/srv/retinue/pages/site:/pages-site:ro" in SERVICES["router"]["volumes"], "build.json, read only"
+    assert "pages" not in str(SERVICES["assistant"]), "she publishes through the router's bus, never a file"
+    traefik = yaml.safe_load((ROOT / "deploy" / "pages" / "traefik.yml.template").read_text().replace(
+        "${PAGES_RANGES}", '"10.8.0.2/32"'))["http"]["middlewares"]
+    assert traefik["pages-owner"] == {"ipAllowList": {"sourceRange": ["10.8.0.2/32"], "rejectStatusCode": 404}}
+    assert traefik["pages-key"] == {"headers": {"customRequestHeaders": {"X-Pages-Key": "${PAGES_KEY}"}}}
+    assert traefik["pages-no-key"] == {"headers": {"customRequestHeaders": {"X-Pages-Key": ""}}}
+    assert traefik["pages-public-limit"]["rateLimit"]["average"] == 20
 
 
 def spans(text: str) -> list[tuple[str, str, int, int]]:
@@ -620,107 +599,92 @@ def server_level(nginx: str) -> str:
     return outside(nginx[nginx.index("server {") + len("server {"):])
 
 
-def test_a_page_under_pages_is_sandboxed_and_runs_scripts_only_when_the_owner_wrote_it():
-    """/pages/ on the hub: every response under it — a page, a vendored file, a 404 — carries the pages' policy and
-    none of the hub's; a page in `pages/scripts/` (only the owner wrote it) gets `sandbox allow-scripts`, any other
-    no scripts; both no network and nothing but /pages/_vendor/, named with the hub's host. CORS only on
-    /pages/_vendor/: a sandboxed page's origin is opaque, so its fonts need it — and nowhere else on the hub."""
-    nginx = (ROOT / "deploy" / "lifehub" / "nginx.conf.template").read_text()
-    top = dict(blocks(nginx[nginx.index("server {") + len("server {"):]))
-    assert list(top) == ["~ /\\.", "/", "^~ /pages/"]
-    assert "add_header" not in top["/"] and "add_header" not in top["~ /\\."], "the hub's own: the server's headers"
-    pages = top["^~ /pages/"]
-    inner = dict(blocks(pages))
-    assert list(inner) == ['~ "^/pages/(?<page>[a-z0-9][a-z0-9-]{0,63})\\.html$"', "^~ /pages/scripts/",
-                           "^~ /pages/_vendor/"]
-    outer = outside(pages)
-    page, scripts, vendor = inner.values()
-    assert "root /site/current;" in outer and "return 404;" in outer, "anything else under /pages/: 404, sandboxed"
-    vendor_src = "https://${LIFEHUB_HOST}/pages/_vendor/"
-    common = (f"style-src {vendor_src} 'unsafe-inline'; img-src {vendor_src} data:; font-src {vendor_src} data:; "
-              "connect-src 'none'; worker-src 'none'; frame-src 'none'; manifest-src 'none'; base-uri 'none'; "
-              "form-action 'none'; frame-ancestors 'none'; sandbox")
-    none = f"add_header Content-Security-Policy \"default-src 'none'; script-src 'none'; {common}\" always;"
-    for block in (outer, page, vendor):
-        assert none in block and block.count("Content-Security-Policy") == 1
-    assert f"add_header Content-Security-Policy \"default-src 'none'; script-src {vendor_src} 'unsafe-inline'; " \
-           f"{common} allow-scripts\" always;" in scripts and scripts.count("Content-Security-Policy") == 1
-    assert "if (-f $document_root/pages/scripts/$page.html) { rewrite ^ /pages/scripts/$page.html last; }" in page
-    assert "internal;" in scripts, "/pages/scripts/<id>.html is reached only through /pages/<id>.html"
-    for block in (outer, page, scripts, vendor):
-        assert "'self'" not in block and "default-src 'self'" not in block, "never the hub's policy under /pages/"
-        for line in (line.strip() for line in block.splitlines() if "add_header" in line):
-            assert line.endswith("always;") or line.startswith("add_header Cache-Control \"public"), line
-    for block in (outer, page, scripts):
-        for header in ('Referrer-Policy "no-referrer"', 'X-Content-Type-Options "nosniff"', 'X-Frame-Options "DENY"',
-                       'X-DNS-Prefetch-Control "off"', 'X-Robots-Tag "noindex, nofollow"',
-                       'Permissions-Policy "camera=(), microphone=(), geolocation=(), clipboard-read=()"'):
-            assert f"add_header {header} always;" in block, header
-        assert "Access-Control-Allow-Origin" not in block, "a page is read by nobody else"
-    assert 'add_header Access-Control-Allow-Origin "*" always;' in vendor
-    assert nginx.count("Access-Control-Allow-Origin") == 1, "CORS on /pages/_vendor/ and nowhere else on the hub"
-    assert 'add_header Cache-Control "public, max-age=31536000, immutable";' in vendor, "not `always`: no 404 kept"
-    assert "sandbox" not in server_level(nginx), "the pages' policy never on the hub's own responses"
-    traefik = yaml.safe_load((ROOT / "deploy" / "lifehub" / "traefik.yml.template").read_text().replace(
-        "${LIFEHUB_RANGES}", '"10.8.0.2/32"'))["http"]["middlewares"]
-    assert traefik["lifehub-key"] == {"headers": {"customRequestHeaders": {"X-Lifehub-Key": "${LIFEHUB_KEY}"}}}, \
-        "the key and nothing else: the hub's policy on a page would stop its scripts"
-    assert traefik["lifehub-headers"]["headers"]["contentSecurityPolicy"].startswith("default-src 'self';")
-    assert "lifehub-pages-headers" not in traefik
+def test_a_public_page_is_sandboxed_and_opens_only_in_its_shell():
+    """The public sites' nginx: the shell with its own policy; the page only under /raw/, only in a frame of the same
+    site, sandboxed with the same permissions as the frame's attribute (retinue/pagesd.py `SANDBOX`) — a 403 and a 404
+    included; CORS on /pages/_vendor/ alone; the shared files internal, never listed."""
+    nginx = (ROOT / "deploy" / "pages" / "public.conf").read_text()
+    server = nginx[nginx.index("server {") + len("server {"):nginx.index("# The healthcheck")]
+    top = dict(blocks(server))
+    assert list(top) == ["= /", '~ "^/(?<page>[a-z0-9][a-z0-9-]{0,63})$"', "^~ /_pages/", "^~ /pages/_vendor/",
+                         '~ "^/raw/(?<slug>_home|[a-z0-9][a-z0-9-]{0,63})$"', "^~ /r/scripts/", "^~ /r/", "/"]
+    shell = outside(server)
+    assert f'add_header Content-Security-Policy "{pagesd.SHELL_CSP}" always;' in shell, "the service's shell policy"
+    assert 'add_header Cross-Origin-Opener-Policy "same-origin" always;' in shell
+    assert "root /public/$pages_site;" in shell and 'if ($pages_site = "") { return 404; }' in shell
+    raw = top['~ "^/raw/(?<slug>_home|[a-z0-9][a-z0-9-]{0,63})$"']
+    assert 'if ($http_sec_fetch_dest != "iframe") { return 403; }' in raw
+    assert 'if ($http_sec_fetch_site != "same-origin") { return 403; }' in raw
+    assert f'add_header Content-Security-Policy "{pagesd.BARE_CSP}" always;' in raw, "a 403 is sandboxed too"
+    for block, scripts in ((top["^~ /r/scripts/"], True), (top["^~ /r/"], False)):
+        policy = pagesd.raw_csp("https://$host", scripts)
+        assert f'add_header Content-Security-Policy "{policy}" always;' in block, scripts
+        assert "internal;" in block and 'add_header Cache-Control "no-store" always;' in block
+    assert top['~ "^/(?<page>[a-z0-9][a-z0-9-]{0,63})$"'].strip() == "try_files /s/$page.html =404;"
+    assert 'add_header Access-Control-Allow-Origin "*" always;' in top["^~ /pages/_vendor/"]
+    assert nginx.count("Access-Control-Allow-Origin") == 1, "CORS on /pages/_vendor/ and nowhere else"
+    assert top["/"].strip() == "return 404;" and "autoindex off;" in shell
 
 
-def test_setup_with_lifehub(tmp_path, monkeypatch):
+def test_setup_with_pages(tmp_path, monkeypatch):
     def run(target, **env):
         return subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
                               env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(target), "RETINUE_HOST_SETUP": "0",
                                    "TELEGRAM_OWNER_ID": "42", **env})
 
-    refused = run(tmp_path / "srv", LIFEHUB="1")
-    assert refused.returncode == 1 and "LIFEHUB_HOST" in refused.stderr
-    wrong = run(tmp_path / "srv", LIFEHUB="1", LIFEHUB_HOST="hub.in.example.com/x", LIFEHUB_DEVICES="10.8.0.2/32")
-    assert wrong.returncode == 1 and "LIFEHUB_HOST" in wrong.stderr
-    target, printed = setup(tmp_path, LIFEHUB="1", LIFEHUB_HOST="hub.in.example.com", TELEGRAM_OWNER_ID="42",
-                            LIFEHUB_DEVICES="10.8.0.2/32, 10.8.0.3/32")
-    hub = target / "lifehub"
-    assert printed["COMPOSE_PROFILES"] == "lifehub" and printed["LIFEHUB_HOST"] == "hub.in.example.com"
+    refused = run(tmp_path / "srv", PAGES="1", DEVICES="10.8.0.2/32")
+    assert refused.returncode == 1 and "PAGES_HOST" in refused.stderr
+    wrong = run(tmp_path / "srv", PAGES="1", PAGES_HOST="pages.in.example.com/x", DEVICES="10.8.0.2/32")
+    assert wrong.returncode == 1 and "PAGES_HOST" in wrong.stderr
+    hidden = run(tmp_path / "srv", PAGES="1", PAGES_HOST="pages.in.example.com", DEVICES="10.8.0.2/32",
+                 PAGES_PUBLIC_HOSTS="notes.in.example.com")
+    assert hidden.returncode == 1 and "behind the VPN" in hidden.stderr, "a public site is never an .in name"
+    target, printed = setup(tmp_path, PAGES="1", PAGES_HOST="pages.in.example.com", TELEGRAM_OWNER_ID="42",
+                            DEVICES="10.8.0.2/32, 10.8.0.3/32", PAGES_PUBLIC_HOSTS="pages.example.com,notes.example.com")
+    pages = target / "pages"
+    assert printed["COMPOSE_PROFILES"] == "pages" and printed["PAGES_HOST"] == "pages.in.example.com"
+    assert printed["PAGES_ORIGIN"] == "https://pages.in.example.com"
+    assert printed["PAGES_PUBLIC_HOSTS"] == "pages.example.com,notes.example.com"
+    assert printed["PAGES_PUBLIC_RULE"] == "Host(`pages.example.com`) || Host(`notes.example.com`)"
+    assert "PAGES_APP_ORIGIN" not in printed, "no face: no link back"
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     cfg = RouterConfig.load(target / "router.yaml")
-    assert cfg.lifehub_url == "https://hub.in.example.com" and cfg.lifehub_data == "/lifehub"
-    assert (hub / "data").is_dir() and (hub / "site").is_dir()
-    key = dict(line.split("=", 1) for line in (target / "secrets.env").read_text().splitlines())["LIFEHUB_KEY"]
-    assert len(key) == 64
-    nginx = (hub / "nginx.conf").read_text()
-    assert f'if ($http_x_lifehub_key != "{key}")' in nginx and oct((hub / "nginx.conf").stat().st_mode & 0o777) == "0o640"
-    traefik = yaml.safe_load((hub / "traefik.yml").read_text())
-    middlewares = traefik["http"]["middlewares"]
-    assert middlewares["lifehub-owner"]["ipAllowList"] == {"sourceRange": ["10.8.0.2/32", "10.8.0.3/32"],
-                                                           "rejectStatusCode": 404}
-    assert middlewares["lifehub-headers"]["headers"]["customRequestHeaders"] == {"X-Lifehub-Key": key}
-    assert middlewares["lifehub-headers"]["headers"]["contentSecurityPolicy"].startswith("default-src 'self';")
-    assert oct((hub / "traefik.yml").stat().st_mode & 0o777) == "0o600"
-    assert (hub / "devices.txt").read_text() == "10.8.0.2/32\n10.8.0.3/32\n" and (hub / "host").read_text() == \
-        "hub.in.example.com\n"
+    assert cfg.pages_url == "https://pages.in.example.com" and cfg.pages_data == "/pages"
+    assert (pages / "data").is_dir() and (pages / "site").is_dir() and (pages / "public").is_dir()
+    key = dict(line.split("=", 1) for line in (target / "secrets.env").read_text().splitlines())["PAGES_KEY"]
+    assert len(key) == 64 and printed["PAGES_KEY"] == key
+    middlewares = yaml.safe_load((pages / "traefik.yml").read_text())["http"]["middlewares"]
+    assert middlewares["pages-owner"]["ipAllowList"] == {"sourceRange": ["10.8.0.2/32", "10.8.0.3/32"],
+                                                         "rejectStatusCode": 404}
+    assert middlewares["pages-key"]["headers"]["customRequestHeaders"] == {"X-Pages-Key": key}
+    assert oct((pages / "traefik.yml").stat().st_mode & 0o777) == "0o600"
+    assert (target / "devices.txt").read_text() == "10.8.0.2/32\n10.8.0.3/32\n"
+    assert (pages / "host").read_text() == "pages.in.example.com\n"
+    assert (pages / "public_hosts.txt").read_text() == "pages.example.com\nnotes.example.com\n"
     again = run(target)
     assert again.returncode == 0 and key not in again.stdout + again.stderr, "on for good; the key is never printed"
-    assert "lifehub_url: https://hub.in.example.com" in (target / "router.yaml").read_text()
-    assert "Lifehub: on — https://hub.in.example.com" in again.stdout
-    assert "${" not in nginx and nginx.count(f'if ($http_x_lifehub_key != "{key}")') == 1, "every name and the key"
-    assert "style-src https://hub.in.example.com/pages/_vendor/ 'unsafe-inline'" in nginx, "the hub's name in it"
-    assert "lifehub_pages_url" not in (target / "router.yaml").read_text() and "LIFEHUB_PAGES_HOST" not in printed
-    assert "Lifehub pages: https://hub.in.example.com/pages/<id>.html" in again.stdout
-    (hub / "pages_host").write_text("pages.in.example.com\n")  # an earlier version's separate name, if one is left
-    with open(target / "stack.env", "a") as stack:
-        stack.write("LIFEHUB_PAGES_HOST=pages.in.example.com\n")
-    cleaned = run(target)
-    assert cleaned.returncode == 0 and not (hub / "pages_host").exists()
-    assert "LIFEHUB_PAGES_HOST" not in (target / "stack.env").read_text()
+    assert "pages_url: https://pages.in.example.com" in (target / "router.yaml").read_text()
+    assert "Pages: on — https://pages.in.example.com" in again.stdout
+    none = run(target, PAGES_PUBLIC_HOSTS="")
+    assert none.returncode == 0 and (pages / "public_hosts.txt").read_text() == ""
+    rule = dict(line.split("=", 1) for line in (target / "stack.env").read_text().splitlines())["PAGES_PUBLIC_RULE"]
+    assert rule == "Host(`pages.invalid`)", "no public site: a rule that matches nothing"
+
+    old = tmp_path / "old"  # the retired life hub's list of devices is taken over, its folder left to the owner
+    (old / "lifehub").mkdir(parents=True)
+    (old / "lifehub" / "devices.txt").write_text("10.8.0.4/32\n")
+    (old / "stack.env").write_text("LIFEHUB_HOST=hub.in.example.com\n")
+    moved = run(old, PAGES="1", PAGES_HOST="pages.in.example.com")
+    assert moved.returncode == 0, moved.stderr
+    assert (old / "devices.txt").read_text() == "10.8.0.4/32\n" and (old / "lifehub" / "devices.txt").exists()
+    assert "LIFEHUB_HOST" not in (old / "stack.env").read_text() and "The life hub is retired" in moved.stdout
 
     plain, printed = setup(tmp_path / "other", TELEGRAM_OWNER_ID="42")
-    assert "lifehub_url" not in (plain / "router.yaml").read_text() and "LIFEHUB_HOST" not in printed
-    assert (plain / "lifehub" / "data").is_dir(), "the router's mounts exist whether it is on or not"
-    bad = run(tmp_path / "third", LIFEHUB="1", LIFEHUB_HOST="hub.in.example.com", LIFEHUB_DEVICES="0.0.0.0/0")
-    assert bad.returncode == 1 and "LIFEHUB_DEVICES" in bad.stderr, "one address per device, not a network"
-    assert not (tmp_path / "third" / "lifehub" / "host").exists(), "nothing kept from a refused run"
+    assert "pages_url" not in (plain / "router.yaml").read_text() and "PAGES_HOST" not in printed
+    assert (plain / "pages" / "data").is_dir(), "the router's mounts exist whether it is on or not"
+    bad = run(tmp_path / "third", PAGES="1", PAGES_HOST="pages.in.example.com", DEVICES="0.0.0.0/0")
+    assert bad.returncode == 1 and "DEVICES" in bad.stderr, "one address per device, not a network"
+    assert not (tmp_path / "third" / "pages" / "host").exists(), "nothing kept from a refused run"
 
 
 def test_the_sender_and_the_gateway_each_hold_their_key_alone():
@@ -973,10 +937,13 @@ def test_every_retinue_service_that_listens_reports_its_health_by_its_own_port()
     ports = {"router": RouterConfig.bus_listen_port, "assistant": AgentConfig.listen_port,
              "collector": CollectorConfig.listen_port, "mail-send": SenderConfig.listen_port,
              "tg-business": GatewayConfig.listen_port, "platform": PlatformConfig.listen_port,
-             **{f"lane-{lane}": LaneHostConfig.listen_port for lane in LANES}, "lane-private-sni": 3128}
-    assert sorted(name for name, service in SERVICES.items() if "healthcheck" in service) == sorted([*ports, "face"])
-    assert SERVICES["face"]["healthcheck"]["test"] == [
-        "CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/healthz"], "nginx: its loopback-only port"
+             **{f"lane-{lane}": LaneHostConfig.listen_port for lane in LANES}, "lane-private-sni": 3128,
+             "pages": pagesd.Config.port}
+    assert sorted(name for name, service in SERVICES.items() if "healthcheck" in service) == \
+        sorted([*ports, "face", "pages-public"])
+    for nginx in ("face", "pages-public"):
+        assert SERVICES[nginx]["healthcheck"]["test"] == [
+            "CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/healthz"], "nginx: its loopback-only port"
     for name, port in ports.items():
         check = SERVICES[name]["healthcheck"]
         assert check["test"] == ["CMD", "python", "-c",
@@ -1408,7 +1375,7 @@ def test_the_face_is_nginx_read_only_behind_traefik_for_the_owners_devices():
     docker = (ROOT / "deploy" / "face" / "Dockerfile").read_text()
     stages = re.findall(r"^FROM (\S+)", docker, re.M)
     assert len(stages) == 2 and re.fullmatch(r"node:\d+\.\d+\.\d+-alpine@sha256:[0-9a-f]{64}", stages[0]), "pinned"
-    assert stages[1] == SERVICES["lifehub"]["image"], "the life hub's nginx, the same pin"
+    assert stages[1] == SERVICES["pages-public"]["image"], "the public pages' nginx, the same pin"
     package = json.loads((ROOT / "face" / "package.json").read_text())
     assert f"corepack prepare {package['packageManager']} --activate" in docker, "the pnpm of package.json, exactly"
     assert "pnpm install --frozen-lockfile" in docker and "RUN pnpm build" in docker
@@ -1529,7 +1496,7 @@ def test_setup_with_face(tmp_path, monkeypatch):
     nameless = run(tmp_path / "b", PLATFORM="1", FACE="1", FACE_DEVICES="10.8.0.3/32")
     assert nameless.returncode == 1 and "FACE_HOST" in nameless.stderr
     blind = run(tmp_path / "c", PLATFORM="1", FACE="1", FACE_HOST="app.in.example.com", FACE_DEVICES="10.8.0.0/24")
-    assert blind.returncode == 1 and "FACE_DEVICES" in blind.stderr
+    assert blind.returncode == 1 and "DEVICES" in blind.stderr
     assert not (tmp_path / "c" / "face" / "host").exists(), "nothing kept from a refused run"
 
     target, printed = setup(tmp_path, PLATFORM="1", FACE="1", FACE_HOST="app.in.example.com",
@@ -1538,7 +1505,7 @@ def test_setup_with_face(tmp_path, monkeypatch):
     assert printed["COMPOSE_PROFILES"] == "platform,face" and printed["FACE_HOST"] == "app.in.example.com"
     assert printed["RETINUE_FACE_ORIGIN"] == "https://app.in.example.com" and printed["TELEGRAM_OWNER_ID"] == "42"
     assert "RETINUE_WEBAPP_KEY" not in printed, "no bot token yet: no Mini App login, codes still work"
-    assert (face / "host").read_text() == "app.in.example.com\n" and (face / "devices.txt").read_text() == "10.8.0.3/32\n"
+    assert (face / "host").read_text() == "app.in.example.com\n" and (target / "devices.txt").read_text() == "10.8.0.3/32\n"
     key = dict(line.split("=", 1) for line in (target / "secrets.env").read_text().splitlines())["FACE_KEY"]
     assert len(key) == 64
     assert (face / "key.conf").read_text() == f'if ($http_x_face_key != "{key}") {{ return 404; }}\n'
@@ -1581,14 +1548,16 @@ def test_setup_with_face(tmp_path, monkeypatch):
     assert (cfg.face_host, cfg.face_origin, cfg.owner_tg) == (FACE_IP, "https://app.in.example.com", 42)
     assert cfg.webapp_key == written["RETINUE_WEBAPP_KEY"] and cfg.face_port == 9600
 
-    # With the life hub on, its list of devices is the face's: one list.
-    hub = run(target, LIFEHUB="1", LIFEHUB_HOST="hub.in.example.com", LIFEHUB_DEVICES="10.8.0.2/32,10.8.0.5/32")
-    assert hub.returncode == 0, hub.stderr
+    # The pages and the face let through one list of devices; a new one given once is the list for both.
+    both = run(target, PAGES="1", PAGES_HOST="pages.in.example.com", DEVICES="10.8.0.2/32,10.8.0.5/32")
+    assert both.returncode == 0, both.stderr
     assert not (face / "devices.txt").exists()
     traefik = yaml.safe_load((face / "traefik.yml").read_text())["http"]["middlewares"]
     assert traefik["face-owner"]["ipAllowList"]["sourceRange"] == ["10.8.0.2/32", "10.8.0.5/32"]
-    twice = run(target, FACE_DEVICES="10.8.0.9/32")
-    assert twice.returncode == 1 and "LIFEHUB_DEVICES" in twice.stderr
+    traefik = yaml.safe_load((target / "pages" / "traefik.yml").read_text())["http"]["middlewares"]
+    assert traefik["pages-owner"]["ipAllowList"]["sourceRange"] == ["10.8.0.2/32", "10.8.0.5/32"]
+    written = dict(line.split("=", 1) for line in stack.read_text().splitlines() if "=" in line)
+    assert written["PAGES_APP_ORIGIN"] == "https://app.in.example.com", "the pages' bar leads back to the app"
 
     plain, printed = setup(tmp_path / "other", TELEGRAM_OWNER_ID="42", PLATFORM="1")
     assert "face_url" not in (plain / "router.yaml").read_text() and not (plain / "face").exists()

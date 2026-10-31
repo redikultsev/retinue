@@ -1,4 +1,0 @@
----
-title: Tracker
-layout: tracker
----

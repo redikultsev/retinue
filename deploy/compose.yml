@@ -79,9 +79,9 @@ services:
       - /srv/retinue/memory/git:/kb-git
       - /srv/retinue/memory/hub.git:/hub
       - /srv/retinue/memory/policy.json:/config/memory-policy.json:ro
-      # The life hub (setup.sh LIFEHUB=1): the pages' data, which the router alone writes; how the last build went.
-      - /srv/retinue/lifehub/data:/lifehub
-      - /srv/retinue/lifehub/site:/lifehub-site:ro
+      # The pages (setup.sh PAGES=1): the pages' data, which the router alone writes; how the last build went.
+      - /srv/retinue/pages/data:/pages
+      - /srv/retinue/pages/site:/pages-site:ro
     environment:
       RETINUE_AS_TOKEN: ${RETINUE_AS_TOKEN:-}         # these two only with a `matrix:` section in router.yaml
       RETINUE_HS_TOKEN: ${RETINUE_HS_TOKEN:-}
@@ -269,61 +269,99 @@ services:
     pids_limit: 64
     networks: [tg-router, outside]              # the router, and Telegram
 
-  # The life hub: pages about the owner's life, for his devices only. The router writes the data; the builder turns it
-  # into pages with Hugo, with no network, checks them and switches `current`; nginx serves `current` to Traefik,
-  # which lets through the owner's devices only and adds the key nginx checks. Off until the owner turns it on
-  # (setup.sh LIFEHUB=1).
-  lifehub-build:
-    profiles: ["lifehub"]
-    build: { context: ./lifehub }
-    image: retinue-lifehub:local
+  # The pages (docs/pages.md): the owner's HTML pages, with what they keep, and the ones he shares. The router writes
+  # the data; the builder checks the pages with no network and switches `current`; the service serves the release to
+  # the owner's devices (Traefik lets through those alone and adds the key it checks) and keeps each page's values in
+  # its own SQLite; the public sites are a static nginx of their own, serving only the files the service writes for
+  # the pages he shared — the internet never reaches the process that holds the store. Off until the owner turns it on
+  # (setup.sh PAGES=1).
+  pages-build:
+    profiles: ["pages"]
+    build: { context: ./pages }
+    image: retinue-pages-build:local
     restart: unless-stopped
     user: "10001:10001"
-    network_mode: none                          # Hugo is in the image; a build reaches nothing
+    network_mode: none                          # a build reaches nothing
     read_only: true
-    tmpfs: ["/tmp:size=256m,uid=10001,gid=10001"]  # a copy of the site and the data per build, Hugo's cache
+    tmpfs: ["/tmp:size=64m,uid=10001,gid=10001"]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 512m
+    mem_limit: 256m
     pids_limit: 64
     volumes:
-      - /srv/retinue/lifehub/data:/data:ro
-      - /srv/retinue/lifehub/site:/site
+      - /srv/retinue/pages/data:/data:ro
+      - /srv/retinue/pages/site:/site
 
-  lifehub:
-    profiles: ["lifehub"]
+  pages:
+    profiles: ["pages"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10021:10021"
+    command: ["retinue-pages"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    init: true
+    mem_limit: 128m
+    pids_limit: 64
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 3).close()"]
+    environment:
+      PAGES_ORIGIN: ${PAGES_ORIGIN:-}
+      PAGES_KEY: ${PAGES_KEY:-}
+      PAGES_PUBLIC_HOSTS: ${PAGES_PUBLIC_HOSTS:-}
+      PAGES_APP_ORIGIN: ${PAGES_APP_ORIGIN:-}
+    volumes:
+      - /srv/retinue/pages/site:/site:ro          # the builder's releases
+      - pages-data:/store                         # what the pages keep, and what is shared where
+      - /srv/retinue/pages/public:/public         # the public sites' files, which the public nginx serves
+    networks: [dokploy-network]                 # Traefik's: nothing of Retinue is on it, and nothing here calls out
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.retinue-pages.rule=Host(`${PAGES_HOST:-}`)
+      - traefik.http.routers.retinue-pages.entrypoints=websecure
+      - traefik.http.routers.retinue-pages.tls.certresolver=letsencrypt
+      - traefik.http.routers.retinue-pages.middlewares=pages-owner@file,pages-key@file
+      - traefik.http.routers.retinue-pages.service=retinue-pages
+      - traefik.http.services.retinue-pages.loadbalancer.server.port=8080
+    depends_on: [pages-build]
+
+  pages-public:
+    profiles: ["pages"]
     image: nginxinc/nginx-unprivileged:1.30.5-alpine-slim@sha256:3af0c10d960cc2502427fe1219c52989d309e7d65596869c60a34fd2fa2406f0
     restart: unless-stopped
     read_only: true
     tmpfs: ["/tmp:size=16m"]                    # nginx's pid and temporary files
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    init: true
     mem_limit: 64m
     pids_limit: 64
+    healthcheck:
+      <<: *health
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/healthz"]
     environment:
       NGINX_ENTRYPOINT_QUIET_LOGS: "1"
     volumes:
-      - /srv/retinue/lifehub/site:/site:ro
-      - /srv/retinue/lifehub/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    networks: [dokploy-network]                 # Traefik's; nothing of Retinue is on it
+      - /srv/retinue/pages/public:/public:ro
+      - ./pages/public.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [dokploy-network]
     labels:
       - traefik.enable=true
       - traefik.docker.network=dokploy-network
-      - traefik.http.routers.retinue-lifehub.rule=Host(`${LIFEHUB_HOST:-}`)
-      - traefik.http.routers.retinue-lifehub.entrypoints=websecure
-      - traefik.http.routers.retinue-lifehub.tls.certresolver=letsencrypt
-      - traefik.http.routers.retinue-lifehub.middlewares=lifehub-owner@file,lifehub-headers@file
-      - traefik.http.routers.retinue-lifehub.service=retinue-lifehub
-      # The owner's own pages under /pages/: the same host and devices, a router of its own, chosen first, that adds
-      # the key and none of the hub's headers — each page's policy (its sandbox) is nginx's (docs/lifehub.md).
-      - traefik.http.routers.retinue-lifehub-pages.rule=Host(`${LIFEHUB_HOST:-}`) && PathPrefix(`/pages/`)
-      - traefik.http.routers.retinue-lifehub-pages.priority=1000
-      - traefik.http.routers.retinue-lifehub-pages.entrypoints=websecure
-      - traefik.http.routers.retinue-lifehub-pages.tls.certresolver=letsencrypt
-      - traefik.http.routers.retinue-lifehub-pages.middlewares=lifehub-owner@file,lifehub-key@file
-      - traefik.http.routers.retinue-lifehub-pages.service=retinue-lifehub
-      - traefik.http.services.retinue-lifehub.loadbalancer.server.port=8080
-    depends_on: [lifehub-build]
+      - traefik.http.routers.retinue-pages-public.rule=${PAGES_PUBLIC_RULE:-Host(`pages.invalid`)}
+      - traefik.http.routers.retinue-pages-public.entrypoints=websecure
+      - traefik.http.routers.retinue-pages-public.tls.certresolver=letsencrypt
+      - traefik.http.routers.retinue-pages-public.middlewares=pages-public-limit@file,pages-public-inflight@file,pages-no-key@file
+      - traefik.http.routers.retinue-pages-public.service=retinue-pages-public
+      - traefik.http.routers.retinue-pages-public-http.rule=${PAGES_PUBLIC_RULE:-Host(`pages.invalid`)}
+      - traefik.http.routers.retinue-pages-public-http.entrypoints=web
+      - traefik.http.routers.retinue-pages-public-http.middlewares=pages-https@file
+      - traefik.http.services.retinue-pages-public.loadbalancer.server.port=8080
+    depends_on: [pages]
 
   # The platform: Claude Code sessions in the lanes, driven from Telegram through the router (docs/platform.md). Code,
   # no model: it starts runs on the lane hosts, answers their CLIs' hooks, keeps every line they wrote in its own
@@ -646,6 +684,7 @@ volumes:
   assistant-data: # the assistant's session; only the assistant mounts it
   travel-data:    # travel-ops' searches, watches and limits; only travel-ops mounts it
   platform-data:  # the platform's SQLite: sessions, approvals, transcripts; only the platform mounts it
+  pages-data:     # the pages service's SQLite: what each page keeps, what is shared where; only the service mounts it
   lane-private-work:    # each lane's working trees: the lane writes them, the platform reads them
   lane-private-config:  # each lane's CLI home and transcripts; only that lane mounts it
   lane-private-state:   # each lane's journal; only that lane mounts it

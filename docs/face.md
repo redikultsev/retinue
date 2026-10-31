@@ -17,13 +17,13 @@ alone.
 
 ## Turning it on
 
-It is deployed exactly like the [life hub](lifehub.md): a public name for the certificate, split DNS inside the
-VPN, Traefik letting through your devices only.
+It is deployed exactly like the [pages](pages.md): a public name for the certificate, split DNS inside the VPN,
+Traefik letting through your devices only.
 
 ### 1. DNS: a public record for the certificate (once)
 
 Let's Encrypt checks the name over plain HTTP, so the name needs a public A record pointing at the server. At your
-DNS provider: `app.in.<your domain>` → the server's public address (the same as `hub.in.…`). Wait until it resolves
+DNS provider: `app.in.<your domain>` → the server's public address (the same as `pages.in.…`). Wait until it resolves
 from outside:
 
 ```bash
@@ -36,7 +36,7 @@ alike. The name itself is public — every certificate goes to the CT logs.
 ### 2. Your devices reach it through the VPN
 
 Split DNS (the VPN's `10.8.0.1`) already answers `10.8.0.1` for every `*.in` name, so there is nothing to add on the
-server. A device must use it — VPN on, DNS `10.8.0.1` (see [lifehub.md](lifehub.md), step 2) — otherwise it resolves
+server. A device must use it — VPN on, DNS `10.8.0.1` (see [pages.md](pages.md), step 2) — otherwise it resolves
 the public record, goes over the internet and gets 404.
 
 ```bash
@@ -53,9 +53,9 @@ sudo TELEGRAM_OWNER_ID=<id> FACE=1 FACE_HOST=app.in.example.com bash /opt/retinu
 sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml up -d --build
 ```
 
-The devices: with the life hub on, the face lets through exactly its devices (`/srv/retinue/lifehub/devices.txt`,
-one list for both). Without the hub, give them once: `FACE_DEVICES=10.8.0.2/32,10.8.0.3/32` (kept in
-`/srv/retinue/face/devices.txt`). A new device: edit the list and run `setup.sh` again.
+The devices: give them once, `DEVICES=10.8.0.2/32,10.8.0.3/32` — kept in `/srv/retinue/devices.txt`, the one list
+for the face and the pages (an earlier version's list, the life hub's or the face's own, is taken over). A new device:
+edit the list and run `setup.sh` again.
 
 `setup.sh` keeps the address in `/srv/retinue/face/host` (later runs need no switch) and adds the compose profile
 `face`; makes a key in `secrets.env` and renders `/etc/dokploy/traefik/dynamic/face.yml` (your devices, the key
@@ -86,8 +86,8 @@ passes all four; `RETINUE_FACE_HOST` is the platform's static address on `face-p
 | `TELEGRAM_OWNER_ID` | your numeric Telegram id: the only user a Mini App login is for. |
 | `RETINUE_FACE_HOST` | the IP address the face API listens on: the platform's own address on `face-platform`. Default `127.0.0.1` — reachable from nowhere. Never `0.0.0.0`: the platform also sits on the lanes' networks, and a lane must not reach the face (not even to spend the login limit). |
 
-and `face_port` from `platform.yaml` (default 9600; it must differ from `listen_port`), and `hub_origin`
-(`https://hub.in.<your domain>`, the life hub's address): the only origin a page of “Pages” may open on — without it
+and `face_port` from `platform.yaml` (default 9600; it must differ from `listen_port`), and `pages_origin`
+(`https://pages.in.<your domain>`, the pages service's address): the only origin a page of “Pages” may open on — without it
 the router's list of pages is refused and “Pages” stays empty ([below](#pages)). The router takes `face_url:
 https://<face host>` from `router.yaml`: with it, `/app` logs you in (without it, `/app` is the
 assistant's, as before), and every approval card gets the button “Open in the app”.
@@ -277,7 +277,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
 | `/new` | «＋»: a new task ([below](#a-new-task)); a tab on a phone, “New task” in the left column on a wide screen |
 | `/sessions` | the sessions by sphere ([below](#in-the-app)); on a wide screen the left column has them, the middle says so |
 | `/spaces`, `/spaces/<space>`, `/spaces/<space>/r/<path inside the Space>` | the Spaces of the Base, a Space's Showcase, a Record ([base.md](base.md)) |
-| `/pages` | the hub's pages: to read, and interactive ones ([lifehub.md](lifehub.md)); `/read`, its old name, leads here |
+| `/pages` | your HTML pages: to read, interactive ones, small sites ([pages.md](pages.md)); `/read`, its old name, leads here |
 | `/week` | “Week”: how the work went ([below](#week)); in the left column on a wide screen, a link on “Today” on a phone |
 | `/s/<id>`, `/a/<id>`, `/f/<id>`, `/b/<id>`, `/p/<id>`, `/login` | as before: a session, a card, a file, a commit card, a push card, the login |
 
@@ -367,8 +367,8 @@ made after what the good chat apps share (studied from public sources):
 
 From what the app already reads — the session rows, the stream, the feed — top to bottom:
 
-- **The day and the chips**: the hub's status as the router last pushed it — anything broken, the last backup's age,
-  the subscription limit's share, whether the hub's last build went through ([platform.md](platform.md#the-assistants-digest)).
+- **The day and the chips**: the status as the router last pushed it — anything broken, the last backup's age,
+  the subscription limit's share, whether the pages' last build went through ([platform.md](platform.md#the-assistants-digest)).
   A chip the router does not have is not shown.
 - **“Waiting for you”**: the feed, grouped by action as everywhere ([below](#the-feed)), but for a finished session that is
   already under “Done”.
@@ -611,14 +611,13 @@ app once the sheet closes.
 
 ## Pages
 
-`/pages` (once “Read”, `/read`) lists the life hub's pages ([lifehub.md](lifehub.md#pages-страницы)) — your HTML pages under the hub's
-`/pages/` — by section (the Space they live in, titled and iconed as its sphere when `platform.yaml` names one,
-“No section” last; in each, the latest changed first), with a search over titles and sections. On top,
-**“Continue”**: the pages you opened and have not marked “Finished”, the last opened first. A row says the reading
-time, the day the page changed, and when you opened it — or “finished”, or “changed since you finished it” when it changed
-on a later day than you finished it.
+`/pages` (once “Read”, `/read`) lists your HTML pages as the pages service serves them ([pages.md](pages.md)) — by
+section (the Space they live in, titled and iconed as its sphere when `platform.yaml` names one, “No section” last; in
+each, the latest changed first), with a search over titles and sections. On top, **“Continue”**: the pages you opened
+and have not marked “Finished”, the last opened first. A row says the reading time, the day the page changed, and when
+you opened it — or “finished”, or “changed since you finished it” when it changed on a later day than you finished it.
 
-**Where the list comes from.** The router owns the hub and pushes the list to the platform (`POST /owner/library`,
+**Where the list comes from.** The router owns the pages and pushes the list to the platform (`POST /owner/library`,
 the router's token, as the assistant's digest): `{pages: [{id, title, url, updated, section?, minutes?}]}`, replacing
 the one there whole, looked at every 30 s, pushed when it changed and at least hourly (`bridge.push_library`). No
 description, no body, no path in the base. The platform checks it again (`library.clean`). A push off its shape
@@ -626,20 +625,21 @@ description, no body, no path in the base. The platform checks it again (`librar
 the contract is dropped, named in the answer's `dropped: [{id, why}]` and in both logs, and the rest go up: an id
 `a-z 0-9 -`, each once; a title of at most 200 characters, invisible characters dropped; a day `YYYY-MM-DD`; a
 section named as a Space is (`a-z 0-9 _ . -`, from a letter or digit, at most 64); whole minutes; and `url` the
-page's address on the hub, `<hub_origin>/pages/<id>.html` with no query or fragment, `hub_origin` being
+page's address on the pages service, `<pages_origin>/<id>` with no query or fragment, `pages_origin` being
 `platform.yaml`'s, not the push's. Both origins are compared normalised — the host in lower case, `:443` dropped — and
 the address is stored in that form. The platform never calls the router.
 
-**How a page opens.** Never inside the app: no frame, no fetch. A row is a link to the hub's own origin with
+**How a page opens.** Never inside the app: no frame, no fetch. A row is a link to the pages service's own origin with
 `target="_blank"` and `rel="noopener noreferrer"`; inside the Mini App the app hands it to Telegram instead
-(`openLink`, as `web_app_open_link` through `TelegramWebviewProxy` — no Telegram script loaded). The page runs on the
-hub under the hub's sandbox and never shares an origin, a cookie or a window with the app. The app draws a link only
-when the address is https, on the hub's origin and under `/pages/` — the platform's rule, checked a second time.
+(`openLink`, as `web_app_open_link` through `TelegramWebviewProxy` — no Telegram script loaded). The page runs there,
+in its shell's sandboxed frame, and never shares an origin, a cookie or a window with the app; its bar has “← Pages”
+back here. The app draws a link only when the address is https, on that origin and a page's id as its whole path —
+the platform's rule, checked a second time.
 
 **What you read is the platform's row** (`library_reads`: the page's id, when you last opened it, when you said
-“Finished”), so the phone and the desktop agree. A page on another origin cannot report its scroll position, so there
-is none: «opened at» and your own “Finished”. A page that leaves the list and comes back under the same id keeps its
-row. The app reads the list when the screen opens and again whenever it comes back to the front.
+“Finished”), so the phone and the desktop agree. What the page itself keeps — its ticks, its progress — is the pages
+service's ([pages.md](pages.md#what-a-page-keeps)), not the app's. A page that leaves the list and comes back under the
+same id keeps both. The app reads the list when the screen opens and again whenever it comes back to the front.
 
 ## A session's changes
 
@@ -683,7 +683,7 @@ once it has any, for every kind of session): newest first, each with its size, i
 - **An HTML page** opens only in a frame, sandboxed twice: the frame's `sandbox` attribute allows nothing, and
   `GET /api/files/{id}/view` carries its own policy — `default-src 'none'; script-src 'none'; style-src
   'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; sandbox;
-  frame-ancestors <the face's origin>`, the life hub's `/pages/` rules for a page the assistant made. The page gets an
+  frame-ancestors <the face's origin>`, the pages' rules for a page the assistant made ([pages.md](pages.md)). The page gets an
   opaque origin: no cookie, no API, no storage of the app's, no script; its own inline styles and `data:` images,
   nothing else. A page that needs a script or a font from the web shows without them.
 - **A download** (`GET /api/files/{id}`) is served as the type its extension has on the platform's list, never what
@@ -696,7 +696,7 @@ once it has any, for every kind of session): newest first, each with its size, i
 
 ## Serving
 
-`deploy/face/nginx.conf`, in the image (`nginx-unprivileged`, the life hub's pin; read-only, no capabilities, its
+`deploy/face/nginx.conf`, in the image (`nginx-unprivileged`, the public pages' pin; read-only, no capabilities, its
 pid and temporary files on a tmpfs):
 
 - The app's routes (`/`, `/login`, `/today`, `/sessions`, `/read`, `/spaces`, `/spaces/<space>`,

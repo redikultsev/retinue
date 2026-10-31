@@ -1,149 +1,69 @@
-"""The life hub's builder (deploy/lifehub/build.py) with a fake Hugo: a release goes live whole and checked, or not
-at all; the gate finds what the page policy would block; the router reads how the last build went. The owner's own
-pages: rewritten to load nothing from elsewhere, refused for what section 4 of the design lists, scripts off when the
-assistant wrote them last or a script hits a tripwire."""
+"""The pages' builder (deploy/pages/build.py): a release goes live whole, or not at all, and the router reads how the
+last build went. The owner's own pages: rewritten to load nothing from elsewhere, refused for what section 4 of the
+design lists, scripts off when the assistant wrote them last or a script hits a tripwire."""
 
 import importlib.util
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("lifehub_build", ROOT / "deploy" / "lifehub" / "build.py")
+spec = importlib.util.spec_from_file_location("pages_build", ROOT / "deploy" / "pages" / "build.py")
 builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
-
-FAKE_HUGO = """#!{python}
-import json, os, sys, time
-args = sys.argv[1:]
-source, out = args[args.index("--source") + 1], args[args.index("--destination") + 1]
-now = json.load(open(os.path.join(source, "assets", "now.json")))
-if now.get("fail"):
-    print(now["fail"], file=sys.stderr)
-    sys.exit(1)
-time.sleep(now.get("sleep", 0))
-os.makedirs(os.path.join(out, "css"), exist_ok=True)
-open(os.path.join(out, "index.html"), "w").write(now.get("page", "<p>Сейчас</p>"))
-open(os.path.join(out, "css", "lifehub.css"), "w").write("body{{}}")
-"""
 
 
 @pytest.fixture
 def site(tmp_path, monkeypatch):
-    fake = tmp_path / "hugo"
-    fake.write_text(FAKE_HUGO.format(python=sys.executable))
-    fake.chmod(0o755)
-    source = tmp_path / "source"
-    (source / "layouts").mkdir(parents=True)
-    for name, value in (("DATA", tmp_path / "data"), ("SITE", tmp_path / "site"), ("SOURCE", source),
-                        ("HUGO", str(fake)), ("WORK", tmp_path / "work" / "lifehub"),
-                        ("VENDOR", tmp_path / "vendor"), ("MANIFEST", tmp_path / "vendor.json")):
+    for name, value in (("DATA", tmp_path / "data"), ("SITE", tmp_path / "site"), ("VENDOR", tmp_path / "vendor"),
+                        ("MANIFEST", tmp_path / "vendor.json")):
         monkeypatch.setattr(builder, name, value)
     (tmp_path / "data").mkdir()
     return tmp_path
 
 
-def data(root, **now):
-    (root / "data" / "now.json").write_text(json.dumps(now))
+def data(root, n):
+    """Data that changed: what the builder looks at is every file's bytes."""
+    (root / "data" / "pages-refused.json").write_text(json.dumps([{"id": f"p{n}", "why": "no title"}]))
 
 
-def test_a_release_goes_live_whole_and_a_bad_one_never_does(site):
+def test_a_release_goes_live_whole_and_a_failed_one_never_does(site, monkeypatch):
     state = {}
-    data(site, page="<p>Сейчас</p>")
+    data(site, 0)
     assert builder.step(state, 1_760_000_000) is True
     current = site / "site" / "current"
     first = os.readlink(current)
-    assert first.startswith("releases/20251009T085320Z-") and not first.startswith("/"), "relative: nginx mounts it"
-    assert (current / "hub" / "index.html").read_text() == "<p>Сейчас</p>"
+    assert first.startswith("releases/20251009T085320Z-") and not first.startswith("/"), "relative: the service mounts it"
+    assert json.loads((current / "pages.json").read_text()) == []
     built = json.loads((site / "site" / "build.json").read_text())
     assert built == {"ok": True, "at": 1_760_000_000, "error": "", "release": first.removeprefix("releases/"),
-                     "pages": 0, "refused": []}
+                     "pages": 0, "refused": [{"id": "p0", "why": "no title"}]}
     assert builder.step(state, 1_760_000_015) is False, "the same data: nothing to build"
 
-    data(site, page='<p onclick="x()">Сейчас</p><script>alert(1)</script>')
+    def broken(*args):
+        raise OSError("disk full")
+    publish = builder.publish_pages
+    monkeypatch.setattr(builder, "publish_pages", broken)
+    data(site, 1)
     assert builder.step(state, 1_760_000_030) is False
     built = json.loads((site / "site" / "build.json").read_text())
-    assert not built["ok"] and built["error"] == "page check: index.html: p[onclick]; index.html: <script>"
-    assert os.readlink(current) == first and (current / "hub" / "index.html").read_text() == "<p>Сейчас</p>"
+    assert not built["ok"] and built["error"] == "disk full" and built["release"] == first
+    assert os.readlink(current) == first
     assert not [p for p in (site / "site" / "releases").iterdir() if p.name.endswith(".tmp")], "no half release"
-
-    data(site, fail="ERROR render of \"home\" failed: home.html:3:1: nil pointer")
-    builder.step(state, 1_760_000_045)
-    assert json.loads((site / "site" / "build.json").read_text())["error"] == (
-        'Hugo: ERROR render of "home" failed: home.html:3:1: nil pointer')
     assert builder.step(state, 1_760_000_060) is False, "a failed build is not repeated every 15 s"
-    for n in range(4):
-        data(site, page=f"<p>{n}</p>")
+    monkeypatch.setattr(builder, "publish_pages", publish)
+    for n in range(2, 6):
+        data(site, n)
         builder.step(state, 1_760_000_100 + n)
     assert len(list((site / "site" / "releases").iterdir())) == builder.KEEP
-    assert (current / "hub" / "index.html").read_text() == "<p>3</p>"
-
-
-def test_hugo_that_hangs_is_stopped_and_the_old_release_stays(site, monkeypatch):
-    data(site, page="<p>a</p>")
-    builder.step({}, 1_760_000_000)  # the default timeout: a loaded machine may take seconds over a good build
-    monkeypatch.setattr(builder, "HUGO_TIMEOUT_S", 1)
-    data(site, sleep=30)              # killed at the timeout: never waited out
-    builder.step({"hash": "x"}, 1_760_000_100)
-    built = json.loads((site / "site" / "build.json").read_text())
-    assert built["error"] == "Hugo did not finish in 1 s" and (site / "site" / "current" / "hub" / "index.html").exists()
-
-
-def test_the_gate_finds_what_the_policy_would_block_or_that_runs(tmp_path):
-    release = tmp_path / "release"
-    (release / "trips" / "a").mkdir(parents=True)
-    (release / "charts").mkdir()
-    (release / "photos").mkdir()
-    (release / "index.html").write_text('<link rel="stylesheet" href="/css/lifehub.css"><a href="https://kiwi.com/x">'
-                                        'https://kiwi.com/x</a><img src="/photos/1.jpg" alt="">')
-    (release / "trips" / "a" / "index.html").write_text(
-        '<a href="javascript:alert(1)">x</a><img src="https://evil.example/p.png"><div style="color:red"></div>'
-        '<link rel="stylesheet" href="https://fonts.example/x.css"><iframe src="/x"></iframe>')
-    (release / "charts" / "t.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"><script>x</script>'
-                                              '<rect onload="x" width="1"/></svg>')
-    (release / "photos" / "1.jpg").write_bytes(b"\xff\xd8\xff\xe0 jpeg")
-    (release / "photos" / "2.jpg").write_bytes(b"<svg onload=alert(1)>")
-    (release / "app.js").write_text("alert(1)")
-    assert builder.gate(release, {}) == [
-        "app.js: a script not the site's own",
-        "charts/t.svg: <script>", "charts/t.svg: rect[onload]",
-        "photos/2.jpg: not a JPEG",
-        "trips/a/index.html: a[href=javascript:alert(1)]",
-        "trips/a/index.html: img[src] from elsewhere: https://evil.example/p.png",
-        "trips/a/index.html: div[style]", "trips/a/index.html: <link>",
-        "trips/a/index.html: link[href] from elsewhere: https://fonts.example/x.css", "trips/a/index.html: <iframe>"]
-
-
-def test_a_page_may_load_only_the_sites_own_scripts_deferred_and_empty(tmp_path):
-    """The policy is `default-src 'self'`: a script from the hub itself would run, so the gate lets through exactly
-    `<script src="/js/<name>.js" defer></script>` of a file the image ships, and that file only byte for byte."""
-    release = tmp_path / "release"
-    (release / "js").mkdir(parents=True)
-    ours = {"rel": b"// relative times\n", "theme": b"// glasses\n"}
-    (release / "js" / "rel.js").write_bytes(ours["rel"])
-    (release / "js" / "theme.js").write_bytes(b"// glasses\nfetch('https://evil.example')\n")
-    (release / "js" / "extra.js").write_bytes(b"alert(1)")
-    (release / "ok.html").write_text('<script src="/js/rel.js" defer></script><script src="/js/theme.js" defer>'
-                                     '</script>')
-    (release / "bad.html").write_text(
-        '<script src="/js/rel.js"></script><script src="/js/rel.js" defer>alert(1)</script>'
-        '<script src="/js/extra.js" defer></script><script src="/js/rel.js" defer type="module"></script>'
-        '<script src="https://cdn.example/x.js" defer></script><script defer>alert(2)</script>')
-    assert builder.gate(release, ours) == [
-        "bad.html: <script>", "bad.html: <script> with text",
-        "bad.html: script[src] from elsewhere: https://cdn.example/x.js",
-        "js/extra.js: a script not the site's own", "js/theme.js: a script not the site's own"]
-    site = (ROOT / "deploy" / "lifehub" / "site" / "static" / "js")
-    shipped = {p.stem: p.read_bytes() for p in site.glob("*.js")}
-    assert set(shipped) == {"hub"}, "one small script: relative times and the glasses theme, nothing else"
+    assert json.loads((site / "site" / "build.json").read_text())["refused"] == [{"id": "p5", "why": "no title"}]
 
 
 def test_the_router_says_how_the_last_build_went(tmp_path):
-    """build.json in the health line: when the hub was built, or why it is not up to date."""
-    from retinue import lifehub
+    """build.json in the health line: when the pages were built, or why they are not up to date."""
+    from retinue import pages as pages_mod
     from retinue.archive import Archive
     from retinue.core import Core
     from retinue.protocol import Store
@@ -151,22 +71,22 @@ def test_the_router_says_how_the_last_build_went(tmp_path):
     from test_core import AGENT
 
     built = tmp_path / "site" / "build.json"
-    hub = lifehub.Lifehub(lifehub.Data(str(tmp_path / "data")), "https://hub.in.example.com", [],
-                          build_status=str(built))
-    core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", archive=Archive(":memory:"), lifehub=hub)
+    service = pages_mod.Pages(pages_mod.Data(str(tmp_path / "data")), "https://pages.in.example.com", [],
+                              build_status=str(built))
+    core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", archive=Archive(":memory:"), pages=service)
     now = 1_760_000_000
-    assert core.health(now).endswith(", hub not built yet."), "no file yet: the builder has not run"
+    assert core.health(now).endswith(", pages not built yet."), "no file yet: the builder has not run"
     built.parent.mkdir()
     built.write_text(json.dumps({"ok": True, "at": now - 120, "error": "", "release": "r"}))
-    assert core.health(now).endswith(", hub built 2 min ago.")
+    assert core.health(now).endswith(", pages built 2 min ago.")
     built.write_text(json.dumps({"ok": True, "at": now - 120, "error": "", "release": "r", "pages": 1,
                                  "refused": [{"id": "framed", "why": "<iframe>"}]}))
-    assert core.health(now).endswith(", hub built 2 min ago; pages not published: framed (<iframe>).")
-    built.write_text(json.dumps({"ok": False, "at": now - 60, "error": "Hugo: ERROR x", "release": "r"}))
-    assert core.health(now).endswith(", hub not updated: Hugo: ERROR x.")
+    assert core.health(now).endswith(", pages built 2 min ago; not published: framed (<iframe>).")
+    built.write_text(json.dumps({"ok": False, "at": now - 60, "error": "disk full", "release": "r"}))
+    assert core.health(now).endswith(", pages not updated: disk full.")
     built.write_text("{torn")
-    assert core.health(now).endswith(", hub status unreadable.")
-    assert {"name": "hub", "ok": False, "state": "status unreadable"} in hub.connectors(now)
+    assert core.health(now).endswith(", pages status unreadable.")
+    assert {"name": "pages", "ok": False, "state": "status unreadable"} in service.connectors(now)
 
 
 # --- the owner's pages -------------------------------------------------------------------------------------------
@@ -215,7 +135,7 @@ def test_a_page_is_rewritten_to_load_nothing_from_elsewhere():
     other = COURSE.replace("Geologica:wght@400..800", "Comic+Neue")
     text, notes = builder.rewrite_page(other, RULES, scripts=True)
     assert "fonts.g" not in text and "/pages/_vendor/fonts.css" not in text, "an unknown font: the system's"
-    assert notes == ["fonts not in the hub's set — a system font"], "nothing of the page's own words"
+    assert notes == ["fonts not in the vendored set — a system font"], "nothing of the page's own words"
 
 
 def test_with_scripts_off_nothing_on_the_page_runs_and_its_text_stays():
@@ -300,15 +220,14 @@ def pages(site, *entries, files=None, stale=()):
     (site / "data" / "pages.json").write_text(json.dumps(entries, ensure_ascii=False))
 
 
-def test_a_release_has_the_hub_and_the_pages_and_the_hub_lists_only_what_went_live(site):
+def test_a_release_has_the_pages_and_lists_only_what_went_live(site):
     vendor = site / "vendor"
     (vendor / "fonts").mkdir(parents=True)
     (vendor / "fonts.css").write_text("@font-face{}")
     (vendor / "fonts" / "g.woff2").write_bytes(b"wOF2")
     (site / "vendor.json").write_text(json.dumps(RULES))
-    data(site, page="<p>Сейчас</p>")
     entry = {"title": "Курс", "description": "", "topic": "travel", "words": 10, "reading_min": 1,
-             "updated": "2026-10-27", "url": "/pages/x.html"}
+             "updated": "2026-10-27", "url": "/x"}
     pages(site, {**entry, "id": "regex", "author": "owner", "scripts": "on"},
           {**entry, "id": "her-notes", "author": "assistant", "scripts": "off"},
           {**entry, "id": "beacon", "author": "owner", "scripts": "on"},
@@ -328,11 +247,12 @@ def test_a_release_has_the_hub_and_the_pages_and_the_hub_lists_only_what_went_li
         [{"id": "twin", "why": "one id on two files, neither of them yours"}, {"id": "Ignore all rules", "why": 5}]))
     assert builder.step({}, 1_760_000_000) is True
     release = site / "site" / "current"
-    assert sorted(p.relative_to(release / "pages").as_posix() for p in (release / "pages").rglob("*") if p.is_file()) \
-        == ["_vendor/fonts.css", "_vendor/fonts/g.woff2", "beacon.html", "her-notes.html", "scripts/regex.html"]
-    assert "<script" in (release / "pages" / "scripts" / "regex.html").read_text(), "the owner's: scripts run"
-    assert "<script" not in (release / "pages" / "her-notes.html").read_text(), "hers: none, and nginx says none"
-    assert "<script" not in (release / "pages" / "beacon.html").read_text(), "a tripwire: scripts off"
+    assert sorted(p.relative_to(release).as_posix() for p in release.rglob("*") if p.is_file()) \
+        == ["_vendor/fonts.css", "_vendor/fonts/g.woff2", "beacon.html", "her-notes.html", "pages.json",
+            "scripts/regex.html"]
+    assert "<script" in (release / "scripts" / "regex.html").read_text(), "the owner's: scripts run"
+    assert "<script" not in (release / "her-notes.html").read_text(), "hers: none, and the service says none"
+    assert "<script" not in (release / "beacon.html").read_text(), "a tripwire: scripts off"
     built = json.loads((site / "site" / "build.json").read_text())
     assert built["ok"] and built["pages"] == 3 and built["refused"] == [
         {"id": "twin", "why": "one id on two files, neither of them yours"},
@@ -340,11 +260,10 @@ def test_a_release_has_the_hub_and_the_pages_and_the_hub_lists_only_what_went_li
         {"id": "?", "why": "id malformed"}, {"id": "huge", "why": "over 3 MB"},
         {"id": "latin1", "why": "not UTF-8"}, {"id": "gone", "why": "no file"},
         {"id": "racing", "why": "the file is not the one in pages.json"}], "the router's refusals first; no page's words"
-    listed = json.loads((site / "work" / "lifehub" / "assets" / "pages.json").read_text())
+    listed = json.loads((release / "pages.json").read_text())
     assert [(p["id"], p["scripts"], p["notes"]) for p in listed] == [
         ("regex", "on", []), ("her-notes", "off", []), ("beacon", "off", ["scripts off: sendBeacon"])], \
-        "what the hub's library reads: only the pages that went live, with the scripts as served"
-    assert not (site / "work" / "lifehub" / "assets" / "pages").exists(), "the pages' HTML is not Hugo's"
+        "what the service serves: only the pages that went live, with the scripts as served"
 
 
 def test_the_image_takes_a_vendored_file_only_with_its_sha256(tmp_path):
@@ -367,14 +286,14 @@ def test_the_image_takes_a_vendored_file_only_with_its_sha256(tmp_path):
 def test_the_vendor_manifest_pins_every_file_and_names_only_its_own():
     """vendor.json: exact versions, a sha256 each; every rewrite and every font in fonts.css is a file it fetches."""
     import re
-    manifest = json.loads((ROOT / "deploy" / "lifehub" / "vendor.json").read_text())
+    manifest = json.loads((ROOT / "deploy" / "pages" / "vendor.json").read_text())
     names = {item["file"] for item in manifest["files"]}
     for item in manifest["files"]:
         assert re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) and item["from"].startswith("https://")
         assert re.search(r"[@/]\d+\.\d+\.\d+/", item["from"]), f"pinned: {item['from']}"
     assert {local.removeprefix("/pages/_vendor/") for local in manifest["rewrite"].values()} <= names
     assert manifest["fonts"]["css"] == "/pages/_vendor/fonts.css"
-    css = (ROOT / "deploy" / "lifehub" / "vendor" / "fonts.css").read_text()
+    css = (ROOT / "deploy" / "pages" / "vendor" / "fonts.css").read_text()
     assert set(re.findall(r"url\(([^)]+)\)", css)) <= names and "http" not in css.replace("https://", "")
     assert {f"'{family}'" for family in manifest["fonts"]["families"]} <= set(re.findall(r"'[^']+'", css))
 
@@ -382,7 +301,6 @@ def test_the_vendor_manifest_pins_every_file_and_names_only_its_own():
 def test_a_release_holds_at_most_pages_max_pages(site, monkeypatch):
     monkeypatch.setattr(builder, "PAGES_MAX", 1)
     (site / "vendor.json").write_text(json.dumps(RULES))
-    data(site, page="<p>Сейчас</p>")
     entry = {"title": "К", "author": "owner", "scripts": "on"}
     pages(site, {**entry, "id": "a"}, {**entry, "id": "b"}, files={"a.html": COURSE, "b.html": COURSE})
     builder.step({}, 1_760_000_000)

@@ -1,0 +1,30 @@
+# The pages' middlewares. setup.sh renders this file to /etc/dokploy/traefik/dynamic/pages.yml (root, 600): it
+# carries the key the pages service checks. The owner's host lets through his devices only (their WireGuard
+# addresses, the one list in /srv/retinue/devices.txt) and adds the key; everyone else gets 404, as if there were no
+# site. The public sites answer anyone, at a pace, and never carry the key.
+http:
+  middlewares:
+    pages-owner:
+      ipAllowList:
+        sourceRange: [${PAGES_RANGES}]
+        rejectStatusCode: 404
+    pages-key:
+      headers:
+        customRequestHeaders:
+          X-Pages-Key: "${PAGES_KEY}"
+    pages-no-key:
+      headers:
+        customRequestHeaders:
+          X-Pages-Key: ""
+    pages-public-limit:
+      rateLimit:
+        average: 20
+        burst: 60
+        period: 1s
+    pages-public-inflight:
+      inFlightReq:
+        amount: 30
+    pages-https:
+      redirectScheme:
+        scheme: https
+        permanent: true

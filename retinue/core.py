@@ -338,7 +338,7 @@ class Core:
     def __init__(self, agents: list[RouterAgent], store: Store, owner: str, ask=ask_agent,
                  archive: Archive | None = None, default_agent: str | None = None,
                  tz: str = clock.DEFAULT_TZ, backup_status: str | None = None, scribe=None, travel=None,
-                 memory=None, mail=None, lifehub=None, outbox=None, proactive=None, watch=None) -> None:
+                 memory=None, mail=None, pages=None, outbox=None, proactive=None, watch=None) -> None:
         self.agents = {a.id: a for a in agents}
         self.backup_status = backup_status  # the host's backup writes it; None: this core says nothing of backups
         self.tz = tz  # the owner's zone: every time the model and the owner see is local time there
@@ -371,9 +371,9 @@ class Core:
         if mail:
             mail.attach(self)
         self.travel_state: tuple[float, str] | None = None  # the last look at travel-ops: when, what went wrong
-        self.lifehub = lifehub  # the life hub's data (`lifehub.Lifehub`); None: no pages
-        if lifehub:
-            lifehub.attach(self)
+        self.pages = pages  # the owner's pages (`pages.Pages`): the data the pages service serves; None: none
+        if pages:
+            pages.attach(self)
         self.outbox = outbox  # replies to people (`outbox.Outbox`): drafts, cards, the senders; None: no sending
         if outbox:
             outbox.attach(self)
@@ -716,8 +716,8 @@ class Core:
             self.collecting = asyncio.create_task(self._collect())
         if self.mail:
             self.mail.step(now)  # one piece of mail work at a time, in a task of its own
-        if self.lifehub:
-            self.lifehub.step(now)  # the pages' data, in a task of its own
+        if self.pages:
+            self.pages.step(now)  # the pages' data, in a task of its own
         if self.watch:
             self.watch.step(now)  # a container gone bad or well again: told in a task of its own
         if self.proactive:
@@ -799,7 +799,7 @@ class Core:
             parts.append(self.backup(now))
         if self.mail:
             parts += self.mail.health(now)
-        if self.lifehub and (built := self.lifehub.health(now)):
+        if self.pages and (built := self.pages.health(now)):
             parts.append(built)
         if self.watch:
             parts.append(self.watch.health(now))
@@ -928,7 +928,7 @@ class Core:
             changed = await asyncio.to_thread(self.memory.changed_since, week)
             facts.append("- Base edits by Space (the owner and you): "
                          + (", ".join(f"{space} — {n}" for space, n in changed.items()) or "none") + ".")
-            from .lifehub import Tracker
+            from .pages import Tracker
 
             tracker = Tracker.of(self.memory)
             path = Path(self.memory.tree) / tracker.path
@@ -1179,8 +1179,8 @@ class Core:
         """One model run in the `runs` table: tokens, cost estimate, the subscription limit state."""
         self.store.run(agent_id=agent.id, conversation_id=conversation_id, kind=kind,
                        status="limit" if meta.get("limit") else status, meta=meta)
-        if self.lifehub:
-            self.lifehub.poke(time.time())
+        if self.pages:
+            self.pages.poke(time.time())
 
     def unseen(self, event: Event) -> list[Event]:
         """Events of the conversation after the assistant's last answer: its session has not seen them."""
@@ -1591,21 +1591,21 @@ class Core:
         return ok, text
 
     async def publish_trip(self, caller: RouterAgent, turn_id: str, trip) -> tuple[bool, str]:
-        """An agent publishes a trip page in the life hub: only during its own turn and with the `trips` grant. What
-        she sends is checked and looked up in travel-ops by code (`Lifehub.publish`); the answer has the address."""
+        """An agent publishes a trip page among the owner's pages: only during its own turn and with the `trips` grant. What
+        she sends is checked and looked up in travel-ops by code (`Pages.publish`); the answer has the address."""
         turn = self.turns.turns.get(turn_id)
         if turn is None or turn.agent_id != caller.id:
             return False, "No active request: a page can be published only during an answer."
         if not caller.trips:
             return False, "Denied: this agent has not been granted trip publishing."
-        if not self.lifehub:
-            return False, "The hub is not connected: there will be no page. Answer the owner without a link."
-        ok, text = await self.lifehub.publish(trip, self.travel, time.time())
+        if not self.pages:
+            return False, "Pages are not connected: there will be no page. Answer the owner without a link."
+        ok, text = await self.pages.publish(trip, self.travel, time.time())
         self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="trips/publish",
                        status="done" if ok else "rejected", input_chars=len(json.dumps(trip, ensure_ascii=False)),
                        output_chars=len(text), channel="bus")
         await self._each(self.channels, "protocol",
-                         f"lifehub: {caller.name} → trip page: {'published' if ok else 'refused'}")
+                         f"pages: {caller.name} → trip page: {'published' if ok else 'refused'}")
         return ok, text
 
     async def draft_reply(self, caller: RouterAgent, turn_id: str, args) -> tuple[bool, str]:

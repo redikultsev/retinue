@@ -22,7 +22,7 @@ from .channels.telegram import TelegramChannel
 from .config import RouterConfig
 from .core import Core, ask_agent
 from .health import Watch
-from .lifehub import Data, Lifehub
+from .pages import Data, Pages
 from .mail import Collector, MailStore
 from .mailroom import Mailroom
 from .outbox import Neighbour, Outbox, OutboxStore
@@ -42,11 +42,10 @@ def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventL
         from .channels.matrix import MatrixChannel
         channels.append(MatrixChannel(cfg.matrix, cfg.agents, store, loop, f"{cfg.state_db}.mx-state.json"))
     if cfg.telegram:
-        # A trip page of the life hub is clickable too, and nothing else of it: the path is under /trips/. So is an
-        # address of the owner's own pages (the answer to a page he sent), under /pages/.
-        hub = [f"{urlsplit(cfg.lifehub_url).hostname}/{where}/" for where in ("trips", "pages")] \
-            if cfg.lifehub_url else []
-        channels.append(TelegramChannel(cfg.telegram, store, [*cfg.link_hosts, *hub], bridge))
+        # An address of the owner's pages is clickable too: a trip page she published, a page he sent. The host serves
+        # nothing else.
+        pages = [f"{urlsplit(cfg.pages_url).hostname}/"] if cfg.pages_url else []
+        channels.append(TelegramChannel(cfg.telegram, store, [*cfg.link_hosts, *pages], bridge))
     return channels
 
 
@@ -98,13 +97,13 @@ def main() -> None:
     # Replies to people: the mail sender and the gateway hold the keys; the router holds the drafts and the «yes».
     outbox = Outbox(OutboxStore(store.db), sender=sender, gateway=gateway,
                     owner_tg=cfg.telegram.owner_id if cfg.telegram else None) if sender or gateway else None
-    lifehub = Lifehub(Data(cfg.lifehub_data), cfg.lifehub_url, cfg.link_hosts, kb=cfg.memory.tree if memory else "",
-                      build_status=cfg.lifehub_build) if cfg.lifehub_url else None
+    pages = Pages(Data(cfg.pages_data), cfg.pages_url, cfg.link_hosts, build_status=cfg.pages_build) \
+        if cfg.pages_url else None
     core = Core(cfg.agents, store, cfg.owner, ask=signed(tokens), archive=Archive(cfg.archive_db),
                 default_agent=cfg.default_agent,
                 tz=cfg.owner_tz, backup_status=cfg.backup_status, scribe=Scribe(cfg.stt_key, store=store),
                 travel=TravelOps(cfg.travel_url) if cfg.travel_url else None, memory=memory, mail=mail,
-                lifehub=lifehub, outbox=outbox, proactive=Proactive(),
+                pages=pages, outbox=outbox, proactive=Proactive(),
                 watch=Watch(cfg.health_status, store.db))
     # The platform's sessions: its cards and summaries reach the owner through Telegram, never through the core.
     bridge = PlatformBridge(PlatformClient(cfg.platform_url, cfg.platform_token, "the platform"), store, cfg.face_url) \
@@ -119,8 +118,8 @@ def main() -> None:
         bridge.detail_waiting = lambda ref, token, now: detail(core, ref, token, now)
         if mail:  # a mark by his Telegram button shows in the app at once too
             mail.changed = bridge.poke
-    if bridge and lifehub:  # the hub's pages, for the face's «Read»
-        bridge.library = lifehub.library
+    if bridge and pages:  # the owner's pages, for the face's «Read»
+        bridge.library = pages.library
     loop.run_until_complete(core.start(build_channels(cfg, store, loop, bridge)))
     # The tasks are held here for as long as the loop runs: the loop itself keeps only weak references to them.
     notes = loop.create_task(bridge.pump()) if bridge else None  # noqa: F841  the platform's cards and summaries

@@ -1,7 +1,8 @@
-// «Pages»: the life hub's pages (`GET /api/library`, retinue/library.py) — the owner's own HTML pages the hub serves
-// under /pages/, as the router last pushed their list. A page is never fetched or framed here: it opens on the hub's
-// own origin in a tab of its own (Telegram's openLink inside the Mini App), so its scripts stay away from the app's
-// login. What the owner opened and finished is the platform's row, the same on every device.
+// «Pages»: the owner's own HTML pages (`GET /api/library`, retinue/library.py) as the pages service serves them
+// (docs/pages.md), as the router last pushed their list. A page is never fetched or framed here: it opens on the pages
+// service's own origin in a tab of its own (Telegram's openLink inside the Mini App), so its scripts stay away from
+// the app's login. What the owner opened and finished is the platform's row, the same on every device; what a page
+// keeps itself (its ticks, its progress) is the pages service's.
 
 import { useCallback, useEffect, useState } from "react";
 import { request } from "./api";
@@ -9,7 +10,7 @@ import { request } from "./api";
 export interface LibraryPage {
   id: string;
   title: string;
-  /** Always `<hub>/pages/<id>.html` — the platform refuses any other address. */
+  /** Always `<origin>/<id>` — the platform refuses any other address. */
   url: string;
   /** The day the page last changed, `YYYY-MM-DD`. */
   updated: string;
@@ -27,8 +28,8 @@ export interface LibraryPage {
 
 export interface Library {
   schema: number;
-  /** The hub's origin from the platform's config; empty when it is not set. */
-  hub: string;
+  /** The pages service's origin from the platform's config; empty when it is not set. */
+  origin: string;
   /** When the router last pushed the list (seconds), or null: never. */
   at: number | null;
   pages: LibraryPage[];
@@ -41,13 +42,18 @@ export const libraryApi = {
     request<{ page: LibraryPage }>(`/api/library/${encodeURIComponent(id)}/done`, { done }),
 };
 
-/** The page's address when it is what the platform promised — https, the hub's origin, under /pages/ — else null:
- * the link is not drawn. The platform checks it already; this is the second look before an href. */
-export function safeUrl(url: string, hub: string): string | null {
+/** The page's address when it is what the platform promised — https, the pages service's origin, a page's id as the
+ * whole path — else null: the link is not drawn. The platform checks it already; this is the second look before an
+ * href. */
+export function safeUrl(url: string, pages: string): string | null {
   try {
     const parsed = new URL(url);
-    const origin = new URL(hub).origin;
-    return parsed.protocol === "https:" && parsed.origin === origin && parsed.pathname.startsWith("/pages/")
+    const origin = new URL(pages).origin;
+    return parsed.protocol === "https:" &&
+      parsed.origin === origin &&
+      /^\/[a-z0-9][a-z0-9-]{0,63}$/.test(parsed.pathname) &&
+      !parsed.search &&
+      !parsed.hash
       ? parsed.href
       : null;
   } catch {

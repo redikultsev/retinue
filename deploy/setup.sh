@@ -9,8 +9,8 @@
 #   sudo TELEGRAM_OWNER_ID=123456789 TRAVEL=1 bash deploy/setup.sh   # travel-ops: trip search and price watches
 #   sudo TELEGRAM_OWNER_ID=123456789 MEMORY=1 bash deploy/setup.sh   # the knowledge base she writes, and its hub
 #   sudo TELEGRAM_OWNER_ID=123456789 MAIL=1 bash deploy/setup.sh     # the mail collector: Gmail and Google Calendar
-#   sudo TELEGRAM_OWNER_ID=123456789 LIFEHUB=1 LIFEHUB_HOST=hub.in.example.com LIFEHUB_DEVICES=10.8.0.2/32,10.8.0.3/32 \
-#     bash deploy/setup.sh                                            # the life hub: pages for your devices only
+#   sudo TELEGRAM_OWNER_ID=123456789 PAGES=1 PAGES_HOST=pages.in.example.com DEVICES=10.8.0.2/32,10.8.0.3/32 \
+#     PAGES_PUBLIC_HOSTS=pages.example.com bash deploy/setup.sh     # your HTML pages, and the ones you share
 #   sudo TELEGRAM_OWNER_ID=123456789 TGBUSINESS=1 bash deploy/setup.sh   # your chosen Telegram chats, replies by card
 #   sudo TELEGRAM_OWNER_ID=123456789 SEND=1 bash deploy/setup.sh     # replies by mail (needs MAIL=1), by card
 #   sudo TELEGRAM_OWNER_ID=123456789 PLATFORM=1 bash deploy/setup.sh # Claude Code sessions in the room, from Telegram
@@ -60,10 +60,12 @@ MAIL_DIR=$ROOT/mail
 MAIL_ON=0
 [[ $MAIL == 1 || -d $MAIL_DIR ]] && MAIL_ON=1
 MAIL_UID=10002                          # the collector's own user: the owner's tokens are its alone
-LIFEHUB=${LIFEHUB:-0}                   # 1: the life hub; on for good once its address is written
-LIFEHUB_DIR=$ROOT/lifehub
-LIFEHUB_ON=0
-[[ $LIFEHUB == 1 || -f $LIFEHUB_DIR/host ]] && LIFEHUB_ON=1
+PAGES=${PAGES:-0}                       # 1: the pages service; on for good once its address is written
+PAGES_DIR=$ROOT/pages
+PAGES_ON=0
+[[ $PAGES == 1 || -f $PAGES_DIR/host ]] && PAGES_ON=1
+PAGES_UID=10021                         # the pages service's own user: its store and the public sites' files
+LIFEHUB_DIR=$ROOT/lifehub               # the retired life hub: its list of devices is read once, its files are the owner's
 NGINX_UID=101                           # nginx-unprivileged's user: it reads the rendered nginx.conf
 TGBUSINESS=${TGBUSINESS:-0}             # 1: the Telegram Business gateway; on for good once its folder exists
 TG_DIR=$ROOT/telegram
@@ -124,8 +126,8 @@ for line in sys.stdin:
 OPEN_CHANGED=0
 
 install -d -m 755 "$ROOT"
-# The life hub's and the face's addresses and the owner's devices: given once, checked — all of them before anything
-# is kept — then kept here (the owner's to edit). Both are behind Traefik for these devices only.
+# The pages' and the face's addresses and the owner's devices: given once, checked — all of them before anything is
+# kept — then kept here (the owner's to edit). Both are behind Traefik for these devices only.
 host_name() {   # $1: the switch, $2: the variable's name, $3: its value, $4: an example
   [[ -n $3 ]] || { echo "$1=1 needs $2: the name, e.g. $4" >&2; return 1; }
   [[ $3 =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || {
@@ -142,39 +144,46 @@ devices() {     # $1: the switch, $2: the variable's name, $3: its value; prints
   done <<< "$list"
   printf '%s\n' "$list"
 }
-if [[ $LIFEHUB_ON == 1 ]]; then
-  LIFEHUB_HOST=${LIFEHUB_HOST:-$(cat "$LIFEHUB_DIR/host" 2>/dev/null || true)}
-  LIFEHUB_DEVICES=${LIFEHUB_DEVICES:-$(paste -sd, "$LIFEHUB_DIR/devices.txt" 2>/dev/null || true)}
-  host_name LIFEHUB LIFEHUB_HOST "$LIFEHUB_HOST" hub.in.example.com || exit 1
-  DEVICES=$(devices LIFEHUB LIFEHUB_DEVICES "$LIFEHUB_DEVICES") || exit 1
+# The owner's devices: one list for every host behind the VPN (the face, the pages) in $ROOT/devices.txt — given as
+# DEVICES (FACE_DEVICES and LIFEHUB_DEVICES: earlier names), else the list kept, else an earlier version's.
+DEVICES_FILE=$ROOT/devices.txt
+if [[ $PAGES_ON == 1 || $FACE_ON == 1 ]]; then
+  DEVICES=${DEVICES:-${FACE_DEVICES:-${LIFEHUB_DEVICES:-}}}
+  for kept in "$DEVICES_FILE" "$LIFEHUB_DIR/devices.txt" "$FACE_DIR/devices.txt"; do
+    [[ -n $DEVICES ]] && break
+    DEVICES=$(paste -sd, "$kept" 2>/dev/null || true)
+  done
+  DEVICE_LIST=$(devices "PAGES or FACE" DEVICES "$DEVICES") || exit 1
 fi
-# The face lets through the same devices as the life hub: with the hub on, the hub's list is the only one.
+if [[ $PAGES_ON == 1 ]]; then
+  PAGES_HOST=${PAGES_HOST:-$(cat "$PAGES_DIR/host" 2>/dev/null || true)}
+  host_name PAGES PAGES_HOST "$PAGES_HOST" pages.in.example.com || exit 1
+  # The public sites a page may be shared on: none until named; an empty PAGES_PUBLIC_HOSTS= takes them all away.
+  PAGES_PUBLIC_HOSTS=${PAGES_PUBLIC_HOSTS-$(paste -sd, "$PAGES_DIR/public_hosts.txt" 2>/dev/null || true)}
+  PUBLIC_LIST=$(tr ', ' '\n\n' <<< "$PAGES_PUBLIC_HOSTS" | sed '/^$/d')
+  while read -r public; do
+    [[ -n $public ]] || continue
+    host_name PAGES PAGES_PUBLIC_HOSTS "$public" pages.example.com || exit 1
+    [[ $public != "$PAGES_HOST" && $public != *.in.* ]] || {
+      echo "PAGES_PUBLIC_HOSTS: $public is a name behind the VPN — a public site needs a name of its own" >&2; exit 1; }
+  done <<< "$PUBLIC_LIST"
+fi
 if [[ $FACE_ON == 1 ]]; then
   FACE_HOST=${FACE_HOST:-$(cat "$FACE_DIR/host" 2>/dev/null || true)}
   host_name FACE FACE_HOST "$FACE_HOST" app.in.example.com || exit 1
-  if [[ $LIFEHUB_ON == 1 ]]; then
-    [[ -z ${FACE_DEVICES:-} ]] || {
-      echo "FACE_DEVICES: the face lets through the life hub's devices — change LIFEHUB_DEVICES instead" >&2; exit 1; }
-    FACE_DEVICE_LIST=$DEVICES
-  else
-    FACE_DEVICES=${FACE_DEVICES:-$(paste -sd, "$FACE_DIR/devices.txt" 2>/dev/null || true)}
-    FACE_DEVICE_LIST=$(devices FACE FACE_DEVICES "$FACE_DEVICES") || exit 1
-  fi
 fi
-if [[ $LIFEHUB_ON == 1 ]]; then
-  install -d -m 755 "$LIFEHUB_DIR"
-  printf '%s\n' "$LIFEHUB_HOST" > "$LIFEHUB_DIR/host"
-  printf '%s\n' "$DEVICES" > "$LIFEHUB_DIR/devices.txt"
-  rm -f "$LIFEHUB_DIR/pages_host"      # pages once had a name of their own; now they are the hub's /pages/
+if [[ $PAGES_ON == 1 || $FACE_ON == 1 ]]; then
+  printf '%s\n' "$DEVICE_LIST" > "$DEVICES_FILE"
+  rm -f "$FACE_DIR/devices.txt"         # one list: no second one to forget
+fi
+if [[ $PAGES_ON == 1 ]]; then
+  install -d -m 755 "$PAGES_DIR"
+  printf '%s\n' "$PAGES_HOST" > "$PAGES_DIR/host"
+  printf '%s\n' "$PUBLIC_LIST" | sed '/^$/d' > "$PAGES_DIR/public_hosts.txt"
 fi
 if [[ $FACE_ON == 1 ]]; then
   install -d -m 755 "$FACE_DIR"
   printf '%s\n' "$FACE_HOST" > "$FACE_DIR/host"
-  if [[ $LIFEHUB_ON == 1 ]]; then
-    rm -f "$FACE_DIR/devices.txt"       # one list, the life hub's: no second one to forget
-  else
-    printf '%s\n' "$FACE_DEVICE_LIST" > "$FACE_DIR/devices.txt"
-  fi
 fi
 # The knowledge base. The mounts exist whether it is on or not, so the folders and the policy always do; what she
 # may write and see is the owner's (written once from the examples, then edited by hand).
@@ -192,7 +201,7 @@ drop() { local rest; rest=$(grep -v "^$1=" "$2" || true); printf '%s\n' "$rest" 
 [[ $ROTATE_BUS_SECRET == 1 ]] && drop RETINUE_BUS_SECRET "$SECRETS"   # the agents' tokens follow from it
 secret RETINUE_BUS_SECRET
 [[ $MAIL_ON == 1 ]] && secret RETINUE_COLLECTOR_TOKEN   # the router signs its calls to the collector with it
-[[ $LIFEHUB_ON == 1 ]] && secret LIFEHUB_KEY   # Traefik adds it to the hub's requests; nginx refuses any without it
+[[ $PAGES_ON == 1 ]] && secret PAGES_KEY   # Traefik adds it to the pages' requests; the service refuses any without it
 [[ $TG_ON == 1 ]] && secret RETINUE_GATEWAY_TOKEN   # the router signs its calls to the Telegram Business gateway
 [[ $SEND_ON == 1 ]] && secret RETINUE_SENDER_TOKEN  # the router signs its calls to the mail sender
 if [[ $PLATFORM_ON == 1 ]]; then
@@ -236,8 +245,8 @@ YAML
   if [[ $MAIL_ON == 1 ]]; then
     printf 'collector_url: %s\n' "$COLLECTOR_URL"   # what the collector found, the router takes there
   fi
-  if [[ $LIFEHUB_ON == 1 ]]; then
-    printf 'lifehub_url: https://%s\n' "$LIFEHUB_HOST"   # the pages' address; the data goes to /lifehub
+  if [[ $PAGES_ON == 1 ]]; then
+    printf 'pages_url: https://%s\n' "$PAGES_HOST"   # the pages' address; the data goes to /pages
   fi
   if [[ $TG_ON == 1 ]]; then
     printf 'gateway_url: %s\n' "$GATEWAY_URL"      # your chosen Telegram chats; replies sent by your card
@@ -328,28 +337,25 @@ if [[ $HOST_SETUP == 1 ]]; then
   fi
 fi
 
-# The life hub: the router writes the data, the builder the pages; both as the containers' user. The router mounts
-# both folders whether the hub is on or not.
-install -d -m 755 "$LIFEHUB_DIR" "$LIFEHUB_DIR/data" "$LIFEHUB_DIR/site"
-[[ $HOST_SETUP == 1 ]] && chown "$MEMORY_UID:$MEMORY_UID" "$LIFEHUB_DIR/data" "$LIFEHUB_DIR/site"
-if [[ $LIFEHUB_ON == 1 ]]; then
-  RANGES=$(sed 's/.*/"&"/' "$LIFEHUB_DIR/devices.txt" | paste -sd, - | sed 's/,/, /g')
-  (umask 077; sed -e "s|\${LIFEHUB_KEY}|$LIFEHUB_KEY|" -e "s|\${LIFEHUB_RANGES}|$RANGES|" \
-    "$REPO/deploy/lifehub/traefik.yml.template" > "$LIFEHUB_DIR/traefik.yml")
-  chmod 600 "$LIFEHUB_DIR/traefik.yml"
-  # The key, and the hub's name: the pages' policy names /pages/_vendor/ on it, not 'self' (docs/lifehub.md).
-  (umask 027; sed -e "s|\${LIFEHUB_KEY}|$LIFEHUB_KEY|g" -e "s|\${LIFEHUB_HOST}|$LIFEHUB_HOST|g" \
-    "$REPO/deploy/lifehub/nginx.conf.template" > "$LIFEHUB_DIR/nginx.conf")
-  chmod 640 "$LIFEHUB_DIR/nginx.conf"
-  if [[ $HOST_SETUP == 1 ]]; then
-    chown "root:$NGINX_UID" "$LIFEHUB_DIR/nginx.conf"
-    install -m 600 "$LIFEHUB_DIR/traefik.yml" /etc/dokploy/traefik/dynamic/lifehub.yml   # Traefik runs as root
-  fi
+# The pages: the router writes the data and the builder the releases (both as the containers' user); the service
+# writes the public sites' files (its own user; its store is the volume pages-data, in the nightly backup). The router mounts its folders whether pages are
+# on or not.
+install -d -m 755 "$PAGES_DIR" "$PAGES_DIR/data" "$PAGES_DIR/site" "$PAGES_DIR/public"
+if [[ $HOST_SETUP == 1 ]]; then
+  chown "$MEMORY_UID:$MEMORY_UID" "$PAGES_DIR/data" "$PAGES_DIR/site"
+  chown "$PAGES_UID:$PAGES_UID" "$PAGES_DIR/public"
+fi
+if [[ $PAGES_ON == 1 ]]; then
+  RANGES=$(sed 's/.*/"&"/' "$DEVICES_FILE" | paste -sd, - | sed 's/,/, /g')
+  (umask 077; sed -e "s|\${PAGES_KEY}|$PAGES_KEY|" -e "s|\${PAGES_RANGES}|$RANGES|" \
+    "$REPO/deploy/pages/traefik.yml.template" > "$PAGES_DIR/traefik.yml")
+  chmod 600 "$PAGES_DIR/traefik.yml"
+  [[ $HOST_SETUP == 1 ]] && install -m 600 "$PAGES_DIR/traefik.yml" /etc/dokploy/traefik/dynamic/pages.yml
 fi
 # The face: its Traefik middlewares (the devices, the key) and nginx's check of the key, both rendered on every run —
 # a changed list of devices reaches Traefik with the next run. nginx's own config is in the image.
 if [[ $FACE_ON == 1 ]]; then
-  RANGES=$(printf '%s\n' "$FACE_DEVICE_LIST" | sed 's/.*/"&"/' | paste -sd, - | sed 's/,/, /g')
+  RANGES=$(sed 's/.*/"&"/' "$DEVICES_FILE" | paste -sd, - | sed 's/,/, /g')
   (umask 077; sed -e "s|\${FACE_KEY}|$FACE_KEY|" -e "s|\${FACE_RANGES}|$RANGES|" \
     "$REPO/deploy/face/traefik.yml.template" > "$FACE_DIR/traefik.yml")
   chmod 600 "$FACE_DIR/traefik.yml"
@@ -513,7 +519,7 @@ PROFILES=()
 [[ -n $MATRIX_SERVER_NAME ]] && PROFILES+=(matrix)
 [[ $TRAVEL_ON == 1 ]] && PROFILES+=(travel)
 [[ $MAIL_ON == 1 ]] && PROFILES+=(mail)
-[[ $LIFEHUB_ON == 1 ]] && PROFILES+=(lifehub)
+[[ $PAGES_ON == 1 ]] && PROFILES+=(pages)
 [[ $TG_ON == 1 ]] && PROFILES+=(tgbusiness)
 [[ $SEND_ON == 1 ]] && PROFILES+=(send)
 [[ $PLATFORM_ON == 1 ]] && PROFILES+=(platform)
@@ -526,8 +532,21 @@ fi
 if [[ $TRAVEL_ON == 1 ]]; then put RETINUE_TRAVEL_URL "$TRAVEL_URL"; else put RETINUE_TRAVEL_URL ""; fi
 if [[ $MEMORY_ON == 1 ]]; then put RETINUE_MEMORY /kb; else put RETINUE_MEMORY ""; fi
 if [[ $MAIL_ON == 1 ]]; then put RETINUE_COLLECTOR_TOKEN "$RETINUE_COLLECTOR_TOKEN"; else drop RETINUE_COLLECTOR_TOKEN "$STACK"; fi
-if [[ $LIFEHUB_ON == 1 ]]; then put LIFEHUB_HOST "$LIFEHUB_HOST"; else drop LIFEHUB_HOST "$STACK"; fi
-drop LIFEHUB_PAGES_HOST "$STACK"          # an earlier version's separate pages' name: gone
+# The pages: the owner's host, its key, the public sites — and Traefik's rule for them, one Host() each (a rule that
+# matches nothing when there is none: the public nginx then answers no one).
+PAGES_ENV=(PAGES_HOST PAGES_ORIGIN PAGES_KEY PAGES_PUBLIC_HOSTS PAGES_PUBLIC_RULE PAGES_APP_ORIGIN)
+if [[ $PAGES_ON == 1 ]]; then
+  put PAGES_HOST "$PAGES_HOST"
+  put PAGES_ORIGIN "https://$PAGES_HOST"
+  put PAGES_KEY "$PAGES_KEY"
+  put PAGES_PUBLIC_HOSTS "$(paste -sd, "$PAGES_DIR/public_hosts.txt")"
+  RULE=$(sed 's/.*/Host(`&`)/' "$PAGES_DIR/public_hosts.txt" | paste -sd'|' - | sed 's/|/ || /g')
+  put PAGES_PUBLIC_RULE "${RULE:-Host(\`pages.invalid\`)}"
+  if [[ $FACE_ON == 1 ]]; then put PAGES_APP_ORIGIN "https://$FACE_HOST"; else drop PAGES_APP_ORIGIN "$STACK"; fi
+else
+  for name in "${PAGES_ENV[@]}"; do drop "$name" "$STACK"; done
+fi
+for name in LIFEHUB_HOST LIFEHUB_PAGES_HOST; do drop "$name" "$STACK"; done   # the retired life hub's
 # The gateway serves this account's connection and no other; the face's Mini App logs in this account and no other.
 [[ $TG_ON == 1 || $FACE_ON == 1 ]] && put TELEGRAM_OWNER_ID "$TELEGRAM_OWNER_ID"
 if [[ $TG_ON == 1 ]]; then
@@ -610,6 +629,7 @@ if [[ $BACKUP == 1 || -f $BACKUP_ENV ]]; then
   VOLUMES=(retinue_router-data retinue_assistant-data)
   [[ $TRAVEL_ON == 1 ]] && VOLUMES+=(retinue_travel-data)
   [[ $PLATFORM_ON == 1 ]] && VOLUMES+=(retinue_platform-data)
+[[ $PAGES_ON == 1 ]] && VOLUMES+=(retinue_pages-data)   # what the pages keep, and what is shared where
   if (( ${#VOLUMES[@]} > 2 )); then
     echo "RETINUE_VOLUMES=\"${VOLUMES[*]}\"" >> "$BACKUP_ENV"
   fi
@@ -652,11 +672,15 @@ if [[ $MAIL_ON == 1 ]]; then
   echo "Mail: on — keys: $(find "$MAIL_DIR/keys" -name '*.json' 2>/dev/null | wc -l | tr -d ' ') files in $MAIL_DIR/keys" \
        "(put there by deploy/mail/login.py on your Mac; see docs/mail.md)"
 fi
-if [[ $LIFEHUB_ON == 1 ]]; then
-  echo "Lifehub: on — https://$LIFEHUB_HOST for $(paste -sd' ' "$LIFEHUB_DIR/devices.txt");" \
-       "check the DNS record and your devices' DNS (docs/lifehub.md)"
-  echo "Lifehub pages: https://$LIFEHUB_HOST/pages/<id>.html; the base's policy.json must let */artifacts/**/*.html" \
-       "through for pages sent to the bot (docs/lifehub.md, «Pages»)"
+if [[ $PAGES_ON == 1 ]]; then
+  echo "Pages: on — https://$PAGES_HOST for $(paste -sd' ' "$DEVICES_FILE"); public sites:" \
+       "$(paste -sd' ' "$PAGES_DIR/public_hosts.txt" | sed 's/^$/none/'), each with a public DNS record (docs/pages.md)"
+  echo "Pages from the bot: the base's policy.json must let */artifacts/**/*.html through (docs/pages.md)"
+fi
+if [[ -d $LIFEHUB_DIR ]]; then
+  echo "The life hub is retired (docs/pages.md): its containers and $LIFEHUB_DIR stay until you remove them —" \
+       "docker rm -f retinue-lifehub-1 retinue-lifehub-build-1; rm /etc/dokploy/traefik/dynamic/lifehub.yml;" \
+       "rm -r $LIFEHUB_DIR"
 fi
 [[ $TG_ON == 1 ]] && echo "Telegram Business: on — connect the bot in Telegram → Settings → Chat Automation, only" \
   "the chats you choose, only «reply on your behalf» (docs/courier.md)"
@@ -679,7 +703,7 @@ if [[ $PLATFORM_ON == 1 ]] && ! has_entry "$ROOT/egress/open-deny-ips.txt"; then
     "there (e.g. 203.0.113.7/32), then restart lane-private-egress"
 fi
 if [[ $FACE_ON == 1 ]]; then
-  echo "Face: on — https://$FACE_HOST for $(printf '%s\n' "$FACE_DEVICE_LIST" | paste -sd' ' -); send /app to the bot" \
+  echo "Face: on — https://$FACE_HOST for $(paste -sd' ' "$DEVICES_FILE"); send /app to the bot" \
        "(docs/face.md)"
   [[ $WEBAPP_KEY_STATE == off ]] && echo "Face: the Mini App logs in once TELEGRAM_BOT_TOKEN is filled and this script" \
     "is run again; /app codes work without it"

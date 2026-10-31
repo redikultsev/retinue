@@ -7,8 +7,8 @@ card's, a handed-over page's), whose address is the face's own, from the router'
 
 Files the owner sends are downloaded here (getFile, up to 20 MB) and handed to the core as they are; reading them
 is the core's work. A file URL carries the bot token: it is never logged and never put into an error text. One
-exception: an HTML file captioned «to hub <Space>» (the Russian «в хаб <Space>» too) goes to the life hub's code,
-which puts it in the base as a page (`Lifehub.upload`); the model never sees it.
+exception: an HTML file captioned «to pages <Space>» («to hub <Space>» and the Russian «в хаб <Space>» too) goes to
+the pages' code, which puts it in the base as a page (`Pages.upload`); the model never sees it.
 """
 
 from __future__ import annotations
@@ -47,10 +47,10 @@ POISON = ("The message with a file was not handled: the router restarted while r
 NOT_FOR_SESSION = "A session takes text, voice messages, photos and files."
 SPEECH_KINDS = ("voice", "audio", "video_note")  # what a session takes besides text: its transcript (`bridge.spoken`)
 FILE_KINDS = ("photo", "document")  # and these as they are: the platform makes them the session's (`bridge.files`)
-# A file with this caption is a page for the life hub: code puts it in the base (`Lifehub.upload`), not the model.
-# «to hub <Space>»; the Russian «в хаб <Space>» still works.
-TO_HUB = re.compile(r"\s*(?:to\s+hub|в\s+хаб)\s+(\S+)\s*", re.I)
-NO_PAGES = "The hub is not connected: there is nowhere to publish pages (docs/lifehub.md)."
+# A file with this caption is one of the owner's pages: code puts it in the base (`Pages.upload`), not the model.
+# «to pages <Space>»; «to hub <Space>» and the Russian «в хаб <Space>», the names it had, still work.
+TO_PAGES = re.compile(r"\s*(?:to\s+pages|to\s+hub|в\s+хаб)\s+(\S+)\s*", re.I)
+NO_PAGES = "Pages are not connected: there is nowhere to publish them (docs/pages.md)."
 # Any trace of a forward, his own included: a forwarded file is never his page, whoever's name it hides behind.
 FORWARDED = ("forward_origin", "forward_date", "forward_from", "forward_from_chat", "forward_sender_name",
              "is_automatic_forward")
@@ -207,7 +207,7 @@ class TelegramChannel:
         and input under the same `input_id`, which the platform takes once — not refused with «send it again»."""
         reply = (message.get("reply_to_message") or {}).get("message_id")
         return bool(self.bridge and reply is not None and not forwarded(message) and "animation" not in message
-                    and not TO_HUB.fullmatch(message.get("caption") or "")  # a page for the hub is read here
+                    and not TO_PAGES.fullmatch(message.get("caption") or "")  # one of his pages is read here
                     and any(key in message for key in (*SPEECH_KINDS, *FILE_KINDS))
                     and self.bridge.session_of(str(reply)))
 
@@ -285,9 +285,9 @@ class TelegramChannel:
         reply = message.get("reply_to_message") or {}
         reply_to = str(reply["message_id"]) if "message_id" in reply else None
         if not forwarded(message) and "document" in message and "animation" not in message \
-                and (to_hub := TO_HUB.fullmatch(message.get("caption") or "")):
-            if self.core.lifehub:
-                await self.core.lifehub.upload(self, to_hub.group(1).lower(), self._upload(message), native_id)
+                and (to_pages := TO_PAGES.fullmatch(message.get("caption") or "")):
+            if self.core.pages:
+                await self.core.pages.upload(self, to_pages.group(1).lower(), self._upload(message), native_id)
             else:
                 await self.core.tell_owner(NO_PAGES, origin=self)
             return

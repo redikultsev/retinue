@@ -1,0 +1,81 @@
+/* The shell around a page (retinue/pagesd.py): a thin bar for the owner, the page under it at the window's full
+   height. The face's neutral tokens (face/src/index.css), dark or light as the system is; the system font. */
+:root {
+  color-scheme: light dark;
+  --background: oklch(0.99 0.002 90);
+  --foreground: oklch(0.2 0.005 70);
+  --muted-foreground: oklch(0.52 0.006 70);
+  --border: oklch(0.91 0.003 80);
+  --accent: oklch(0.94 0.004 80);
+  --primary: oklch(0.52 0.18 262);
+  --primary-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --card: oklch(1 0 0);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.205 0.003 70);
+    --foreground: oklch(0.93 0.004 80);
+    --muted-foreground: oklch(0.68 0.006 80);
+    --border: oklch(1 0 0 / 10%);
+    --accent: oklch(1 0 0 / 7%);
+    --primary: oklch(0.7 0.14 262);
+    --primary-foreground: oklch(0.16 0 0);
+    --destructive: oklch(0.68 0.19 22);
+    --card: oklch(0.235 0.003 70);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  display: flex; flex-direction: column; background: var(--background); color: var(--foreground);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.bar {
+  position: relative; display: flex; align-items: center; gap: 8px; min-height: 44px;
+  padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+  padding-top: env(safe-area-inset-top); border-bottom: 1px solid var(--border); flex: none;
+}
+.bar a.back { color: var(--muted-foreground); text-decoration: none; white-space: nowrap; padding: 10px 4px; }
+.bar a.back:hover { color: var(--foreground); }
+.bar h1 {
+  flex: 1; min-width: 0; margin: 0; font-size: 14px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#saved { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+#saved.bad { color: var(--destructive); }
+button {
+  font: inherit; color: var(--foreground); background: transparent; border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 10px; min-height: 32px; cursor: pointer;
+}
+button:hover { background: var(--accent); }
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 2px;
+}
+button.on, form button { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
+button.on:hover, form button:hover { background: var(--primary); opacity: 0.9; }
+button.quiet { color: var(--muted-foreground); }
+@media (pointer: coarse) { button { min-height: 44px; } }
+#sharing {
+  position: absolute; top: calc(100% + 4px); right: 8px; z-index: 2; width: min(420px, calc(100vw - 16px));
+  padding: 12px; background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px oklch(0 0 0 / 18%);
+}
+#sharing p { margin: 0 0 8px; color: var(--muted-foreground); }
+#sharing ul { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+#sharing li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#sharing li a { flex: 1 1 100%; color: var(--primary); overflow-wrap: anywhere; }
+#sharing form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#sharing select { font: inherit; min-height: 32px; max-width: 100%; color: inherit; background: transparent;
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+#sharing label { display: flex; align-items: center; gap: 6px; }
+[data-said]:empty { display: none; }
+#blocked { margin: 0 12px; color: var(--primary); }
+iframe#page { flex: 1; width: 100%; min-height: 0; border: 0; display: block; background: #fff; }  /* a page that sets no background is drawn as a browser would draw it alone: on white */
+.index { max-width: 720px; margin: 0 auto; padding: 24px 16px; width: 100%; }
+.index h1 { font-size: 20px; margin: 0 0 16px; }
+.index ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; }
+.index li + li { border-top: 1px solid var(--border); }
+.index li a { display: flex; gap: 12px; padding: 12px 14px; color: inherit; text-decoration: none; }
+.index li a:hover { background: var(--accent); }
+.index li span { margin-left: auto; color: var(--muted-foreground); white-space: nowrap; }

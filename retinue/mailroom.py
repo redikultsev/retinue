@@ -441,7 +441,7 @@ class Mailroom:
 
     def _owner_lines(self) -> list[str]:
         """What the owner's config tells the judgement run: his private matter and his tracker, when there is one."""
-        from .lifehub import Tracker
+        from .pages import Tracker
 
         memory = self.core.memory
         lines = [Private.of(memory).line(), Tracker.of(memory).line(str(getattr(memory, "tree", "") or ""))]

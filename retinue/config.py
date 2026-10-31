@@ -60,7 +60,7 @@ class RouterAgent:
     archive: bool = False                 # may search the raw archive through the bus
     reminders: bool = False               # may set, list, move and cancel the owner's reminders through the bus
     attachments: bool = False             # may fetch what the owner sent (#N) again through the bus
-    trips: bool = False                   # may publish a trip page in the life hub through the bus
+    trips: bool = False                   # may publish a trip page among the owner's pages through the bus
     drafts: bool = False                  # may propose a reply to a person; the owner sends it with his button
 
 
@@ -104,7 +104,7 @@ class MemoryConfig:
     # The owner's own words for what the code keeps generic; the server's own file fills them (docs/memory.md).
     location: str = ""                  # the Record whose header names his zone; '' — proactive.LOCATION
     private: dict = field(default_factory=dict)   # his private matter: {about, sphere} (mail.Private)
-    tracker: dict = field(default_factory=dict)   # what his tracker tracks: path, title, states… (lifehub.Tracker)
+    tracker: dict = field(default_factory=dict)   # what his tracker tracks: path, title, states… (pages.Tracker)
 
 
 @dataclass
@@ -128,9 +128,9 @@ class RouterConfig:
     memory: MemoryConfig | None = None  # the knowledge base she writes; without the section she has no base
     collector_url: str = ""             # the mail collector: the owner's mail and calendar; empty = no mail
     collector_token: str = ""           # from RETINUE_COLLECTOR_TOKEN: the router signs its calls to the collector
-    lifehub_url: str = ""               # the life hub's address, https://<host>; empty = no pages
-    lifehub_data: str = "/lifehub"      # where the router writes the pages' data; the build container reads it
-    lifehub_build: str = "/lifehub-site/build.json"  # how the builder's last build went (read-only for the router)
+    pages_url: str = ""                 # the owner's pages' address, https://<host>; empty = no pages
+    pages_data: str = "/pages"          # where the router writes the pages' data; the pages service reads it
+    pages_build: str = "/pages-site/build.json"  # how the builder's last build went (read-only for the router)
     gateway_url: str = ""               # the Telegram Business gateway: the owner's chosen chats; empty = none
     gateway_token: str = ""             # from RETINUE_GATEWAY_TOKEN
     sender_url: str = ""                # the mail sender: replies and letters the owner confirmed; empty = none
@@ -149,6 +149,11 @@ class RouterConfig:
         raw.pop("matrix", None)
         raw.pop("telegram", None)
         raw.pop("memory", None)
+        # The retired life hub's keys (docs/pages.md): a router.yaml setup.sh has not rewritten yet still starts —
+        # with no pages until it does.
+        if retired := [key for key in ("lifehub_url", "lifehub_data", "lifehub_build") if raw.pop(key, None)]:
+            log.warning("router config: %s is the retired life hub's — run setup.sh PAGES=1 (docs/pages.md)",
+                        ", ".join(retired))
         cfg = cls(agents=agents, matrix=matrix, telegram=telegram, memory=memory, **raw)
         if not (cfg.matrix or cfg.telegram):
             raise SystemExit("router config: no channel — add a `telegram:` or a `matrix:` section")
@@ -171,8 +176,8 @@ class RouterConfig:
             cfg.platform_token = _env("RETINUE_PLATFORM_TOKEN")
         if cfg.face_url and not (cfg.platform_url and FACE_ORIGIN.fullmatch(cfg.face_url)):
             raise SystemExit(f"router config: face_url {cfg.face_url!r} is not https://<host>, or no platform_url")
-        if cfg.lifehub_url and not re.fullmatch(r"https://[a-z0-9.-]+", cfg.lifehub_url):
-            raise SystemExit(f"router config: lifehub_url {cfg.lifehub_url!r} is not https://<host>")
+        if cfg.pages_url and not re.fullmatch(r"https://[a-z0-9.-]+", cfg.pages_url):
+            raise SystemExit(f"router config: pages_url {cfg.pages_url!r} is not https://<host>")
         try:
             ZoneInfo(cfg.owner_tz)
         except (ZoneInfoNotFoundError, ValueError):
@@ -419,9 +424,9 @@ class PlatformConfig:
     owner_memory_mount: str = "/owner-memory"  # his memory snapshot, read-only, as lane-private mounts it (same doc)
     out_store_mb: int = 500             # the bytes of handed-over files the platform keeps, in all (outfiles)
     out_day_mb: int = 200               # and new in one day
-    # The life hub's address, https://<host>: the one origin a page of «Read» may open on (`library.py`); '' : the
-    # router's list of pages is refused.
-    hub_origin: str = ""
+    # The pages service's address, https://<host>: the one origin a page of «Pages» may open on (`library.py`); '' :
+    # the router's list of pages is refused.
+    pages_origin: str = ""
     spheres: list[Sphere] = field(default_factory=list)
     base: BaseConfig | None = None
     code: CodeConfig | None = None
@@ -444,6 +449,8 @@ class PlatformConfig:
             raise SystemExit("base: author is not «Name <email>» — the owner, whose commits the button makes")
         code = _code(raw.pop("code", None))
         voice = _speech(raw.pop("speech", None))
+        if raw.pop("hub_origin", None):  # the retired life hub's: «Pages» stays empty until pages_origin is written
+            log.warning("platform config: hub_origin is the retired life hub's — write pages_origin (docs/pages.md)")
         cfg = cls(lanes=lanes, tracks=tracks, spheres=spheres, base=BaseConfig(**given) if given else None, code=code,
                   speech=voice, **raw)
         for lane in cfg.lanes.values():
@@ -501,9 +508,9 @@ class PlatformConfig:
         owner = os.environ.get("TELEGRAM_OWNER_ID", "")
         if cfg.face_origin and not FACE_ORIGIN.fullmatch(cfg.face_origin):
             raise SystemExit(f"RETINUE_FACE_ORIGIN {cfg.face_origin!r} is not https://<host>[:port]")
-        cfg.hub_origin = str(cfg.hub_origin or "").rstrip("/").lower()
-        if cfg.hub_origin and not re.fullmatch(r"https://[a-z0-9.-]+(:\d{1,5})?", cfg.hub_origin):
-            raise SystemExit(f"platform config: hub_origin {cfg.hub_origin!r} is not https://<host>")
+        cfg.pages_origin = str(cfg.pages_origin or "").rstrip("/").lower()
+        if cfg.pages_origin and not re.fullmatch(r"https://[a-z0-9.-]+(:\d{1,5})?", cfg.pages_origin):
+            raise SystemExit(f"platform config: pages_origin {cfg.pages_origin!r} is not https://<host>")
         if cfg.webapp_key and not re.fullmatch(r"[0-9a-f]{64}", cfg.webapp_key):
             raise SystemExit("RETINUE_WEBAPP_KEY: 64 hex digits, HMAC_SHA256(key=WebAppData, msg=<bot token>)")
         if owner and not owner.isdigit():

@@ -328,11 +328,11 @@ class Platform:
         return web.json_response({"ok": True, "waited": self.details.answer(number, detail)})
 
     async def owner_library(self, request: web.Request) -> web.Response:
-        """The hub's list of pages from the router (`library.clean`), replacing the one before it whole."""
+        """The pages' list from the router (`library.clean`), replacing the one before it whole."""
         if request.content_length is None or request.content_length > library_mod.BYTES:
             return web.json_response({"error": f"page list over {library_mod.BYTES} bytes"}, status=413)
         try:
-            pages, dropped = library_mod.clean(await _body(request), self.library.hub)
+            pages, dropped = library_mod.clean(await _body(request), self.library.origin)
         except library_mod.Refused as exc:
             return web.json_response({"error": str(exc)}, status=400)
         for page in dropped:

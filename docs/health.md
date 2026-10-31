@@ -38,7 +38,7 @@ Server: OK again — assistant, egress.
 - A `health.json` **older than ten minutes** is told too: the timer has stopped, and nothing else would say so.
 
 The morning summary has a line: `containers: all 17 OK`, or which are not, and how many went bad in the last
-day. The life hub's status page has it as well.
+day.
 
 ## What it cannot tell
 

@@ -116,7 +116,7 @@ class PlatformClient(Neighbour):
         return await self._digest("/owner/waiting/detail", body)
 
     async def library(self, body: dict) -> dict:
-        """The hub's list of pages for «Read» (`/owner/library`), the same way as the digest."""
+        """The owner's list of pages for «Read» (`/owner/library`), the same way as the digest."""
         return await self._digest("/owner/library", body)
 
     async def _digest(self, path: str, body: dict) -> dict:
@@ -143,7 +143,7 @@ class PlatformBridge:
         self.timers: dict[str, asyncio.Task] = {}  # an album's key -> the task that closes it (`files`)
         # What waits for the owner in the assistant's world (`waiting.digest`), given by the router once its core is up.
         self.waiting: Callable[[float], list[dict]] | None = None
-        self.chips: Callable[[float], list[dict]] | None = None  # the hub's status chips, pushed with it
+        self.chips: Callable[[float], list[dict]] | None = None  # the status chips, pushed with it
         self.counts: Callable[[float], dict] | None = None  # its two numbers: closed today, run out in the week
         # A press on a row of it in the app (`waiting.press`): the row's token and the mark; False — not known.
         self.press_waiting: Callable[[str, str, float], bool] | None = None
@@ -152,7 +152,7 @@ class PlatformBridge:
         self._detailing: asyncio.Task | None = None
         self._looked, self._pushed, self._pushed_mark = 0.0, 0.0, ""
         self._pushing: asyncio.Task | None = None
-        # The hub's pages for the face's «Read» (`Lifehub.library`): None until the hub has read them.
+        # The owner's pages for the face's «Read» (`Pages.library`): None until the router has read them.
         self.library: Callable[[], list[dict] | None] | None = None
         self._library_looked, self._library_pushed, self._library_mark = 0.0, 0.0, ""
         self.spheres_at = 0.0  # when the platform last named its spheres (`refresh_spheres`)
@@ -222,9 +222,9 @@ class PlatformBridge:
             try:
                 await self.push_library(time.time())
             except Unavailable as exc:
-                log.warning("the hub's pages not pushed: %s", exc)
+                log.warning("the pages' list not pushed: %s", exc)
             except Exception:
-                log.exception("the hub's pages not pushed")
+                log.exception("the pages' list not pushed")
             await asyncio.sleep(PUMP_S)
 
     async def push_waiting(self, now: float) -> bool:
@@ -291,9 +291,9 @@ class PlatformBridge:
         self._looked = 0.0
 
     async def push_library(self, now: float) -> bool:
-        """The hub's pages to the platform (`/owner/library`), replacing the list there whole, by the digest's rules:
+        """The owner's pages to the platform (`/owner/library`), replacing the list there whole, by the digest's rules:
         looked at every WAITING_LOOK_S, pushed when it changed and at least every WAITING_PUSH_S, a refused list not
-        pushed again until it changes or the hour is up. Nothing before the hub first read its pages. True when
+        pushed again until it changes or the hour is up. Nothing before the router first read them. True when
         pushed."""
         if self.library is None or now - self._library_looked < WAITING_LOOK_S:
             return False
@@ -307,10 +307,10 @@ class PlatformBridge:
             return False
         answer = await self.neighbour.library(body)
         if answer.get("error"):
-            log.warning("the platform refused the hub's pages: %s", answer["error"])
+            log.warning("the platform refused the pages' list: %s", answer["error"])
         for page in answer.get("dropped") or []:  # the rest went up: these did not, and the log says which and why
             if isinstance(page, dict):
-                log.warning("the platform dropped the hub's page %s: %s", page.get("id"), page.get("why"))
+                log.warning("the platform dropped the page %s: %s", page.get("id"), page.get("why"))
         self._library_pushed, self._library_mark = now, mark
         return True
 

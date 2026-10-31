@@ -21,7 +21,8 @@ Anything that lets data leave the server, or lets someone other than the owner a
 
 - a way past the gate, the exfil guard or the SNI guard from inside a session;
 - a way out of the assistant's container other than the model API;
-- a way to reach the face API or the life hub from outside the owner's devices;
+- a way to reach the face API or the owner's pages host from outside the owner's devices, a page reading another
+  page's values or the app's, or the public pages reaching anything but what was shared;
 - a token, a key or the owner's data reaching a lane, a log or a message where the docs say it does not.
 
 Known, documented limits are not new findings, though a better fix for one is welcome: see

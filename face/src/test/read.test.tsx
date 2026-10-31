@@ -13,13 +13,13 @@ import {
 import { openInTelegram } from "@/lib/telegram";
 import { ReadPage, ReadView } from "@/pages/read";
 
-const HUB = "https://hub.in.example.test";
+const HUB = "https://pages.in.example.test";
 const NOW = new Date(2026, 9, 28, 12, 0).getTime() / 1000;
 
 const page = (id: string, over: Partial<LibraryPage> = {}): LibraryPage => ({
   id,
   title: id,
-  url: `${HUB}/pages/${id}.html`,
+  url: `${HUB}/${id}`,
   updated: "2026-10-27",
   section: "education",
   section_title: "Study",
@@ -32,12 +32,12 @@ const page = (id: string, over: Partial<LibraryPage> = {}): LibraryPage => ({
 
 const LIBRARY: Library = {
   schema: 1,
-  hub: HUB,
+  origin: HUB,
   at: NOW - 60,
   pages: [
     page("regex", { title: "Regex course", opened: NOW - 3600 }),
     page("sql-cheatsheet", { title: "SQL: cheat sheet", updated: "2026-10-20", opened: NOW - 60 }),
-    page("ёлки", { title: "Ёлки и сосны", section: null, section_title: null, section_icon: null, minutes: null }),
+    page("trees", { title: "Ёлки и сосны", section: null, section_title: null, section_icon: null, minutes: null }),
     page("travel-notes", { title: "Notes for the trip", section: "travel", section_title: "Travel", section_icon: "✈️", done: NOW - 86400 * 3, opened: NOW - 86400 * 4 }),
   ],
 };
@@ -48,13 +48,15 @@ afterEach(() => {
 });
 
 describe("the library's rules", () => {
-  it("draws a link only to the hub's own /pages/ over https", () => {
-    expect(safeUrl(`${HUB}/pages/regex.html`, HUB)).toBe(`${HUB}/pages/regex.html`);
-    expect(safeUrl("http://hub.in.example.test/pages/regex.html", HUB)).toBeNull();
-    expect(safeUrl("https://evil.example/pages/regex.html", HUB)).toBeNull();
-    expect(safeUrl(`${HUB}/now/`, HUB)).toBeNull();
+  it("draws a link only to a page's own address on the pages service over https", () => {
+    expect(safeUrl(`${HUB}/regex`, HUB)).toBe(`${HUB}/regex`);
+    expect(safeUrl("http://pages.in.example.test/regex", HUB)).toBeNull();
+    expect(safeUrl("https://evil.example/regex", HUB)).toBeNull();
+    expect(safeUrl(`${HUB}/api/share/regex`, HUB)).toBeNull();
+    expect(safeUrl(`${HUB}/raw/regex`, HUB)).toBeNull();
+    expect(safeUrl(`${HUB}/regex?x=1`, HUB)).toBeNull();
     expect(safeUrl("javascript:alert(1)", HUB)).toBeNull();
-    expect(safeUrl(`${HUB}/pages/regex.html`, "")).toBeNull();
+    expect(safeUrl(`${HUB}/regex`, "")).toBeNull();
   });
 
   it("puts what was opened and not finished first, the last opened on top", () => {
@@ -65,9 +67,9 @@ describe("the library's rules", () => {
     expect(sections(LIBRARY.pages).map((s) => [s.title, s.pages.map((p) => p.id)])).toEqual([
       ["Study", ["regex", "sql-cheatsheet"]],
       ["Travel", ["travel-notes"]],
-      [NO_SECTION, ["ёлки"]],
+      [NO_SECTION, ["trees"]],
     ]);
-    expect(sections(LIBRARY.pages, "елки").flatMap((s) => s.pages.map((p) => p.id))).toEqual(["ёлки"]);
+    expect(sections(LIBRARY.pages, "елки").flatMap((s) => s.pages.map((p) => p.id))).toEqual(["trees"]);
     expect(sections(LIBRARY.pages, "study regex").flatMap((s) => s.pages.map((p) => p.id))).toEqual(["regex"]);
     expect(sections(LIBRARY.pages, "no such thing")).toEqual([]);
   });
@@ -79,11 +81,11 @@ describe("the library's rules", () => {
   });
 
   it("hands the link to Telegram inside the Mini App, and to the browser outside it", () => {
-    expect(openInTelegram(`${HUB}/pages/regex.html`)).toBe(false);
+    expect(openInTelegram(`${HUB}/regex`)).toBe(false);
     const openLink = vi.fn();
     (window as unknown as { Telegram: unknown }).Telegram = { WebApp: { openLink } };
-    expect(openInTelegram(`${HUB}/pages/regex.html`)).toBe(true);
-    expect(openLink).toHaveBeenCalledWith(`${HUB}/pages/regex.html`);
+    expect(openInTelegram(`${HUB}/regex`)).toBe(true);
+    expect(openLink).toHaveBeenCalledWith(`${HUB}/regex`);
     const postEvent = vi.fn();
     const proxy = { TelegramWebviewProxy: { postEvent } } as unknown as Window;
     expect(openInTelegram("https://x/pages/a.html", proxy)).toBe(true);
@@ -99,7 +101,7 @@ describe("«Pages»", () => {
     return { onOpen, onDone };
   };
 
-  it("shows «Continue» above the sections, each page a link to the hub in a tab of its own", () => {
+  it("shows «Continue» above the sections, each page a link to the pages service in a tab of its own", () => {
     view(LIBRARY);
     const [one, ...rest] = screen.getAllByRole("region");
     const first = one!;
@@ -110,7 +112,7 @@ describe("«Pages»", () => {
     ]);
     expect(rest.map((r) => r.getAttribute("aria-label"))).toEqual(["Study", "Travel", NO_SECTION]);
     const link = within(first).getByRole("link", { name: "Regex course" });
-    expect(link.getAttribute("href")).toBe(`${HUB}/pages/regex.html`);
+    expect(link.getAttribute("href")).toBe(`${HUB}/regex`);
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
     expect(within(first).getAllByTestId("library-page")[1]!.textContent).toContain("42 min · updated");
@@ -118,7 +120,7 @@ describe("«Pages»", () => {
     expect(document.querySelector("iframe")).toBeNull();
   });
 
-  it("does not draw a link the hub did not give", () => {
+  it("does not draw a link off the pages service", () => {
     view({ ...LIBRARY, pages: [page("bad", { title: "Foreign", url: "https://evil.example/pages/bad.html" })] });
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.getByText("Foreign")).toBeTruthy();
@@ -155,13 +157,13 @@ describe("«Pages»", () => {
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
     link.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    expect(openLink).toHaveBeenCalledWith(`${HUB}/pages/regex.html`);
+    expect(openLink).toHaveBeenCalledWith(`${HUB}/regex`);
     expect(onOpen).toHaveBeenCalled();
   });
 
   it("says when the list never came, when it is empty, and when it failed", () => {
     view({ ...LIBRARY, at: null, pages: [] });
-    expect(screen.getByText("The list of pages has not come from the hub yet.")).toBeTruthy();
+    expect(screen.getByText("The list of pages has not come from the router yet.")).toBeTruthy();
     expect(screen.queryByLabelText("Find a page")).toBeNull();
     document.body.innerHTML = "";
     view({ ...LIBRARY, pages: [] });
@@ -175,12 +177,12 @@ describe("«Pages»", () => {
 
   it("the page reads the list, marks an open at once and keeps what the platform answers", async () => {
     vi.spyOn(libraryApi, "list").mockResolvedValue(LIBRARY);
-    const open = vi.spyOn(libraryApi, "open").mockResolvedValue({ page: page("ёлки", { title: "Ёлки и сосны", section: null, section_title: null, opened: 5 }) });
+    const open = vi.spyOn(libraryApi, "open").mockResolvedValue({ page: page("trees", { title: "Ёлки и сосны", section: null, section_title: null, opened: 5 }) });
     const done = vi.spyOn(libraryApi, "done").mockResolvedValue({ page: { ...LIBRARY.pages[0]!, done: NOW } });
     render(<ReadPage />);
     const link = await screen.findByRole("link", { name: "Ёлки и сосны" });
     fireEvent.click(link);
-    expect(open).toHaveBeenCalledWith("ёлки");
+    expect(open).toHaveBeenCalledWith("trees");
     await waitFor(() => expect(screen.getByRole("region", { name: "Continue" }).textContent).toContain("Ёлки"));
     const regex = within(screen.getByRole("region", { name: "Continue" }))
       .getAllByTestId("library-page")

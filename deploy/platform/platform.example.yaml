@@ -3,9 +3,9 @@
 state_db: /platform/platform.sqlite   # on the platform-data volume
 max_sessions: 12                      # running sessions across every lane: you and up to 10 sub-sessions
 owner_tz: UTC                         # your IANA zone (e.g. Europe/Berlin): the times the platform says to you
-# The life hub's address (docs/lifehub.md): «Read» in the app opens its pages there and nowhere else; without it
-# the router's list of pages is refused (docs/face.md, «Read»).
-# hub_origin: https://hub.in.example.com
+# The pages service's address (docs/pages.md): «Pages» in the app opens its pages there and nowhere else; without
+# it the router's list of pages is refused (docs/face.md, «Pages»).
+# pages_origin: https://pages.in.example.com
 lanes:
   # The room (docs/platform.md, «The room»): your Base, your repositories under /work/code and the open web through
   # WebSearch and WebFetch. A fetch whose address looks like it carries data comes to you as a card. lane-code and

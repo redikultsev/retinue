@@ -1,5 +1,5 @@
 {
- "_about": "What a published page may load, served by the hub under /pages/_vendor/. The lifehub image fetches every file at build time and checks its sha256 (Dockerfile); build.py rewrites a page's exact CDN address to the local one, with no network. fonts.css is ours: it names the fontsource files.",
+ "_about": "What a published page may load, served by the pages service under /pages/_vendor/. The builder's image fetches every file at build time and checks its sha256 (deploy/pages/Dockerfile); build.py rewrites a page's exact CDN address to the local one, with no network. fonts.css is ours: it names the fontsource files.",
  "files": [
   {"file": "highlight-11.11.1.min.js", "from": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js", "sha256": "c4a399dd6f488bc97a3546e3476747b3e714c99c57b9473154c6fb8d259b9381"},
   {"file": "mermaid-11.4.1.min.js", "from": "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js", "sha256": "a43bc1afd446f9c4cc66ac5dd45d02e8d65e26fc5344ec0ef787f88d6ddb6f9e"},

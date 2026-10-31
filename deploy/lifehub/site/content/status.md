@@ -1,4 +1,0 @@
----
-title: Status
-layout: status
----

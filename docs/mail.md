@@ -109,7 +109,7 @@ sudo docker exec "$(sudo docker ps -qf name=router)" python -c "import sqlite3; 
 ## Closing what waits
 
 What her judgement said asks you to act — reply, decide, pay, attend, act — waits for you in «Waiting for you» (the app,
-`/wait`, the hub's «Now») until something closes it. Nothing about it is stored but your last press
+`/wait`) until something closes it. Nothing about it is stored but your last press
 (`ask_marks` in the router's database, `MailStore.asks`); the rest is read from the router's rows each time.
 
 - **Your buttons**, under its urgent message in Telegram and on its row in the app: «Done» and «Not a task» close it,

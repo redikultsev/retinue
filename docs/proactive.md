@@ -53,8 +53,8 @@ logged once. An `until` of a profile Record and any `deadline` are also pushed o
 The tracker is a table of items with statuses in a Record of your base — `| # | Date | Item | Detail | Score |
 Status | Report | Notes |`, read by its header — with a weekly goal in the Record's header (`weekly_goal: 5`). Its
 rows are counted in the hub's history: a row whose status reached one of the counted states between two moments.
-A row's own Date is when it was added, not when it moved, so it is not used. The hub has a page of it (docs/lifehub.md),
-and the judgement of a letter about an item may move its row.
+A row's own Date is when it was added, not when it moved, so it is not used. The judgement of a letter about an
+item may move its row.
 
 - Monday's summary: «Tracker for the week: N (goal 5).» for the week before.
 - The weekly review: the same line for this week, at the end; the assistant sees it among the week's facts.

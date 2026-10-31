@@ -191,7 +191,7 @@ def test_the_router_holds_the_knowledge_base_when_the_config_says_so(tmp_path, m
 def test_the_owners_own_words_for_memory_load_from_router_yaml(tmp_path, monkeypatch):
     """`location`, `private` and `tracker` come from the server's owner.yaml under `memory:` (docs/memory.md):
     router.yaml takes them, and without them each keeps its neutral default."""
-    from retinue.lifehub import Tracker
+    from retinue.pages import Tracker
     from retinue.mail import Private
     from retinue.proactive import LOCATION, location_record
 
@@ -225,35 +225,38 @@ def test_the_router_reaches_the_mail_collector_with_its_token(tmp_path, monkeypa
     assert (cfg.collector_url, cfg.collector_token) == ("http://collector:9200", "c")
 
 
-def test_the_life_hub_is_on_when_the_config_names_its_address(tmp_path, monkeypatch):
+def test_the_pages_are_on_when_the_config_names_their_address(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     plain = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\n")
-    assert plain.lifehub_url == "" and plain.lifehub_data == "/lifehub", "off unless the config says so"
-    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nlifehub_url: https://hub.in.example.com\n")
-    assert cfg.lifehub_url == "https://hub.in.example.com"
-    for wrong in ("http://hub.in.example.com", "https://hub.in.example.com/x", "hub.in.example.com"):
-        with pytest.raises(SystemExit, match="lifehub_url"):
-            load(tmp_path, AGENT + f"telegram:\n  owner_id: 42\nlifehub_url: {wrong}\n")
-    with pytest.raises(TypeError):  # the pages are the hub's /pages/: no address of their own any more
-        load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nlifehub_url: https://hub.in.example.com\n"
-                               "lifehub_pages_url: https://pages.in.example.com\n")
+    assert (plain.pages_url, plain.pages_data, plain.pages_build) == ("", "/pages", "/pages-site/build.json"), \
+        "off unless the config says so"
+    cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\npages_url: https://pages.in.example.com\n")
+    assert cfg.pages_url == "https://pages.in.example.com"
+    for wrong in ("http://pages.in.example.com", "https://pages.in.example.com/x", "pages.in.example.com",
+                  "https://Pages.in.example.com", "https://pages.in.example.com:8443"):
+        with pytest.raises(SystemExit, match="pages_url"):
+            load(tmp_path, AGENT + f"telegram:\n  owner_id: 42\npages_url: {wrong}\n")
+    old = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nlifehub_url: https://hub.in.example.com\n"
+                              "lifehub_data: /lifehub\n")
+    assert old.pages_url == "", "the retired hub's keys start the router with no pages, not a crash"
 
-def test_a_link_to_a_trip_page_is_clickable_in_telegram_and_nothing_else_of_the_hub(tmp_path, monkeypatch):
+
+def test_a_link_to_the_owners_pages_is_clickable_in_telegram(tmp_path, monkeypatch):
     from retinue.render import render_telegram
     from retinue.router import build_channels
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nlink_hosts: [kiwi.com]\n"
-                                 "lifehub_url: https://hub.in.example.com\n")
+                                 "pages_url: https://pages.in.example.com\n")
     (channel,) = build_channels(cfg, None, None)
-    assert channel.link_hosts == ("kiwi.com", "hub.in.example.com/trips/", "hub.in.example.com/pages/")
-    (html,) = render_telegram("Нашла.\n\n[подробнее](https://hub.in.example.com/trips/0123456789abcdef/)",
+    assert channel.link_hosts == ("kiwi.com", "pages.in.example.com/")
+    (html,) = render_telegram("Нашла.\n\n[подробнее](https://pages.in.example.com/trip-0123456789abcdef)",
                               channel.link_hosts)
-    assert '<a href="https://hub.in.example.com/trips/0123456789abcdef/">подробнее</a>' in html
-    (other,) = render_telegram("[статус](https://hub.in.example.com/status/)", channel.link_hosts)
-    assert "<a " not in other, "only a trip or a page: the model chooses the path under /trips/, nothing else"
-    (page,) = render_telegram("[курс](https://hub.in.example.com/pages/regex.html)", channel.link_hosts)
-    assert '<a href="https://hub.in.example.com/pages/regex.html">курс</a>' in page, "the answer to a page he sent"
+    assert '<a href="https://pages.in.example.com/trip-0123456789abcdef">подробнее</a>' in html
+    (page,) = render_telegram("[курс](https://pages.in.example.com/regex)", channel.link_hosts)
+    assert '<a href="https://pages.in.example.com/regex">курс</a>' in page, "the answer to a page he sent"
+    (other,) = render_telegram("[статус](https://pages.in.example.com.evil.example/x)", channel.link_hosts)
+    assert "<a " not in other, "only the pages' own host"
 
 
 def test_the_router_reaches_the_gateway_and_the_sender_with_their_tokens(tmp_path, monkeypatch):

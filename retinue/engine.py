@@ -20,7 +20,7 @@ import httpx
 from claude_agent_sdk import (ClaudeAgentOptions, HookMatcher, RateLimitEvent, RateLimitInfo, ResultError,
                               ResultMessage, StreamEvent, SystemMessage, create_sdk_mcp_server, query, tool)
 
-from . import courier, kbcheck, lifehub, travel
+from . import courier, kbcheck, pages, travel
 from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
@@ -222,11 +222,11 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return {"content": [*images, {"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
     @tool("publish_trip",
-          "Publish a trip page in the owner's hub: all the options you found, with prices, times, reviews and "
+          "Publish a trip page among the owner's pages: all the options you found, with prices, times, reviews and "
           "photos. Name each option by its link (link.url) and search_id from travel-ops' answers: the router takes "
           "prices, seller and times from travel-ops itself. The answer is the page's address; give it to the owner "
           "at the end of your answer as a «details» link. A refusal names the field — fix it and try again.",
-          lifehub.TRIP_SCHEMA)
+          pages.TRIP_SCHEMA)
     async def publish_trip(args):
         async with client(120) as http:
             response = await http.post(f"{bus_url}/trips/publish", headers=headers,

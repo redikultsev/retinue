@@ -25,7 +25,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from . import clock
-from .lifehub import Tracker, front_matter
+from .pages import Tracker, front_matter
 
 log = logging.getLogger("retinue.proactive")
 
@@ -426,7 +426,7 @@ class Proactive:
         core, today = self.core, clock.local(now, self.core.tz).date()
         if self.scanned and now - self.scanned[0] < SCAN_S and self.scanned[1] == today:
             return self.scanned[2], self.scanned[3]
-        if not core.queue.locked() and not (core.lifehub and now - core.lifehub.written < SCAN_S):
+        if not core.queue.locked() and not (core.pages and now - core.pages.written < SCAN_S):
             async with core.queue:
                 await core._fresh_base()
         items, old = await asyncio.to_thread(scan, core.memory.tree, today)

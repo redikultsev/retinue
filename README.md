@@ -157,7 +157,7 @@ which needs a WireGuard VPN.
 | [mail.md](docs/mail.md) | Gmail and Google Calendar, read-only, and their triage |
 | [courier.md](docs/courier.md) | your chosen Telegram chats and replies to people, sent only by your button |
 | [proactive.md](docs/proactive.md) | the time zone, deadlines, a tracker with a weekly goal, the heartbeat |
-| [lifehub.md](docs/lifehub.md) | read-only pages for your devices: now, trips, a tracker, your own HTML pages |
+| [pages.md](docs/pages.md) | your HTML pages for your devices, keeping what you do in them; public sites of the ones you share |
 | [backup.md](docs/backup.md) | the nightly restic backup and the monthly check from your own computer |
 | [health.md](docs/health.md) | the containers checked every two minutes, told to you when one goes bad |
 

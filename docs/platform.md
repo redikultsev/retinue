@@ -164,10 +164,10 @@ text masked as the digest's title is (`waiting.masked`), a link to the Gmail thr
 owner's own mailbox — never the letter's text, its quote or the sender's address. It is held in the platform's memory
 only while the face's request waits: never written, never logged.
 
-The same push carries the hub's **status chips** (`waiting.chips`, the hub's own «now» chips): `[{key, text, level}]`,
+The same push carries the **status chips** (`waiting.chips`, from `Pages.chips`): `[{key, text, level}]`,
 `key` one of `health`, `backup`, `limit`, `build` at most once each, `level` `ok`, `warn` or `bad`, the text folded and
-cut to 60 characters — the build's said without its age («hub built»), so the digest does not change every
-minute. No hub on the router: none. A chip off the contract refuses the push as an item does. The face shows them on
+cut to 60 characters — the build's said without its age («pages built»), so the digest does not change every
+minute. No pages on the router: none. A chip off the contract refuses the push as an item does. The face shows them on
 «Today» (`GET /api/feed`'s `chips`).
 
 ## Spheres

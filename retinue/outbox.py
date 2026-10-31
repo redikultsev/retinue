@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from . import clock, courier, lifehub
+from . import clock, courier, pages
 from .archive import CHAT, MAIL, exchange_of
 from .courier import MAIL as BY_MAIL, TELEGRAM as BY_TELEGRAM, CardView, Envelope, Refused
 from .mail import PRIVATE, Unavailable, safe_label
@@ -213,7 +213,7 @@ class Outbox:
         answer tells her what happened — never that anything was sent. `reads` — what the run read (code's record);
         `others` — somebody else's message started the run."""
         try:
-            args = lifehub.check(courier.DRAFT_SCHEMA, args)
+            args = pages.check(courier.DRAFT_SCHEMA, args)
             if bool(args.get("reply_to")) == bool(args.get("to")):
                 raise Refused("exactly one of reply_to (a reply) and to (a new letter) is needed")
             text = courier.clean(args["text"])
@@ -222,7 +222,7 @@ class Outbox:
                 raise Refused(f"draft {args['replaces']} does not exist or is no longer valid")
             built = await (self._reply(str(args["reply_to"]), text, now) if args.get("reply_to") else
                            self._letter(str(args["to"]), str(args.get("subject") or ""), text))
-        except (Refused, lifehub.Refused) as exc:
+        except (Refused, pages.Refused) as exc:
             return False, f"Not accepted: {exc}"
         flags = list(built.flags) + (["at the other person's request"] if foreign & {"mail", "telegram"} else [])
         read, closed, private = self._read_outside(built, reads, others)

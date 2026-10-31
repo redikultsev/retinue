@@ -32,11 +32,11 @@ CACHE = "/var/cache/restic"  # systemd gives the service no HOME, and restic fin
 # which carries tokens from secrets.env; the mail collector's folder — the owner's Google tokens, and its cursors,
 # which a full sync rebuilds; the mail sender's folder — the owner's gmail.send tokens. setup.sh writes the
 # registration anew after a restore; the tokens come from the Mac.
-# The life hub's nginx and Traefik files carry its key (setup.sh renders them again); its built pages the builder
-# makes again from the data, which is kept.
+# The pages' Traefik file carries their key (setup.sh renders it again); their releases the builder makes again
+# from the data, and the public sites' files the service writes again from its store, both of which are kept.
 SECRETS = [".credentials.json", f"{ROOT}/*.env", f"{ROOT}/*.env.*", f"{ROOT}/**/*.env", f"{ROOT}/**/*.env.*",
-           f"{ROOT}/tuwunel/appservices", f"{ROOT}/mail", f"{ROOT}/send", f"{ROOT}/lifehub/nginx.conf",
-           f"{ROOT}/lifehub/traefik.yml", f"{ROOT}/lifehub/site"]
+           f"{ROOT}/tuwunel/appservices", f"{ROOT}/mail", f"{ROOT}/send", f"{ROOT}/pages/traefik.yml",
+           f"{ROOT}/pages/site", f"{ROOT}/pages/public"]
 
 
 class Failure(Exception):

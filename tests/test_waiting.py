@@ -133,16 +133,18 @@ def test_the_week_ahead_goes_too_with_its_day_and_path_and_waits_only_from_the_p
     assert len(items) == 3, "the platform takes what the router sends"
 
 
-def test_the_hubs_chips_cross_without_the_builds_age(tmp_path):
+def test_the_chips_cross_without_the_builds_age(tmp_path):
     c = core(tmp_path)
-    assert waiting.chips(c, NOW) == [], "no hub here: no chips"
-    c.lifehub = SimpleNamespace(chips=lambda now: [
+    assert waiting.chips(c, NOW) == [], "no pages here: no chips"
+    c.pages = SimpleNamespace(chips=lambda now: [
         {"key": "health", "text": "all working", "level": "ok"},
         {"key": "backup", "text": "backup 3 h ago", "level": "ok"},
-        {"key": "build", "text": "hub built 4 min ago", "level": "ok"}])
+        {"key": "build", "text": "pages built 4 min ago", "level": "ok"}])
     chips = waiting.chips(c, NOW)
-    assert [c["text"] for c in chips] == ["all working", "backup 3 h ago", "hub built"]
+    assert [c["text"] for c in chips] == ["all working", "backup 3 h ago", "pages built"]
     assert feed.clean_chips({"chips": chips}) == chips
+    c.pages = SimpleNamespace(chips=lambda now: [{"key": "build", "text": "pages not updated: disk full", "level": "bad"}])
+    assert [c["text"] for c in waiting.chips(c, NOW)] == ["pages not built"]
 
 
 def test_a_letter_a_sent_draft_answered_waits_no_more(tmp_path):

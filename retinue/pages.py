@@ -1,10 +1,10 @@
-"""The life hub (`lifehub`): pages about the owner's life on his own server, behind his VPN, for his devices only.
-In Retinue "hub" already names the knowledge base's git hub, so in code the site is the lifehub.
+"""The owner's pages (`pages`): HTML pages on his own server, behind his VPN, for his devices only, each at
+`<pages_url>/<id>` — served by the pages service (`retinue/pagesd.py`, deploy/pages), not by the router.
 
-The router writes data here and nothing else: JSON checked by a schema, pictures drawn or re-encoded by code. The
-pages are built from it by Hugo in a container of its own with no network (deploy/lifehub); the model never writes
-HTML, and nothing it sends is markup — Hugo escapes every value. A page is a view of the archive, the base and the
-router's tables, not a third store: its numbers are counted by code.
+The router's side is a data folder the service reads: the base's HTML files that opted in, with the list that names
+them (pages.json, each with its sha256: the service takes a page only with the bytes the list names), and the trip
+pages it renders itself from her references and travel-ops' numbers (`publish`). The model never writes the HTML of
+a trip page: every value she or a site sent goes through `html.escape`, and the page has no script and loads nothing.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
@@ -33,7 +33,7 @@ import yaml
 from .render import linkable
 from .travel import Refused as TravelRefused, Unavailable as TravelUnavailable
 
-log = logging.getLogger("retinue.lifehub")
+log = logging.getLogger("retinue.pages")
 
 ID = re.compile(r"[0-9a-f]{16}")  # a page's address: random, so that a link in a chat says nothing
 
@@ -192,62 +192,18 @@ class Data:
         return page_id
 
 
-# --- what the router writes: the status page ----------------------------------------------------------------------
+# --- what the router keeps here ----------------------------------------------------------------------------------
 
-DAY = 86400
-WEEK = 7 * DAY
-# How a model run is named on the status page. A kind not here is shown as it is.
-RUN_KINDS = {"conversation": "conversation", "retry": "reply after the limit", "summary": "morning brief",
-             "compact": "compaction", "reminder": "reminder", "price": "price watch", "triage": "letter triage",
-             "mail": "mail judgement", "weekly": "weekly review", "initiative": "own thought"}
-TOKENS = ("input", "output", "cache: read", "cache: write")
-RUN_STATES = {"done": "ok", "error": "failure", "failed": "failure", "rejected": "refused", "limit": "hit the limit"}
-WINDOW_NAMES = {"five_hour": "5 hours", "seven_day": "week"}
-REFRESH_S = 300           # the pages' data is written this often
-AFTER_RUN_S = 60          # and this long after a model run ended: what she just did shows on the status page
-DEADLINE_PAST_DAYS = 30   # a deadline that passed this long ago is history, not a deadline
-DEADLINES_DOCUMENTS = 8   # coming deadlines of documents (`until`) on the «now» page, besides the overdue ones
-DEADLINES_RECHECKS = 8    # and of facts to check again (`stale_after`)
-EVENING = 18              # from this local hour the day's events are «Evening»
-BLOCK_HOURS = 4           # an own recurring event this long, alone and nowhere, is a busy block («Block»), not a meeting
-WAITING_ITEMS = 200       # items that wait for the owner, read for the «now» page at most
-WAITING_SHOWN = 5         # and the newest of them under each person
-# What the owner is asked to do, the most pressing first; «read» is only to know.
-URGENCY = {"reply": 0, "decide": 1, "pay": 2, "attend": 3, "act": 4, "read": 5}
+REFRESH_S = 300           # the base is brought to the hub's head and the pages written this often
+AFTER_RUN_S = 60          # and this long after a model run ended: a page she just committed shows soon
 URL = re.compile(r"https?://[^\s<>\"'`]+")
 LINKS = 4                 # addresses taken out of one note at most
 URL_CHARS = 2000          # an address longer than this is not made a link
-# Meeting services: an event's address there is a «join» button showing the host. Matched by the host's end.
-MEETINGS = (("zoom.us", "zoom"), ("zoom.com", "zoom"), ("meet.google.com", "meet"), ("teams.microsoft.com", "teams"),
-            ("teams.live.com", "teams"), ("whereby.com", "online"), ("meet.jit.si", "online"), ("webex.com", "online"))
-# A letter from a robot of a service — a CRM, a shop — is a notice, not a letter that waits for his answer.
-NOTICE = re.compile(r"^(no-?reply|notifications?|notify|alerts?|mailer-daemon|do-?not-?reply|robot|bounces?)[@+.-]",
-                    re.IGNORECASE)
-PARAGRAPH_CHARS = 280     # a summary's paragraph is cut after a sentence past this
+SUMMARY_CHARS = 280       # a trip summary's paragraph is cut after a sentence past this
 KIND_NAMES = {"flight": "Flight", "stay": "Stay", "ground": "Overland"}
 NEEDS = {"read": "read", "reply": "reply", "decide": "decide", "attend": "attend", "pay": "pay", "act": "do"}
-REVIEW_DAYS = 7           # the review page: her judgements this many days back
-REVIEW_ITEMS = 400        # at most this many of them
-REVIEW_DROPPED = 300      # and this many lines of the dropped log
-REVIEW_PAGE = 25          # cards on one page of the review
-REVIEW_DROPPED_PAGE = 50  # lines on one page of the dropped
-REVIEW_SENDERS = 40       # senders with a page of their own, the most frequent first
 CHIP_CHARS = 28           # a sender's name on a chip: her «who» up to its first aside, then cut
-SOURCES = {"telegram": "Telegram", "mail": "mail", "calendar": "calendar"}
-REVIEW_MARKS = {"told": "told you at once", "held": "at once, in one message", "later": "in the morning brief",
-                "done": "was in the morning brief", "silent": "silently", "waiting": "awaiting judgement"}
-DECISIONS = {"told": "told you at once", "held": "at once, in one message with the others from them",
-             "later": "in the morning brief", "done": "was in the morning brief", "silent": "silently",
-             "kept": "awaiting judgement", "new": "awaiting judgement"}
-DRAFTS = {"shown": "draft waits for your button", "hidden": "draft waits for your button", "fixing": "draft being edited",
-          "queued": "draft being sent", "sending": "draft being sent", "sent": "draft sent",
-          "stale": "draft expired: a new message came", "expired": "draft expired with time",
-          "dropped": "you said not to reply", "failed": "draft not sent", "unknown": "draft: whether it went is unknown",
-          "link": "draft: send it yourself by the link"}
-MAIL_DAYS = 7             # mail that needs the owner, judged this many days back
-TRACKER_DAYS = 14         # the tracker page: its meetings this many days ahead
-TRACKER_MAIL_DAYS = 30    # and the private matter's letters waiting for his answer, this many days back
-TRACKER_NOTES = 300       # a tracker row's notes, cut to this on the page
+TRACKER_NOTES = 300       # a tracker row's notes, cut to this
 # The tracker's defaults; the owner's own are his config (`Tracker`).
 STATES = {"new": "new", "sent": "sent", "answered": "answered", "meeting": "meeting", "won": "accepted",
           "lost": "rejected", "dropped": "dropped"}
@@ -352,22 +308,17 @@ def plain(cell: str) -> str:
     return re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", cell).replace("**", "").replace("`", "").strip()
 
 
-def grouped(number: int) -> str:
-    """7785378 -> «7 785 378»: a page shows numbers as text, so that no template formats them."""
-    return f"{number:,}".replace(",", " ")
+class Pages:
+    """The router's side of the owner's pages: what it writes to the data folder and when. Attached to the core like
+    the mailroom; reads the base and travel-ops' stored searches, and never calls a model."""
 
-
-class Lifehub:
-    """The router's side of the life hub: what it writes to the data folder and when. Attached to the core like the
-    mailroom; reads the router's own tables, the archive and the base, and never calls a model."""
-
-    def __init__(self, data: Data, url: str, link_hosts: list[str], kb: str = "", build_status: str = "") -> None:
+    def __init__(self, data: Data, url: str, link_hosts: list[str], build_status: str = "") -> None:
         self.data = data
         self.pages_head = ""                  # the hub's commit the pages were last read from
+        self.base_pages: list[dict] | None = None  # the base's entries of pages.json as last read; None — not yet
         self.build_status = build_status      # build.json the builder writes after every build; "" — not known
-        self.url = url.rstrip("/")            # the site's address as the owner's devices open it
-        self.link_hosts = list(link_hosts)    # travel-ops' sites: a link there is clickable on a page too
-        self.kb = kb                          # the knowledge base's files: deadlines are read there; "" — none
+        self.url = url.rstrip("/")            # the pages' address as the owner's devices open it
+        self.link_hosts = list(link_hosts)    # travel-ops' sites: a link there is a button on a trip page
         self.core = None
         self.written = 0.0                    # when the data was last written
         self.poked = 0.0                      # when a model run last ended, until the data is written
@@ -395,207 +346,30 @@ class Lifehub:
             self.fetching = asyncio.create_task(self.photos(self.pending.pop(0), self.core.travel, now))
 
     async def refresh(self, now: float) -> None:
-        """Every page's data, each part on its own: a part that fails is logged, the others are written. The base is
-        brought to the hub's first when no run is going: what the Mac pushed shows without waiting for her next run."""
+        """The base brought to the hub's head when no run is going — what the Mac pushed shows without waiting for
+        her next run (and the heartbeat skips its own fetch: `written`) — then the pages written. A failure is logged,
+        and the next refresh comes."""
         core = self.core
-        if core.memory and not core.queue.locked():
-            async with core.queue:
-                await core._fresh_base()
-        for name, part in (("site", self.write_site), ("status", self.write_status), ("now", self.write_now),
-                           ("review", self.write_review), ("tracker", self.write_tracker), ("pages", self.write_pages)):
-            try:
-                result = part(now)
-                if asyncio.iscoroutine(result):
-                    await result
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception("lifehub: %s not written", name)
-
-    def write_site(self, now: float) -> None:
-        """What every page needs: the address, and the hosts a link may lead to (the template checks them again)."""
-        hosts = list(dict.fromkeys(entry.partition("/")[0].lower() for entry in self.link_hosts))
-        self.data.write("site.json", {"url": self.url, "link_hosts": hosts})
-
-    # --- the owner's zone ----------------------------------------------------------------------------------------
+        try:
+            if core.memory and not core.queue.locked():
+                async with core.queue:
+                    await core._fresh_base()
+            await self.write_pages(now)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("pages: not written")
 
     @property
     def tz(self) -> str:
-        """The owner's effective time zone: every time on every page is local there. The one place the hub reads
+        """The owner's effective time zone: every time on a trip page is local there. The one place the pages read
         it. `core.tz` is the zone in force — router.yaml's `owner_tz` at first, then whatever the owner set in words
         (`set_timezone`, kept in the router's state and put back into `core.tz` on start: retinue/proactive.py)."""
         return self.core.tz
 
-    # --- the «now» page ------------------------------------------------------------------------------------------
-
-    async def now(self, now: float) -> dict:
-        """The «now» page: what is next with a countdown, who waits for an
-        answer (by person, oldest first within each), the rest of today, the evening and tomorrow as a timeline in
-        the owner's local time, deadlines overdue and coming, upcoming trips and a row of status chips. Data only:
-        local times, titles, the kind of place and a meeting's host — never a meeting's address in text, its
-        password or anybody's e-mail."""
-        from . import clock
-
-        core = self.core
-        today = clock.local(now, self.tz).date()
-        trips = []
-        for name in self.data.names("trips"):
-            trip = self.data.read(name)
-            if isinstance(trip, dict) and str(trip.get("end", "")) >= today.isoformat():
-                trips.append({"title": trip.get("title", ""), "start": trip.get("start", ""),
-                              "end": trip.get("end", ""), "url": f"/trips/{trip.get('id')}/",
-                              "days": (_day(trip.get("start")) - today).days if _day(trip.get("start")) else None})
-        page = {"updated": self.stamp(now), "ts": round(now), "at": f"{clock.local(now, self.tz):%H:%M}",
-                "date": today.isoformat(),
-                "zone": clock.label(self.tz), "trips": sorted(trips, key=lambda t: t["start"]),
-                "next": None, "today": [], "evening": [], "tomorrow": [], "blocks": [], "calendar": "",
-                "reminders": [self.reminder(job, now) for job in core.jobs.reminders(10)],
-                "mail": self.waiting(now), "deadlines": self.deadlines(today), "chips": self.chips(now),
-                "health": health_words(core.health(now))}
-        if core.mail and core.mail.collector is not None:
-            try:
-                start = midnight(today, self.tz)
-                events, failed = await core.mail.collector.agenda(start, midnight(today + timedelta(days=2), self.tz))
-                page.update(self.timeline(events, now))
-                page["calendar"] = "; ".join(f"not read: {f}" for f in failed)
-            except Exception:
-                log.exception("lifehub: the agenda was not read")
-                page["calendar"] = "calendar not read: the collector is unavailable"
-        elif not core.mail:
-            page["calendar"] = "calendar not connected"
-        return page
-
-    async def write_now(self, now: float) -> None:
-        self.data.write("now.json", await self.now(now))
-
-    def timeline(self, events: list[dict], now: float) -> dict:
-        """Today, the evening and tomorrow from the calendars, by the moment each begins in the owner's zone. What
-        ended is gone; the owner's own recurring blocks with nobody else and nowhere to be — «Block» — are
-        named once in `blocks`, not shown as meetings; `next` is the nearest meeting, going on or ahead."""
-        from . import clock
-
-        today = clock.local(now, self.tz).date()
-        start = midnight(today, self.tz)
-        out = {"today": [], "evening": [], "tomorrow": [], "blocks": [], "next": None}
-        for event in sorted((e for e in map(lambda e: self.event(e), events) if e), key=lambda e: e["start"]):
-            if (not event["all_day"] and event["end"] <= now) or event["end"] <= start:
-                continue
-            day = max(date.fromisoformat(event["day"]), today)  # begun before today and still on: today's
-            if event["block"]:
-                if day == today and not any(b["title"] == event["title"] for b in out["blocks"]):
-                    out["blocks"].append({"title": event["title"], "time": event["time"], "until": event["until"]})
-                continue
-            if day == today:
-                begins = clock.local(event["start"], self.tz)
-                late = not event["all_day"] and begins.date() == today and begins.hour >= EVENING
-                out["evening" if late else "today"].append(event)
-            elif day == today + timedelta(days=1):
-                out["tomorrow"].append(event)
-            else:
-                continue
-            if out["next"] is None and not event["all_day"]:
-                out["next"] = {**event, "going": event["start"] <= now}
-        return out
-
-    def event(self, event: dict) -> dict | None:
-        """One calendar event as the page shows it: local time, title, the kind of place, a meeting's host and the
-        address to join it (a link only to a meeting service, shown as its host). No e-mail of anybody."""
-        from . import clock
-
-        if str(event.get("status") or "") == "cancelled":
-            return None
-        begin, finish = event.get("start") or {}, event.get("end") or {}
-        try:
-            if begin.get("dateTime"):
-                start = _instant(begin["dateTime"])
-                end = _instant(finish["dateTime"]) if finish.get("dateTime") else start
-                all_day, day = False, clock.local(start, self.tz).date()
-            elif begin.get("date"):
-                day = date.fromisoformat(str(begin["date"]))
-                start = midnight(day, self.tz)
-                end = midnight(_day(finish.get("date")) or day + timedelta(days=1), self.tz)
-                all_day = True
-            else:
-                return None
-        except (TypeError, ValueError):
-            return None
-        title = str(event.get("summary") or "").strip() or "(no title)"
-        place = places(str(event.get("location") or ""), str(event.get("description") or ""))
-        alone = int(event.get("attendees") or 0) <= 1
-        block = (not all_day and bool(event.get("recurring")) and alone and not place["place"]
-                 and (event.get("mine") or not event.get("organizer")) and end - start >= BLOCK_HOURS * 3600)
-        return {"title": title[:200], "start": start, "end": end, "all_day": all_day, "day": day.isoformat(),
-                "time": "" if all_day else f"{clock.local(start, self.tz):%H:%M}",
-                "until": "" if all_day else f"{clock.local(end, self.tz):%H:%M}",
-                "minutes": round((end - start) / 60), **place, "block": block,
-                "invited": not event.get("mine") and bool(event.get("organizer")),
-                "unanswered": not event.get("mine") and event.get("answer") == "needsAction"
-                and not event.get("recurring")}
-
-    def reminder(self, job, now: float) -> dict:
-        from . import clock
-
-        moment = clock.local(job.due, self.tz)
-        return {"ts": round(job.due), "time": f"{moment:%H:%M}", "date": moment.date().isoformat(),
-                "day": f"{clock.SHORT[moment.weekday()]} {moment.day} {clock.MONTHS[moment.month - 1]}",
-                "text": str(job.text)}
-
-    def waiting(self, now: float) -> dict:
-        """What waits for the owner — letters and chats she judged ask something of him — by person: one group per
-        sender with how many, the most pressing ask, how long the oldest has waited and the newest words. What asks
-        him to act is what is still open of it, as «Waiting for you» has it (`MailStore.asks`: not marked, not answered,
-        not run out); what only asks to be read comes after it, from the last MAIL_DAYS. The private matter's letters
-        are one group that names nothing and points at the tracker page."""
-        from . import clock
-        from .mail import ASKS, PRIVATE
-
-        out = {"count": 0, "act": 0, "groups": []}
-        if not self.core.mail:
-            return out
-        groups: dict[str, dict] = {}
-        store = self.core.mail.store
-        sent = self.core.outbox.store.answered() if self.core.outbox else {}
-        read = store.needing(now - MAIL_DAYS * DAY, WAITING_ITEMS, besides=ASKS)
-        for item in sorted(store.asks(now, sent) + read, key=lambda i: (i["at"], i["seq"])):
-            card, data = item["card"] or {}, item["data"] or {}
-            sender = str(item["sender"] or "")
-            chat = item["source"] == "telegram" or sender.startswith("tg:")
-            private = item["kind"] == PRIVATE or bool(card.get(PRIVATE))
-            key = PRIVATE if private else sender or str(card.get("who") or "?")
-            who = "Private" if private else named(str(data.get("name") or "") if chat else
-                                                     str(card.get("who") or ""), "" if chat else sender)
-            ts = float(item["ts"] or item["at"] or now)
-            need = str(card.get("needs_now") or "read")
-            group = groups.setdefault(key, {
-                "key": hashlib.sha256(key.encode()).hexdigest()[:10], "who": who, "private": private,
-                "where": "mail" if private else SOURCES["telegram" if chat else "mail"],
-                "source": "mail" if private else "telegram" if chat else "mail",
-                "action": need, "needs": "", "count": 0, "first": ts, "last": ts, "deadline": "", "items": []})
-            group["count"] += 1
-            group["first"], group["last"] = min(group["first"], ts), max(group["last"], ts)
-            if URGENCY.get(need, 9) < URGENCY.get(group["action"], 9):
-                group["action"] = need
-            group["deadline"] = group["deadline"] or str(card.get("deadline_now") or "")
-            if not private:
-                group["items"].append({"text": str(card.get("text") or card.get("summary") or ""), "ts": round(ts),
-                                       "needs": NEEDS.get(need, ""), "deadline": str(card.get("deadline_now") or ""),
-                                       "age": clock.ago(now - ts)})
-        for group in groups.values():
-            group["needs"] = NEEDS.get(group["action"], "")
-            group["age"] = clock.ago(now - group["first"])
-            group["text"] = (f"{group['count']} {plural(group['count'], 'letter', 'letters')} about the private "
-                             "matter — on the tracker page" if group["private"] else group["items"][-1]["text"])
-            group["items"] = group["items"][::-1][:WAITING_SHOWN]
-            group["first"], group["last"] = round(group["first"]), round(group["last"])
-        ordered = sorted(groups.values(), key=lambda g: (URGENCY.get(g["action"], 9) >= URGENCY["read"],
-                                                         URGENCY.get(g["action"], 9), -g["last"]))
-        out.update(count=sum(g["count"] for g in ordered), groups=ordered,
-                   act=sum(1 for g in ordered if URGENCY.get(g["action"], 9) < URGENCY["read"]))
-        return out
-
     def chips(self, now: float) -> list[dict]:
-        """The row of status chips on «now»: whether anything is broken, the backup, the limit, the hub's build —
-        each `ok`, `warn` or `bad`, the details on «Status»."""
+        """The row of status chips «Waiting for you» shows (`waiting.chips`): whether anything is broken, the backup,
+        the limit, the pages' build — each `ok`, `warn` or `bad`."""
         broken = [c for c in self.connectors(now) if not c["ok"]]
         out = [{"key": "health", "text": "all working" if not broken else
                 f"{len(broken)} {plural(len(broken), 'failure', 'failures')}", "level": "bad" if broken else "ok"}]
@@ -613,229 +387,10 @@ class Lifehub:
                         "level": "ok" if built["ok"] else "bad"})
         return out
 
-    # --- the «review» page: what she decided ----------------------------------------------------------------------
-
-    def review(self, now: float) -> dict:
-        """A week of her judgements, newest first, sliced by source, by sender and by decision, page by page: where
-        from, from whom, her words, where code sent it and what became of a draft; the dropped from the log. The site runs no script, so every slice —
-        all, by source, by decision, by sender, the dropped — is its own set of pages of REVIEW_PAGE, cut here."""
-        import hashlib
-
-        from . import clock
-        from .mail import KINDS
-
-        page = {"updated": self.stamp(now), "days": REVIEW_DAYS, "views": [], "dropped": 0,
-                "facets": {"sources": [], "decisions": [], "senders": []}}
-        if not self.core.mail:
-            page["views"] = cut("all", "All", {}, [])
-            return page
-        store, since = self.core.mail.store, now - REVIEW_DAYS * DAY
-        drafts = self.core.outbox.store.by_reply() if self.core.outbox else {}
-        items = []
-        for item in store.review(since, REVIEW_ITEMS):
-            card, data = item["card"] or {}, item["data"] or {}
-            chat = item["source"] == "telegram"
-            who = str(data.get("name") or "") if chat else str(card.get("who") or item["sender"] or "")
-            moment = clock.local(item["ts"], self.tz)
-            mark = "waiting" if item["state"] in ("kept", "new") else item["state"]
-            items.append({
-                "when": self.stamp(item["ts"]), "time": f"{moment:%H:%M}",
-                "day": f"{clock.WEEKDAYS[moment.weekday()]}, {moment.day} {clock.MONTHS[moment.month - 1]}",
-                "source": item["source"], "where": SOURCES.get(item["source"], item["source"]),
-                "who": who, "who_key": "who-" + hashlib.sha256(str(item["sender"] or who).encode()).hexdigest()[:10],
-                "from": "" if chat else str(item["sender"] or ""),
-                "text": str(card.get("text") or card.get("summary") or ""),
-                "mark": mark, "decision": DECISIONS.get(item["state"], item["state"]),
-                "needs": NEEDS.get(card.get("needs_now"), ""), "deadline": str(card.get("deadline_now") or ""),
-                "draft": DRAFTS.get(drafts.get(item["event_id"] or ""), "")})
-        facets = page["facets"]
-        page["views"] += cut("all", "All", {}, items)
-        for key, name in SOURCES.items():
-            these = [i for i in items if i["source"] == key]
-            if these:
-                facets["sources"].append({"key": key, "name": name, "count": len(these), "path": f"src-{key}"})
-                page["views"] += cut(f"src-{key}", name, {"source": key}, these)
-        for key, name in REVIEW_MARKS.items():
-            these = [i for i in items if i["mark"] == key]
-            if these:
-                facets["decisions"].append({"key": key, "name": name, "count": len(these), "path": f"dec-{key}"})
-                page["views"] += cut(f"dec-{key}", name, {"decision": key}, these)
-        senders: dict[str, list] = {}
-        for item in items:
-            senders.setdefault(item["who_key"], []).append(item)
-        for key, these in sorted(senders.items(), key=lambda kv: -len(kv[1]))[:REVIEW_SENDERS]:
-            facets["senders"].append({"key": key, "name": chip(these[0]["who"]), "where": these[0]["where"],
-                                      "count": len(these), "path": key})
-            page["views"] += cut(key, these[0]["who"] or "no name", {"who": key}, these)
-        rows = [{"when": self.stamp(row["ts"]), "from": row["sender"], "subject": row["subject"],
-                 "kind": "your rule" if row["why"] == "blocked" else KINDS.get(row["kind"], row["kind"])}
-                for row in store.dropped_since(since, REVIEW_DROPPED)]
-        page["dropped"], page["dropped_shown"] = store.dropped_count(since), len(rows)
-        page["views"] += cut("dropped", "Dropped", {}, rows, key="rows", size=REVIEW_DROPPED_PAGE)
-        return page
-
-    def write_review(self, now: float) -> None:
-        self.data.write("review.json", self.review(now))
-
-    # --- the tracker page -----------------------------------------------------------------------------------------
-
-    async def tracker(self, now: float) -> dict:
-        """The tracker page: the funnel, the rows of the tracker in the base (`Tracker`, the owner's config), its
-        meetings in his calendars two weeks ahead, the private matter's letters he has not answered. Read only:
-        statuses change in the tracker — by the owner on his computer or by her from a letter."""
-        from . import clock
-        from .mail import PRIVATE, when
-
-        tracker = Tracker.of(self.core.memory)
-        path = Path(self.kb) / tracker.path if self.kb else None
-        rows = tracker.rows(path.read_text(encoding="utf-8")) if path and path.is_file() else []
-        page = {"updated": self.stamp(now), "title": tracker.title, "path": tracker.path,
-                "tracker": bool(rows) or bool(path and path.is_file()),
-                "funnel": [{"key": key, "state": label, "count": n,
-                            "tone": next((g for g, _, states in tracker.groups if key in states), "other")}
-                           for key, label in tracker.states.items() if (n := sum(1 for r in rows if r["key"] == key))],
-                "rows": rows, "meetings": [], "letters": [], "notices": []}
-        groups = (*tracker.groups, ("other", "Other", ()))
-        page["groups"] = [{"key": key, "title": title, "rows": these} for key, title, states in groups
-                          if (these := sorted((r for r in rows if r["key"] in states or (not states and not any(
-                              r["key"] in s for _, _, s in tracker.groups))), key=lambda r: -score(r["score"])
-                              if key == "next" else 0))]
-        core = self.core
-        if core.mail and core.mail.collector is not None:
-            try:
-                events, _ = await core.mail.collector.agenda(now, now + TRACKER_DAYS * DAY)
-            except Exception:
-                log.exception("lifehub: the calendar for the tracker page was not read")
-                events = []
-            names = [r["item"].casefold() for r in rows if len(r["item"]) >= 3 and r["item"] != "?"]
-            for event in events:
-                title = str(event.get("summary") or "")
-                about = f"{title} {event.get('organizer') or ''}".casefold()
-                if any(word in about for word in tracker.meetings) or any(name in about for name in names):
-                    shown = self.event(event) or {}
-                    page["meetings"].append({"when": when(event, self.tz), "title": title[:200],
-                                             "start": shown.get("start"), "time": shown.get("time", ""),
-                                             "date": shown.get("day", ""), "place": shown.get("place", ""),
-                                             "where": shown.get("where", ""), "join": shown.get("join", ""),
-                                             "join_host": shown.get("join_host", "")})
-        if core.mail:
-            for item in core.mail.store.needing(now - TRACKER_MAIL_DAYS * DAY, WAITING_ITEMS):
-                card = item["card"] or {}
-                if not (item["kind"] == PRIVATE or card.get(PRIVATE)) or self.answered(item):
-                    continue
-                sender, ts = str(item["sender"] or ""), float(item["ts"] or item["at"] or 0)
-                text, links = unlinked(str(card.get("text") or card.get("summary") or ""))
-                page["notices" if NOTICE.match(sender) else "letters"].append({
-                    "when": self.stamp(ts), "ts": round(ts), "age": clock.ago(now - ts), "from": sender,
-                    "who": named(str(card.get("who") or ""), sender), "domain": domain(sender),
-                    "text": text, "links": links, "needs": NEEDS.get(card.get("needs_now"), "")})
-        return page
-
-    async def write_tracker(self, now: float) -> None:
-        self.data.write("tracker.json", await self.tracker(now))
-        self.data.remove("work.json")  # the page's data under its former name
-
-    def answered(self, item: dict) -> bool:
-        """Has the owner written in this letter's thread after it — from Gmail himself or by a card?"""
-        event = self.core.archive.get(item["event_id"] or "")
-        thread = event.meta.get("thread") if event else ""
-        if not thread:
-            return False
-        return self.core.archive.db.execute(
-            "SELECT 1 FROM events WHERE kind = 'mail' AND ts > ? AND json_extract(meta, '$.direction') = 'out'"
-            " AND json_extract(meta, '$.thread') = ? LIMIT 1", (event.ts, thread)).fetchone() is not None
-
-    def deadlines(self, today: date) -> list[dict]:
-        """Dates from the base's Records about the world and about the owner: `until` — a document or a status runs
-        out (`document`) — and `stale_after` — a fact to check again (`recheck`). Each kind has its own limit, so
-        that twenty re-checks do not push a passport off the page; what is overdue is marked and always kept.
-        Superseded knowledge and long past dates are left out."""
-        if not self.kb or not os.path.isdir(self.kb):
-            return []
-        horizon, found = today - timedelta(days=DEADLINE_PAST_DAYS), []
-        root = Path(self.kb)
-        for path in sorted(root.glob("*/*/**/*.md")):
-            relative = path.relative_to(root)
-            if relative.parts[1] not in ("profile", "knowledge") or any(p.startswith(".") for p in relative.parts):
-                continue
-            head = front_matter(path)
-            if not head or head.get("status") == "superseded":
-                continue
-            for field, kind, what in (("until", "document", "valid until"), ("stale_after", "recheck", "recheck")):
-                value = head.get(field)
-                when = value if isinstance(value, date) else _day(value)
-                if when and when >= horizon:
-                    found.append({"title": str(head.get("title") or relative.stem)[:120], "date": when.isoformat(),
-                                  "kind": kind, "what": what, "overdue": when < today, "days": (when - today).days,
-                                  "path": relative.as_posix()})
-        found.sort(key=lambda d: d["date"])
-        kept = []
-        for kind, cap in (("document", DEADLINES_DOCUMENTS), ("recheck", DEADLINES_RECHECKS)):
-            these = [d for d in found if d["kind"] == kind]
-            kept += [d for d in these if d["overdue"]] + [d for d in these if not d["overdue"]][:cap]
-        return sorted(kept, key=lambda d: d["date"])
-
     def stamp(self, ts: float) -> str:
         from . import clock
 
         return clock.stamp(ts, self.tz)
-
-    def status(self, now: float) -> dict:
-        """The status page: counted by code from the router's tables."""
-        from . import charts, clock
-        from .archive import ASSISTANT, OWNER, SYSTEM
-        from .mail import KINDS
-
-        core = self.core
-        runs = core.store.runs_since(now - DAY)
-        tally = core.mail.store.tally(now - DAY) if core.mail else {"kept": {}, "dropped": {}, "blocked": {}}
-        windows = core.store.windows()
-        status = {
-            "updated": self.stamp(now),
-            "day": {"owner": core.archive.count(OWNER, now - DAY), "answers": core.archive.count(ASSISTANT, now - DAY),
-                    "notices": core.archive.count(SYSTEM, now - DAY),
-                    "runs": [[RUN_STATES.get(state, state), n] for state, n in sorted(runs.items(), key=lambda x: -x[1])],
-                    "reminders": core.jobs.fired_since(now - DAY),
-                    "letters": {"kept": sum(tally["kept"].values()),
-                                "dropped": sum(tally["dropped"].values()) + sum(tally["blocked"].values())}},
-            "limit": [{"window": WINDOW_NAMES[name], "share": round(w["utilization"] * 100),
-                       "level": level(round(w["utilization"] * 100)),
-                       "resets": self.stamp(w["resets_at"]) if w["resets_at"] else "",
-                       "resets_ts": round(w["resets_at"]) if w["resets_at"] else None,
-                       "resets_in": clock.ago(w["resets_at"] - now) if w["resets_at"] and w["resets_at"] > now else "",
-                       "seen": self.stamp(w["seen"])} for name, w in windows.items()],
-            "tokens": [{**row, "name": RUN_KINDS.get(row["kind"], row["kind"]),
-                        "cells": [RUN_KINDS.get(row["kind"], row["kind"]), *(grouped(row[k]) for k in (
-                            "runs", "input", "output", "cache_read", "cache_write")), f"{row['cost_usd']:.2f}"]}
-                       for row in core.store.tokens(now - WEEK)],
-            "connectors": (connectors := self.connectors(now)),
-            "problems": [c for c in connectors if not c["ok"]],
-            "build": self.built(now),
-            "sent": [[name, core.outbox.store.sent(now - DAY, channel), core.outbox.store.sent(now - WEEK, channel)]
-                     for channel, name in (("mail", "mail"), ("telegram", "Telegram"))] if core.outbox else None,
-            "mail": None,
-            "ts": round(now),
-        }
-        status["charts"] = [
-            charts.bars("Tokens over 7 days by kind of run", list(TOKENS),
-                        [(row["name"], [row["input"], row["output"], row["cache_read"], row["cache_write"]])
-                         for row in status["tokens"]]),
-            charts.bars("Model runs by day", ["ok", "failures"], self.runs_by_day(now), colours=[1, 4])]
-        if core.mail:
-            def named(counts: dict) -> list:
-                return [[KINDS.get(k, k), n] for k, n in sorted(counts.items(), key=lambda x: -x[1])]
-
-            week = core.mail.store.tally(now - WEEK)
-            status["mail"] = {
-                "day": {"kept": named(tally["kept"]), "dropped": named(tally["dropped"]),
-                        "blocked": [[s, n] for s, n in tally["blocked"].items()]},
-                "week": {"kept": named(week["kept"]), "dropped": named(week["dropped"]),
-                         "blocked": [[s, n] for s, n in week["blocked"].items()]},
-                "rules": [f"drop {sender}" if rule == "block" else
-                          f"do not notify at once: {sender}, {KINDS.get(kind, kind)}"
-                          for rule, sender, kind in core.mail.store.rules()],
-            }
-        return status
 
     def connectors(self, now: float) -> list[dict]:
         """Each way in and out the router has, and how it is doing."""
@@ -883,7 +438,7 @@ class Lifehub:
             said = core.backup(now)
             out.append({"name": "backup", "ok": backed_up(said), "state": BACKUP.sub("", said, count=1)})
         if (built := self.built(now)) is not None:
-            out.append({"name": "hub", "ok": built["ok"], "state": built["said"].removeprefix("hub ")})
+            out.append({"name": "pages", "ok": built["ok"], "state": built["said"].removeprefix("pages ")})
         if getattr(core, "watch", None):
             said = core.watch.health(now)
             out.append({"name": "containers", "ok": bool(CONTAINERS_OK.match(said)),
@@ -891,13 +446,13 @@ class Lifehub:
         return out
 
     def health(self, now: float) -> str:
-        """The hub's part of the health line, from the builder's build.json: built when, or why not."""
+        """The pages' part of the health line, from the builder's build.json: built when, or why not."""
         built = self.built(now)
         return built["said"] if built else ""
 
     def built(self, now: float) -> dict | None:
         """How the last build went, from build.json the builder writes: ok, when, how long ago, the error, the
-        release, and the words for the health line. None when the hub is not set up here."""
+        release, and the words for the health line. None when the builder is not set up here."""
         from . import clock
 
         if not self.build_status:
@@ -909,37 +464,19 @@ class Lifehub:
             if not isinstance(built, dict):
                 raise ValueError(built)
         except FileNotFoundError:
-            return {**out, "said": "hub not built yet"}
+            return {**out, "said": "pages not built yet"}
         except (OSError, ValueError):
-            return {**out, "said": "hub status unreadable"}
+            return {**out, "said": "pages status unreadable"}
         at = float(built.get("at") or 0)
         out.update(at=round(at), ago=clock.ago(now - at), release=str(built.get("release") or ""))
         if not built.get("ok"):
             out["error"] = str(built.get("error") or "no reason recorded").rstrip(". ")
-            return {**out, "said": f"hub not updated: {out['error']}"}
+            return {**out, "said": f"pages not updated: {out['error']}"}
         # Pages the build left out: their ids and the check, in the builder's fixed words — never a page's text.
         out["refused"] = [f"{page.get('id')} ({page.get('why')})" for page in built.get("refused") or []
                           if isinstance(page, dict)]
-        return {**out, "ok": True, "said": f"hub built {out['ago']} ago" + (
-            f"; pages not published: {', '.join(out['refused'][:3])}" if out["refused"] else "")}
-
-    def runs_by_day(self, now: float) -> list[tuple[str, list[int]]]:
-        """Model runs of the last seven days by the owner's local date: good ones and failures."""
-        from . import clock
-
-        days = []
-        for back in range(6, -1, -1):
-            moment = clock.local(now - back * DAY, self.tz)
-            days.append((moment.date(), f"{clock.SHORT[moment.weekday()]} {moment.day}.{moment.month:02d}"))
-        counts = {day: [0, 0] for day, _ in days}
-        for ts, state in self.core.store.run_times(now - WEEK):
-            day = clock.local(ts, self.tz).date()
-            if day in counts:
-                counts[day][0 if state in ("done", "limit") else 1] += 1
-        return [(label, counts[day]) for day, label in days]
-
-    def write_status(self, now: float) -> None:
-        self.data.write("status.json", self.status(now))
+        return {**out, "ok": True, "said": f"pages built {out['ago']} ago" + (
+            f"; not published: {', '.join(out['refused'][:3])}" if out["refused"] else "")}
 
     # --- a trip page: her references, travel-ops' numbers ------------------------------------------------------------
 
@@ -982,27 +519,64 @@ class Lifehub:
         except (TravelRefused, TravelUnavailable) as exc:
             return False, f"Not published: {str(exc).rstrip('.')}."
         page_id = page_id or self.data.new_id("trips")
-        self.data.write(f"trips/{page_id}.json", {
+        self.render({
             "id": page_id, "title": trip["title"], "summary": trip["summary"], "paragraphs": paragraphs(trip["summary"]),
             "start": trip["start"], "end": trip["end"], "published": self.stamp(now), "published_ts": round(now),
-            "options": options, "timeline": timeline(options)})
-        self.poke(now)
+            "options": options, "timeline": timeline(options)}, now)
+        self.write_index()
         if any(option.get("photo_from") for option in options):  # the page goes up now, its photos a little later
             self.pending.append(page_id)
-        url = f"{self.url}/trips/{page_id}/"
+        url = f"{self.url}/{TRIP}{page_id}"
         return True, (f"Published: {url} (trip_id {page_id} — to update this same page). At the end of your reply to "
                       f"the owner: [details]({url})")
+
+    def render(self, trip: dict, now: float) -> None:
+        """A trip's data to trips/<id>.json and its page to pages/trip-<id>.html, with the page's entry of pages.json
+        kept in the data (`page`): the list is put together from the base's pages and these (`write_index`)."""
+        body = trip_page(trip, self.link_hosts).encode("utf-8")
+        meta = page_meta(body.decode("utf-8")) or {}
+        trip["page"] = {
+            "id": f"{TRIP}{trip['id']}", "title": str(trip.get("title") or ""),
+            "description": meta.get("description", ""), "words": meta.get("words", 0),
+            "reading_min": meta.get("reading_min", 1), "topic": "trips",
+            "updated": _local_day(trip.get("published_ts") or now, self.tz), "author": "assistant", "scripts": "off",
+            "url": f"/{TRIP}{trip['id']}", "path": f"trips/{trip['id']}",
+            "sha256": hashlib.sha256(body).hexdigest()}
+        self.data.write_bytes(f"pages/{TRIP}{trip['id']}.html", body)
+        self.data.write(f"trips/{trip['id']}.json", trip)
+
+    def write_index(self) -> None:
+        """pages.json: the base's pages as last read (`pages`) and the router's trip pages, the newest first. A trip
+        whose page is not in the data — written by a router before trip pages were its own — is rendered here."""
+        base = self.base_pages
+        if base is None:  # not read since the router started: the base's entries as the list has them
+            listed = self.data.read("pages.json")
+            base = [page for page in listed if isinstance(page, dict) and not str(page.get("id", "")).startswith(TRIP)] \
+                if isinstance(listed, list) else []
+        trips = []
+        for name in self.data.names("trips"):
+            trip = self.data.read(name)
+            if not isinstance(trip, dict) or not ID.fullmatch(str(trip.get("id", ""))):
+                continue
+            if not isinstance(trip.get("page"), dict) or not self.data.path(f"pages/{TRIP}{trip['id']}.html").is_file():
+                self.render(trip, float(trip.get("published_ts") or time.time()))
+            trips.append(trip["page"])
+        pages = sorted(base + trips, key=lambda page: (str(page.get("updated", "")), str(page.get("id", ""))),
+                       reverse=True)
+        self.data.write("pages.json", pages)
 
     async def photos(self, page_id: str, travel, now: float) -> None:
         """Photos of the page's stays: travel-ops fetches them from the sites (`stay_photos`; the router has no way
         there, and a page may not load them from there), the router's file worker re-encodes each as a JPEG, and what
-        does not decode is dropped. A look that fails leaves the page as it was."""
+        does not decode is dropped. Each goes into the page itself as a data: address — the page loads nothing — at
+        most PHOTOS a stay, and a photo that would take the page past PAGE_MAX is left out. A look that fails leaves
+        the page as it was."""
         from .attachments import Unreadable, Upload, isolated
 
         name = f"trips/{page_id}.json"
         page = self.data.read(name) or {}
-        found: dict[str, list[str]] = {}
-        for number, option in enumerate(page.get("options") or [], 1):
+        found: dict[str, list[str]] = {}  # an option's link: its photos as data: addresses
+        for option in page.get("options") or []:
             source = option.get("photo_from") or {}
             if not source.get("stay"):
                 continue
@@ -1010,7 +584,7 @@ class Lifehub:
                 result = await travel.result("stay_photos", {"search_id": source["search_id"],
                                                              "stays": [source["stay"]], "per_stay": PHOTOS})
             except (TravelRefused, TravelUnavailable) as exc:
-                log.warning("lifehub: photos of %s not fetched: %s", page_id, exc)
+                log.warning("pages: photos of %s not fetched: %s", page_id, exc)
                 continue
             names = []
             for block in result.get("content") or []:
@@ -1020,16 +594,23 @@ class Lifehub:
                     done = await isolated(Upload("photo", base64.b64decode(str(block.get("data", "")))))
                 except (Unreadable, ValueError):
                     continue
-                names.append(f"photos/{page_id}/{number}-{len(names) + 1}.jpg")
-                self.data.write_bytes(names[-1], done.files[0][1])
+                names.append(JPEG + base64.b64encode(done.files[0][1]).decode("ascii"))
             if names:
                 found[option["link"]] = names
         page = self.data.read(name)  # she may have published it again meanwhile: her new page, these photos
         if found and page:
-            for option in page.get("options") or []:
-                option["photos"] = found.get(option["link"], option.get("photos") or [])
-            self.data.write(name, page)
-            self.poke(now)
+            options = page.get("options") or []
+            wanted = [found.get(option.get("link"), option.get("photos") or []) for option in options]
+            for option in options:
+                option["photos"] = []
+            size = len(trip_page(page, self.link_hosts).encode("utf-8"))
+            for option, photos in zip(options, wanted):
+                for photo in photos[:PHOTOS]:
+                    if size + len(photo) + PHOTO_TAG <= PAGE_MAX:
+                        option["photos"].append(photo)
+                        size += len(photo) + PHOTO_TAG
+            self.render(page, now)
+            self.write_index()
 
     def describe(self, option: dict, card: dict, offer: dict, view: dict) -> dict:
         """One option as the page shows it, in code's words from travel-ops' card: what, the price, the lines."""
@@ -1106,18 +687,20 @@ class Lifehub:
         except ValueError:
             return str(iso)
 
-    # --- the owner's own pages: HTML files of the base, served sandboxed under /pages/ -------------------------------
+    # --- the owner's own pages: HTML files of the base, served sandboxed at <pages_url>/<id> --------------------------
 
     async def write_pages(self, now: float) -> None:
         if self.core.memory:
             await asyncio.to_thread(self.pages, now)
+        self.write_index()  # again on the loop: a trip she published while the thread read the base is in the list
 
     def pages(self, now: float) -> bool:
         """Every HTML file in a nature folder of the base that says `<meta name="lifehub" content="publish">`, as the
         hub's `main` has it: its bytes to data/pages/<id>.html, what the «Library» lists to pages.json (with each
-        file's sha256: the builder takes a page only with the bytes this list names), what was left out and why to
-        pages-refused.json. Scripts run only when no commit of hers ever touched the file (`author`). Read again only
-        when `main` moved. Returns whether it read the hub."""
+        file's sha256: the builder takes a page only with the bytes this list names; the router's trip pages are
+        listed beside them, `write_index`), what was left out and why to pages-refused.json. Scripts run only when no
+        commit of hers ever touched the file (`author`). An id that begins with `trip-` is the router's, never a
+        file's. Read again only when `main` moved. Returns whether it read the hub."""
         import hashlib
 
         from . import clock
@@ -1138,7 +721,7 @@ class Lifehub:
                     or any(part.startswith(".") for part in parts)):
                 continue
             if mode != "100644" or not PAGE_PATH.fullmatch(path):  # a name git or a glob would read another way
-                log.warning("lifehub: %r is not a plain page name: not published", path)
+                log.warning("pages: %r is not a plain page name: not published", path)
                 refused.append({"id": "?", "why": "file name malformed: a-z, 0-9, / _ . -"})
                 continue
             if int(size) > PAGE_MAX:
@@ -1152,12 +735,15 @@ class Lifehub:
             if not PAGE_ID.fullmatch(page_id):
                 refused.append({"id": "?", "why": "lifehub:id malformed: a-z, 0-9, -"})
                 continue
+            if page_id.startswith(TRIP):  # the address of a trip page the router renders: not a file's to take
+                refused.append({"id": page_id, "why": f"{TRIP} ids are the router's trip pages"})
+                continue
             author, seconds = self.author(path, ref)
             found.setdefault(page_id, []).append({
                 "id": page_id, **meta, "topic": parts[0],
                 "updated": clock.local(seconds or now, self.core.tz).date().isoformat(),
                 "author": author, "scripts": "on" if author == "owner" else "off",
-                "url": f"{PAGES}/{page_id}.html", "path": path,
+                "url": f"/{page_id}", "path": path,
                 "sha256": hashlib.sha256(body).hexdigest(), "body": body})
         pages = []
         for page_id, claims in found.items():
@@ -1178,10 +764,12 @@ class Lifehub:
                 self.data.write_bytes(name, body)
         ids = {page["id"] for page in pages}
         for name in self.data.names("pages"):  # a page no longer published goes from the data, and so from the site
-            if PurePosixPath(name).stem not in ids:
+            stem = PurePosixPath(name).stem
+            if stem not in ids and not stem.startswith(TRIP):  # a trip page is the router's, not the base's
                 self.data.remove(name)
         self.data.write("pages-refused.json", refused)
-        self.data.write("pages.json", pages)
+        self.base_pages = pages
+        self.write_index()
         self.pages_head = head
         return True
 
@@ -1226,15 +814,16 @@ class Lifehub:
         return ("assistant" if hers or not history else "owner"), seconds
 
     async def upload(self, origin, space: str, upload, native_id: str) -> None:
-        """The owner sent an HTML file with «to hub <Space>» (or the Russian «в хаб <Space>»: `channels/telegram.py`; a
-        page made in claude.ai on his phone): code, not the model, puts it in the base as <Space>/artifacts/<name>.html
+        """The owner sent an HTML file with «to pages <Space>» (or «to hub <Space>», the Russian «в хаб <Space>»:
+        `channels/telegram.py`; a page made in claude.ai on his phone): code, not the model, puts it in the base as
+        <Space>/artifacts/<name>.html
         with the opt-in mark, commits it with a trailer that says it is his, and answers with the page's address. On
         record like any message of his."""
         from .archive import OWNER
 
         core = self.core
         name = (upload.name or "page.html").strip()
-        event, fresh = core.archive.append(OWNER, f"[page to hub {space}: {name}]", channel=origin.name,
+        event, fresh = core.archive.append(OWNER, f"[page to pages {space}: {name}]", channel=origin.name,
                                            native_id=native_id, meta={"hub_page": space},
                                            conversation_id=core.store.conversation(core.default_agent))
         if not fresh and core.archive.answered(event.id):
@@ -1242,7 +831,7 @@ class Lifehub:
         try:
             text = await self.put_page(space, name, upload, time.time())
         except Exception as exc:  # the owner hears of it instead of silence
-            log.exception("lifehub: the page %s was not put in the base", name)
+            log.exception("pages: the page %s was not put in the base", name)
             text = f"Page not published: the router failed ({type(exc).__name__})."
         await core.tell_owner(text, origin=origin, ref=event.id)
 
@@ -1288,7 +877,7 @@ class Lifehub:
             return "Page not published: the Base did not take the file — " + "; ".join(refusals) + "."
         self.poke(now)
         page_id = named or PurePosixPath(path).stem
-        said = (f"Page in the Base: {path}. In a couple of minutes it opens at {self.url}{PAGES}/{page_id}.html "
+        said = (f"Page in the Base: {path}. In a couple of minutes it opens at {self.url}/{page_id} "
                 "(with the VPN), with its scripts — it is yours.")
         if number > 1:
             said += f" A file {stem}.html was already there — this one went beside it under a new name, the old one " \
@@ -1347,30 +936,6 @@ def chip(who: str) -> str:
     name = re.split(r" \(|, | via | через | → | — ", who or "", maxsplit=1)[0].strip() or NO_NAME[0]
     return name if len(name) <= CHIP_CHARS else name[:CHIP_CHARS - 1].rstrip() + "…"
 
-
-def cut(base: str, title: str, chosen: dict, rows: list, key: str = "items", size: int | None = None) -> list[dict]:
-    """One slice of the review as its pages: `base`, `base-p2`, … with the neighbours and every page's number."""
-    size = size or REVIEW_PAGE
-    pages = max(1, -(-len(rows) // size))
-    paths = [base if n == 1 else f"{base}-p{n}" for n in range(1, pages + 1)]
-    numbers = [{"page": n, "path": path} for n, path in enumerate(paths, 1)]
-    return [{"path": path, "title": title, "kind": key, "page": n, "pages": pages,
-             "filter": {"source": chosen.get("source", ""), "decision": chosen.get("decision", ""),
-                        "who": chosen.get("who", "")},
-             key: runs(rows[(n - 1) * size:n * size]) if key == "items" else rows[(n - 1) * size:n * size],
-             "prev": paths[n - 2] if n > 1 else "", "next": paths[n] if n < pages else "", "numbers": numbers}
-            for n, path in enumerate(paths, 1)]
-
-
-def runs(items: list[dict]) -> list[dict]:
-    """A page of the review with each message marked `cont` when it goes on from the one above — the same sender,
-    the same day: a chat of ten lines reads as one card, not ten."""
-    out = []
-    for item in items:
-        before = out[-1] if out else None
-        out.append({**item, "cont": bool(before and before["who_key"] == item["who_key"]
-                                         and before["day"] == item["day"])})
-    return out
 
 
 def money(value) -> str:
@@ -1460,36 +1025,18 @@ def paragraphs(text: str) -> list[str]:
     third sentence."""
     out = []
     for block in (b.strip() for b in str(text).splitlines()):
-        if len(block) <= PARAGRAPH_CHARS:
+        if len(block) <= SUMMARY_CHARS:
             out += [block] if block else []
             continue
         chunk = ""
         for sentence in re.split(r"(?<=[.!?])\s+(?=[«\"(A-ZА-ЯЁ0-9])", block):  # her words may be Russian too
-            if chunk and len(chunk) + len(sentence) > PARAGRAPH_CHARS:
+            if chunk and len(chunk) + len(sentence) > SUMMARY_CHARS:
                 out.append(chunk)
                 chunk = ""
             chunk = f"{chunk} {sentence}".strip()
         out += [chunk] if chunk else []
     return out
 
-
-def places(location: str, description: str) -> dict:
-    """Where an event is, as a page shows it: `place` — zoom, meet, teams, online (another meeting service), link,
-    address or nothing; `where` — an address or a site's host, never an address with its query; `join` — the address
-    of a meeting service to go in by (its host in `join_host`). An address with a password stays in the data the
-    page links to and never becomes its text."""
-    for found in URL.findall(f"{location} {description}"):
-        url = sound(found.rstrip(".,;:!?)»>"))
-        host = (urlsplit(url).hostname or "") if url else ""
-        kind = next((name for suffix, name in MEETINGS if host == suffix or host.endswith("." + suffix)), "")
-        if kind:
-            return {"place": kind, "where": "", "join": url, "join_host": host}
-    found = URL.search(location)
-    if found:  # a site, named by its host; an address that is not a sound one is not named at all
-        host = host_of(found.group().rstrip(".,;:!?)»>"))
-        return {"place": "link" if host else "", "where": host, "join": "", "join_host": ""}
-    where = re.sub(r"\s+", " ", location).strip()
-    return {"place": "address" if where else "", "where": where[:120], "join": "", "join_host": ""}
 
 
 def host_of(url: str) -> str:
@@ -1527,7 +1074,6 @@ BACKUP = re.compile(r"^(backup|бэкап) — ")
 BACKUP_FAILED = ("failed", "не удался")
 CONTAINERS = re.compile(r"^(containers|контейнеры): ")
 CONTAINERS_OK = re.compile(r"^(containers: all|контейнеры: все)\b")
-HEALTH = re.compile(r"^(Health[^:]*|Здоровье за сутки): ")
 NO_NAME = ("no name", "без имени")  # chip's word for a sender with none; the Russian one may be in older data
 
 
@@ -1536,20 +1082,10 @@ def backed_up(said: str) -> bool:
     return bool(BACKUP.match(said)) and not any(word in said for word in BACKUP_FAILED)
 
 
-def health_words(line: str) -> str:
-    """The health line without its heading and its full stop: what the «now» page shows."""
-    return HEALTH.sub("", line, count=1).rstrip(".")
-
-
 def level(share: int) -> str:
     """A limit window's share as a colour: ok below 70 %, warn below 90 %, bad from there."""
     return "ok" if share < 70 else "warn" if share < 90 else "bad"
 
-
-def score(text: str) -> float:
-    """«4.1/5» -> 4.1; anything else 0."""
-    found = re.match(r"\s*(\d+(?:[.,]\d+)?)", str(text or ""))
-    return float(found.group(1).replace(",", ".")) if found else 0.0
 
 
 def midnight(day: date, tz: str) -> float:
@@ -1557,6 +1093,12 @@ def midnight(day: date, tz: str) -> float:
     from . import clock
 
     return datetime(day.year, day.month, day.day, tzinfo=clock.zone(tz)).timestamp()
+
+
+def _local_day(ts: float, tz: str) -> str:
+    from . import clock
+
+    return clock.local(ts, tz).date().isoformat()
 
 
 def _instant(value) -> float:
@@ -1573,7 +1115,9 @@ def _epoch(value) -> int | None:
 # --- the owner's pages: what the router reads from an HTML file -------------------------------------------------
 
 PAGE_MAX = 3 * 1024 * 1024    # the builder refuses a bigger page too: libraries and fonts are vendored, not in git
-PAGES = "/pages"              # where the hub serves them: nginx gives everything under it the pages' sandbox
+TRIP = "trip-"                # the id of a trip page the router renders begins with this; a base file's never does
+JPEG = "data:image/jpeg;base64,"  # a stay's photo, inside the page: the page loads nothing from anywhere
+PHOTO_TAG = 200               # what one photo's <img> adds to a page besides its data: address
 PAGE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 PAGE_PATH = re.compile(r"[a-z0-9][a-z0-9/_.-]*\.html")
 PAGES_MAX = 200               # pages published at most; the rest named in pages-refused.json, then the health line
@@ -1681,3 +1225,129 @@ def git_bytes(memory, *args: str) -> bytes:
 
 def git_out(memory, *args: str) -> str:
     return subprocess.run([*memory.repo, *args], env=memory.env, capture_output=True).stdout.decode("utf-8", "replace")
+
+
+# --- a trip page as HTML: what Hugo's trip layout drew, now drawn here --------------------------------------------
+
+TRIP_KINDS = (("flight", "Flights"), ("stay", "Stays"), ("ground", "Overland"))
+# One stylesheet in the page itself: the page loads nothing, so no font, no icon, no script. Light or dark as the
+# system asks; one column a phone reads without zooming.
+TRIP_STYLE = """
+:root { color-scheme: light dark; --bg: #fcfcfd; --card: #f9f9fb; --line: #d9d9e0; --text: #1c2024; --muted: #60646c;
+  --accent: #3e63dd; --accent-text: #3a5bc7; --accent-soft: #edf2fe; --on-accent: #ffffff; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111113; --card: #18191b; --line: #363a3f; --text: #edeef0; --muted: #b0b4ba; --accent: #3e63dd;
+    --accent-text: #9eb1ff; --accent-soft: #182449; }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; background: var(--bg); }
+body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.5 system-ui, -apple-system, "Segoe UI",
+  Roboto, sans-serif; }
+main { max-width: 44rem; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 1.75rem; line-height: 1.2; margin: 0 0 4px; }
+h2 { font-size: 1.25rem; margin: 32px 0 8px; }
+.muted, .leg, small, .foot { color: var(--muted); }
+.leg { margin: 16px 0 8px; font-weight: 600; }
+.summary p { margin: 0 0 12px; }
+.option { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 0 0 12px; }
+.option.pick { border-color: var(--accent); }
+.head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.what { font-weight: 600; overflow-wrap: anywhere; }
+.chip { display: inline-block; font-size: 0.8125rem; padding: 2px 8px; border-radius: 999px; margin-top: 4px;
+  border: 1px solid var(--line); overflow-wrap: anywhere; }
+.chip.accent { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+.price { font-size: 1.25rem; font-weight: 650; text-align: right; white-space: nowrap; }
+.price small { display: block; font-size: 0.8125rem; font-weight: 400; }
+ul { margin: 8px 0; padding-left: 1.1em; color: var(--muted); }
+.note { border-left: 2px solid var(--line); padding-left: 12px; margin: 8px 0; }
+.photos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+.photos img { width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; }
+.foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 0.8125rem; margin-top: 8px; }
+.btn { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 10px;
+  background: var(--accent); color: var(--on-accent); font-size: 0.9375rem; font-weight: 600; text-decoration: none;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+"""
+PHOTO = re.compile(r"data:image/jpeg;base64,[A-Za-z0-9+/]+=*")  # the only image address a trip page holds
+
+
+def trip_page(trip: dict, hosts: list[str]) -> str:
+    """A trip's page from its data (`Pages.render`): the title, the dates, her summary's paragraphs, the options by
+    day as the timeline has them (by kind when it has none), each with what it is, the price, the seller, the times,
+    the rating, when the price was seen, her note, a «recommended» mark, the photos, and the site as a button showing
+    its host. Every value goes through `html.escape`: what she or a site wrote is text, never markup. No script, no
+    event handler, nothing loaded from anywhere; a link is a button only when it is a sound https address on one of
+    travel-ops' sites (`hosts`)."""
+    from html import escape
+
+    options = [option for option in trip.get("options") or [] if isinstance(option, dict)]
+    title = escape(str(trip.get("title") or ""))
+    out = ["<!doctype html>", '<html lang="en">', "<head>", '<meta charset="utf-8">',
+           '<meta name="viewport" content="width=device-width, initial-scale=1">', OPT_IN,
+           f'<meta name="description" content="{escape(" ".join(str(trip.get("summary") or "").split()))}">',
+           f"<title>{title}</title>", f"<style>{TRIP_STYLE}</style>", "</head>", "<body>", "<main>",
+           f"<h1>{title}</h1>"]
+    when = f"{escape(str(trip.get('start') or ''))} — {escape(str(trip.get('end') or ''))}"
+    if trip.get("published"):
+        when += f" · published {escape(str(trip['published']))}"
+    out.append(f'<p class="muted">{when}</p>')
+    said = trip.get("paragraphs") or str(trip.get("summary") or "").splitlines()
+    out.append('<div class="summary">' + "".join(f"<p>{escape(str(p))}</p>" for p in said if str(p).strip())
+               + "</div>")
+    if trip.get("timeline"):
+        for day in trip["timeline"]:
+            out.append(f"<h2>{escape(str(day.get('label') or ''))}</h2>")
+            for leg in day.get("legs") or []:
+                if leg.get("kind") != "stay":
+                    name = escape(str(leg.get("name") or ""))
+                    out.append(f'<p class="leg">{name}' + (f" · {escape(str(leg['leg']))}" if leg.get("leg") else "")
+                               + "</p>")
+                out += [option_card(options[n], hosts) for n in leg.get("options") or []
+                        if isinstance(n, int) and 0 <= n < len(options)]
+    else:
+        for kind, name in TRIP_KINDS:
+            these = [option for option in options if option.get("kind") == kind]
+            if these:
+                out.append(f"<h2>{name}</h2>")
+                out += [option_card(option, hosts) for option in these]
+    out += ["</main>", "</body>", "</html>", ""]
+    return "\n".join(out)
+
+
+def option_card(option: dict, hosts: list[str]) -> str:
+    """One option of a trip page: what, the price in the converted currency first (the seller's under it), the
+    facts code took from travel-ops, her note, the photos, how old the price is, and the site as a button."""
+    from html import escape
+
+    pick = option.get("pick") is True
+    price, converted = str(option.get("price") or ""), str(option.get("converted") or "")
+    out = [f'<article class="option{" pick" if pick else ""}">', '<div class="head">',
+           f'<div><div class="what">{escape(str(option.get("what") or ""))}</div>'
+           + ('<span class="chip accent">recommended</span>' if pick else "") + "</div>",
+           '<div class="price">' + escape(converted or price) + (f"<small>{escape(price)}</small>" if converted else "")
+           + (f"<small>{escape(str(option['seller']))}</small>" if option.get("seller") else "") + "</div>", "</div>"]
+    lines = [str(line) for line in option.get("lines") or [] if str(line).strip()]
+    if lines:
+        out.append("<ul>" + "".join(f"<li>{escape(line)}</li>" for line in lines) + "</ul>")
+    if option.get("note"):
+        out.append(f'<p class="note">{escape(str(option["note"]))}</p>')
+    photos = [photo for photo in option.get("photos") or [] if PHOTO.fullmatch(str(photo))]
+    if photos:
+        out.append('<div class="photos">' + "".join(f'<img src="{photo}" alt="photo of the option">' for photo in photos)
+                   + "</div>")
+    out.append(f'<div class="foot"><span>{escape(str(option.get("seen") or ""))}: search again before buying</span>'
+               + link_button(str(option.get("link") or ""), hosts) + "</div>")
+    out.append("</article>")
+    return "".join(out)
+
+
+def link_button(url: str, hosts: list[str]) -> str:
+    """The option's site: a button with its host when the address is a sound https one on a travel-ops site, the
+    host as plain text when it is only sound, nothing when it is not even that. Never the address as text."""
+    from html import escape
+
+    host = host_of(url)
+    if host and linkable(url, hosts):
+        return f'<a class="btn" href="{escape(sound(url))}" rel="noopener noreferrer">{escape(host)}</a>'
+    return f'<span class="chip">{escape(host)}</span>' if host else ""

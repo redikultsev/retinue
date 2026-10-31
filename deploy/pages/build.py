@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""The life hub's builder: the `lifehub-build` container, no network, its own user, standard library only.
+"""The pages' builder: the `pages-build` container, no network, its own user, standard library only.
 
-Every POLL_S it looks at the router's data folder; when the data changed, it builds a new release of two halves:
-`hub/` — the site, by Hugo, every page and picture checked (`gate`) — and `pages/` — the owner's own HTML pages from
-the base, served by the hub under /pages/ as sandboxed documents (an opaque origin each, the CSP header): each is
-rewritten to load nothing but /pages/_vendor/ (`rewrite_page`) and checked (`page_gate`). Only then `current` points at the release — one
-rename, so nginx serves the old release or the new one, never half of one. A build or a hub check that fails leaves
-`current` where it was and says why in build.json, which the router reads into the health line; a page that fails
-its check is left out of the release, named in build.json with the reason. The last KEEP releases stay.
+Every POLL_S it looks at the router's data folder; when the data changed, it builds a new release of the owner's HTML
+pages — the base's pages and the router's trip pages: each is rewritten to load nothing but /pages/_vendor/
+(`rewrite_page`) and checked (`page_gate`), and the release lists the pages that went live in its own pages.json. Only
+then `current` points at the release — one rename, so the pages service serves the old release or the new one, never
+half of one. A build that fails leaves `current` where it was and says why in build.json, which the router reads into
+the health line; a page that fails its check is left out of the release, named in build.json with the reason. The
+last KEEP releases stay.
 
-Paths come from the environment, so the same script runs in the tests with a fake Hugo. `build.py vendor` runs once,
-when the image is built: it fetches what pages may load (vendor.json) and checks each file's sha256.
+Paths come from the environment, so the same script runs in the tests. `build.py vendor` runs once, when the image is
+built: it fetches what pages may load (vendor.json) and checks each file's sha256.
 """
 
 from __future__ import annotations
@@ -20,108 +20,23 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
 from html.parser import HTMLParser
 from pathlib import Path
 
-DATA = Path(os.environ.get("LIFEHUB_DATA", "/data"))        # the router's JSON, charts and photos (read-only)
-SITE = Path(os.environ.get("LIFEHUB_SITE", "/site"))        # releases/, current, build.json — nginx serves current
-SOURCE = Path(os.environ.get("LIFEHUB_SOURCE", "/app/site"))  # the Hugo site: templates, content, CSS
-HUGO = os.environ.get("LIFEHUB_HUGO", "/usr/local/bin/hugo")
-WORK = Path(os.environ.get("LIFEHUB_WORK", "/tmp/lifehub"))  # a fresh copy of the site and the data per build
+DATA = Path(os.environ.get("PAGES_DATA", "/data"))          # the router's pages.json and pages/ (read-only)
+SITE = Path(os.environ.get("PAGES_SITE", "/site"))          # releases/, current, build.json — the service reads current
 POLL_S = 15
 RETRY_S = 300            # a failed build is tried again this late even if the data did not change
 KEEP = 3                 # releases kept, the live one among them
-HUGO_TIMEOUT_S = 120
-VENDOR = Path(os.environ.get("LIFEHUB_VENDOR", "/app/vendor"))       # what pages may load, fetched into the image
-MANIFEST = Path(os.environ.get("LIFEHUB_MANIFEST", "/app/vendor.json"))  # its addresses, sha256 and the rewrites
-# What a release may contain: pages, the stylesheet, pictures, re-encoded photos — and the site's own few scripts
-# (static/js: relative times, the glasses theme), each byte for byte as the image ships it. Nothing else that runs.
-SUFFIXES = {".html", ".css", ".svg", ".jpg", ".js"}
-NEVER = {"script", "style", "iframe", "object", "embed", "form", "base", "frame", "frameset", "applet", "link"}
-ADDRESSES = {"href", "src", "action", "formaction", "xlink:href", "poster", "srcset", "data"}
-SCRIPT = re.compile(r"/js/([a-z0-9-]{1,40})\.js")  # the one form of <script> a page may have, with `defer`
+VENDOR = Path(os.environ.get("PAGES_VENDOR", "/app/vendor"))         # what pages may load, fetched into the image
+MANIFEST = Path(os.environ.get("PAGES_MANIFEST", "/app/vendor.json"))    # its addresses, sha256 and the rewrites
 
 
 class Failure(Exception):
-    """The build or its check failed; the text goes to build.json and the owner's health line."""
-
-
-class Gate(HTMLParser):
-    """Everything in a page or an SVG that the site's policy would block or that would run: a script, a style, an
-    event handler, an address with a scheme that runs, anything loaded from elsewhere. The one script a page may
-    have is `<script src="/js/<name>.js" defer></script>` of a file the site ships, empty, nothing else on it."""
-
-    def __init__(self, scripts: frozenset[str] = frozenset()) -> None:
-        super().__init__(convert_charrefs=True)
-        self.bad: list[str] = []
-        self.scripts = scripts         # the names of static/js/*.js the image ships
-        self.inside = ""               # in a <script>: its text must be empty
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "script" and self.shipped(attrs):
-            self.inside = "script"
-        elif tag in NEVER and not (tag == "link" and dict(attrs).get("href") == "/css/lifehub.css"):
-            self.bad.append(f"<{tag}>")
-        for name, value in attrs:
-            value = (value or "").strip().lower()
-            if name == "style" or name.startswith("on"):
-                self.bad.append(f"{tag}[{name}]")
-            elif name in ADDRESSES and value.startswith(("javascript:", "data:", "vbscript:", "//")):
-                self.bad.append(f"{tag}[{name}={value[:30]}]")
-            elif name in ADDRESSES and "://" in value and not (tag == "a" and value.startswith("https://")):
-                self.bad.append(f"{tag}[{name}] from elsewhere: {value[:60]}")
-
-    def handle_startendtag(self, tag, attrs):
-        self.handle_starttag(tag, attrs)
-        self.inside = ""
-
-    def handle_endtag(self, tag):
-        if tag == "script":
-            self.inside = ""
-
-    def handle_data(self, data):
-        if self.inside and data.strip():
-            self.bad.append("<script> with text")
-
-    def shipped(self, attrs) -> bool:
-        """`src` of a shipped script and `defer`, nothing more: no type, no inline code, no other address."""
-        found = SCRIPT.fullmatch(dict(attrs).get("src") or "")
-        return (sorted(name for name, _ in attrs) == ["defer", "src"] and dict(attrs)["defer"] in (None, "")
-                and bool(found) and found.group(1) in self.scripts)
-
-
-def shipped() -> dict[str, bytes]:
-    """The site's own scripts as the image ships them: static/js/<name>.js -> bytes."""
-    folder = SOURCE / "static" / "js"
-    return {p.stem: p.read_bytes() for p in sorted(folder.glob("*.js"))} if folder.is_dir() else {}
-
-
-def gate(folder: Path, scripts: dict[str, bytes] | None = None) -> list[str]:
-    """What is wrong with a built release, file by file; empty when it may go live. A script is let through only
-    at js/<name>.js and only byte for byte the site's own (`scripts`, by default what the image ships)."""
-    scripts = shipped() if scripts is None else scripts
-    problems = []
-    for path in sorted(p for p in folder.rglob("*") if p.is_file()):
-        where = path.relative_to(folder).as_posix()
-        if path.suffix not in SUFFIXES:
-            problems.append(f"{where}: no such file belongs in the hub")
-        elif path.suffix == ".js":
-            found = SCRIPT.fullmatch("/" + where)
-            if not found or scripts.get(found.group(1)) != path.read_bytes():
-                problems.append(f"{where}: a script not the site's own")
-        elif path.suffix == ".jpg":
-            if not path.read_bytes().startswith(b"\xff\xd8\xff"):
-                problems.append(f"{where}: not a JPEG")
-        elif path.suffix in (".html", ".svg"):
-            check = Gate(frozenset(scripts))
-            check.feed(path.read_text(errors="replace"))
-            check.close()
-            problems += [f"{where}: {bad}" for bad in dict.fromkeys(check.bad)]
-    return problems
+    """The build failed; the text goes to build.json and the owner's health line."""
 
 
 # --- the owner's pages: rewritten to load nothing from elsewhere, checked, sorted by whether they may run scripts ---
@@ -271,7 +186,7 @@ def rewrite_page(text: str, rules: dict, scripts: bool) -> tuple[str, list[str]]
                 families = [family.split(":")[0].strip() for family in parse_qs(urlsplit(href).query).get("family", [])]
                 if not (families and fonts.get("css") and set(families) <= set(fonts.get("families") or [])):
                     edits.append((start, end, ""))
-                    notes.append("fonts not in the hub's set — a system font")
+                    notes.append("fonts not in the vendored set — a system font")
                     continue
                 kept = [(n, fonts["css"] if n == "href" else v) for n, v in attrs if n != "crossorigin"]
         if not scripts:
@@ -329,7 +244,7 @@ def page_gate(text: str, scripts: bool) -> tuple[list[str], list[str]]:
 
 def publish_pages(data: Path, out: Path, rules: dict) -> tuple[list[dict], list[dict]]:
     """Every page the router listed (data/pages.json, its files in data/pages/), rewritten and checked into `out`:
-    `<id>.html` with scripts off, `scripts/<id>.html` with them on. Returns (the pages live, as the hub lists them;
+    `<id>.html` with scripts off, `scripts/<id>.html` with them on. Returns (the pages live, as the release lists them;
     the ones refused — the router's own refusals (data/pages-refused.json) among them). A refusal names the page's
     id and the check, in fixed words: build.json goes into the health line, which the model reads."""
     def listed(name: str) -> list:
@@ -422,38 +337,20 @@ def fingerprint(folder: Path) -> str:
 
 
 def build(now: float, data_hash: str) -> tuple[str, list[dict], list[dict]]:
-    """One release from the data as it is: the pages into releases/<stamp>.tmp/pages, Hugo into …/hub with the list
-    of the pages that went live, the gate, then live. Returns (release, pages live, pages refused). Raises Failure."""
-    shutil.rmtree(WORK, ignore_errors=True)
-    shutil.copytree(SOURCE, WORK)
-    shutil.copytree(DATA, WORK / "assets", dirs_exist_ok=True,  # the pages' HTML is not Hugo's to read
-                    ignore=lambda folder, names: [n for n in names if n.startswith(".")
-                                                  or (Path(folder) == DATA and n == "pages")])
+    """One release from the data as it is: the pages into releases/<stamp>.tmp, the list of those that went live as
+    its pages.json, the vendored files as its _vendor/, then live. Returns (release, pages live, pages refused)."""
     releases = SITE / "releases"
     releases.mkdir(parents=True, exist_ok=True)
     name = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now)) + f"-{data_hash[:8]}"
     target = releases / f"{name}.tmp"
     shutil.rmtree(target, ignore_errors=True)
     try:
-        pages = target / "pages"
-        pages.mkdir(parents=True)
-        live, refused = publish_pages(DATA, pages, vendor_rules())
-        (WORK / "assets" / "pages.json").write_text(json.dumps(live, ensure_ascii=False))
+        target.mkdir(parents=True)
+        live, refused = publish_pages(DATA, target, vendor_rules())
+        (target / "pages.json").write_text(json.dumps(live, ensure_ascii=False))
         if VENDOR.is_dir():
-            shutil.copytree(VENDOR, pages / "_vendor")
-        run = subprocess.run([HUGO, "build", "--source", str(WORK), "--destination", str(target / "hub"), "--noBuildLock",
-                              "--cacheDir", str(WORK.parent / "hugo-cache")], capture_output=True, text=True,
-                             timeout=HUGO_TIMEOUT_S, env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(WORK)})
-        if run.returncode != 0:
-            said = (run.stderr or run.stdout).strip().splitlines()
-            raise Failure(f"Hugo: {said[-1][:300] if said else f'code {run.returncode}'}")
-        problems = gate(target / "hub")
-        if problems:
-            raise Failure(f"page check: {'; '.join(problems[:5])}" + (f" and {len(problems) - 5} more"
-                                                                            if len(problems) > 5 else ""))
+            shutil.copytree(VENDOR, target / "_vendor")
         os.rename(target, releases / name)
-    except subprocess.TimeoutExpired:
-        raise Failure(f"Hugo did not finish in {HUGO_TIMEOUT_S} s") from None
     finally:
         shutil.rmtree(target, ignore_errors=True)
     link = SITE / "current.tmp"
@@ -485,15 +382,15 @@ def step(state: dict, now: float) -> bool:
     state["hash"] = data_hash
     try:
         release, live, refused = build(now, data_hash)
-    except (Failure, OSError, subprocess.SubprocessError) as exc:
+    except (Failure, OSError) as exc:
         state["failed"] = now
         report(ok=False, at=now, error=str(exc)[:500], release=os.readlink(SITE / "current")
                if (SITE / "current").is_symlink() else None)
-        print(f"lifehub: build failed: {exc}", file=sys.stderr, flush=True)
+        print(f"pages: build failed: {exc}", file=sys.stderr, flush=True)
         return False
     state["failed"] = 0
     report(ok=True, at=now, error="", release=release, pages=len(live), refused=refused)
-    print(f"lifehub: {release} is live, {len(live)} pages" + (f", {len(refused)} refused" if refused else ""),
+    print(f"pages: {release} is live, {len(live)} pages" + (f", {len(refused)} refused" if refused else ""),
           flush=True)
     return True
 
@@ -503,7 +400,7 @@ def main() -> None:
         fetch_vendor(MANIFEST, VENDOR)
         return
     state: dict = {}
-    print(f"lifehub builder: {DATA} -> {SITE}", flush=True)
+    print(f"pages builder: {DATA} -> {SITE}", flush=True)
     while True:
         step(state, time.time())
         time.sleep(POLL_S)

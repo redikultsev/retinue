@@ -168,24 +168,26 @@ def test_files_are_fetched_and_handed_to_the_core(tmp_path):
     assert ch.fetched == ["/file/bott/files/big", "/file/bott/files/v1"]
 
 
-def test_an_html_file_captioned_to_the_hub_is_the_hubs_code_not_the_models(tmp_path):
-    """«to hub <Space>» on a file (the Russian «в хаб <Space>» too): the life hub's code puts it in the base
-    (`Lifehub.upload`). Someone else's forwarded file with that caption is data like any other; without the hub the
-    owner hears so."""
+def test_an_html_file_captioned_to_pages_is_the_pages_code_not_the_models(tmp_path):
+    """«to pages <Space>» on a file («to hub <Space>» and the Russian «в хаб <Space>», its former names, too): the
+    pages' code puts it in the base (`Pages.upload`). Someone else's forwarded file with that caption is data like
+    any other; without the pages the owner hears so."""
     ch = make(tmp_path)
     uploads = []
 
-    class Hub:
+    class Pages:
         async def upload(self, channel, space, upload, native_id):
             uploads.append((channel is ch, space, upload, native_id))
 
-    ch.core.lifehub = Hub()
+    ch.core.pages = Pages()
     page = {"file_id": "h", "file_name": "course.html", "mime_type": "text/html", "file_size": 4000}
     ivan = {"type": "user", "sender_user": {"id": 7, "first_name": "Иван"}}
 
     async def run():
         await ch.on_message(msg(None, message_id=40, document=page, caption=" To hub Work "))
         await ch.on_message(msg(None, message_id=47, document=page, caption=" В хаб Notes "))
+        await ch.on_message(msg(None, message_id=48, document=page, caption="to pages travel"))
+        await ch.on_message(msg(None, message_id=49, document=page, caption="to pages"))
         await ch.on_message(msg(None, message_id=41, document=page, caption="to hub work", forward_origin=ivan))
         await ch.on_message(msg(None, message_id=42, document=page, caption="to hub"))
         await ch.on_message(msg(None, message_id=43, document=page, caption="put it to hub work, please"))
@@ -193,14 +195,15 @@ def test_an_html_file_captioned_to_the_hub_is_the_hubs_code_not_the_models(tmp_p
                                 forward_sender_name="Скрыт"))
         await ch.on_message(msg(None, message_id=46, document=page, caption="в хаб work",
                                 forward_origin={"type": "user", "sender_user": {"id": OWNER}}))
-        ch.core.lifehub = None
-        await ch.on_message(msg(None, message_id=44, document=page, caption="to hub work"))
+        ch.core.pages = None
+        await ch.on_message(msg(None, message_id=44, document=page, caption="to pages work"))
 
     asyncio.run(run())
     page_upload = Upload("document", b"", "course.html", "text/html", 0, 4000)
-    assert uploads == [(True, "work", page_upload, "40"), (True, "notes", page_upload, "47")]
-    assert [call[0] for call in ch.core.calls] == ["receive"] * 5 + ["tell"], \
-        "a forward (a hidden sender's, his own too), a bare «to hub» and a sentence go to her as files"
+    assert uploads == [(True, "work", page_upload, "40"), (True, "notes", page_upload, "47"),
+                       (True, "travel", page_upload, "48")]
+    assert [call[0] for call in ch.core.calls] == ["receive"] * 6 + ["tell"], \
+        "a forward (a hidden sender's, his own too), a bare «to pages» or «to hub» and a sentence go to her as files"
     assert ch.core.calls[-1] == ("tell", NO_PAGES)
 
 

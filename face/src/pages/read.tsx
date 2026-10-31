@@ -1,6 +1,6 @@
-// `/pages`, «Pages» (once «Read», `/read`): the life hub's pages by section with search, «Continue» (opened, not finished) on top. A page
-// opens on the hub's own origin, never inside the app (lib/library.ts); what was opened and «Finished» are kept by the
-// platform, so the phone and the desktop agree.
+// `/pages`, «Pages» (once «Read», `/read`): the owner's pages by section with search, «Continue» (opened, not finished)
+// on top. A page opens on the pages service's own origin, never inside the app (lib/library.ts); what was opened and
+// «Finished» are kept by the platform, so the phone and the desktop agree.
 import { PageHeader, PAGE_X } from "@/components/page-header";
 import { useMemo, useState } from "react";
 import { Check, Circle } from "@/components/icons";
@@ -35,18 +35,18 @@ function details(page: LibraryPage, now: number): string {
 
 function PageRow({
   page,
-  hub,
+  origin,
   now,
   onOpen,
   onDone,
 }: {
   page: LibraryPage;
-  hub: string;
+  origin: string;
   now: number;
   onOpen: (page: LibraryPage) => void;
   onDone: (page: LibraryPage, done: boolean) => void;
 }) {
-  const href = safeUrl(page.url, hub);
+  const href = safeUrl(page.url, origin);
   const done = page.done !== null;
   const title = <span className={cn("font-medium break-words", done && "text-muted-foreground")}>{page.title}</span>;
   return (
@@ -66,7 +66,7 @@ function PageRow({
             {title}
           </a>
         ) : (
-          <span className="text-[15px] md:text-sm" title="The page's address is not on the hub: not opening it">
+          <span className="text-[15px] md:text-sm" title="The page's address is not the pages service's: not opening it">
             {title}
           </span>
         )}
@@ -110,7 +110,7 @@ export function ReadView({
   const grouped = useMemo(() => sections(pages, query), [pages, query]);
   const going = useMemo(() => (query.trim() ? [] : continuing(pages)), [pages, query]);
   const row = (page: LibraryPage) => (
-    <PageRow key={page.id} page={page} hub={library?.hub ?? ""} now={now} onOpen={onOpen} onDone={onDone} />
+    <PageRow key={page.id} page={page} origin={library?.origin ?? ""} now={now} onOpen={onOpen} onDone={onDone} />
   );
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
@@ -142,8 +142,8 @@ export function ReadView({
         ) : pages.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {library.at === null
-              ? "The list of pages has not come from the hub yet."
-              : "No pages. A page shows up here once it is published to the hub."}
+              ? "The list of pages has not come from the router yet."
+              : "No pages. A page shows up here once it is published (docs/pages.md)."}
           </p>
         ) : (
           <>

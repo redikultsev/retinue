@@ -806,17 +806,16 @@ def test_both_limit_windows_are_kept_from_what_the_cli_reports(instructions, tmp
 
 def test_publish_trip_reaches_the_router_and_answers_with_the_page_address(tmp_path):
     """Her tool sends the trip to the router's bus; only during her own turn and with the grant."""
-    from retinue import lifehub
+    from retinue import pages
 
-    from test_lifehub import FLIGHT, FLIGHTS, trip_with
+    from test_pages import FLIGHT, FLIGHTS, trip_with
     from test_travel import travel_ops
 
     async def run():
         agent = RouterAgent(id="assistant", name="Assistant", url="a", trust_class="private", trips=True)
         plain = RouterAgent(id="other", name="Другой", url="o", trust_class="private")
-        hub = lifehub.Lifehub(lifehub.Data(str(tmp_path / "data")), "https://hub.in.example.com",
-                              ["www.kupibilet.ru"])
-        core = Core([agent, plain], Store(str(tmp_path / "r.sqlite")), "owner", lifehub=hub,
+        hub = pages.Pages(pages.Data(str(tmp_path / "data")), "https://pages.in.example.com", ["www.kupibilet.ru"])
+        core = Core([agent, plain], Store(str(tmp_path / "r.sqlite")), "owner", pages=hub,
                     travel=travel_ops([FLIGHTS], []))
         await core.start([FakeChannel("telegram", False)])
         turn, other = core.turns.open_root("assistant"), core.turns.open_root("other")
@@ -835,8 +834,8 @@ def test_publish_trip_reaches_the_router_and_answers_with_the_page_address(tmp_p
             await server.close()
 
     publish, done, refused, late = asyncio.run(run())
-    assert publish.input_schema is lifehub.TRIP_SCHEMA, "she sees the very schema code checks"
-    assert not done["is_error"] and done["content"][0]["text"].startswith("Published: https://hub.in.example.com/trips/")
+    assert publish.input_schema is pages.TRIP_SCHEMA, "she sees the very schema code checks"
+    assert not done["is_error"] and done["content"][0]["text"].startswith("Published: https://pages.in.example.com/trip-")
     assert refused["is_error"] and "not been granted trip publishing" in refused["content"][0]["text"]
     assert late["is_error"] and "No active request" in late["content"][0]["text"]
 

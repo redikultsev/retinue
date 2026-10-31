@@ -47,7 +47,7 @@ from urllib.parse import quote
 from . import clock
 from .courier import INVISIBLE, line
 from .feed import CHIP_CHARS, DIGEST_BYTES, DIGEST_ITEMS, EMAIL, PRIVATE_WHO, RECORD, SPHERE
-from .lifehub import NEEDS, midnight, named, plural
+from .pages import NEEDS, midnight, named, plural
 from .mail import ASKS, MARKS, PRIVATE, Private, ask_row, later_until
 from .outbox import LIVE
 from .proactive import FIELDS, PUSH_DAYS
@@ -355,15 +355,15 @@ def _deadlines(core, now: float) -> list[dict]:
 
 
 def chips(core, now: float) -> list[dict]:
-    """The hub's status chips (`Lifehub.chips`: anything broken, the backup, the limit, the hub's build) for the
-    face's «Today», each `{key, text, level}`. The build's age is left out of its words — «hub built» or not —
-    so the digest does not change every minute. No hub here: none."""
-    if not getattr(core, "lifehub", None):
+    """The status chips (`Pages.chips`: anything broken, the backup, the limit, the pages' build) for the face's
+    «Today», each `{key, text, level}`. The build's age is left out of its words — «pages built» or not — so the
+    digest does not change every minute. No pages here: none."""
+    if not getattr(core, "pages", None):
         return []
     out = []
-    for chip in core.lifehub.chips(now):
+    for chip in core.pages.chips(now):
         if chip.get("key") == "build":
-            chip = {**chip, "text": "hub built" if chip.get("level") == "ok" else "hub not built"}
+            chip = {**chip, "text": "pages built" if chip.get("level") == "ok" else "pages not built"}
         out.append({"key": str(chip.get("key")), "text": line(str(chip.get("text") or ""), CHIP_CHARS),
                     "level": str(chip.get("level"))})
     return out

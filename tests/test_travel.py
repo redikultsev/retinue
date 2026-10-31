@@ -6,16 +6,19 @@ from retinue import travel
 from retinue.travel import Refused
 
 TRIP = {"origin": "ams", "place": "Springfield", "depart": "2026-05-22", "return_date": "2026-05-23", "country": "Utopia"}
-# Every tool travel-ops a0acb3f + tasks 1–3 lists (`tools/list`); a new one is refused until it has a form here.
+# Every tool travel-ops 9be47b1 lists (`tools/list`); a new one is refused until it has a form here.
 TRAVEL_OPS_TOOLS = {"search_trip", "search_flights", "search_stays", "search_ground", "refine_flights", "refine_stays",
                     "refine_ground", "stay_details", "stay_photos", "airports_near", "watch_price", "watches",
-                    "watch_alerts", "stop_watch", "sources"}
+                    "watch_alerts", "stop_watch", "sources", "compare_stays", "compare_stay_searches",
+                    "flight_schedule", "resume_search", "record_outcome", "journal_review", "reparse_run"}
 
 
 def test_every_tool_of_travel_ops_has_a_form_or_a_reason():
-    assert set(travel.FORMS) | {"watch_alerts"} == TRAVEL_OPS_TOOLS
+    assert set(travel.FORMS) | set(travel.NOT_HERS) == TRAVEL_OPS_TOOLS
     with pytest.raises(Refused, match="router"):
         travel.check("watch_alerts", {})
+    with pytest.raises(Refused, match="maintaining travel-ops"):
+        travel.check("journal_review", {"days": 7})
     with pytest.raises(Refused, match="unknown travel-ops tool: book_now"):
         travel.check("book_now", {"card": 1})
 
@@ -154,3 +157,33 @@ def test_codes_are_real_ones_and_the_form_is_sent_as_written():
                          "arguments: missing field depart")):
         with pytest.raises(Refused, match=why):
             travel.check("watch_price", dict(watch, **broken))
+
+
+def test_the_newer_tools_and_bars_take_closed_types_too():
+    """travel-ops' bars for flights and stays, its own-memory tools and the outcome the owner names."""
+    bars = {"search_id": "sj4bt6gc", "arrive_before": "22:00", "workday_depart_after": "18:00", "no_night": True,
+            "not_in_air": ["2030-12-31T23:00/2031-01-01T01:00"], "avoid_transit": ["schengen", "DE", "IST"],
+            "one_ticket": True, "sort": "comfort"}
+    assert travel.check("refine_flights", bars) == bars
+    assert travel.check("refine_stays", {"search_id": "sj4bt6gc", "near": "Eiffel Tower, Paris", "sort": "value",
+                                         "price_basis": ["total_with_taxes"], "room_contains": ["king"]})
+    assert travel.check("search_stays", {"place": "Springfield", "checkin": "2027-03-13", "checkout": "2027-03-15",
+                                         "max_total": 400, "near": "Old Town, Springfield"})
+    assert travel.check("flight_schedule", {"search_id": "sj4bt6gc", "flights": ["lh1234"]})["flights"] == ["LH1234"]
+    assert travel.check("compare_stays", {"search_id": "sj4bt6gc", "stays": ["Harbor View Apartment"]})
+    assert travel.check("compare_stay_searches", {"search_id_a": "sj4bt6gc", "search_id_b": "fwgug2dt"})
+    assert travel.check("resume_search", {"search_id": "sj4bt6gc", "confirm": True})
+    assert travel.check("record_outcome", {"status": "booked", "choice": "TP1234 13 Mar", "paid": 214.5,
+                                           "paid_currency": "eur"})["paid_currency"] == "EUR"
+    refusals = [
+        ("refine_stays", {"search_id": "sj4bt6gc", "near": "у моего офиса"}, "near: a landmark"),
+        ("refine_stays", {"search_id": "sj4bt6gc", "near": "Acme Corp, 12 Main Street"}, "near: a landmark"),
+        ("refine_flights", {"search_id": "sj4bt6gc", "not_in_air": ["New Year"]}, "start/end"),
+        ("refine_flights", {"search_id": "sj4bt6gc", "avoid_transit": ["Moscow"]}, "schengen, a country code"),
+        ("refine_flights", {"search_id": "sj4bt6gc", "sort": "cheapest"}, "one of"),
+        ("record_outcome", {"status": "maybe", "choice": "x"}, "one of: chosen"),
+        ("record_outcome", {"status": "booked", "choice": "x" * 121}, "up to 120"),
+    ]
+    for tool, given, why in refusals:
+        with pytest.raises(Refused, match=why):
+            travel.check(tool, given)

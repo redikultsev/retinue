@@ -14,6 +14,13 @@ branches, commits, `git status`, `git log`, `git diff`, tests, installing packag
 - Nothing about the owner — from the Base, mail, chats, his life, work and trips — goes into the repositories' files:
   code, tests, examples, documentation and commit messages. Examples only invented (`example.com`, `acme`,
   "Jane Doe"). If in doubt, it is not allowed.
+- Stay inside the task. Do not pull into, fast-forward or reset a branch you did not make, and do not touch files the
+  task did not ask about; if the task needs it, say so first. A clone may hold another session's work.
+- A review — or checking your own change before calling it done — goes through the states the code keeps (rows,
+  statuses, flags, timers): for each, every place that writes it, and what happens with two writers at once (two
+  devices, two turns, a retry), a restart between two writes, expiry, and what the owner sees at each step. Each
+  finding: `file:line`, the exact sequence that triggers it, and what goes wrong — checked against the code before
+  you report it; no sequence, no finding. Then one line on what you checked and found sound.
 - Commit your work yourself, on a separate branch. What is uncommitted does not get into the push, and the platform
   does not commit for you.
 - In the summary, name in one line: the repository, the branch, how many commits and what is left uncommitted.

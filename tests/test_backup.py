@@ -131,23 +131,66 @@ def test_a_failed_night_is_on_record_with_the_error_and_the_last_good_one(tmp_pa
     assert status["ok"] is False and "retinue_gone-data" in status["error"], "a missing volume is a failure, not a skip"
 
 
+def test_the_platforms_collections_and_uploaded_files_go_in_with_its_volume(tmp_path):
+    """collections.sqlite is copied whole while the platform writes (the copy has what was committed), and the
+    uploaded files beside it are in the volume restic reads after — never excluded."""
+    srv, _, env = host(tmp_path)
+    platform = tmp_path / "volumes" / "retinue_platform-data" / "_data"
+    (platform / "attachments").mkdir(parents=True)
+    sha = "ab" * 32
+    (platform / "attachments" / sha).write_bytes(b"%PDF-1.7 statement")
+    db = sqlite3.connect(platform / "collections.sqlite")
+    db.execute("CREATE TABLE files (sha256 TEXT PRIMARY KEY, name TEXT, size INTEGER, mime TEXT, created REAL)")
+    db.execute("INSERT INTO files VALUES (?, 'statement.pdf', 18, 'application/pdf', 1)", (sha,))
+    db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    db.execute("INSERT INTO files VALUES (?, 'later.pdf', 1, 'application/pdf', 2)", ("cd" * 32,))  # not committed
+    done = run(env, RETINUE_VOLUMES="retinue_router-data retinue_assistant-data retinue_platform-data")
+    db.rollback()
+    assert done.returncode == 0, done.stderr
+    staged = tmp_path / "backups" / "staging" / "retinue_platform-data" / "collections.sqlite"
+    assert sqlite3.connect(staged).execute("SELECT sha256 FROM files").fetchall() == [(sha,)]
+    (call,) = [json.loads(line) for line in (tmp_path / "restic.log").read_text().splitlines()]
+    assert str(platform) in call, "the volume, the uploaded files with it"
+    excluded = (tmp_path / "restic.log.exclude").read_text().splitlines()
+    assert f"{platform}/collections.sqlite" in excluded, "the raw file stays out: its copy is in staging"
+    assert not any("attachments" in line for line in excluded)
+
+
 MAC = ROOT / "deploy" / "backup" / "mac.sh"
 FAKE_MAC_RESTIC = """#!/bin/bash
 echo "$*" >> "$FAKE_LOG"
 if [[ $1 == restore ]]; then
   target=${@: -1}
   mkdir -p "$target/var/backups/retinue" && cp -R "$FAKE_RESTORE" "$target/var/backups/retinue/staging"
+  [[ -z ${FAKE_VOLUMES:-} ]] || { mkdir -p "$target/var/lib/docker" && cp -R "$FAKE_VOLUMES" "$target/var/lib/docker/volumes"; }
 fi
 """
 
 
-def mac(tmp_path, archive_bytes=None):
-    """The owner's Mac: an env file with the deleting key, a fake restic whose `restore` lays out last night's copies."""
+def mac(tmp_path, archive_bytes=None, platform=None):
+    """The owner's Mac: an env file with the deleting key, a fake restic whose `restore` lays out last night's copies.
+    `platform`: the platform's volume too — `{"collections": bool, "rows": [sha…], "blobs": [sha…]}`."""
     snapshot = tmp_path / "snapshot"
     (snapshot / "retinue_router-data").mkdir(parents=True)
     (snapshot / "retinue_assistant-data").mkdir()
     for name in ("retinue_router-data/router.sqlite", "retinue_assistant-data/agent.sqlite"):
         sqlite3.connect(snapshot / name).execute("CREATE TABLE t (x)").connection.close()
+    volumes = {}
+    if platform is not None:
+        (snapshot / "retinue_platform-data").mkdir()
+        sqlite3.connect(snapshot / "retinue_platform-data" / "platform.sqlite").execute("CREATE TABLE t (x)").connection.close()
+        if platform["collections"]:
+            db = sqlite3.connect(snapshot / "retinue_platform-data" / "collections.sqlite")
+            db.execute("CREATE TABLE files (sha256 TEXT PRIMARY KEY)")
+            db.executemany("INSERT INTO files VALUES (?)", [(sha,) for sha in platform["rows"]])
+            db.commit()
+            db.close()
+        blobs = tmp_path / "volumes" / "retinue_platform-data" / "_data" / "attachments"
+        blobs.mkdir(parents=True)
+        for sha in platform["blobs"]:
+            (blobs / sha).write_bytes(b"x")
+        volumes = {"FAKE_VOLUMES": str(tmp_path / "volumes")}
     archive = snapshot / "retinue_router-data" / "archive.sqlite"
     if archive_bytes is None:
         db = sqlite3.connect(archive)
@@ -167,7 +210,7 @@ def mac(tmp_path, archive_bytes=None):
     run = subprocess.run(["bash", str(MAC), "monthly"], capture_output=True, text=True,
                          env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), "TMPDIR": str(tmp_path),
                               "RETINUE_BACKUP_ENV": str(env_file), "RESTIC": str(restic), "PYTHON": sys.executable,
-                              "FAKE_LOG": str(tmp_path / "restic.log"), "FAKE_RESTORE": str(snapshot)})
+                              "FAKE_LOG": str(tmp_path / "restic.log"), "FAKE_RESTORE": str(snapshot), **volumes})
     calls = (tmp_path / "restic.log").read_text().splitlines() if (tmp_path / "restic.log").exists() else []
     steps = [call.split()[2] if call.startswith("-r ") else call.split()[0] for call in calls]  # -r <local repo> <command>
     return run, steps, calls
@@ -196,3 +239,16 @@ def test_a_broken_restore_stops_before_anything_is_deleted(tmp_path):
     assert run.returncode != 0 and steps == ["check", "restore"], "no copy, no prune after a failed restore"
     assert "archive.sqlite" in run.stderr
     assert not list(tmp_path.glob("retinue-restore.*")), "nor a copy of the archive left in the temporary folder"
+
+
+def test_with_the_platform_a_snapshot_without_its_collections_or_their_files_fails_the_restore(tmp_path):
+    sha = "ab" * 32
+    run, steps, _ = mac(tmp_path / "a", platform={"collections": False, "rows": [], "blobs": []})
+    assert run.returncode != 0 and steps == ["check", "restore"] and "collections.sqlite" in run.stderr, \
+        "the platform makes the file at its start: a snapshot without it lost it"
+    run, steps, _ = mac(tmp_path / "b", platform={"collections": True, "rows": [sha], "blobs": []})
+    assert run.returncode != 0 and steps == ["check", "restore"] and "1 uploaded files" in run.stderr, \
+        "a row whose file is not there: the uploads were not all taken"
+    run, steps, _ = mac(tmp_path / "c", platform={"collections": True, "rows": [sha], "blobs": [sha]})
+    assert run.returncode == 0, run.stderr
+    assert "integrity ok: agent.sqlite, archive.sqlite, collections.sqlite, platform.sqlite, router.sqlite" in run.stdout

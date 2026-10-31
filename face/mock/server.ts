@@ -5,7 +5,7 @@
 // Mock-only endpoints (not in the contract), for trying the edges by hand:
 //   POST /api/_mock/approval {session?}  a new shown approval card arrives (an `approval` event)
 //   POST /api/_mock/prune                old events are pruned and streams cut: clients get 410 and resync
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as fx from "./fixtures.ts";
 import { mockSpaces } from "./spaces.ts";
@@ -102,6 +102,23 @@ const proposals = new Map<string, Proposal>(fx.proposals.map((p) => [p.id, { ...
 const summaries = new Map<string, Summary>(fx.summaries.map((s) => [`${s.session}/${s.seq}`, s]));
 let noteSeq = 100;
 const MOCK_PAGES = "https://pages.in.example.test";
+// «Uploads» (retinue/collections.py): invented files, kept by their SHA-256 in memory; the bytes are dropped for the
+// seeded ones, so a download of those is a few made-up bytes.
+const UPLOAD_MAX = 40 * 1024 * 1024;
+interface Uploaded { sha256: string; name: string; size: number; mime: string; created: number; bytes?: Buffer }
+const uploads = new Map<string, Uploaded>(
+  [
+    { name: "bank-a-statement-2026-09.pdf", size: 184_320, mime: "application/pdf", created: now() - 3 * 86400 },
+    { name: "bank-b-statement-2026-08.pdf", size: 96_811, mime: "application/pdf", created: now() - 3 * 86400 + 40 },
+    { name: "acme-card-export.csv", size: 12_044, mime: "text/csv", created: now() - 86400 },
+    { name: "IMG_0412.HEIC", size: 2_411_903, mime: "image/heic", created: now() - 3600 },
+    { name: "Screenshot 2026-10-30 at 12.04.11 — a very long name that wraps on a phone.png", size: 731_220, mime: "image/png", created: now() - 120 },
+  ].map((f) => {
+    const sha256 = createHash("sha256").update(f.name).digest("hex");
+    return [sha256, { ...f, sha256 }];
+  }),
+);
+const uploadRow = ({ bytes: _bytes, ...row }: Uploaded) => row;
 const library = new Map(
   [
     { id: "regex-course", title: "Regex in an evening", section: "education", section_title: "Study", section_icon: "🎓", minutes: 95, updated: "2026-10-27" },
@@ -366,6 +383,42 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     else if (typeof b.done === "boolean") page.done = b.done ? now() : null;
     else return json(res, 400, { error: "done: true or false." });
     return json(res, 200, { page });
+  }
+
+  // «Uploads»: the bytes read whole (the real limit is nginx's and the platform's), a new file told to every stream.
+  if (path === "/api/c/_files" && method === "GET")
+    return json(res, 200, { schema: 1, max: UPLOAD_MAX, files: [...uploads.values()].map(uploadRow).sort((a, b) => b.created - a.created) });
+  if (path === "/api/c/_files" && method === "POST") {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of req) {
+      total += (chunk as Buffer).length;
+      if (total > UPLOAD_MAX) return json(res, 413, { error: "The file is too large: 40 MB at most." });
+      chunks.push(chunk as Buffer);
+    }
+    const bytes = Buffer.concat(chunks);
+    if (!bytes.length) return json(res, 400, { error: "The file is empty." });
+    await new Promise((done) => setTimeout(done, 400)); // a slow link, so the progress shows
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const known = uploads.get(sha256);
+    if (known) return json(res, 200, { file: uploadRow(known), new: false });
+    let name = "file";
+    try {
+      name = decodeURIComponent(String(req.headers["x-name"] ?? "")).split(/[/\\]/).pop()?.trim() || "file";
+    } catch {
+      // a name that is not percent-encoded UTF-8: «file»
+    }
+    const row: Uploaded = { sha256, name, size: bytes.length, mime: String(req.headers["content-type"] ?? "application/octet-stream"), created: now(), bytes };
+    uploads.set(sha256, row);
+    emit("upload", sha256, uploadRow(row));
+    return json(res, 200, { file: uploadRow(row), new: true });
+  }
+  const uploaded = /^\/api\/c\/_files\/([0-9a-f]{64})$/.exec(path);
+  if (uploaded && method === "GET") {
+    const file = uploads.get(uploaded[1] ?? "");
+    if (!file) return json(res, 404, { error: "No such file." });
+    res.writeHead(200, { "Content-Type": file.mime, "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" });
+    return res.end(file.bytes ?? Buffer.from(`made-up bytes of ${file.name}\n`));
   }
 
   if (path === "/api/sessions" && method === "GET") return json(res, 200, { schema: 1, cursor: lastId, sessions: [...sessions.values()] });

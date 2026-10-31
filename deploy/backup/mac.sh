@@ -34,8 +34,11 @@ restore() {
 import sqlite3, sys, time
 from pathlib import Path
 
-found = {p.name: p for p in Path(sys.argv[1]).rglob("*.sqlite") if "staging" in p.parts}
-missing = {"router.sqlite", "archive.sqlite", "agent.sqlite"} - set(found)
+root = Path(sys.argv[1])
+found = {p.name: p for p in root.rglob("*.sqlite") if "staging" in p.parts}
+# With the platform on, its collections too: the platform makes the file at its start, uploads or not.
+wanted = {"router.sqlite", "archive.sqlite", "agent.sqlite"} | ({"collections.sqlite"} if "platform.sqlite" in found else set())
+missing = wanted - set(found)
 if missing:
     sys.exit(f"restore: not in the snapshot: {', '.join(sorted(missing))}")
 for name, path in sorted(found.items()):
@@ -45,7 +48,13 @@ for name, path in sorted(found.items()):
         result = str(exc)
     if result != "ok":
         sys.exit(f"restore: {name}: {result}")
-last = sqlite3.connect(f"{found['archive.sqlite'].as_uri()}?mode=ro", uri=True).execute(
+if "collections.sqlite" in found:  # every uploaded file its row names, in the volume beside it (by its SHA-256)
+    db = sqlite3.connect(f"{found['collections.sqlite'].as_uri()}?mode=ro", uri=True)
+    rows = [sha for (sha,) in db.execute("SELECT sha256 FROM files")]
+    kept = {p.name for p in root.rglob("attachments/*") if "staging" not in p.parts}
+    if lost := [sha for sha in rows if sha not in kept]:
+        sys.exit(f"restore: {len(lost)} uploaded files not in the snapshot, e.g. {lost[0][:12]}")
+last =sqlite3.connect(f"{found['archive.sqlite'].as_uri()}?mode=ro", uri=True).execute(
     "SELECT max(ts) FROM events").fetchone()[0]
 if not last or time.time() - last > 2 * 86400:
     sys.exit("restore: archive.sqlite has no events from the last two days")

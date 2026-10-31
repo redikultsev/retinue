@@ -10,7 +10,10 @@ What goes in, every night at 03:30 in your zone (`OWNER_TZ`, UTC unless you gave
 - every `*.sqlite` of the `router-data` and `assistant-data` volumes (and `travel-data` with travel on,
   `platform-data` with the platform on), copied with SQLite's backup API (a plain copy taken during a write is
   torn) and checked with `quick_check`;
-- the rest of those volumes (the assistant's session transcripts) and `/srv/retinue` (configs).
+- the rest of those volumes (the assistant's session transcripts; with the platform on, the files you uploaded,
+  `attachments/` beside `collections.sqlite`) and `/srv/retinue` (configs). The platform writes an uploaded file
+  before its row and restic reads the volume after the databases were copied, so every row in the copy names a file
+  that is in the snapshot ([collections.md](collections.md)).
 
 What is not backed up: the lanes' volumes. The room's `/work` holds your repositories' clones and any session
 files outside the Base; a commit a session made there that you have not pushed exists only on the server.
@@ -115,7 +118,8 @@ It stops at the first failure, so nothing is deleted after a bad check or restor
 
 1. `restic check --read-data` — every byte read back;
 2. `restic restore latest` into a temporary folder; every database must pass `integrity_check` and the archive
-   must have events from the last two days; the folder is removed;
+   must have events from the last two days; with the platform on (`platform.sqlite` is in it), `collections.sqlite`
+   must be there too and every file its rows name must be in the snapshot; the folder is removed;
 3. `restic copy` into the local repository (created on first use with the same chunker parameters and your
    password);
 4. `restic forget --keep-within-daily 7d --keep-within-weekly 1m --keep-within-monthly 6m --prune` — time-based,

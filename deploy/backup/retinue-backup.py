@@ -4,7 +4,9 @@
 1. Every *.sqlite in the stack's volumes is copied with SQLite's backup API into a staging folder and checked:
    the databases use a rollback journal, and a plain file copy taken during a write is torn.
 2. `restic backup` of the copies, the volumes and the install folder. The raw databases (their copies are in
-   staging), the Claude login and the secret env files stay out.
+   staging), the Claude login and the secret env files stay out. The files the owner uploaded are in the platform's
+   volume (`attachments/`, by SHA-256) and go with it, read after collections.sqlite was copied: the platform
+   writes a file before its row, so every row the copy has names a file restic finds.
 3. <root>/status/backup.json — what the router's morning summary reports. Written on failure as well.
 
 Paths come from the environment (backup.env through systemd), so the same script runs in the tests.

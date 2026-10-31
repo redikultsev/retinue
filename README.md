@@ -159,6 +159,7 @@ which needs a WireGuard VPN.
 | [courier.md](docs/courier.md) | your chosen Telegram chats and replies to people, sent only by your button |
 | [proactive.md](docs/proactive.md) | the time zone, deadlines, a tracker with a weekly goal, the heartbeat |
 | [pages.md](docs/pages.md) | your HTML pages for your devices, keeping what you do in them; public sites of the ones you share |
+| [collections.md](docs/collections.md) | the platform's own tables beside the Base: the files you upload, any type, kept as they came |
 | [backup.md](docs/backup.md) | the nightly restic backup and the monthly check from your own computer |
 | [health.md](docs/health.md) | the containers checked every two minutes, told to you when one goes bad |
 

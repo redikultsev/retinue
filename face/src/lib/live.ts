@@ -10,6 +10,7 @@ import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
 import { type Action, initialState, reduce, type State, waitsOnOwner } from "./store";
 import { type Approval, EVENT_KINDS, type Meta, SCHEMA, type StreamEvent } from "./types";
+import type { Upload } from "./uploads";
 
 export const HIDDEN_RECONNECT_MS = 45_000;
 const RETRY_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
@@ -41,6 +42,7 @@ export class Live {
   private state: State = initialState;
   private listeners = new Set<() => void>();
   private cardListeners = new Set<(approval: Approval) => void>();
+  private uploadListeners = new Set<(file: Upload) => void>();
   private source: EventSource | null = null;
   private watched = new Set<string>();
   private hiddenAt: number | null = null;
@@ -175,6 +177,12 @@ export class Live {
     for (const kind of EVENT_KINDS) {
       source.addEventListener(kind, (e) => this.onEvent(kind, e as MessageEvent<string>));
     }
+    // A file uploaded from any device (lib/uploads.ts): not the sessions' state, so not the store's — told to whoever
+    // has «Uploads» open.
+    source.addEventListener("upload", (e) => {
+      const file = JSON.parse((e as MessageEvent<string>).data) as Upload;
+      for (const l of this.uploadListeners) l(file);
+    });
     source.addEventListener("delta", (e) => {
       const data = JSON.parse((e as MessageEvent<string>).data) as { session: string; text: string };
       this.dispatch({ type: "delta", session: data.session, text: data.text });
@@ -210,6 +218,12 @@ export class Live {
     if (event.kind === "session" && event.data.waiting > 0 && !this.watched.has(event.data.id)) {
       this.watch(event.data.id).catch(() => undefined);
     }
+  }
+
+  /** Told of each file uploaded while the app is open, from this device or another. */
+  onUpload(listener: (file: Upload) => void): () => void {
+    this.uploadListeners.add(listener);
+    return () => this.uploadListeners.delete(listener);
   }
 
   isWatched(id: string): boolean {

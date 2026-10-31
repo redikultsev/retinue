@@ -38,6 +38,11 @@ export function onUnauthorized(listener: Listener): () => void {
   return () => unauthorized.delete(listener);
 }
 
+/** Tells them: a call was refused for want of a login — `request`'s own, or an upload's (lib/uploads.ts). */
+export function loggedOut(): void {
+  for (const l of unauthorized) l();
+}
+
 const MESSAGES: Record<number, string> = {
   401: "Please log in again.",
   403: "Request refused.",
@@ -76,7 +81,7 @@ async function call<T>(path: string, init: RequestInit): Promise<T> {
   } catch {
     throw new ApiError(0, init.signal?.aborted ? "Cancelled." : "No connection to the server.");
   }
-  if (res.status === 401 && !path.startsWith("/api/auth/")) for (const l of unauthorized) l();
+  if (res.status === 401 && !path.startsWith("/api/auth/")) loggedOut();
   if (!res.ok) {
     let message = MESSAGES[res.status] ?? `Error ${res.status}.`;
     try {

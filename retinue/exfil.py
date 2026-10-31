@@ -46,6 +46,10 @@ SITE_BUDGET = 6000
 # Joined text (separators out): base64-like when its letters are this share upper case or more — base64 is about a
 # half, Title_Case and CamelCase words about a sixth.
 UPPER_SHARE = 0.25
+# ...and when, inside its pieces (between separators), a lower-case letter is followed by an upper-case one this often
+# per letter or more. base64 does so about every sixth letter; words do it once in a CamelCase name (`ChatGPT`,
+# `eSIM`, `WhatsApp`) and never between words, so a search of Title Case names and acronyms stays well under.
+SWITCH_SHARE = 0.06
 # Parameters that are another site's own structured state, not anyone's data: exempt from the count, the length and
 # the encoded-run checks on that site only (the host is checked strictly: `google.evil.example` is not Google).
 _CCTLD = r"(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})"
@@ -105,8 +109,15 @@ def blob(text: str) -> int:
 def joined(text: str) -> int:
     """The longest base64-like run in `text` read with its escapes undone twice and every ASCII separator taken out:
     data split across segments and params by `/ . - _ ~ , ! : ; = &` joins up again. Case-unmixed text is exempt —
-    a slug of words joined is a long lower-case run — and so is text whose letters are mostly lower case."""
-    plain = _PUNCT.sub("", unquote(unquote(text, errors="replace"), errors="replace"))
+    a slug of words joined is a long lower-case run — and so is text whose letters are mostly lower case, or whose
+    pieces rarely switch from lower to upper case inside a word (`SWITCH_SHARE`): words in Title Case."""
+    text = unquote(unquote(text, errors="replace"), errors="replace")
+    pieces = _PUNCT.split(text)
+    letters = sum(c.isalpha() for c in text)
+    switches = sum(a.islower() and b.isupper() for piece in pieces for a, b in zip(piece, piece[1:]))
+    if not letters or switches / letters < SWITCH_SHARE:
+        return 0
+    plain = "".join(pieces)
     found = 0
     for run in _JOINED.findall(plain):
         letters = [c for c in run if c.isalpha()]

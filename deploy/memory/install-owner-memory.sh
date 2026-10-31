@@ -5,7 +5,7 @@
 # MEMORY.md among them, no link, sizes bounded, nothing that looks like a credential) and swapped in whole.
 # lane-private mounts /srv/retinue/owner-memory read-only; a session's next run sees the new snapshot, no restart.
 #
-#   sudo bash deploy/memory/install-owner-memory.sh ~/retinue-owner-memory    # from the Mac: rsync of the folder
+#   sudo bash deploy/memory/install-owner-memory.sh ~/retinue-owner-memory    # from the Mac: a tar of the folder
 #   sudo bash deploy/memory/install-owner-memory.sh --empty                   # no memory
 #
 # The source is a folder of the user who ran sudo, so it is read as that user (tar under `sudo -u $SUDO_USER`), never

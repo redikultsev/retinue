@@ -198,11 +198,12 @@ the server those are not there, and the index's heading says so once for all.
 
 ### Refreshing it
 
-From the Mac, whenever your memory has changed (only `*.md` goes; a link is skipped by `rsync -r`):
+From the Mac, whenever your memory has changed (only `*.md` goes, as a tar over ssh: the server has no rsync; a link
+goes as a link, and the script skips it):
 
 ```bash
-rsync -r --delete --include='*.md' --exclude='*' \
-  ~/.claude/projects/-Users-you-projects-kb/memory/ server:retinue-owner-memory/
+cd ~/.claude/projects/-Users-you-projects-kb/memory && COPYFILE_DISABLE=1 tar --no-xattrs -cf - *.md \
+  | ssh server 'rm -rf ~/retinue-owner-memory && mkdir -p ~/retinue-owner-memory && tar -C ~/retinue-owner-memory -xf -'
 ssh -t server 'sudo bash /opt/retinue/deploy/memory/install-owner-memory.sh ~/retinue-owner-memory'
 ```
 

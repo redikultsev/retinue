@@ -1,5 +1,5 @@
-# A lane: the lane host (`retinue-lane`) and the pinned Claude Code CLI it runs, nothing else. One image per lane
-# (ARG LANE, LANE_UID), built from the repository root (compose: context `..`).
+# A lane: the lane host (`retinue-lane`), the pinned Claude Code CLI it runs and the tools its sessions build with.
+# One image per lane (ARG LANE, LANE_UID), built from the repository root (compose: context `..`).
 FROM python:3.12-slim-trixie
 COPY --from=ghcr.io/astral-sh/uv:0.6.12 /uv /bin/uv
 
@@ -13,6 +13,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap soca
 # image with an older git fails to build instead of every clone failing at run time.
 RUN printf '[safe]\n\tdirectory = /lane/mirrors/*\n' > /etc/gitconfig && chmod 0644 /etc/gitconfig \
  && git version | awk '{split($3, v, "."); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 46))}'
+# Node and pnpm: what the owner's own front ends build and test with (face: node >=24, packageManager pnpm@11.24.0).
+# Without them a code session checking a front end installs its own into a temporary folder first.
+COPY --from=node:24.22.1-trixie-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:24.22.1-trixie-slim /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && npm install -g --no-fund --no-audit pnpm@11.24.0 && npm cache clean --force \
+ && node --version && pnpm --version
 COPY deploy/lanes/fetch-cli.sh deploy/lanes/cli.lock /tmp/cli/
 # The CLI the lane host checks at start-up (cliengine.CLI_VERSION); its npm integrity is checked before unpacking.
 RUN bash /tmp/cli/fetch-cli.sh /opt/claude && rm -rf /tmp/cli

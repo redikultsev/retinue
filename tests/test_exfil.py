@@ -164,6 +164,21 @@ def test_an_address_that_carries_data_cards_with_the_reason(url):
     assert why.startswith("Looks like data leaving: ") and why.endswith("Read the whole address"), url
 
 
+@pytest.mark.parametrize("query", [
+    "China travel eSIM Hong Kong IP ChatGPT Claude Gemini blocked Singapore exit IP which eSIM",
+    "Airalo Holafly Nomad China eSIM Google WhatsApp Telegram without VPN Reddit 2026",
+    "Claude Code GitHub Actions TypeScript monorepo pnpm cache not working YouTube OpenAI API",
+])
+def test_a_search_of_names_and_acronyms_is_not_a_joined_block(query):
+    """A real search that carded: Title Case names and acronyms, joined, are a long run with many capitals."""
+    assert exfil.why("WebSearch", {"query": query}) == ""
+
+
+def test_data_cut_into_words_still_cards():
+    words = " ".join(encoded(NOTE[:60])[i:i + 6] for i in range(0, 80, 6))
+    assert "encoded block" in exfil.why("WebSearch", {"query": words})
+
+
 def test_a_long_or_encoded_search_cards():
     assert "the query is " in exfil.why("WebSearch", {"query": NOTE + " " + NOTE})
     assert "encoded block" in exfil.why("WebSearch", {"query": "find " + encoded(NOTE[:60])})

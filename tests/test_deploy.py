@@ -1431,7 +1431,7 @@ def test_face_nginx_serves_every_app_route_and_a_records_path_however_deep_the_r
         found = next((r for r in regexes if re.search(r, uri)), None)
         return "app" if found and "today" in found else "dot" if found == r"/\." else str(found)
 
-    for uri in ("/", "/login", "/today", "/sessions", "/new", "/read", "/spaces", "/spaces/travel",
+    for uri in ("/", "/login", "/today", "/sessions", "/new", "/read", "/uploads", "/spaces", "/spaces/travel",
                 "/spaces/travel/r/a.md", "/spaces/travel/r/knowledge/ensk-transit.md",
                 "/spaces/work/r/profile/acme/2026-10-01-x.v2.md", "/s/a1b2c3d4", "/a/5f3a9c21", "/f/f1",
                 "/b/b1", "/p/p1"):
@@ -1469,7 +1469,7 @@ def test_face_nginx_serves_the_app_and_streams_the_events():
     assert '~^/assets/      "public, max-age=31536000, immutable";' in cache
     assert '~^/api/         "";' in cache and 'default         "no-cache";' in cache, \
         "index.html, sw.js and the manifest revalidate; the API keeps its own no-store"
-    assert "location ~ ^/(|login|today|sessions|new|pages|read|week|spaces|spaces/[^/]+|spaces/[^/]+/r/.+|s/[^/]+|a/[^/]+|f/[^/]+|b/[^/]+|p/[^/]+)$ { try_files /index.html =404; }" in server, \
+    assert "location ~ ^/(|login|today|sessions|new|pages|read|week|uploads|spaces|spaces/[^/]+|spaces/[^/]+/r/.+|s/[^/]+|a/[^/]+|f/[^/]+|b/[^/]+|p/[^/]+)$ { try_files /index.html =404; }" in server, \
         "the app's routes only"
     assert "location / { try_files $uri =404; }" in server and "location ~ /\\. { return 404; }" in server
     for passed in ("Cookie $http_cookie", "Origin $http_origin", "X-Retinue $http_x_retinue", 'X-Face-Key ""',
@@ -1486,6 +1486,14 @@ def test_face_nginx_serves_the_app_and_streams_the_events():
     size = int(re.search(r"client_max_body_size (\d+)m;", inputs)[1]) * 1024 ** 2
     assert inbox.BODY_MAX <= size and "proxy_request_buffering off;" in inputs
     assert "proxy_pass http://172.16.96.10:9600;" in inputs
+    # An upload: the platform's 40 MB fits, streamed in; a file back is streamed out — neither spooled to /tmp.
+    from retinue import collections
+    uploads = server.split("location = /api/c/_files {")[1].split("}")[0]
+    size = int(re.search(r"client_max_body_size (\d+)m;", uploads)[1]) * 1024 ** 2
+    assert collections.FILE_MAX < size and "proxy_request_buffering off;" in uploads
+    assert "proxy_pass http://172.16.96.10:9600;" in uploads
+    download = server.split('location ~ "^/api/c/_files/[0-9a-f]{64}$" {')[1].split("}")[0]
+    assert "proxy_buffering off;" in download and "proxy_pass http://172.16.96.10:9600;" in download
     health = nginx.split("server {")[2]
     assert "listen 127.0.0.1:8081;" in health and "location = /healthz { return 204; }" in health
 

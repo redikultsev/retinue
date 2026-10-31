@@ -40,12 +40,13 @@ from collections import deque
 from pathlib import PurePosixPath
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qsl, quote
+from urllib.parse import parse_qsl, quote, unquote
 
 from aiohttp import web
 
 from . import changes, feed, inbox, signals, spaces, tobase, topush
 from .cliengine import UUID4
+from .collections import FILE_MAX, Full, Refused
 from .sessions import PlatformStore
 from .speech import Scribe, SpeechError
 from .spoken import VERBATIM_MARK
@@ -327,7 +328,10 @@ class Face:
             # …and its sheet: what the row is about and where it is, asked of the router (`feed.Details`).
             web.post("/api/waiting/detail", self.waiting_detail),
             # The owner's voice (`speech.py`): a recording in, its text out.
-            web.post("/api/speech", self.speech)])
+            web.post("/api/speech", self.speech),
+            # «Uploads» (`collections.py`): any file the owner sends up, kept as it came.
+            web.post("/api/c/_files", self.upload), web.get("/api/c/_files", self.uploads),
+            web.get("/api/c/_files/{sha}", self.uploaded)])
         app.on_startup.append(self._sweep)
         return app
 
@@ -849,6 +853,51 @@ class Face:
         finally:
             self.hearing = False
 
+    # --- «Uploads» ---------------------------------------------------------------------------------------------------
+
+    async def upload(self, request: web.Request) -> web.Response:
+        """One file, the body its bytes as they are, `Content-Type` its type and `X-Name` its name (percent-encoded
+        UTF-8): `{file, new}`. Any type up to 40 MB, never parsed; the same bytes again are the same file (`new:
+        false`, the first name kept). A new one goes to every open app as an `upload` event."""
+        if (request.content_length or 0) > FILE_MAX:
+            return _error(413, f"The file is too large: {FILE_MAX // 2**20} MB at most.")
+        data = await _read_at_most(request, FILE_MAX)
+        if data is None:
+            return _error(413, f"The file is too large: {FILE_MAX // 2**20} MB at most.")
+        if not data:
+            return _error(400, "The file is empty.")
+        name = unquote(request.headers.get("X-Name", ""), errors="replace")
+        try:
+            row, new = await self.platform.collections.put_file(data, name, request.content_type, self.clock())
+        except Refused as exc:
+            return _error(503, str(exc))
+        except Full as exc:
+            return _error(507, str(exc))
+        if new:
+            self.store.upload_event(row)
+        return web.json_response({"file": row, "new": new})
+
+    async def uploads(self, request: web.Request) -> web.Response:
+        """«Uploads»: the files, the newest first, and the size a file may be."""
+        try:
+            files = await self.platform.collections.files()
+        except Refused as exc:
+            return _error(503, str(exc))
+        return web.json_response({"schema": SCHEMA, "files": files, "max": FILE_MAX})
+
+    async def uploaded(self, request: web.Request) -> web.StreamResponse:
+        """One uploaded file's bytes, as a download: its type as the device gave it, never sniffed, under the sandbox
+        policy — opened by itself, it is a document of no origin."""
+        try:
+            found = await self.platform.collections.file(request.match_info["sha"])
+        except Refused as exc:
+            return _error(503, str(exc))
+        if found is None or not found[1].is_file():
+            return _error(404, "No such file.")
+        row, path = found
+        return web.FileResponse(path, headers={"Content-Type": row["mime"], "Content-Security-Policy": FILE_CSP,
+                                               "Content-Disposition": _attachment(row["name"])})
+
     # --- «To the Base» -----------------------------------------------------------------------------------------------
 
     async def base_open(self, request: web.Request) -> web.Response:
@@ -966,15 +1015,15 @@ def _gone(request: web.Request) -> bool:
     return request.transport is None or request.transport.is_closing()
 
 
-async def _read_at_most(request: web.Request, limit: int) -> bytes | None:
-    """The body, or None when it is longer than `limit` — read by pieces, so a body without a length stops there."""
-    parts, size = [], 0
+async def _read_at_most(request: web.Request, limit: int) -> bytearray | None:
+    """The body, or None when it is longer than `limit` — read by pieces, so a body without a length stops there, and
+    into one buffer, so a 40 MB upload is held once, not as its pieces and their join."""
+    body = bytearray()
     while chunk := await request.content.read(SPEECH_CHUNK):
-        size += len(chunk)
-        if size > limit:
+        if len(body) + len(chunk) > limit:
             return None
-        parts.append(chunk)
-    return b"".join(parts)
+        body += chunk
+    return body
 
 
 def _attachment(name: str) -> str:

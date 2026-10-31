@@ -31,11 +31,16 @@ restore() {
   "$RESTIC" restore latest "${SNAPSHOTS[@]}" --target "$RESTORED"
   # The restore counts when every database opens whole and the archive has last night's events.
   "$PYTHON" - "$RESTORED" <<'PY'
-import sqlite3, sys, time
+import os, sqlite3, sys, time
 from pathlib import Path
 
-found = {p.name: p for p in Path(sys.argv[1]).rglob("*.sqlite") if "staging" in p.parts}
-missing = {"router.sqlite", "archive.sqlite", "agent.sqlite"} - set(found)
+root = Path(sys.argv[1])
+found = {p.name: p for p in root.rglob("*.sqlite") if "staging" in p.parts}
+# With the platform on (RETINUE_PLATFORM=1 in backup.env, or its database in the snapshot), its collections too:
+# the platform makes the file at its start, uploads or not.
+platform = os.environ.get("RETINUE_PLATFORM") == "1" or "platform.sqlite" in found
+wanted = {"router.sqlite", "archive.sqlite", "agent.sqlite"} | ({"platform.sqlite", "collections.sqlite"} if platform else set())
+missing = wanted - set(found)
 if missing:
     sys.exit(f"restore: not in the snapshot: {', '.join(sorted(missing))}")
 for name, path in sorted(found.items()):
@@ -45,6 +50,15 @@ for name, path in sorted(found.items()):
         result = str(exc)
     if result != "ok":
         sys.exit(f"restore: {name}: {result}")
+if "collections.sqlite" in found:  # every uploaded file its row names, whole, in its own volume (by its SHA-256)
+    staged = found["collections.sqlite"]
+    db = sqlite3.connect(f"{staged.as_uri()}?mode=ro", uri=True)
+    rows = db.execute("SELECT sha256, size FROM files").fetchall()
+    volume = staged.parent.name
+    kept = {p.name: p.stat().st_size for p in root.rglob("attachments/*")
+            if "staging" not in p.parts and volume in p.parts and p.is_file()}
+    if lost := [sha for sha, size in rows if kept.get(sha) != size]:
+        sys.exit(f"restore: {len(lost)} uploaded files not in the snapshot or not whole, e.g. {lost[0][:12]}")
 last = sqlite3.connect(f"{found['archive.sqlite'].as_uri()}?mode=ro", uri=True).execute(
     "SELECT max(ts) FROM events").fetchone()[0]
 if not last or time.time() - last > 2 * 86400:

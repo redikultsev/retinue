@@ -191,7 +191,7 @@ class PlatformStore:
             CREATE INDEX IF NOT EXISTS buttons_approval ON buttons (approval);
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT,                          -- session | item | items_reset | approval | summary | file
+                kind TEXT,                          -- session | item | items_reset | approval | summary | file | upload…
                 session TEXT,
                 key TEXT,                           -- the object the event replaces whole
                 data TEXT,
@@ -848,6 +848,12 @@ class PlatformStore:
                         (kind, session, key, _json(data), self.clock()))
         if self.listener is not None:
             self.listener()
+
+    def upload_event(self, row: dict) -> None:
+        """A file the owner uploaded (`collections.py`), for every open app: its row, never its bytes. Written by the
+        loop after the collections' thread kept the file — that thread never touches this connection."""
+        self._event("upload", "", row["sha256"], row)
+        self.db.commit()
 
     def _session_event(self, session: str) -> None:
         if (row := self.face_session(session)) is not None:

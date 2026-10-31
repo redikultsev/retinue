@@ -69,6 +69,8 @@ describe("Live", () => {
     const { live, deps } = setup();
     await live.start();
     await live.watch("s1");
+    const resynced = vi.fn();
+    live.onResync(resynced);
     (deps.probe as ReturnType<typeof vi.fn>).mockResolvedValue(410);
     (deps.api.sessions as ReturnType<typeof vi.fn>).mockResolvedValue({ schema: 1, cursor: 900, sessions: [session("s1", { state: "idle" })] });
     const first = FakeSource.all[0]!;
@@ -80,6 +82,7 @@ describe("Live", () => {
     expect(deps.api.session).toHaveBeenCalledTimes(2); // the watched session again
     // the session snapshot (cursor 10) is older than the new list (cursor 900): the list's row stays
     expect(live.getState().sessions.s1?.state).toBe("idle");
+    expect(resynced).toHaveBeenCalledTimes(1); // a list kept beside the state («Uploads») reads itself again
   });
 
   it("on 401 hands over to the login screen", async () => {

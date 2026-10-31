@@ -10,9 +10,10 @@ import dataclasses
 import hashlib
 import hmac
 import json
+import sqlite3
 import time
 import uuid
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import pytest
 from aiohttp import DummyCookieJar
@@ -44,6 +45,7 @@ class FaceWorld(World):
     async def down(self) -> None:
         self.face.close()
         await self.api.close()
+        await self.platform.collections.close()
         await super().down()
 
     async def call(self, method: str, path: str, body: dict | None = None, *, headers: dict | None = None,
@@ -976,3 +978,118 @@ def test_the_apps_new_task_runs_on_the_track_in_the_root_of_the_base():
     assert face.general_track(cfg) is None, "a repository's track would refuse every «＋»: none, and the app says so"
     cfg.tracks = []
     assert face.general_track(cfg) is None
+
+
+# --- «Uploads» ------------------------------------------------------------------------------------------------------
+
+def test_an_upload_is_any_file_kept_once_by_its_sha256_listed_and_given_back_as_a_download(tmp_path):
+    async def body(world: FaceWorld):
+        data = b"%PDF-1.7 a statement of account A"
+        sha = hashlib.sha256(data).hexdigest()
+
+        async def upload(content: bytes, name: str, kind: str = "application/pdf", headers: dict | None = None,
+                         cookie: bool = True):
+            given = {**POST, "Content-Type": kind, "X-Name": name, **(headers or {})}
+            if cookie:
+                given["Cookie"] = f"{COOKIE}={world.cookie}"
+            response = await world.api.post("/api/c/_files", data=content, headers=given)
+            return response.status, await response.json()
+
+        assert (await upload(data, "a.pdf", cookie=False))[0] == 401, "the owner's alone"
+        await world.login()
+        assert (await upload(data, "a.pdf", headers={"X-Retinue": ""}))[0] == 403, "only from the app's page"
+        assert (await upload(data, "a.pdf", headers={"Origin": "https://evil.example"}))[0] == 403
+        before = world.store.cursor()
+        status, answer = await upload(data, quote("Statement A — March.pdf"))
+        assert status == 200 and answer == {"new": True, "file": {
+            "sha256": sha, "name": "Statement A — March.pdf", "size": len(data), "mime": "application/pdf",
+            "created": world.clock.now}}
+        assert (tmp_path / "attachments" / sha).read_bytes() == data, "on the platform's volume, by its SHA-256"
+        [(kind, event)] = [(k, json.loads(d)) for _, k, d in world.store.events_after(before)]
+        assert kind == "upload" and event == answer["file"], "every open app sees it"
+
+        world.clock.now += 60
+        status, again = await upload(data, "copy.pdf")
+        assert status == 200 and again == {"new": False, "file": answer["file"]}, "the same bytes are the same file"
+        assert world.store.events_after(world.store.cursor()) == [] and world.store.cursor() == before + 1
+        status, xlsx = await upload(b"PK\x03\x04 a workbook", "export.xlsx",
+                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        assert status == 200 and xlsx["new"], "any type: nothing is refused for what it is"
+        status, plain = await upload(b"\x00\x01", "", "")
+        assert status == 200 and plain["file"]["name"] == "file" and plain["file"]["mime"] == "application/octet-stream"
+
+        listing = await world.get("/api/c/_files")
+        assert listing["max"] == 40 * 2**20
+        assert [f["name"] for f in listing["files"]] == ["file", "export.xlsx", "Statement A — March.pdf"]
+
+        response = await world.api.get(f"/api/c/_files/{sha}", headers={"Cookie": f"{COOKIE}={world.cookie}"})
+        assert response.status == 200 and await response.read() == data
+        assert response.headers["Content-Type"] == "application/pdf"
+        assert response.headers["Content-Disposition"].startswith("attachment; ")
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["Content-Security-Policy"] == face.FILE_CSP
+        assert (await world.api.get(f"/api/c/_files/{sha}")).status == 401
+        assert (await world.call("GET", f"/api/c/_files/{'f' * 64}"))[0] == 404
+        assert (await world.call("GET", "/api/c/_files/..%2Fplatform.sqlite"))[0] == 404
+
+    faced(tmp_path, body)
+
+
+def test_an_upload_over_40_mb_or_empty_is_refused_and_nothing_is_kept(tmp_path, monkeypatch):
+    monkeypatch.setattr(face, "FILE_MAX", 1024)
+
+    async def body(world: FaceWorld):
+        await world.login()
+        headers = {**POST, "Cookie": f"{COOKIE}={world.cookie}", "Content-Type": "application/zip", "X-Name": "a.zip"}
+        response = await world.api.post("/api/c/_files", data=b"x" * 1025, headers=headers)
+        assert response.status == 413 and "too large" in (await response.json())["error"]
+
+        async def chunks():  # no length given: read up to the limit, and no further
+            for _ in range(5):
+                yield b"x" * 300
+
+        response = await world.api.post("/api/c/_files", data=chunks(), headers=headers)
+        assert response.status == 413
+        response = await world.api.post("/api/c/_files", data=b"", headers=headers)
+        assert response.status == 400
+        assert (await world.get("/api/c/_files"))["files"] == []
+        assert not [p for p in (tmp_path / "attachments").iterdir()], "no blob of a refused file"
+
+    faced(tmp_path, body)
+
+
+def test_an_upload_while_the_store_is_locked_is_refused_with_a_retry(tmp_path, monkeypatch):
+    from retinue import collections
+
+    monkeypatch.setattr(collections, "BUSY_S", 0.1)
+
+    async def body(world: FaceWorld):
+        await world.login()
+        await world.platform.collections.open()
+        other = sqlite3.connect(tmp_path / "collections.sqlite", isolation_level=None)
+        other.execute("BEGIN EXCLUSIVE")
+        headers = {**POST, "Cookie": f"{COOKIE}={world.cookie}", "Content-Type": "text/plain", "X-Name": "a.txt"}
+        response = await world.api.post("/api/c/_files", data=b"hello", headers=headers)
+        assert response.status == 503 and "try again" in (await response.json())["error"]
+        assert (await world.call("GET", "/api/c/_files"))[0] == 503
+        other.execute("ROLLBACK")
+        response = await world.api.post("/api/c/_files", data=b"hello", headers=headers)
+        assert response.status == 200
+
+    faced(tmp_path, body)
+
+
+def test_an_upload_that_would_fill_the_disk_is_refused_and_nothing_is_kept(tmp_path, monkeypatch):
+    from retinue import collections
+
+    monkeypatch.setattr(collections, "FREE_MIN", 2**62)  # more than any disk has free
+
+    async def body(world: FaceWorld):
+        await world.login()
+        headers = {**POST, "Cookie": f"{COOKIE}={world.cookie}", "Content-Type": "text/plain", "X-Name": "a.txt"}
+        response = await world.api.post("/api/c/_files", data=b"hello", headers=headers)
+        assert response.status == 507 and "nearly full" in (await response.json())["error"]
+        assert (await world.get("/api/c/_files"))["files"] == []
+        assert not [p for p in (tmp_path / "attachments").iterdir()], "no blob, no .part"
+
+    faced(tmp_path, body)

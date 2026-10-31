@@ -35,6 +35,7 @@ from .base import BaseRepo, under
 from . import library as library_mod
 from . import code as code_mod
 from .code import CodeRepos
+from .collections import Collections
 from .spheres import Spheres
 from .config import PlatformConfig
 from .gate import Gate, retire
@@ -102,6 +103,8 @@ class Platform:
         self.feed = feed.Feed(store, cfg)  # «Waiting for you»: the face's home and `/wait`, with the assistant's digest
         self.details = feed.Details()  # a row's sheet of hers, relayed from the router to the app and never kept
         self.library = library_mod.Library(store, cfg)  # «Read»: the hub's pages, as the router pushes them
+        # The owner's collections beside the platform's own file (`collections.py`); opened by `start`.
+        self.collections = Collections(_beside(cfg.state_db, "collections.sqlite"))
         self._looking = asyncio.Lock()
         pings.prepare(store)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
@@ -1268,6 +1271,7 @@ class Platform:
     def start(self) -> None:
         self.retire_cards()
         self.tasks = [asyncio.create_task(self._poller(lane)) for lane in self.lanes]
+        self.tasks.append(asyncio.create_task(self.collections.open()))  # there for the night's backup from now on
         self.tasks.append(asyncio.create_task(self._clock()))
         self.tasks.append(asyncio.create_task(self.tobase.recover()))  # a «To the Base» card a restart cut
         if self.base is not None:
@@ -1328,6 +1332,12 @@ class Platform:
                 log.warning("session %s not stopped: %s", run["session"], answer)
             elif answer.get("status") == "stopping":  # not_running: it ended on its own, its lines say how
                 self.store.interrupt(run["run"], self.clock())
+        await self.collections.close()
+
+
+def _beside(state_db: str, name: str) -> str:
+    """A file of the platform's next to its own database: in the same folder, the platform's volume."""
+    return ":memory:" if state_db == ":memory:" else posixpath.join(posixpath.dirname(state_db), name)
 
 
 def _lane_view(cfg: PlatformConfig) -> str:

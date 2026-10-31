@@ -29,8 +29,8 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, cliengine, courier, face, feed, inbox, outfiles, pings, questions, signals, subs,
-               tobase, topush, transcript)
+from . import (approvals, attachments, cliengine, collections_admin, courier, face, feed, inbox, outfiles, pings, questions,
+               signals, subs, tobase, topush, transcript)
 from .base import BaseRepo, under
 from . import library as library_mod
 from . import code as code_mod
@@ -1405,9 +1405,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="retinue-platform")
     parser.add_argument("--rebuild-projection", action="store_true",
                         help="project every session's transcript again from its raw lines, then exit")
+    collections_admin.add_parser(parser.add_subparsers(dest="command"))
     args = parser.parse_args()
     # Its environment holds the lanes' login: a parse worker for the owner's pictures (`inbox`) must not read it.
     attachments.undumpable()
+    if args.command == "collections":  # the owner's, on the server's terminal: the file, not the running platform
+        raise SystemExit(collections_admin.run(args, _beside(PlatformConfig.load().state_db, "collections.sqlite")))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)

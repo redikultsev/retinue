@@ -505,7 +505,10 @@ def test_a_form_is_checked_strictly(tmp_path):
     async def body():
         for form, reason in [
             ([], "a form is a JSON object"),
-            ({"fields": {"a": {"type": "text"}}, "rights": {}}, 'takes only "fields"'),
+            ({"fields": {"a": {"type": "text"}}, "goals": {}}, 'takes only "fields"'),
+            ({"fields": {"a": {"type": "text"}}, "rights": {}}, "rights are the owner's alone"),
+            ({"fields": {"a": {"type": "text"}}, "writers": {}}, "rights are the owner's alone"),
+            ({"fields": {"a": {"type": "enum", "values": ["x"], "set_by": {}}}}, "rights are the owner's alone"),
             ({"fields": {}}, "at least one field"),
             ({"fields": {"A": {"type": "text"}}}, "a field's name"),
             ({"fields": {"a": {"type": "money"}}}, '"type" is one of text, int, enum, date, bool, ref'),
@@ -524,7 +527,8 @@ def test_a_form_is_checked_strictly(tmp_path):
         with pytest.raises(Rejected, match="not a Space's name"):
             await store.define(OWNER, "leads", "../career", LEADS, 1)
         defined = await store.define(OWNER, "leads", "career", LEADS, 1)
-        assert defined == {"name": "leads", "rev": (await sql(store, "SELECT max(change_id) FROM changes"))[0][0]}
+        assert defined["name"] == "leads" and defined["form_rev"] == 1 and defined["before"] is None
+        assert defined["rev"] == (await sql(store, "SELECT max(change_id) FROM changes"))[0][0]
         assert await store.define(OWNER, "own", "career", {"fields": {"up": {"type": "ref", "to": "own"}}}, 1)
         await store.define(OWNER, "leads", "jobs", LEADS, 2)
         assert await sql(store, "SELECT space, rev FROM schemas WHERE collection = 'leads'") == [("jobs", 2)]
@@ -699,7 +703,7 @@ def test_rights_are_the_owners_alone_and_checked_strictly(tmp_path):
                                                                                  "delete": True}}}, 2)
         with pytest.raises(Rejected, match="a form is the owner's to apply"):
             await store.define(SESSION, "touches", "career", TOUCHES, 2)
-        with pytest.raises(Rejected, match='takes only "fields", "key" and "unique"'):
+        with pytest.raises(Rejected, match="rights are the owner's alone, set from the server's terminal"):
             await store.define(OWNER, "touches", "career", {**TOUCHES, "rights": TOUCH_RIGHTS}, 2)
         for rights, reason in [
             ([], "rights are a JSON object"),
@@ -729,7 +733,7 @@ def test_rights_are_the_owners_alone_and_checked_strictly(tmp_path):
         assert json.loads(change[3]) == {"rights": {"writers": {"assistant": {"add": False, "set": ["state"],
                                                                               "delete": False}}, "set_by": {}}}
         assert json.loads(change[2])["rights"]["set_by"] == TOUCH_RIGHTS["set_by"]
-        with pytest.raises(Rejected, match="rights do not fit this form"):
+        with pytest.raises(Rejected, match="would be gone: a form only grows"):  # so the rights always fit it
             await store.define(OWNER, "touches", "career", {"fields": {"note": {"type": "text"}}}, 5)
         await store.close()
 

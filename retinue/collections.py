@@ -167,6 +167,14 @@ OPS_MAX = 200               # operations in one apply
 ENUM_MAX = 200              # values of one enum
 INT_MAX = 2**53 - 1         # what a JSON number keeps exactly
 HISTORY = 50                # the newest changes `history` returns
+IMPORT_MAX = 100_000        # lines of one import
+IMPORT_CHUNK = 500          # lines of an import in one transaction: between them the platform's own writes get in
+FAILURES_SHOWN = 20         # records a form's trial run names, of those that do not fit it
+RIGHTS_KEYS = {"rights", "writers", "set_by", "sensitive", "ats_senders"}  # rights' own words, never in a form
+RIGHTS_ELSEWHERE = ("rights are the owner's alone, set from the server's terminal with `retinue-platform collections "
+                    "rights <collection> <file>` — never with a form")
+GROWS = ("a form only grows for now: removing or renaming a field, changing its type or `to`, and taking a value out "
+         "of an enum wait for their first real case (⏸)")
 RECORD_COLUMNS = "id, data, version, created, updated, deleted"
 CHANGE_COLUMNS = ('change_id, ts, as_of, batch, collection, id, op, before, after, actor, model, via, src, "foreign", '
                   "reverts, idem")
@@ -179,6 +187,14 @@ class Refused(Exception):
 
 class Full(Exception):
     """The file would leave less than `FREE_MIN` on the volume: nothing was written."""
+
+
+class _Undo(Exception):
+    """A trial run's answer, raised out of its transaction so that nothing of it is kept."""
+
+    def __init__(self, answer: dict) -> None:
+        super().__init__()
+        self.answer = answer
 
 
 class Rejected(Exception):
@@ -255,7 +271,13 @@ class Ulids:
     by these ids, and an id that went back would be skipped."""
 
     def __init__(self, last: str | None = None) -> None:
-        self.last = sum(CROCKFORD.index(c) << 5 * (25 - n) for n, c in enumerate(last)) if last else 0
+        self.last = 0
+        self.see(last)
+
+    def see(self, last: str | None) -> None:
+        """An id made elsewhere — by another process writing the same file — that the next must be above."""
+        if last:
+            self.last = max(self.last, sum(CROCKFORD.index(c) << 5 * (25 - n) for n, c in enumerate(last)))
 
     def next(self, now: float) -> str:
         value = (int(now * 1000) << 80) | secrets.randbits(80)
@@ -272,6 +294,8 @@ def parse_form(form: Any) -> dict:
         raise Rejected("a form is a JSON object: {\"fields\": {...}}")
     if len(_json(form).encode()) > FORM_MAX:
         raise Rejected(f"a form is at most {FORM_MAX // 1024} KB")
+    if set(form) & RIGHTS_KEYS:
+        raise Rejected(RIGHTS_ELSEWHERE)
     if unknown := set(form) - {"fields", "key", "unique"}:
         raise Rejected(f"a form takes only \"fields\", \"key\" and \"unique\", not "
                        f"{', '.join(sorted(map(repr, unknown)))}")
@@ -285,6 +309,8 @@ def parse_form(form: Any) -> dict:
         if not isinstance(spec, dict) or spec.get("type") not in TYPES:
             raise Rejected(f"field {name!r}: \"type\" is one of {', '.join(TYPES)}")
         extra = TYPES[spec["type"]]
+        if set(spec) & RIGHTS_KEYS:
+            raise Rejected(RIGHTS_ELSEWHERE)
         if unknown := set(spec) - {"type", "required", "index", *extra}:
             raise Rejected(f"field {name!r}: a {spec['type']} takes no {', '.join(sorted(map(repr, unknown)))}")
         for flag in ("required", "index"):
@@ -367,6 +393,20 @@ def parse_rights(rights: Any, form: dict) -> dict:
     return kept
 
 
+def _grows(old: dict, new: dict) -> None:
+    """Rejected unless `new` is `old` grown: every field still there, of the same type (a ref to the same
+    collection), every value of an enum still one. What else changes — a field added, a value added, `required`,
+    `index`, `key`, `unique` — the trial run over the records settles."""
+    for name, spec in old["fields"].items():
+        now = new["fields"].get(name)
+        if now is None:
+            raise Rejected(f"field {name!r} would be gone: {GROWS}")
+        if now["type"] != spec["type"] or now.get("to") != spec.get("to"):
+            raise Rejected(f"field {name!r} would become another type: {GROWS}")
+        if lost := [v for v in spec.get("values", ()) if v not in now["values"]]:
+            raise Rejected(f"field {name!r} would lose {', '.join(map(repr, lost))}: {GROWS}")
+
+
 def _path(field: str) -> str:
     """A field's value in a record, as SQL: the one place a name goes into a statement, so an index and the query
     meant to use it say it the same — and only a name the form declared, which is letters, digits and _."""
@@ -418,6 +458,7 @@ class Collections:
         self._db: sqlite3.Connection | None = None
         self.thread: int | None = None  # the writer's thread, once it has opened the file
         self._ulids = Ulids()
+        self._seen = 0  # the file's data_version this connection last looked at (`_fresh`)
         self._closed = False
 
     # --- the thread -------------------------------------------------------------------------------------------------
@@ -443,9 +484,8 @@ class Collections:
         # isolation_level=None: no implicit BEGIN, so `BEGIN IMMEDIATE` is ours (`_write`).
         db = sqlite3.connect(self.path, isolation_level=None, timeout=BUSY_S)
         db.executescript(SCHEMA)
-        last = db.execute("SELECT max(id) FROM (SELECT max(change_id) AS id FROM changes "
-                          "UNION ALL SELECT max(id) FROM batches)").fetchone()[0]
-        self._ulids = Ulids(last)
+        self._ulids = Ulids(_newest(db))
+        self._seen = db.execute("PRAGMA data_version").fetchone()[0]
         self.blobs.mkdir(parents=True, exist_ok=True)
         for part in self.blobs.glob(".*.part"):  # a blob a crash cut while it was written: never named by a row
             part.unlink(missing_ok=True)
@@ -458,12 +498,23 @@ class Collections:
         db = self._db
         db.execute("BEGIN IMMEDIATE")
         try:
+            self._fresh(db)
             yield db
             db.execute("COMMIT")
         except BaseException:
             if db.in_transaction:
                 db.execute("ROLLBACK")
             raise
+
+    def _fresh(self, db: sqlite3.Connection) -> None:
+        """What another connection committed since this one last wrote — the server's terminal commands write the
+        file from a process of their own — taken in, under the lock that keeps anything else from committing now: the
+        ids go on from the file's newest, so none of ours sorts before one of theirs. Forms and rights need nothing:
+        every call reads them from the file."""
+        seen = db.execute("PRAGMA data_version").fetchone()[0]
+        if seen != self._seen:
+            self._seen = seen
+            self._ulids.see(_newest(db))
 
     def _close(self) -> None:
         if self._db is not None:
@@ -550,13 +601,19 @@ class Collections:
 
     # --- records ----------------------------------------------------------------------------------------------------
 
-    async def define(self, writer: Writer, collection: str, space: str, form: Any, now: float) -> dict:
-        """A collection's form, new or in place of the one it had, as a `define` change: `{name, rev}`. A new
-        collection gets the default rights (DEFAULT_RIGHTS); a form is the owner's to apply. Raises Rejected,
-        Refused."""
-        return await self._run(self._define, writer, collection, space, form, now)
+    async def define(self, writer: Writer, collection: str, space: str, form: Any, now: float,
+                     dry: bool = False) -> dict:
+        """A collection's form, new or grown from the one it had (`_grows`), as a `define` change, after a trial run
+        over its records: `{name, rev, form_rev, before, after, space, unchanged, records, failures, failed}` — `rev`
+        its newest change_id, `form_rev` the form's revision it becomes, `before` the form it had (None for a new
+        collection), `records` how many it checked and `failures` the first FAILURES_SHOWN that do not fit (`{id,
+        reason}`), of `failed`. `dry` keeps nothing: what the server's terminal shows before it asks. A new
+        collection gets the default rights (DEFAULT_RIGHTS). The writer is the owner, or `define:<rev>` naming the
+        revision the form becomes — so a form changed since its trial run is not applied over. Raises Rejected
+        (records that do not fit included), Refused."""
+        return await self._run(self._define, writer, collection, space, form, now, dry)
 
-    def _define(self, writer: Writer, collection: str, space: str, form: Any, now: float) -> dict:
+    def _define(self, writer: Writer, collection: str, space: str, form: Any, now: float, dry: bool) -> dict:
         _check_writer(writer)
         if writer_class(writer.actor) not in ("owner", "define"):
             raise Rejected("a form is the owner's to apply, from the server's terminal")
@@ -566,25 +623,62 @@ class Collections:
         if not isinstance(space, str) or not SPACE.fullmatch(space):
             raise Rejected(f"not a Space's name: {space!r}")
         form = parse_form(form)
-        with self._write() as db:
-            for name, spec in form["fields"].items():
-                if spec["type"] == "ref" and spec["to"] != collection and self._form(spec["to"]) is None:
-                    raise Rejected(f"field {name!r}: there is no collection {spec['to']!r}")
-            old = db.execute("SELECT form, rev, rights FROM schemas WHERE collection = ?", (collection,)).fetchone()
-            if old is not None:
+        try:
+            with self._write() as db:
+                for name, spec in form["fields"].items():
+                    if spec["type"] == "ref" and spec["to"] != collection and self._form(spec["to"]) is None:
+                        raise Rejected(f"field {name!r}: there is no collection {spec['to']!r}")
+                old = db.execute("SELECT form, rev, space FROM schemas WHERE collection = ?",
+                                 (collection,)).fetchone()
+                before = json.loads(old[0]) if old else None
+                if before is not None:
+                    _grows(before, form)
+                rev = old[1] + 1 if old else 1
+                if writer_class(writer.actor) == "define" and writer.actor != f"define:{rev}":
+                    raise Rejected(f"the form of {collection} is at revision {rev - 1}, not the one this was tried "
+                                   "on: try it again")
+                answer = {"name": collection, "rev": self._rev(collection), "form_rev": rev, "before": before,
+                          "after": form, "space": space, "unchanged": before == form and old[2] == space}
+                if answer["unchanged"]:  # already so: nothing is written, the revision stays
+                    answer.update(form_rev=old[1], records=self._count(collection, None, None), failures=[],
+                                  failed=0)
+                    return answer
+                db.execute("INSERT INTO schemas (collection, space, form, rights, rev, updated) "
+                           "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (collection) DO UPDATE SET space = excluded.space, "
+                           "form = excluded.form, rev = excluded.rev, updated = excluded.updated",
+                           (collection, space, _json(form), _json(DEFAULT_RIGHTS), rev, now))
+                records, failures = self._trial(collection, form)
                 try:
-                    parse_rights(json.loads(old[2]), form)
+                    self._index(collection, form)
                 except Rejected as exc:
-                    raise Rejected(f"the collection's rights do not fit this form: {exc.reason}") from None
-            rev = old[1] + 1 if old else 1
-            db.execute("INSERT INTO schemas (collection, space, form, rights, rev, updated) VALUES (?, ?, ?, ?, ?, ?) "
-                       "ON CONFLICT (collection) DO UPDATE SET space = excluded.space, form = excluded.form, "
-                       "rev = excluded.rev, updated = excluded.updated",
-                       (collection, space, _json(form), _json(DEFAULT_RIGHTS), rev, now))
-            self._index(collection, form)
-            self._change(writer, now, collection, None, "define", {"form": json.loads(old[0])} if old else None,
-                         {"form": form})
-            return {"name": collection, "rev": self._rev(collection)}
+                    failures.append({"id": None, "reason": exc.reason})
+                answer.update(records=records, failures=failures[:FAILURES_SHOWN], failed=len(failures))
+                if dry:
+                    raise _Undo(answer)
+                if failures:
+                    shown = "; ".join(f"{f['id']}: {f['reason']}" if f["id"] else f["reason"] for f in failures[:3])
+                    raise Rejected(f"{len(failures)} of {records} records do not fit the form: {shown}")
+                self._change(writer, now, collection, None, "define",
+                             {"form": before, **({"space": old[2]} if old[2] != space else {})} if old else None,
+                             {"form": form, **({"space": space} if old and old[2] != space else {})})
+                answer["rev"] = self._rev(collection)
+                return answer
+        except _Undo as undo:
+            return undo.answer
+
+    def _trial(self, collection: str, form: dict) -> tuple[int, list[dict]]:
+        """The collection's records, not deleted, tried against a form: how many, and those that do not fit it —
+        all that a form's growing can break is a field now required that a record does not have. A unique the
+        records break `_index` finds."""
+        required = [name for name, spec in form["fields"].items() if spec.get("required")]
+        records, failures = 0, []
+        for rid, data in self._db.execute(f"SELECT id, data FROM records WHERE {_within(collection)} ORDER BY id"):
+            records += 1
+            data = json.loads(data)
+            if missing := [name for name in required if name not in data]:
+                failures.append({"id": rid, "reason": f"{', '.join(map(repr, missing))} "
+                                                      f"{'is' if len(missing) == 1 else 'are'} required"})
+        return records, failures
 
     def _index(self, collection: str, form: dict) -> None:
         """The collection's indexes made what its form asks: those it no longer asks for dropped, the new ones made
@@ -604,12 +698,13 @@ class Collections:
                 raise Rejected(f"records of {collection} share a {names}: make them distinct before it is "
                                "unique") from None
 
-    async def rights(self, writer: Writer, collection: str, rights: Any, now: float) -> dict:
-        """A collection's rights (`parse_rights`) in place of the ones it had, as a `define` change: `{name, rev}`.
-        The owner's alone — no agent's path reaches here (docs/collections.md#rights). Raises Rejected, Refused."""
-        return await self._run(self._rights, writer, collection, rights, now)
+    async def rights(self, writer: Writer, collection: str, rights: Any, now: float, dry: bool = False) -> dict:
+        """A collection's rights (`parse_rights`) in place of the ones it had, as a `define` change: `{name, rev,
+        before, after, unchanged}`; `dry` keeps nothing. The owner's alone — no agent's path reaches here
+        (docs/collections.md#rights). Raises Rejected, Refused."""
+        return await self._run(self._rights, writer, collection, rights, now, dry)
 
-    def _rights(self, writer: Writer, collection: str, rights: Any, now: float) -> dict:
+    def _rights(self, writer: Writer, collection: str, rights: Any, now: float, dry: bool) -> dict:
         _check_writer(writer)
         if writer.actor != "owner":
             raise Rejected("rights are the owner's alone, set from the server's terminal")
@@ -618,11 +713,12 @@ class Collections:
             if row is None:
                 raise Rejected(f"there is no collection {collection!r}")
             old, new = json.loads(row[1]), parse_rights(rights, json.loads(row[0]))
-            if new != old:
+            if new != old and not dry:
                 db.execute("UPDATE schemas SET rights = ?, updated = ? WHERE collection = ?",
                            (_json(new), now, collection))
                 self._change(writer, now, collection, None, "define", {"rights": old}, {"rights": new})
-            return {"name": collection, "rev": self._rev(collection)}
+            return {"name": collection, "rev": self._rev(collection), "before": old, "after": new,
+                    "unchanged": new == old}
 
     async def start_batch(self, kind: str, writer: Writer, now: float) -> str:
         """A batch, `applying`, for changes that go together (an import, a form's application): its id, to pass to
@@ -631,8 +727,8 @@ class Collections:
 
     def _start_batch(self, kind: str, writer: Writer, now: float) -> str:
         _check_writer(writer)
-        batch = self._ulids.next(now)
         with self._write() as db:
+            batch = self._ulids.next(now)
             try:
                 db.execute("INSERT INTO batches (id, kind, state, actor, created, updated) VALUES (?, ?, ?, ?, ?, ?)",
                            (batch, kind, "applying", writer.actor, now, now))
@@ -806,9 +902,11 @@ class Collections:
             raise Rejected(f"possible duplicate of {row[0]}: the same {', '.join(key)}. Change that record instead, "
                            "or give \"distinct\": true if this one is another", self._record(collection, row[0]))
 
-    def _revert(self, stamp: dict, schema: tuple[dict, dict], op: dict) -> tuple[dict, str | None]:
+    def _revert(self, stamp: dict, schema: tuple[dict, dict], op: dict,
+                aside: Callable[[dict], bool] | None = None) -> tuple[dict, str | None]:
         """A change taken back, as a change of its own: what it changed set back to what it was — unless something
-        has changed it since, which is Rejected with who did. Taking back an add deletes the record."""
+        has changed it since, which is Rejected with who did; `aside` names the later changes that do not count (a
+        batch's own, as a batch is taken back). Taking back an add deletes the record."""
         form, rights = schema
         cid = op.get("change_id")
         row = self._db.execute(f"SELECT seq, {CHANGE_COLUMNS} FROM changes WHERE change_id = ?",
@@ -832,7 +930,7 @@ class Collections:
         later = [_change(r) for r in self._db.execute(
             f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection = ? AND id = ? AND seq > ? ORDER BY seq",
             (stamp["collection"], target["id"], seq))]
-        for change in later:
+        for change in (c for c in later if aside is None or not aside(c)):
             if touched is None or touched & set(change["after"] or {}):
                 what = ", ".join(sorted("deleted" if k == DELETED else k
                                         for k in change["after"] if touched is None or k in touched))
@@ -985,6 +1083,208 @@ class Collections:
         """A record's changes, the newest first. Raises Refused."""
         return await self._run(self._history, collection, rid, limit)
 
+    # --- the server's terminal -----------------------------------------------------------------------------------
+
+    async def import_ops(self, collection: str, ops: Any, now: float, dry: bool = False) -> dict:
+        """Operations, one for each line of a file the owner brought (`add` with its `as_of` and `src`, mostly), as
+        one batch an `import:<batch>` writer makes: `{batch, name, rev, lines, added, changed, same}`. Kept by
+        IMPORT_CHUNK lines a transaction, so the platform's own writes get in between; a line refused takes back the
+        lines before it with the batch (`revert_batch`), so the file is kept whole or not at all. `dry` tries every
+        line in one transaction and keeps nothing: what the terminal shows before it asks. Raises Rejected (naming the
+        line), Refused."""
+        if not isinstance(ops, list) or not 0 < len(ops) <= IMPORT_MAX:
+            raise Rejected(f"an import is 1 to {IMPORT_MAX} lines")
+        if dry:
+            return await self._run(self._import_dry, collection, ops, now)
+        owner = Writer("owner", "import")
+        batch = await self.start_batch("import", owner, now)
+        counts, adds = {"lines": len(ops), "added": 0, "changed": 0, "same": 0}, {}
+        try:
+            for start in range(0, len(ops), IMPORT_CHUNK):
+                await self._run(self._import_chunk, collection, ops[start:start + IMPORT_CHUNK], start, now, batch,
+                                adds, counts)
+        except (Rejected, Refused) as exc:
+            reason = exc.reason if isinstance(exc, Rejected) else str(exc)
+            try:
+                await self.revert_batch(owner, batch, now)
+            except (Rejected, Refused) as undo:
+                raise Rejected(f"{reason} — and the lines before it are still kept in batch {batch}: take them back "
+                               f"with revert-batch {batch} ({undo})") from exc
+            raise Rejected(f"{reason} — nothing of the file is kept") from exc
+        await self.finish_batch(batch, now)
+        return {"batch": batch, "name": collection, "rev": await self._run(self._rev, collection), **counts}
+
+    def _import_dry(self, collection: str, ops: list, now: float) -> dict:
+        counts = {"lines": len(ops), "added": 0, "changed": 0, "same": 0}
+        try:
+            with self._write() as db:
+                batch = self._ulids.next(now)
+                db.execute("INSERT INTO batches (id, kind, state, actor, created, updated) "
+                           "VALUES (?, 'import', 'applying', 'owner', ?, ?)", (batch, now, now))
+                self._lines(collection, ops, 0, now, batch, {}, counts)
+                raise _Undo({"batch": None, "name": collection, "rev": self._rev(collection), **counts})
+        except _Undo as undo:
+            return undo.answer
+
+    def _import_chunk(self, collection: str, ops: list, start: int, now: float, batch: str, adds: dict,
+                      counts: dict) -> None:
+        with self._write():
+            self._lines(collection, ops, start, now, batch, adds, counts)
+
+    def _lines(self, collection: str, ops: list, start: int, now: float, batch: str, adds: dict,
+               counts: dict) -> None:
+        schema = self._schema(collection)
+        if schema is None:
+            raise Rejected(f"there is no collection {collection!r}")
+        writer = Writer(f"import:{batch}", "import")
+        for n, op in enumerate(ops, start):
+            try:
+                _, change = self._op(writer, collection, schema, op, now, batch, None, adds)
+            except Rejected as exc:
+                raise Rejected(f"line {n + 1}: {exc.reason}", exc.record, exc.change) from None
+            kind = "same" if change is None else "added" if op["op"] == "add" else "changed"
+            counts[kind] += 1
+
+    async def revert_batch(self, writer: Writer, batch: str, now: float, dry: bool = False) -> dict:
+        """A batch taken back, the owner's from the server's terminal: each record it changed set back to what it
+        was before it, as a `revert` batch of its own — unless something outside it has changed the record since,
+        which is left as it is and named in `touched` (`{collection, id, by, op, change_id}`). Answers `{batch,
+        undo, reverted, records, touched, state}`: the revert batch (None when it changed nothing), the changes taken
+        back, the records they were of, and the batch's state — `reverted` once nothing of it is left to take back.
+        Made again after the touched records are dealt with, it takes back what it left. `dry` keeps nothing. Raises
+        Rejected, Refused."""
+        return await self._run(self._revert_batch, writer, batch, now, dry)
+
+    def _revert_batch(self, writer: Writer, batch: str, now: float, dry: bool) -> dict:
+        _check_writer(writer)
+        if writer.actor != "owner":
+            raise Rejected("a batch is taken back by the owner, from the server's terminal")
+        try:
+            with self._write() as db:
+                row = db.execute("SELECT state FROM batches WHERE id = ?",
+                                 (batch,)).fetchone() if isinstance(batch, str) else None
+                if row is None:
+                    raise Rejected(f"no batch {batch!r}")
+                if row[0] == "reverted":
+                    raise Rejected(f"batch {batch} is taken back already")
+                ids, groups = set(), {}
+                for seq, *rest in db.execute(f"SELECT seq, {CHANGE_COLUMNS} FROM changes WHERE batch = ? "
+                                             "ORDER BY seq", (batch,)):
+                    change = _change(tuple(rest))
+                    ids.add(change["change_id"])
+                    groups.setdefault((change["collection"], change["id"]), []).append((seq, change))
+                done = {cid for (cid,) in db.execute(
+                    "SELECT reverts FROM changes WHERE reverts IN (SELECT change_id FROM changes WHERE batch = ?)",
+                    (batch,))}
+                undo = self._ulids.next(now)
+                db.execute("INSERT INTO batches (id, kind, state, actor, created, updated) "
+                           "VALUES (?, 'revert', 'applied', ?, ?, ?)", (undo, writer.actor, now, now))
+
+                def aside(change: dict) -> bool:  # the batch's own changes, and what took them back
+                    return change["batch"] in (batch, undo) or change["reverts"] in ids
+
+                touched, reverted, records = [], 0, 0
+                for (collection, rid), changes in groups.items():
+                    left = [change for _, change in changes if change["change_id"] not in done]
+                    if not left:
+                        continue
+                    outside = next((c for c in map(_change, db.execute(
+                        f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection = ? AND id = ? AND seq > ? "
+                        "ORDER BY seq", (collection, rid, changes[0][0]))) if not aside(c)), None)
+                    if outside is not None:
+                        touched.append({"collection": collection, "id": rid, "by": outside["actor"],
+                                        "op": outside["op"], "change_id": outside["change_id"]})
+                        continue
+                    schema = self._schema(collection)
+                    stamp = {"writer": writer, "now": now, "collection": collection, "as_of": None, "src": None,
+                             "batch": undo, "idem": None}
+                    for change in reversed(left):
+                        version = self._record(collection, rid)["version"]
+                        _, made = self._revert(stamp, schema, {"change_id": change["change_id"], "version": version},
+                                               aside)
+                        reverted += made is not None
+                    records += 1
+                if not reverted:
+                    db.execute("DELETE FROM batches WHERE id = ?", (undo,))
+                state = "reverted" if not touched else row[0]
+                db.execute("UPDATE batches SET state = ?, updated = ? WHERE id = ?", (state, now, batch))
+                answer = {"batch": batch, "undo": undo if reverted else None, "reverted": reverted,
+                          "records": records, "touched": touched, "state": state}
+                if dry:
+                    raise _Undo(answer)
+                return answer
+        except _Undo as undo_:
+            return undo_.answer
+
+    async def export(self, folder: str | Path) -> dict:
+        """Everything, to a folder that is empty or not there yet (docs/collections.md#export): `schemas.json`, each
+        collection's `records.jsonl` and `changes.jsonl` in a folder of its name, `batches.jsonl`, `files.jsonl` and
+        the files themselves in `attachments/`. Read in one transaction, so what it holds is one moment's.
+        Answers how many of each. Raises Rejected, Refused."""
+        return await self._run(self._export, Path(folder))
+
+    def _export(self, folder: Path) -> dict:
+        if folder.exists() and (not folder.is_dir() or any(folder.iterdir())):
+            raise Rejected(f"{folder} is not an empty folder")
+        folder.mkdir(parents=True, exist_ok=True)
+        db, counts = self._db, {"collections": 0, "records": 0, "changes": 0, "files": 0}
+        db.execute("BEGIN")
+        try:
+            schemas = [{"collection": c, "space": sp, "form": json.loads(f), "rights": json.loads(r),
+                        "views": json.loads(v), "rev": rev, "updated": u} for c, sp, f, r, v, rev, u in db.execute(
+                "SELECT collection, space, form, rights, views, rev, updated FROM schemas ORDER BY collection")]
+            (folder / "schemas.json").write_text(json.dumps(schemas, ensure_ascii=False, indent=2) + "\n")
+            for schema in schemas:
+                name = schema["collection"]
+                (folder / name).mkdir()
+                counts["collections"] += 1
+                counts["records"] += _jsonl(folder / name / "records.jsonl", map(_record, db.execute(
+                    f"SELECT {RECORD_COLUMNS} FROM records WHERE collection = ? ORDER BY id", (name,))))
+                counts["changes"] += _jsonl(folder / name / "changes.jsonl", map(_change, db.execute(
+                    f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection = ? ORDER BY seq", (name,))))
+            _jsonl(folder / "batches.jsonl", (dict(zip(("id", "kind", "state", "actor", "created", "updated"), row))
+                                              for row in db.execute("SELECT id, kind, state, actor, created, updated "
+                                                                    "FROM batches ORDER BY id")))
+            files = [_row(row) for row in db.execute(f"SELECT {FILE_COLUMNS} FROM files ORDER BY created, sha256")]
+            _jsonl(folder / "files.jsonl", files)
+        finally:
+            db.execute("COMMIT")
+        (folder / BLOBS).mkdir()
+        for file in files:  # after the transaction: a blob never changes, and the copy should not hold the lock
+            if (self.blobs / file["sha256"]).is_file():
+                shutil.copyfile(self.blobs / file["sha256"], folder / BLOBS / file["sha256"])
+                counts["files"] += 1
+        return counts
+
+    async def catalog(self) -> list[dict]:
+        """Every collection: `{name, space, form_rev, records, deleted, rev}`. Raises Refused."""
+        return await self._run(self._catalog)
+
+    def _catalog(self) -> list[dict]:
+        rows = self._db.execute(
+            "SELECT s.collection, s.space, s.rev, count(r.id) - count(r.deleted), count(r.deleted) FROM schemas s "
+            "LEFT JOIN records r ON r.collection = s.collection GROUP BY s.collection ORDER BY s.collection")
+        return [{"name": name, "space": space, "form_rev": rev, "records": records, "deleted": deleted,
+                 "rev": self._rev(name)} for name, space, rev, records, deleted in rows.fetchall()]
+
+    async def schema(self, collection: str) -> dict | None:
+        """One collection as the terminal shows it: `{name, space, form, rights, views, form_rev, records, deleted,
+        rev, batches}`, `batches` the newest ten that changed it (`{id, kind, state, actor, created, changes}`), or
+        None. Raises Refused."""
+        return await self._run(self._schema_shown, collection)
+
+    def _schema_shown(self, collection: str) -> dict | None:
+        row = self._db.execute("SELECT space, form, rights, views, rev FROM schemas WHERE collection = ?",
+                               (collection,)).fetchone()
+        if row is None:
+            return None
+        (shown,) = [c for c in self._catalog() if c["name"] == collection]
+        batches = self._db.execute(
+            "SELECT b.id, b.kind, b.state, b.actor, b.created, count(*) FROM batches b JOIN changes c ON c.batch = b.id "
+            "WHERE c.collection = ? GROUP BY b.id ORDER BY b.id DESC LIMIT 10", (collection,))
+        return {**shown, "form": json.loads(row[1]), "rights": json.loads(row[2]), "views": json.loads(row[3]),
+                "batches": [dict(zip(("id", "kind", "state", "actor", "created", "changes"), b)) for b in batches]}
+
     # --- reading ----------------------------------------------------------------------------------------------------
 
     async def query(self, collection: str, filter: Any = None, fields: Any = None, limit: int = QUERY_ROWS,
@@ -1109,6 +1409,22 @@ class Collections:
         if not isinstance(value, list) or len(value) != 2 or not all(map(_date, value)) or value[0] > value[1]:
             raise Rejected("between takes [first, last], two dates YYYY-MM-DD, the first not after the last")
         return f"{_path(name)} BETWEEN ? AND ?", list(value)
+
+
+def _newest(db: sqlite3.Connection) -> str | None:
+    """The newest id the file holds, a change's or a batch's: where the next must start above."""
+    return db.execute("SELECT max(id) FROM (SELECT max(change_id) AS id FROM changes "
+                      "UNION ALL SELECT max(id) FROM batches)").fetchone()[0]
+
+
+def _jsonl(path: Path, rows) -> int:
+    """Rows written as JSON lines; how many."""
+    n = 0
+    with open(path, "w", encoding="utf-8") as out:
+        for row in rows:
+            out.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+            n += 1
+    return n
 
 
 def _record(row: tuple) -> dict:

@@ -2,8 +2,9 @@
 
 Records the owner keeps in tables rather than in the Base — what came in, what was paid, who answered — live in one
 SQLite file of the platform's, `collections.sqlite`, beside `platform.sqlite` on the `platform-data` volume
-(`retinue/collections.py`). It holds the files you upload and the records below; nothing writes records yet — the
-app, the agents and the server's commands come next, each through the one `apply`.
+(`retinue/collections.py`). It holds the files you upload and the records below. For now records are written only by
+the commands on the server's terminal ([below](#from-the-servers-terminal)); the app and the agents come next, each
+through the one `apply`.
 
 ## One thread, one connection
 
@@ -13,6 +14,11 @@ the hooks, the gate and the app: a writer that waited there would stall them all
 lock — the night's backup copy holds one while it copies — and then refuses at once: the app answers 503 “The store is
 busy (an import or the night's backup copy) — try again in a moment.” and nothing was written. The file uses a
 rollback journal, like every database the backup copies.
+
+The commands on the server's terminal are the one other writer: they open the file from their own process and take
+its lock the same way. At each write the thread asks SQLite whether another connection has committed since
+(`PRAGMA data_version`) and, if one has, carries its ids on from the file's newest, so none it makes sorts before one
+the command made. Forms and rights need nothing of the kind: every call reads them from the file.
 
 The platform makes the file at its start, uploads or not, so the backup can require it ([backup.md](backup.md)).
 
@@ -67,13 +73,15 @@ letters, digits and `_`, starting with a letter (at most 40), so it never meets 
 | `schemas` | one row per collection: its Space, its `form`, its `rights`, its `views` (empty for now), `rev` (the form's revision) |
 | `records` | each record's current state: `id`, `data` (its fields, one JSON document), `version`, `created`, `updated`, `deleted` |
 | `changes` | every change of a record or a form, append-only: triggers abort any `UPDATE` or `DELETE` |
-| `batches` | changes that go together (an import, a form's application): `kind`, `state` (`applying`, then `applied`) |
+| `batches` | changes that go together (an import, a batch's taking back): `kind`, `state` (`applying`, `applied`, `reverted`) |
 | `idems` | the calls already made under an idem, by the writer's class and the collection, with what they made |
 
 **A form** is `{"fields": {name: {"type": …, "required": true|false, "index": true|false}}, "key": [...],
-"unique": [[...], ...]}`, checked strictly: an unknown key stops it, and a form is at most 64 KB. A form is the
-owner's to apply (from the server's terminal; an agent's way to propose one comes later), and a `define` that
-changes it is kept in `changes` as `{"form": …}` before and after. The types:
+"unique": [[...], ...]}`, checked strictly: an unknown key stops it, and a form is at most 64 KB. Rights' own words
+(`rights`, `writers`, `set_by`, `sensitive`, `ats_senders`), in a form or in one of its fields, are refused with
+“rights are the owner's alone, set from the server's terminal …”. A form is the owner's to apply, from the server's
+terminal (an agent's way to propose one comes later), and a `define` that changes it is kept in `changes` as
+`{"form": …}` before and after (and `{"space": …}` when it moves). The types:
 
 | Type | Value |
 |---|---|
@@ -207,3 +215,84 @@ the form does not have is refused before any SQL is run on the records.
   there are more, is the id to pass as `after`.
 - **`count(collection, filter, group)`** answers how many; with `group` an enum or a bool, how many of each value,
   `[{value, count}]`, the most first, `value` `null` for the records it is unknown in.
+
+## From the server's terminal
+
+`retinue-platform collections …` is how a collection is made, its form grown, its rights set, a file of records
+brought in, a batch taken back and everything taken out. It runs inside the platform's container, on the file itself,
+while the platform runs:
+
+```bash
+docker compose -p retinue exec platform retinue-platform collections list
+```
+
+No route of the platform's reaches these commands, so neither the Router nor an agent can set a form or a right. A
+file a command reads must be inside the container, whose filesystem is read-only but for `/tmp` (16 MB) and its
+volume; an export goes to the volume and comes out with `docker compose cp`:
+
+```bash
+docker compose -p retinue exec -T platform sh -c 'cat > /tmp/leads.json' < leads.json
+docker compose -p retinue exec platform retinue-platform collections define leads /tmp/leads.json
+docker compose -p retinue exec platform retinue-platform collections export /platform/export
+docker compose -p retinue cp platform:/platform/export ./export
+docker compose -p retinue exec platform rm -r /platform/export
+```
+
+Every command that changes something
+tries it first — in a transaction it then rolls back — shows what it would do, and asks `Apply? [y/N]`; anything but
+`y` keeps nothing. It exits 0 when it did what was asked or nothing was needed, 1 when it was refused or not
+confirmed.
+
+| Command | Does |
+|---|---|
+| `list` | every collection: its Space, its form's revision, how many records it holds |
+| `show <collection>` | its form, its rights and the ten newest batches that changed it |
+| `define <collection> <file>` | makes the collection, or grows its form |
+| `rights <collection> <file>` | sets its rights |
+| `import <collection> <file>` | applies a JSONL file of operations, as one batch |
+| `revert-batch <batch>` | takes a batch back |
+| `export <folder>` | writes everything to an empty folder |
+
+**`define`** reads `{"space": "career", "form": {"fields": {…}, "key": […], "unique": […]}}` and nothing else — a
+`rights` beside the form is refused the same way as one in it. It shows the diff of the form, then tries the new one on
+every record (those not deleted) and says “All 47 records fit it.”, or names the first twenty that do not and stops
+without asking. Applied, it is a `define` change by `define:<rev>`, the revision the form becomes — so a form someone
+changed between the trial and the `y` is not applied over (“try it again”). A new collection gets the default rights.
+
+A form only grows, for now:
+
+- **it may** add a field, add a value to an enum, change `required` and `index`, change `key` and `unique`, move to
+  another Space — and what the records would break (a field now required that some lack, a `unique` two of them
+  share) the trial run finds;
+- **it may not** remove or rename a field, change a field's type or a ref's `to`, or take a value out of an enum:
+  “field 'role' would be gone: a form only grows for now … wait for their first real case (⏸)”. A rename is a field
+  gone and another come, so it is refused the same way.
+
+**`rights`** reads `{"writers": {…}, "set_by": {…}}` ([Rights](#rights)), shows the diff against the rights the
+collection has, and on `y` keeps it as a `define` change by `owner`.
+
+**`import`** reads one operation of `apply` per line — `add` with its `fields`, and its `as_of` and `src` when the file
+knows them; `set`, `delete` or `restore` of a record by its id and version — and tries every line in one transaction
+first: “12 lines into leads: 12 to add, 0 to change, 0 already so.”, or the first line refused (“line 3: 'stage' is
+one of …”), before anything is asked.
+
+```jsonl
+{"op": "add", "fields": {"company": "Acme", "role": "Backend", "stage": "applied"}, "as_of": "2026-09-01", "src": "file:<sha256>#row=2"}
+{"op": "add", "fields": {"company": "Example Ltd", "stage": "evaluated"}}
+```
+
+Applied, it is one batch (`kind` `import`), and every change in it is by `import:<batch>`, via `import`. It is kept 500
+lines to a transaction, so the platform's own writes get in between on a long file. A line refused then — the app added
+the same record meanwhile, say — takes back the lines before it with the batch: the file is kept whole or not at all.
+The answer names the batch, and the command that takes it back.
+
+**`revert-batch`** takes each record the batch changed back to what it was before it — a record it added is deleted —
+as a batch of its own (`kind` `revert`, by `owner`), one `revert` change for each change of the batch. A record
+something outside the batch has changed since is left as it is and named (“leads/<id>: set by owner (<change_id>)”),
+for the owner to settle by hand; the batch stays `applied` while any is left, and is `reverted` once nothing of it is.
+Run again, it takes back only what it had left and names what still stands. The whole of it is one transaction.
+
+**`export`** writes, to a folder that is empty or not there yet: `schemas.json` (each collection's Space, form, rights,
+views and revision), `<collection>/records.jsonl` (deleted ones too) and `<collection>/changes.jsonl` (the oldest
+first, without `seq`), `batches.jsonl`, `files.jsonl` and the uploaded files in `attachments/`. The tables are read in
+one transaction, so they are one moment's; the files are copied after it, since a file never changes.

@@ -365,6 +365,13 @@ def test_platform_spheres_are_optional_and_map_to_a_track(tmp_path, monkeypatch)
     assert load_platform(tmp_path, monkeypatch, PLATFORM + SPHERES.replace(", icon: '✈️'", "")).spheres[0].icon == ""
 
 
+def test_the_platform_offers_travel_ops_only_when_the_stack_names_it(tmp_path, monkeypatch):
+    monkeypatch.delenv("RETINUE_TRAVEL_URL", raising=False)
+    assert load_platform(tmp_path, monkeypatch).travel_url == "", "off unless the stack says so"
+    monkeypatch.setenv("RETINUE_TRAVEL_URL", "http://travel-ops:8765/mcp")
+    assert load_platform(tmp_path, monkeypatch).travel_url == "http://travel-ops:8765/mcp"
+
+
 def test_the_example_platform_config_loads_with_its_spheres_in_the_root_of_the_base(tmp_path, monkeypatch):
     example = (Path(__file__).parent.parent / "deploy" / "platform" / "platform.example.yaml").read_text()
     monkeypatch.setenv("RETINUE_LANE_TOKEN_PRIVATE", "lane")

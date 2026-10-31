@@ -265,7 +265,7 @@ class Gate:
             refused = UNCHECKED
         if refused:
             return _decision("deny", refused)  # first: no rule, card or courier ever holds such an input
-        if _call_of(body)[0].startswith(subs.PREFIX) and (_subagent(body) or not run.subs):
+        if subs.own(_call_of(body)[0]) and (_subagent(body) or not run.subs):
             return _decision("deny", subs.NO_DEPTH)  # depth 1: not a subagent's, a side question's or a child's
         if self.closing:
             return _decision("deny" if _subagent(body) else "defer", CLOSING)

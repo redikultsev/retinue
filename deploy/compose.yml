@@ -126,8 +126,9 @@ services:
 
   # travel-ops: live prices from the travel sites, in containers of their own with a way out to the sites. The
   # assistant calls its MCP over HTTP on `travel-assistant` (every call's arguments checked by the engine's guard),
-  # the router collects price alerts on `travel-router`: one bridge per pair, so the owner's traffic between the
-  # router and the assistant never crosses a bridge travel-ops is on. Off until the owner turns it on (setup.sh
+  # the router collects price alerts on `travel-router`, the platform serves its tools to the sessions on
+  # `travel-platform` (the lanes never reach it): one bridge per pair, so the owner's traffic between the router, the
+  # assistant and the platform never crosses a bridge travel-ops is on. Off until the owner turns it on (setup.sh
   # TRAVEL=1): the image is about 5 GB, both browsers inside.
   travel-ops:
     profiles: ["travel"]
@@ -160,7 +161,7 @@ services:
         - /home/travel/.cache/camoufox/fontconfig:size=16m,uid=10001,gid=10001
         - /home/travel/Downloads:size=64m,uid=10001,gid=10001
         - /home/travel/camoufox:size=256m,uid=10001,gid=10001
-    networks: [travel-assistant, travel-router, travel-out]
+    networks: [travel-assistant, travel-router, travel-platform, travel-out]
 
   travel-watch:                   # the owner's price watches, checked one search at a time
     profiles: ["travel"]
@@ -410,6 +411,8 @@ services:
       RETINUE_LANE_TOKEN_CODE: ${RETINUE_LANE_TOKEN_CODE:-}
       RETINUE_LANE_TOKEN_WEB: ${RETINUE_LANE_TOKEN_WEB:-}
       RETINUE_HOOK_SECRET: ${RETINUE_HOOK_SECRET:-}
+      # travel-ops' MCP on `travel-platform` (setup.sh TRAVEL=1); empty = no travel tools in the sessions.
+      RETINUE_TRAVEL_URL: ${RETINUE_TRAVEL_URL:-}
       # The face API (docs/face.md): it listens on the platform's own address on `face-platform` alone — never
       # 0.0.0.0, which the lanes' networks would reach. Off while RETINUE_FACE_ORIGIN is empty (setup.sh FACE=1).
       RETINUE_FACE_HOST: 172.16.96.10
@@ -436,6 +439,7 @@ services:
       face-platform:
         ipv4_address: 172.16.96.10              # = RETINUE_FACE_HOST and deploy/face/nginx.conf's proxy_pass
       platform-out: {}                          # its proxy to GitHub and GitLab alone: the mirrors and the push
+      travel-platform: {}                       # travel-ops' MCP, which it serves to the sessions (lanetravel.py)
     depends_on: [lane-private]                  # the room creates its work volume, owned by its own user
 
   # The face: the platform's app for the owner's phone (docs/face.md). nginx serves the built app and passes /api/* to
@@ -703,6 +707,8 @@ networks:
   travel-assistant:  # assistant <-> travel-ops only. Internal: no route out
     internal: true
   travel-router:     # router <-> travel-ops only (price alerts). Internal: no route out
+    internal: true
+  travel-platform:   # platform <-> travel-ops only: the sessions' travel tools (docs/platform.md). Internal: no route out
     internal: true
   travel-out:   # travel-ops' way to the travel sites; nobody else is on it
   mail-router:  # router <-> collector only. Internal: no route out

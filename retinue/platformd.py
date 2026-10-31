@@ -29,8 +29,8 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, cliengine, courier, face, feed, inbox, outfiles, pings, questions, signals, subs,
-               tobase, topush, transcript)
+from . import (approvals, attachments, cliengine, courier, face, feed, inbox, lanetravel, outfiles, pings, questions,
+               signals, subs, tobase, topush, transcript)
 from .base import BaseRepo, under
 from . import library as library_mod
 from . import code as code_mod
@@ -106,6 +106,8 @@ class Platform:
         pings.prepare(store)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
+        # travel-ops' tools on the same server, for every session (`lanetravel.py`); None: no travel-ops in this stack.
+        self.travel = lanetravel.LaneTravel(cfg.travel_url) if cfg.travel_url else None
         self.feed.subs = self.subs  # the feed's proposals of sub-sessions, under «Decide»
         # The owner's Base cloned into a lane (`base.py`): kept fresh here, committed by his button.
         self.base = base if base is not None or cfg.base is None else BaseRepo(cfg.base, _lane_view(cfg))
@@ -808,8 +810,9 @@ class Platform:
             self.store.db.commit()
         body = {"session": session["id"], "run": run, "cli_session": session["cli_session"] or fork or None,
                 **({"fork": True} if fork else {}),
-                # The sub-sessions' MCP server (`subs`): the lane host builds its address from its own hook address.
-                **({"subs": True} if subs.may_start(session) else {}),
+                # The platform's MCP server — sub-sessions (`subs`), travel-ops (`lanetravel`): the lane host builds its
+                # address from its own hook address.
+                **({"subs": True} if subs.may_start(session) or self.travel is not None else {}),
                 "cwd": self.cwd_of(session, track), "settings": cliengine.settings(lane.hook_url, CLEANUP_DAYS, [m.rule for m in marks]),
                 # A card rule is neither: its call is the gate's to defer, and the owner's grant must be able to run it.
                 "allowed": [m.rule for m in marks if m.kind == "allow"],

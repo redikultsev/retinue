@@ -290,14 +290,17 @@ def test_travel_ops_is_a_neighbour_of_the_assistant_and_the_only_one_with_a_way_
     # router and the assistant (A2A, the bus) never crosses a bridge travel-ops is on.
     assert members["travel-assistant"] == ["assistant", "travel-ops"]
     assert members["travel-router"] == ["router", "travel-ops"]
+    assert members["travel-platform"] == ["platform", "travel-ops"], "the sessions' tools: the platform alone"
     assert members["travel-out"] == ["travel-ops", "travel-watch"]
     assert members["agents"] == ["assistant", "egress", "router"] and "travel" not in COMPOSE["networks"]
-    for net in ("travel-assistant", "travel-router"):
+    for net in ("travel-assistant", "travel-router", "travel-platform"):
         assert COMPOSE["networks"][net] == {"internal": True}, f"{net}: no route out"
     assert "internal" not in (COMPOSE["networks"]["travel-out"] or {}), "travel-ops' way to the sites"
     search, watch = SERVICES["travel-ops"], SERVICES["travel-watch"]
     environment = SERVICES["assistant"]["environment"]
     assert environment["RETINUE_TRAVEL_URL"] == "${RETINUE_TRAVEL_URL:-}" and "travel-ops" in environment["NO_PROXY"]
+    assert SERVICES["platform"]["environment"]["RETINUE_TRAVEL_URL"] == "${RETINUE_TRAVEL_URL:-}", \
+        "the sessions' travel tools: on with travel, off without"
     assert search["build"]["context"] == "${TRAVEL_OPS_GIT:-}", \
         "built from the owner's own checkout at a pinned commit (stack.env), no address of it in the repo"
     assert search["image"] == watch["image"] == "travel-ops:local" and "build" not in watch
@@ -825,7 +828,8 @@ def test_the_platform_and_its_lanes_are_off_until_asked_and_locked_down():
                                                "RETINUE_FACE_ORIGIN",
                                                "RETINUE_HOOK_SECRET", "RETINUE_LANE_TOKEN_CODE",
                                                "RETINUE_LANE_TOKEN_PRIVATE", "RETINUE_LANE_TOKEN_WEB",
-                                               "RETINUE_PLATFORM_TOKEN", "RETINUE_WEBAPP_KEY", "TELEGRAM_OWNER_ID"], \
+                                               "RETINUE_PLATFORM_TOKEN", "RETINUE_TRAVEL_URL", "RETINUE_WEBAPP_KEY",
+                                               "TELEGRAM_OWNER_ID"], \
         "the lanes' login, which it sends with each run; no bot token: the Mini App's key is derived from it, not it"
     assert platform["environment"]["CLAUDE_CODE_OAUTH_TOKEN"] == "${CLAUDE_CODE_OAUTH_TOKEN}"
     holders = sorted(name for name, service in SERVICES.items()
@@ -869,7 +873,8 @@ def test_each_lane_is_on_its_own_internal_network_and_goes_out_through_its_own_p
                for net in COMPOSE["networks"]}
     assert members["platform-router"] == ["platform", "router"]
     assert list(SERVICES["platform"]["networks"]) == ["platform-router", "lane-private", "face-platform",
-                                                      "platform-out"], "no `outside`, and no retired lane's network"
+                                                      "platform-out", "travel-platform"], \
+        "no `outside`, and no retired lane's network; travel-ops' bridge is the platform's alone"
     assert SERVICES["platform"]["depends_on"] == ["lane-private"], "a retired lane is never started for it"
     assert members["platform-out"] == ["platform", "platform-egress"] and COMPOSE["networks"]["platform-out"] == \
         {"internal": True}, "its way to GitHub and GitLab is its own proxy"

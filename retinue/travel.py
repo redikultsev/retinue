@@ -1,7 +1,8 @@
-"""travel-ops: what the assistant may send to the travel sites.
+"""travel-ops: what the assistant and the platform's sessions may send to the travel sites.
 
-The assistant calls travel-ops' MCP server herself and reads its whole answer — reviews, descriptions, photos.
-What goes the other way is checked here, in code, before every call (the engine's PreToolUse hook): the arguments
+The assistant calls travel-ops' MCP server herself and reads its whole answer — reviews, descriptions, photos; the
+sessions call it through the platform's server (`lanetravel`). What goes the other way is checked here, in code,
+before every call (the engine's PreToolUse hook; the platform before it forwards one): the arguments
 of a search are what the sites receive, and the owner's data must not ride out in them. Closed types only — airport
 codes, dates, numbers, choices, a place name in Latin script of a few words — and anything else is refused with the
 reason, which the model reads and acts on.
@@ -331,8 +332,9 @@ def alert(value: Any) -> dict:
 
 
 class TravelOps:
-    """`travelops mcp --http` as the router reaches it: one JSON-RPC `tools/call` per POST, no session, so a
-    restart of either side loses only the call in flight. The router only collects price alerts with it."""
+    """`travelops mcp --http` as the router and the platform reach it: one JSON-RPC message per POST, no session, so a
+    restart of either side loses only the call in flight. The router collects price alerts with it; the platform
+    serves its tools to the sessions (`lanetravel`)."""
 
     def __init__(self, url: str, http: httpx.AsyncClient | None = None) -> None:
         self.url = url
@@ -347,8 +349,15 @@ class TravelOps:
 
     async def result(self, tool: str, arguments: dict, timeout: float = 60.0) -> dict:
         """The whole MCP result of a call: its `content` blocks too — the pictures of `stay_photos`."""
-        body = {"jsonrpc": "2.0", "id": next(self.ids), "method": "tools/call",
-                "params": {"name": tool, "arguments": arguments}}
+        result = await self.ask("tools/call", {"name": tool, "arguments": arguments}, timeout)
+        if result.get("isError"):
+            said = " ".join(c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict))
+            raise Refused(f"travel-ops refused: {words(said, 300) or 'no reason given'}")
+        return result
+
+    async def ask(self, method: str, params: dict, timeout: float = 60.0) -> dict:
+        """One JSON-RPC request's result: a tool's call, or what the server offers (`initialize`, `tools/list`)."""
+        body = {"jsonrpc": "2.0", "id": next(self.ids), "method": method, "params": params}
         headers = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": PROTOCOL}
         try:
             response = await self.http.post(self.url, json=body, headers=headers, timeout=timeout)
@@ -362,9 +371,6 @@ class TravelOps:
             raise Unavailable("travel-ops answered off protocol.") from None
         if not isinstance(result, dict):
             raise Unavailable("travel-ops answered off protocol.")
-        if result.get("isError"):
-            said = " ".join(c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict))
-            raise Refused(f"travel-ops refused: {words(said, 300) or 'no reason given'}")
         return result
 
     async def alerts(self) -> list[dict]:

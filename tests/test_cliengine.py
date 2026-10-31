@@ -149,7 +149,7 @@ def test_the_only_mcp_server_a_run_may_have_is_the_platforms_at_the_lanes_own_ho
     assert full[-3:] == ["--mcp-config", cliengine.mcp_config(hook), "--strict-mcp-config"]
     assert json.loads(full[-2]) == {"mcpServers": {"retinue": {
         "type": "http", "url": "http://platform:9500/hook/mcp",
-        "headers": {"Authorization": "Bearer ${RETINUE_HOOK_RUN}"}}}}
+        "headers": {"Authorization": "Bearer ${RETINUE_HOOK_RUN}"}, "timeout": 840_000}}}
     assert cliengine.check_argv(full, hook) == full
     base = cliengine.argv(SETTINGS, [], [], None)
     other = json.dumps({"mcpServers": {"x": {"type": "stdio", "command": "sh"}}})

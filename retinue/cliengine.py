@@ -58,6 +58,7 @@ STDIO_TOOL = ("--permission-prompt-tool", "stdio")
 FORK_SESSION = "--fork-session"
 MCP_CONFIG, MCP_STRICT = "--mcp-config", "--strict-mcp-config"
 MCP_SERVER = "retinue"  # `subs.SERVER`: the platform's sub-sessions server, the only one a run may have
+MCP_CALL_MS = 840_000   # a tool call's longest wait: a travel search's minutes (`lanetravel.CALL_TIMEOUT`)
 FORBIDDEN = {"bypassPermissions": "the bypassPermissions mode",
              "--dangerously-skip-permissions": "the flag --dangerously-skip-permissions",
              "--allow-dangerously-skip-permissions": "the flag --allow-dangerously-skip-permissions",
@@ -139,10 +140,12 @@ def rule_ok(rule: object) -> bool:
 
 
 def mcp_config(hook_url: str) -> str:
-    """The run's one MCP server: the platform's sub-sessions (`subs`), beside its hooks and under the same run token,
-    which the CLI puts in the header from its environment (probed with 2.1.304)."""
+    """The run's one MCP server: the platform's sub-sessions (`subs`) and travel-ops (`lanetravel`), beside its hooks
+    and under the same run token, which the CLI puts in the header from its environment (probed with 2.1.304). A call
+    may wait `MCP_CALL_MS`: a travel search asks the sites for minutes."""
     return json.dumps({"mcpServers": {MCP_SERVER: {"type": "http", "url": f"{hook_url}/mcp",
-                                                   "headers": {"Authorization": f"Bearer ${{{HOOK_TOKEN}}}"}}}},
+                                                   "headers": {"Authorization": f"Bearer ${{{HOOK_TOKEN}}}"},
+                                                   "timeout": MCP_CALL_MS}}},
                       separators=(",", ":"))
 
 def argv(settings_path: str, allowed: Sequence[str], disallowed: Sequence[str], resume: str | None, *,

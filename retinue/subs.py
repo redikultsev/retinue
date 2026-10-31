@@ -104,6 +104,13 @@ TOOLS = [
                                                "description": "one of the names the platform gave; leave it out if "
                                                               "none fits"}}}},
 ]
+OWN = frozenset(PREFIX + tool["name"] for tool in TOOLS)  # the sub-sessions' own: the depth rule is theirs (`gate`)
+
+
+def own(tool: str) -> bool:
+    """A tool of the sub-sessions' own, not one this server serves for travel-ops (`lanetravel`)."""
+    return tool in OWN
+
 
 NO_DEPTH = ("Only a session the owner started can start sub-sessions: not a sub-session, a side question or a "
             "subagent. Do it yourself or say so in the summary.")
@@ -147,9 +154,10 @@ def args_digest(arguments: object) -> str:
     return hashlib.sha256(json.dumps(arguments, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-async def rpc(body: object, instructions: str, call) -> tuple[int, dict | None]:
+async def rpc(body: object, instructions: str, call, tools: list[dict] = TOOLS) -> tuple[int, dict | None]:
     """One JSON-RPC message of MCP's streamable HTTP transport, answered as plain JSON: (status, body). `call(name,
-    arguments, params)` serves `tools/call`: awaited, (text, is_error). A notification gets 202 and no body."""
+    arguments, params)` serves `tools/call`: awaited, (text or content blocks, is_error). A notification gets 202 and
+    no body."""
     if not isinstance(body, dict) or body.get("jsonrpc") != "2.0" or not isinstance(body.get("method"), str):
         return 400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "invalid request"}}
     if "id" not in body:
@@ -167,13 +175,14 @@ async def rpc(body: object, instructions: str, call) -> tuple[int, dict | None]:
     if method == "ping":
         return result({})
     if method == "tools/list":
-        return result({"tools": TOOLS})
+        return result({"tools": tools})
     if method == "tools/call":
         name, arguments = params.get("name"), params.get("arguments")
         if not isinstance(name, str) or not isinstance(arguments, dict):
             return 200, {"jsonrpc": "2.0", "id": body["id"], "error": {"code": -32602, "message": "invalid params"}}
-        text, error = await call(name, arguments, params)
-        return result({"content": [{"type": "text", "text": text}], "isError": error})
+        said, error = await call(name, arguments, params)
+        content = said if isinstance(said, list) else [{"type": "text", "text": said}]
+        return result({"content": content, "isError": error})
     return 200, {"jsonrpc": "2.0", "id": body["id"], "error": {"code": -32601, "message": "method not found"}}
 
 
@@ -251,15 +260,24 @@ class Subs:
 
     async def mcp(self, run: Run, body: object) -> tuple[int, dict | None]:
         session = self.store.session(run.session) or {}
-        return await rpc(body, self.instructions(session), lambda name, arguments, params:
-                         self.call(run, session, name, arguments, call_id_of(params)))
+        said, tools = (self.instructions(session), TOOLS) if may_start(session) else ("", [])
+        offered = isinstance(body, dict) and body.get("method") in ("initialize", "tools/list")
+        if offered and self.platform.travel is not None:  # travel-ops' tools beside these (`lanetravel`)
+            rules, travelling = await self.platform.travel.offer()
+            said, tools = "\n".join(x for x in (said, rules) if x), tools + travelling
+        return await rpc(body, said, lambda name, arguments, params:
+                         self.call(run, session, name, arguments, call_id_of(params)), tools)
 
-    async def call(self, run: Run, session: dict, name: str, arguments: dict, call_id: str) -> tuple[str, bool]:
-        if not may_start(session):
+    async def call(self, run: Run, session: dict, name: str, arguments: dict,
+                   call_id: str) -> tuple[list[dict] | str, bool]:
+        travelling = self.platform.travel is not None and self.platform.travel.has(name)
+        if not travelling and not may_start(session):
             return NO_DEPTH, True
         seen = self.platform.gate.passed(run.id, call_id, PREFIX + name, arguments) if call_id else None
         if seen is None:
             return UNSEEN, True
+        if travelling:
+            return await self.platform.travel.call(name, arguments)
         if name == START:
             return await self.start(session, call_id, arguments, granted=seen == "granted")
         if name == PROPOSE:

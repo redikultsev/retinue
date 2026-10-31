@@ -105,9 +105,10 @@ sudo nano /srv/retinue/travel/profile.yml   # home_airports, travellers, currenc
 docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml up -d --build
 ```
 
-Two containers run: `travel-ops` (the MCP server, on the internal network `travel` with the assistant and the
-router) and `travel-watch` (the price watches, every 30 minutes). Both reach the travel sites through their own
-network; the assistant does not. She calls travel-ops' tools herself and reads its whole answer; the arguments
+Two containers run: `travel-ops` (the MCP server, on internal networks of two members each: with the assistant,
+with the router, with the platform) and `travel-watch` (the price watches, every 30 minutes). Both reach the travel
+sites through their own network; the assistant and the platform do not. With the platform on, its sessions have
+travel-ops' tools too ([platform](platform.md#travel-prices-in-a-session)). She calls travel-ops' tools herself and reads its whole answer; the arguments
 of each call are checked by the engine before they leave, and every check is a line in the router's protocol.
 Links to the sites in `deploy/travel/link-hosts.txt` are clickable; every other address stays monospace. Sites
 may limit automated requests: use it for your own trips, as travel-ops' README says.

@@ -358,6 +358,25 @@ sets the sphere, never the main mark, and the session's sub-sessions follow — 
 a title it has stays; a sphere set by you (`sphere_by: owner`) or by the session stays. A sub-session has its title
 from its start and its parent's sphere; a side question its question's — neither is asked.
 
+## Travel prices in a session
+
+With travel on (`setup.sh TRAVEL=1`, [install](install.md#6-travel-optional)), every session — yours, a sub-session,
+a subagent's call — has travel-ops' tools: `search_trip`, `search_flights`, `search_stays`, `search_ground`, their
+`refine_*` views, `stay_details`, `stay_photos`, `airports_near`, `watch_price`, `watches`, `stop_watch`, `sources`.
+They come on the platform's own server, beside the sub-sessions' tools (`mcp__retinue__search_flights`): a run may have
+that one server only, and the room never reaches travel-ops — it has no login, and only the platform shares a network
+with it (`travel-platform`, two members). `retinue/lanetravel.py`:
+
+- **Each call is the gate's first**, as every call of that server is, then the assistant's check before it leaves
+  (`travel.exact`): closed types only — airport codes, dates, numbers, a place name in Latin script — and the call
+  goes out exactly as checked; anything else comes back refused with the reason. Only the tools those forms know are
+  offered, so a tool travel-ops adds stays off until it has a form; `watch_alerts` never — the router collects the
+  price alerts, and a session's watch tells you through it, as the assistant's does.
+- **travel-ops' own rules** (its server's instructions) reach the session with the tools; its list is asked once in
+  ten minutes. A search asks the sites for minutes: a call may wait 14 minutes, as the assistant's does.
+- **travel-ops down** costs a run its travel tools, not its turn: the platform asks it for 5 seconds, then the run
+  starts without them and the session is told why; the next try is a minute later.
+
 ## What a session gets from you
 
 A photo, a PDF or any other file sent **in reply** to a session's message (its caption is your text), or attached in

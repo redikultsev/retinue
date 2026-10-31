@@ -1497,7 +1497,7 @@ def test_face_nginx_serves_the_app_and_streams_the_events():
     assert '~^/assets/      "public, max-age=31536000, immutable";' in cache
     assert '~^/api/         "";' in cache and 'default         "no-cache";' in cache, \
         "index.html, sw.js and the manifest revalidate; the API keeps its own no-store"
-    assert "location ~ ^/(|login|today|sessions|new|read|spaces|spaces/[^/]+|spaces/[^/]+/r/.+|s/[^/]+|a/[^/]+|f/[^/]+|b/[^/]+|p/[^/]+)$ { try_files /index.html =404; }" in server, \
+    assert "location ~ ^/(|login|today|sessions|new|read|week|spaces|spaces/[^/]+|spaces/[^/]+/r/.+|s/[^/]+|a/[^/]+|f/[^/]+|b/[^/]+|p/[^/]+)$ { try_files /index.html =404; }" in server, \
         "the app's routes only"
     assert "location / { try_files $uri =404; }" in server and "location ~ /\\. { return 404; }" in server
     for passed in ("Cookie $http_cookie", "Origin $http_origin", "X-Retinue $http_x_retinue", 'X-Face-Key ""',
@@ -1667,3 +1667,15 @@ def test_the_faces_nginx_config_loads_in_its_own_image(tmp_path):
                           "-v", f"{tmp_path}:/etc/nginx/face:ro", image, "nginx", "-t"],
                          capture_output=True, text=True, timeout=300)
     assert run.returncode == 0, run.stderr
+
+
+def test_every_route_of_the_app_is_served_its_page_on_a_reload():
+    """A route the app has (face/src/router.tsx) but nginx does not list is a 404 when the page is reloaded or opened
+    by a link: nginx serves index.html only for the app's routes. Each route, its params filled in, matches the list."""
+    conf = (ROOT / "deploy/face/nginx.conf").read_text()
+    pattern = re.search(r'location ~ (\^/\(.*?\)\$) \{ try_files /index.html', conf).group(1)
+    routes = re.findall(r'path: "(/[^"]*)"', (ROOT / "face/src/router.tsx").read_text())
+    assert "/week" in routes and len(routes) > 10
+    for route in routes:
+        filled = re.sub(r"\$[a-z]+", "abc12345", route).replace("/$", "/home/x.md").rstrip("/") or "/"
+        assert re.fullmatch(pattern, filled), f"{route}: nginx answers 404 on a reload"

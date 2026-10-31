@@ -1,4 +1,4 @@
-// The owner's voice (docs/face.md «Голос»): a recording made by the browser and sent as it is to the platform, which
+// The owner's voice (docs/face.md «Voice»): a recording made by the browser and sent as it is to the platform, which
 // has ElevenLabs Scribe turn it into text (`/api/speech`). Voice is input only: the answers stay text.
 //
 // Two modes. Dictation (the default): the text lands in the field at the cursor, to be edited and sent by hand.
@@ -12,9 +12,9 @@ export type Mode = "dictate" | "en";
 export type VoiceState = "idle" | "starting" | "recording" | "sending";
 
 export const MAX_MS = 10 * 60 * 1000;
-export const UNAVAILABLE = "Микрофон здесь недоступен — надиктуй голосовым боту или открой приложение с экрана «Домой»";
-export const NOT_SET_UP = "Голос не настроен на сервере: нет ключа ElevenLabs или выхода к нему.";
-export const AT_CAP = "Запись остановлена: 10 минут — предел. Расшифровываю.";
+export const UNAVAILABLE = "The microphone is not available here — send the bot a voice message or open the app from the Home Screen";
+export const NOT_SET_UP = "Voice is not set up on the server: no ElevenLabs key or no way to reach it.";
+export const AT_CAP = "Recording stopped: 10 minutes is the limit. Transcribing.";
 /** What the browser may record in, best first: Chrome and Firefox take WebM/Opus, Safari MP4/AAC. Scribe takes both
  * (probed). */
 export const TYPES = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4;codecs=mp4a.40.2"];
@@ -99,7 +99,7 @@ function release(r: { stream: MediaStream; timer?: ReturnType<typeof setInterval
   void r.audio?.close().catch(() => undefined);
 }
 
-/** The recording's whole life: idle → starting (the permission prompt) → recording → sending → idle. «Отмена» from
+/** The recording's whole life: idle → starting (the permission prompt) → recording → sending → idle. «Cancel» from
  * any of them, the screen going away, «＋» closing or another session goes straight back: the microphone is let go,
  * nothing is sent, nothing is kept. Each recording has a token; whatever comes back after an await is taken only
  * while its token is the current one — so a result reaches only the screen and session that started it, while they
@@ -147,17 +147,17 @@ export function useVoice({
       const audio = new Blob(r.chunks, { type: r.recorder.mimeType || r.chunks[0]?.type || "audio/webm" });
       r.chunks = [];
       if (audio.size === 0) {
-        toast("Запись пустая — попробуй ещё раз.", "error");
+        toast("The recording is empty — try again.", "error");
         if (token.current === r.token) setState("idle");
         return;
       }
       try {
         const answer = await transcribe(audio, r.mode, r.abort.signal);
         if (token.current !== r.token) return;
-        if (r.mode === "en") await handlers.current.onMessage(answer.message ?? `(голосом, дословно) ${answer.text}`);
+        if (r.mode === "en") await handlers.current.onMessage(answer.message ?? `(by voice, verbatim) ${answer.text}`);
         else handlers.current.onText(answer.text);
       } catch (e) {
-        if (token.current === r.token) toast(e instanceof ApiError ? e.message : "Не удалось расшифровать — попробуй ещё раз.", "error");
+        if (token.current === r.token) toast(e instanceof ApiError ? e.message : "Couldn't transcribe — try again.", "error");
       } finally {
         if (token.current === r.token) {
           run.current = null;

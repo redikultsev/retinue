@@ -1,4 +1,4 @@
-// A ping's suggested replies («Ответы:») as small chips: a press sends that reply into the session as the owner's
+// A ping's suggested replies (`pings._LINE`) as small chips: a press sends that reply into the session as the owner's
 // message — once, whichever place pressed it, here or in Telegram (retinue/pings.py). Once one went in, or the owner
 // wrote, the replies are gone in both places; the one that went in is shown as «→ …». 44 px to tap on a touch screen.
 import { useState } from "react";
@@ -33,13 +33,13 @@ export function ReplyButtons({ summary, live = defaultLive, reply = api.reply, c
       if (res.summary) live.dispatch({ type: "event", id: null, event: { kind: "summary", data: res.summary } });
       toast(res.say);
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : "Не получилось.", "error");
+      toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
     } finally {
       setBusy(false);
     }
   }
   return (
-    <fieldset aria-label="Ответы" className={cn("m-0 flex min-w-0 flex-wrap gap-1.5 border-0 p-0 pointer-coarse:gap-2", className)}>
+    <fieldset aria-label="Replies" className={cn("m-0 flex min-w-0 flex-wrap gap-1.5 border-0 p-0 pointer-coarse:gap-2", className)}>
       {replies.map((r, n) => (
         <button
           key={r}

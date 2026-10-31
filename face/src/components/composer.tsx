@@ -1,11 +1,11 @@
 // The one input box of the app: a new task (`/new`, pages/new.tsx) and a session's replies (its screen, the list's
 // peek). Made after Claude's apps (docs/face.md «The composer»): a rounded box; the text on top, at least three lines on
 // a phone, growing with what is typed to 40 % of the visible height, then scrolling inside; under it «+» on the left —
-// a menu «Фото · Камера · Файл» (the camera on a touch screen) — and on the right 🎙 «EN» and the send arrow, greyed
+// a menu «Photo · Camera · File» (the camera on a touch screen) — and on the right 🎙 «EN» and the send arrow, greyed
 // while there is nothing to send. What is attached shows as chips above the text, each with its ×, within the
 // platform's limits (lib/attach.ts); a message may be files alone. Enter sends on a desktop (Shift+Enter: a new line);
 // on a phone Enter is a new line and the arrow sends. A tap anywhere on the box puts the cursor in the text. While a
-// turn runs, «Стоп» stands beside the arrow. 🎙 dictates into the text at the cursor; «EN» sends the English at once,
+// turn runs, «Stop» stands beside the arrow. 🎙 dictates into the text at the cursor; «EN» sends the English at once,
 // word for word, with what the box holds, as one message (lib/voice.ts).
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, Camera, Close, FileIcon, ImageIcon, Plus, Stop } from "@/components/icons";
@@ -82,7 +82,7 @@ function RoundButton({
   );
 }
 
-/** «+»: one button, one menu — as Claude, ChatGPT and Gemini have it. «Камера» opens the camera itself, on a touch
+/** «+»: one button, one menu — as Claude, ChatGPT and Gemini have it. «Camera» opens the camera itself, on a touch
  * screen only (a desktop has no `capture`). */
 function AttachMenu({ onFiles, disabled, camera }: { onFiles: (files: File[]) => void; disabled: boolean; camera: boolean }) {
   const [open, setOpen] = useState(false);
@@ -132,9 +132,9 @@ function AttachMenu({ onFiles, disabled, camera }: { onFiles: (files: File[]) =>
     } else if (e.key === "Tab") close(false);
   }
   const items = [
-    { input: photo, label: "Фото", Icon: ImageIcon, accept: "image/*", testid: "attach-photo", capture: undefined },
-    ...(camera ? [{ input: shot, label: "Камера", Icon: Camera, accept: "image/*", testid: "attach-camera", capture: "environment" as const }] : []),
-    { input: file, label: "Файл", Icon: FileIcon, accept: undefined, testid: "attach-input", capture: undefined },
+    { input: photo, label: "Photo", Icon: ImageIcon, accept: "image/*", testid: "attach-photo", capture: undefined },
+    ...(camera ? [{ input: shot, label: "Camera", Icon: Camera, accept: "image/*", testid: "attach-camera", capture: "environment" as const }] : []),
+    { input: file, label: "File", Icon: FileIcon, accept: undefined, testid: "attach-input", capture: undefined },
   ];
   return (
     <div ref={box} className="relative">
@@ -156,8 +156,8 @@ function AttachMenu({ onFiles, disabled, camera }: { onFiles: (files: File[]) =>
       ))}
       <RoundButton
         ref={trigger}
-        aria-label="Прикрепить"
-        title="Фото, камера или файл"
+        aria-label="Attach"
+        title="Photo, camera or file"
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
@@ -170,7 +170,7 @@ function AttachMenu({ onFiles, disabled, camera }: { onFiles: (files: File[]) =>
         <div
           ref={menu}
           role="menu"
-          aria-label="Прикрепить"
+          aria-label="Attach"
           onKeyDown={onMenuKey}
           className="absolute bottom-full left-0 z-30 mb-2 flex min-w-44 flex-col rounded-2xl border bg-background p-1 shadow-lg"
         >
@@ -199,7 +199,7 @@ function AttachMenu({ onFiles, disabled, camera }: { onFiles: (files: File[]) =>
 function Chips({ files, onRemove }: { files: File[]; onRemove: (k: number) => void }) {
   if (files.length === 0) return null;
   return (
-    <ul className="flex gap-1.5 overflow-x-auto px-3 pt-3" aria-label="Вложения">
+    <ul className="flex gap-1.5 overflow-x-auto px-3 pt-3" aria-label="Attachments">
       {files.map((f, k) => {
         const Icon = f.type.startsWith("image/") ? ImageIcon : FileIcon;
         return (
@@ -209,7 +209,7 @@ function Chips({ files, onRemove }: { files: File[]; onRemove: (k: number) => vo
             <span className="shrink-0 text-muted-foreground">{sizeWord(f.size)}</span>
             <button
               type="button"
-              aria-label={`Убрать ${f.name}`}
+              aria-label={`Remove ${f.name}`}
               className="group -my-3 -mr-2.5 -ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-full"
               onClick={() => onRemove(k)}
             >
@@ -290,7 +290,7 @@ export function ComposerBox({
   /** The English transcript, put into the field when it could not be sent: never lost. */
   function keep(message: string, why: string) {
     setText(insertAt(text, text.length, text.length, message).text);
-    toast(`${why} Запись — в поле: отправь её сам.`, "error", 8000);
+    toast(`${why} The transcript is in the field: send it yourself.`, "error", 8000);
   }
 
   /** What the box holds, `spoken` (an English transcript, word for word) after its text, as one message. Null when it
@@ -298,7 +298,7 @@ export function ComposerBox({
   async function submit(spoken?: string): Promise<string | null> {
     const body = [text.trim(), spoken ?? ""].filter(Boolean).join("\n\n");
     if (!body && files.length === 0) return null;
-    if (busy) return "Предыдущее сообщение ещё отправляется.";
+    if (busy) return "The previous message is still sending.";
     if (blocked) return blocked;
     const id = messageId(tried.current, body, files);
     tried.current = { id, body, files };
@@ -310,10 +310,10 @@ export function ComposerBox({
       onDraft?.("");
       setFiles([]);
       tried.current = null;
-      if (res?.say && res.say !== "Принято.") toast(res.say);
+      if (res?.say && res.say !== "Accepted.") toast(res.say);
       return null;
     } catch (e) {
-      return e instanceof ApiError ? e.message : "Не отправилось — попробуй ещё раз.";
+      return e instanceof ApiError ? e.message : "Not sent — try again.";
     } finally {
       setBusy(false);
     }
@@ -335,7 +335,7 @@ export function ComposerBox({
       setTimeout(() => field.current?.setSelectionRange(next.caret, next.caret), 0);
     },
     onMessage: async (message) => {
-      if (busy) return keep(message, "Предыдущее сообщение ещё отправляется.");
+      if (busy) return keep(message, "The previous message is still sending.");
       const why = await submit(message);
       if (why) keep(message, why);
     },
@@ -418,17 +418,17 @@ export function ComposerBox({
               <MicButtons voice={voice} disabled={busy} compact />
             </>
           )}
-          {/* «Стоп» stays in reach while dictating: a turn that runs away is stopped without dropping the recording */}
+          {/* «Stop» stays in reach while dictating: a turn that runs away is stopped without dropping the recording */}
           {running && onStop && (
-            <RoundButton aria-label="Стоп" title="Стоп" onClick={onStop} face="border bg-background hover:bg-accent">
+            <RoundButton aria-label="Stop" title="Stop" onClick={onStop} face="border bg-background hover:bg-accent">
               <Stop />
             </RoundButton>
           )}
           {!recording && (
             <RoundButton
               type="submit"
-              aria-label="Отправить"
-              title={blocked ?? (coarse ? "Отправить" : "Отправить (Enter)")}
+              aria-label="Send"
+              title={blocked ?? (coarse ? "Send" : "Send (Enter)")}
               disabled={empty || busy || !!blocked}
               face={cn(
                 "[&_svg]:size-5",
@@ -458,17 +458,17 @@ export function Composer({ session, running, send = api.input, stop = api.stop, 
   async function onStop() {
     try {
       await stop(session);
-      toast("Останавливаю.");
+      toast("Stopping.");
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : "Не остановилось.", "error");
+      toast(e instanceof ApiError ? e.message : "Did not stop.", "error");
     }
   }
   return (
     <ComposerBox
       key={session}
       owner={session}
-      label="Сообщение"
-      placeholder="Написать в сессию…"
+      label="Message"
+      placeholder="Write to the session…"
       send={(text, id, files) => send(session, text, id, files)}
       running={running}
       onStop={onStop}

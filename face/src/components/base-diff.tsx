@@ -1,4 +1,4 @@
-// A «В Базу» card's diff: the files turned on, as the Base's clone has them now (`GET /api/base/{id}/diff`), rendered by
+// A «To the Base» card's diff: the files turned on, as the Base's clone has them now (`GET /api/base/{id}/diff`), rendered by
 // @pierre/diffs as a diff — never as the Markdown the files are. Read again when the files turned on change.
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
@@ -15,7 +15,7 @@ export function BaseDiff({ id, on, load = api.baseDiff }: { id: string; on: stri
     setError(null);
     load(id)
       .then((d) => !gone && setData(d))
-      .catch((e) => !gone && setError(e instanceof ApiError ? e.message : "Дифф не загрузился."));
+      .catch((e) => !gone && setError(e instanceof ApiError ? e.message : "The diff did not load."));
     return () => {
       gone = true;
     };
@@ -31,12 +31,12 @@ export function BaseDiff({ id, on, load = api.baseDiff }: { id: string; on: stri
   }, [data]);
 
   if (error) return <p className="text-sm text-destructive">{error}</p>;
-  if (!data) return <p className="text-sm text-muted-foreground">Загружаю дифф…</p>;
+  if (!data) return <p className="text-sm text-muted-foreground">Loading the diff…</p>;
   return (
     <div data-testid="base-diff" className="flex flex-col gap-2">
-      {data.truncated && <p className="text-sm text-warning-foreground">Дифф больше 1 МБ — показано начало.</p>}
+      {data.truncated && <p className="text-sm text-warning-foreground">The diff is over 1 MB — showing the start.</p>}
       {files.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Изменений нет.</p>
+        <p className="text-sm text-muted-foreground">No changes.</p>
       ) : (
         files.map((f) => (
           <FileDiff

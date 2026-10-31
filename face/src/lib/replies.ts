@@ -1,5 +1,5 @@
-// A ping's suggested replies (retinue/pings.py). The model ends a turn that leaves the owner a choice with one line
-// `Ответы: «…» · «…»`; the platform parses it, keeps it out of the summary and sends it back as `Summary.line`, exactly
+// A ping's suggested replies (retinue/pings.py). The model ends a turn that leaves the owner a choice with one line of
+// suggested replies (`pings._LINE`); the platform parses it, keeps it out of the summary and sends it back as `Summary.line`, exactly
 // as written. The turn's own last message in the transcript still ends with it: the face takes off that exact line —
 // it never parses one itself, so it can never disagree with the platform about what was a replies line.
 import type { Item, Summary } from "./types";

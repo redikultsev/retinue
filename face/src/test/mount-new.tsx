@@ -6,8 +6,8 @@ import { NewPage } from "@/pages/new";
 export async function mountNew(props: React.ComponentProps<typeof NewPage> = {}) {
   const root = createRootRoute();
   const page = createRoute({ getParentRoute: () => root, path: "/new", component: () => <NewPage {...props} /> });
-  const today = createRoute({ getParentRoute: () => root, path: "/today", component: () => <p>сегодня</p> });
-  const one = createRoute({ getParentRoute: () => root, path: "/s/$id", component: () => <p>открыта сессия</p> });
+  const today = createRoute({ getParentRoute: () => root, path: "/today", component: () => <p>today</p> });
+  const one = createRoute({ getParentRoute: () => root, path: "/s/$id", component: () => <p>session opened</p> });
   const router = createRouter({
     routeTree: root.addChildren([page, today, one]),
     history: createMemoryHistory({ initialEntries: ["/new"] }),

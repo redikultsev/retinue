@@ -63,43 +63,43 @@ afterEach(() => {
   live.meta = null;
 });
 
-const field = () => screen.getByRole("textbox", { name: "Сообщение" }) as HTMLTextAreaElement;
+const field = () => screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
 
 function composer(answer: { text: string; message?: string } = { text: "KV cache" }) {
-  const send = vi.fn().mockResolvedValue({ say: "Принято." });
+  const send = vi.fn().mockResolvedValue({ say: "Accepted." });
   const transcribe = vi.fn().mockResolvedValue(answer);
   render(<Composer session="s1" running={false} send={send} transcribe={transcribe} />);
   return { send, transcribe };
 }
 
 async function record() {
-  fireEvent.click(screen.getByRole("button", { name: /^(Диктовать|Сказать по-английски)$/ }));
-  await screen.findByRole("status", { name: "Идёт запись" });
+  fireEvent.click(screen.getByRole("button", { name: /^(Dictate|Say it in English)$/ }));
+  await screen.findByRole("status", { name: "Recording" });
 }
 
 describe("dictation in a session", () => {
-  it("records, shows the time and «Отмена», and puts the text at the cursor for him to send", async () => {
+  it("records, shows the time and «Cancel», and puts the text at the cursor for him to send", async () => {
     const { send, transcribe } = composer();
-    fireEvent.change(field(), { target: { value: "Проверь и сделай" } });
-    field().setSelectionRange(7, 7);
+    fireEvent.change(field(), { target: { value: "Check and do" } });
+    field().setSelectionRange(5, 5);
     await record();
     expect(getUserMedia).toHaveBeenCalledWith({ audio: { echoCancellation: true, noiseSuppression: true } });
     expect(FakeRecorder.made[0]!.options).toEqual({ mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 64000 });
     expect(screen.getByTestId("voice-clock").textContent).toBe("0:00 / 10:00");
-    expect(screen.getByRole("button", { name: "Отмена" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
-    await waitFor(() => expect(field().value).toBe("Проверь KV cache и сделай"));
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
+    await waitFor(() => expect(field().value).toBe("Check KV cache and do"));
     const [audio, mode] = transcribe.mock.calls[0]!;
     expect([(audio as Blob).type, (audio as Blob).size, mode]).toEqual(["audio/webm;codecs=opus", 5, "dictate"]);
     expect(send).not.toHaveBeenCalled();
     expect(track.stop).toHaveBeenCalled();
-    await waitFor(() => expect(field().selectionStart).toBe("Проверь KV cache".length));
+    await waitFor(() => expect(field().selectionStart).toBe("Check KV cache".length));
   });
 
-  it("«Отмена» drops the recording: nothing is sent anywhere", async () => {
+  it("«Cancel» drops the recording: nothing is sent anywhere", async () => {
     const { transcribe } = composer();
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
     expect(transcribe).not.toHaveBeenCalled();
     expect(track.stop).toHaveBeenCalled();
@@ -121,12 +121,12 @@ describe("dictation in a session", () => {
   it("an error is a short line, and the field is back", async () => {
     const send = vi.fn();
     const { ApiError } = await import("@/lib/api");
-    const transcribe = vi.fn().mockRejectedValue(new ApiError(502, "Не удалось расшифровать: кончились кредиты ElevenLabs — пополни баланс."));
+    const transcribe = vi.fn().mockRejectedValue(new ApiError(502, "Could not transcribe: the ElevenLabs credits ran out — top up the balance."));
     render(<Composer session="s1" running={false} send={send} transcribe={transcribe} />);
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith("Не удалось расшифровать: кончились кредиты ElevenLabs — пополни баланс.", "error"),
+      expect(toast).toHaveBeenCalledWith("Could not transcribe: the ElevenLabs credits ran out — top up the balance.", "error"),
     );
     expect(field().hidden).toBe(false);
   });
@@ -134,39 +134,39 @@ describe("dictation in a session", () => {
 
 describe("English, word for word", () => {
   it("is sent at once as the session's message, unedited", async () => {
-    const { send, transcribe } = composer({ text: "So, um, yes", message: "(голосом, дословно) So, um, yes" });
+    const { send, transcribe } = composer({ text: "So, um, yes", message: "(by voice, verbatim) So, um, yes" });
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     expect(screen.getByRole("button", { name: "EN" }).getAttribute("aria-pressed")).toBe("true");
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
-    await waitFor(() => expect(send).toHaveBeenCalledWith("s1", "(голосом, дословно) So, um, yes", expect.stringMatching(/^face:/), []));
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith("s1", "(by voice, verbatim) So, um, yes", expect.stringMatching(/^face:/), []));
     expect(transcribe.mock.calls[0]![1]).toBe("en");
     expect(field().value).toBe(""); // nothing put into the field
   });
 
   it("in «＋» it is the new session's first message, and the session opens", async () => {
-    const d = newDeps({ text: "Hello there", message: "(голосом, дословно) Hello there" });
+    const d = newDeps({ text: "Hello there", message: "(by voice, verbatim) Hello there" });
     const { router } = await mountNew(d);
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
     await waitFor(() =>
-      expect(d.newSession).toHaveBeenCalledWith("notes", "(голосом, дословно) Hello there", expect.stringMatching(/^face:/), null, []),
+      expect(d.newSession).toHaveBeenCalledWith("notes", "(by voice, verbatim) Hello there", expect.stringMatching(/^face:/), null, []),
     );
     await waitFor(() => expect(router.state.location.pathname).toBe("/s/n1"));
   });
 
   it("in «＋» dictation goes into the text", async () => {
-    const d = newDeps({ text: "найди рейсы" });
+    const d = newDeps({ text: "find flights" });
     await mountNew(d);
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
-    await waitFor(() => expect(task().value).toBe("найди рейсы"));
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
+    await waitFor(() => expect(task().value).toBe("find flights"));
     expect(d.newSession).not.toHaveBeenCalled();
   });
 });
 
-const task = () => screen.getByRole("textbox", { name: "Что сделать" }) as HTMLTextAreaElement;
+const task = () => screen.getByRole("textbox", { name: "What should I do?" }) as HTMLTextAreaElement;
 
 function newDeps(answer: { text: string; message?: string }) {
   return {
@@ -186,7 +186,7 @@ function later<T>() {
 
 describe("a recording never outlives what shows it", () => {
   it("leaving «＋» (another tab, back) drops it: the microphone off, nothing sent, even past 10 minutes", async () => {
-    const d = newDeps({ text: "room noise", message: "(голосом, дословно) room noise" });
+    const d = newDeps({ text: "room noise", message: "(by voice, verbatim) room noise" });
     const { router } = await mountNew(d);
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
@@ -207,9 +207,9 @@ describe("a recording never outlives what shows it", () => {
     const asked = later<MediaStream>();
     getUserMedia.mockReturnValue(asked.promise);
     const { transcribe } = composer();
-    fireEvent.click(screen.getByRole("button", { name: "Диктовать" }));
-    expect(await screen.findByRole("status", { name: "Жду микрофон" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Отмена" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    expect(await screen.findByRole("status", { name: "Waiting for the microphone" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
     cleanup();
     await act(async () => asked.settle(stream));
     expect(track.stop).toHaveBeenCalled();
@@ -217,12 +217,12 @@ describe("a recording never outlives what shows it", () => {
     expect(transcribe).not.toHaveBeenCalled();
   });
 
-  it("«Отмена» at the permission prompt: the same", async () => {
+  it("«Cancel» at the permission prompt: the same", async () => {
     const asked = later<MediaStream>();
     getUserMedia.mockReturnValue(asked.promise);
     composer();
-    fireEvent.click(screen.getByRole("button", { name: "Диктовать" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Отмена" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     expect(field().hidden).toBe(false);
     await act(async () => asked.settle(stream));
     expect(track.stop).toHaveBeenCalled();
@@ -232,7 +232,7 @@ describe("a recording never outlives what shows it", () => {
 
   it("another session on the same screen drops it: a result reaches only the session that started it", async () => {
     const send = vi.fn();
-    const transcribe = vi.fn().mockResolvedValue({ text: "x", message: "(голосом, дословно) x" });
+    const transcribe = vi.fn().mockResolvedValue({ text: "x", message: "(by voice, verbatim) x" });
     const view = render(<Composer session="s1" running={false} send={send} transcribe={transcribe} />);
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     await record();
@@ -243,18 +243,18 @@ describe("a recording never outlives what shows it", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("«Отмена» while it is transcribed: what comes back later is dropped", async () => {
+  it("«Cancel» while it is transcribed: what comes back later is dropped", async () => {
     const answer = later<{ text: string }>();
     const send = vi.fn();
     const transcribe = vi.fn().mockReturnValue(answer.promise);
     render(<Composer session="s1" running={false} send={send} transcribe={transcribe} />);
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
-    await screen.findByRole("status", { name: "Расшифровываю" });
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
+    await screen.findByRole("status", { name: "Transcribing" });
     const signal = transcribe.mock.calls[0]![2] as AbortSignal;
-    fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(signal.aborted).toBe(true);
-    await act(async () => answer.settle({ text: "поздно" }));
+    await act(async () => answer.settle({ text: "too late" }));
     expect(field().value).toBe("");
   });
 
@@ -263,7 +263,7 @@ describe("a recording never outlives what shows it", () => {
       throw new Error("NotSupportedError");
     });
     composer();
-    fireEvent.click(screen.getByRole("button", { name: "Диктовать" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith(UNAVAILABLE, "error", 8000));
     expect(track.stop).toHaveBeenCalled();
     expect(screen.queryByRole("status")).toBeNull();
@@ -274,68 +274,68 @@ describe("a recording never outlives what shows it", () => {
 describe("an English transcript is never lost", () => {
   it("in a session: not sent, it goes into the field with the reason", async () => {
     const { ApiError } = await import("@/lib/api");
-    const send = vi.fn().mockRejectedValue(new ApiError(0, "Нет связи с сервером."));
-    const transcribe = vi.fn().mockResolvedValue({ text: "So, um", message: "(голосом, дословно) So, um" });
+    const send = vi.fn().mockRejectedValue(new ApiError(0, "No connection to the server."));
+    const transcribe = vi.fn().mockResolvedValue({ text: "So, um", message: "(by voice, verbatim) So, um" });
     render(<Composer session="s1" running={false} send={send} transcribe={transcribe} />);
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
-    await waitFor(() => expect(field().value).toBe("(голосом, дословно) So, um"));
-    expect(toast).toHaveBeenCalledWith("Нет связи с сервером. Запись — в поле: отправь её сам.", "error", 8000);
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
+    await waitFor(() => expect(field().value).toBe("(by voice, verbatim) So, um"));
+    expect(toast).toHaveBeenCalledWith("No connection to the server. The transcript is in the field: send it yourself.", "error", 8000);
   });
 
   it("in «＋» it goes with what the box holds — its text, the files — as one message", async () => {
-    const d = newDeps({ text: "Hello", message: "(голосом, дословно) Hello" });
+    const d = newDeps({ text: "Hello", message: "(by voice, verbatim) Hello" });
     await mountNew(d);
-    fireEvent.change(task(), { target: { value: "Проверь мой английский" } });
+    fireEvent.change(task(), { target: { value: "Check my English" } });
     fireEvent.change(screen.getByTestId("attach-input"), { target: { files: [new File(["abc"], "notes.txt", { type: "text/plain" })] } });
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
     await waitFor(() => expect(d.newSession).toHaveBeenCalledTimes(1));
     const [, body, , , attachments] = d.newSession.mock.calls[0]!;
-    expect(body).toBe("Проверь мой английский\n\n(голосом, дословно) Hello");
+    expect(body).toBe("Check my English\n\n(by voice, verbatim) Hello");
     expect((attachments as { name: string }[]).map((a) => a.name)).toEqual(["notes.txt"]);
   });
 
   it("in «＋» when the session could not start: kept in the text with the reason, nothing opened", async () => {
     const { ApiError } = await import("@/lib/api");
-    const d = newDeps({ text: "Hello", message: "(голосом, дословно) Hello" });
-    d.newSession.mockRejectedValue(new ApiError(503, "Комната занята."));
+    const d = newDeps({ text: "Hello", message: "(by voice, verbatim) Hello" });
+    d.newSession.mockRejectedValue(new ApiError(503, "The room is busy."));
     const { router } = await mountNew(d);
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
-    await waitFor(() => expect(task().value).toBe("(голосом, дословно) Hello"));
-    expect(toast).toHaveBeenCalledWith("Комната занята. Запись — в поле: отправь её сам.", "error", 8000);
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
+    await waitFor(() => expect(task().value).toBe("(by voice, verbatim) Hello"));
+    expect(toast).toHaveBeenCalledWith("The room is busy. The transcript is in the field: send it yourself.", "error", 8000);
     expect(router.state.location.pathname).toBe("/new");
   });
 });
 
 describe("the box while it records", () => {
-  it("keeps «Стоп» in reach while a turn runs: stopping the turn does not drop the dictation", async () => {
+  it("keeps «Stop» in reach while a turn runs: stopping the turn does not drop the dictation", async () => {
     const stop = vi.fn().mockResolvedValue({ ok: true });
     render(<Composer session="s1" running send={vi.fn()} stop={stop} transcribe={vi.fn()} />);
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Стоп" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(stop).toHaveBeenCalledWith("s1");
-    expect(screen.getByRole("status", { name: "Идёт запись" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Recording" })).toBeTruthy();
   });
 
   it("an English message after a failed send is a message of its own: a new id, not the failed one's", async () => {
     const { ApiError } = await import("@/lib/api");
-    const send = vi.fn().mockRejectedValueOnce(new ApiError(0, "Нет связи с сервером.")).mockResolvedValue({ say: "Принято." });
-    const transcribe = vi.fn().mockResolvedValue({ text: "Hi", message: "(голосом, дословно) Hi" });
+    const send = vi.fn().mockRejectedValueOnce(new ApiError(0, "No connection to the server.")).mockResolvedValue({ say: "Accepted." });
+    const transcribe = vi.fn().mockResolvedValue({ text: "Hi", message: "(by voice, verbatim) Hi" });
     render(<Composer session="s1" running={false} send={send} transcribe={transcribe} />);
-    fireEvent.change(field(), { target: { value: "привет" } });
-    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+    fireEvent.change(field(), { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     await record();
-    fireEvent.click(screen.getByRole("button", { name: "Остановить и расшифровать" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop and transcribe" }));
     await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
     const [first, second] = send.mock.calls;
-    expect(second![1]).toBe("привет\n\n(голосом, дословно) Hi");
+    expect(second![1]).toBe("hello\n\n(by voice, verbatim) Hi");
     expect(second![2]).not.toBe(first![2]);
   });
 });
@@ -354,7 +354,7 @@ describe("where there is no microphone", () => {
   it("refused when asked: the same line, no crash", async () => {
     getUserMedia.mockRejectedValue(Object.assign(new Error("denied"), { name: "NotAllowedError" }));
     composer();
-    fireEvent.click(screen.getByRole("button", { name: "Диктовать" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith(UNAVAILABLE, "error", 8000));
     expect(screen.getByRole("button", { name: UNAVAILABLE })).toBeTruthy();
     expect(field().hidden).toBe(false);
@@ -369,7 +369,7 @@ describe("where there is no microphone", () => {
   it("the platform cannot hear: said before anything is recorded", () => {
     live.meta = { ...live.meta!, speech: false };
     composer();
-    fireEvent.click(screen.getByRole("button", { name: "Диктовать" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
     expect(toast).toHaveBeenCalledWith(NOT_SET_UP, "error");
     expect(getUserMedia).not.toHaveBeenCalled();
   });
@@ -384,7 +384,7 @@ describe("its pieces", () => {
   });
 
   it("text at the cursor, spaced where words would touch", () => {
-    expect(insertAt("", 0, 0, "привет")).toEqual({ text: "привет", caret: 6 });
+    expect(insertAt("", 0, 0, "hello")).toEqual({ text: "hello", caret: 5 });
     expect(insertAt("ab", 1, 1, "X")).toEqual({ text: "a X b", caret: 3 });
     expect(insertAt("a ", 2, 2, "X")).toEqual({ text: "a X", caret: 3 });
     expect(insertAt("a old b", 2, 5, "new")).toEqual({ text: "a new b", caret: 5 });

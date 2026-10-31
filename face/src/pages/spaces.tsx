@@ -1,6 +1,6 @@
-// «Пространства»: the Base in the app, read only (retinue/spaces.py). `/spaces` — the grid of Spaces with what waits
+// «Spaces»: the Base in the app, read only (retinue/spaces.py). `/spaces` — the grid of Spaces with what waits
 // in each; `/spaces/<space>` — its Showcase as a screen: its sessions, Open questions, Tasks, Records by nature with a
-// search; `/spaces/<space>/r/<path>` — one Record to read, its head in plain words. «Обсудить» starts a session in
+// search; `/spaces/<space>/r/<path>` — one Record to read, its head in plain words. «Discuss» starts a session in
 // the Space's sphere with the Record or the question in its first message: the Base changes only through a session.
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -59,7 +59,7 @@ function useRead<T>(key: string, read: () => Promise<T>): { data: T | undefined;
         setData(found);
       })
       .catch((e) => {
-        if (!gone) setError(e instanceof ApiError ? e.message : "Не загрузилось.");
+        if (!gone) setError(e instanceof ApiError ? e.message : "Did not load.");
       });
     return () => {
       gone = true;
@@ -125,14 +125,14 @@ function spaceTitle(name: string, sphere: Sphere | undefined, showcase?: string)
 function Badges({ waiting, working, questions }: { waiting: number; working: number; questions: number }) {
   return (
     <span className="flex flex-wrap gap-1">
-      {waiting > 0 && <Badge variant="warning">{`${waiting} ${plural(waiting, "ждёт", "ждут", "ждут")}`}</Badge>}
-      {working > 0 && <Badge variant="secondary">{`${working} ${plural(working, "работает", "работают", "работают")}`}</Badge>}
-      {questions > 0 && <Badge variant="outline">{`${questions} ${plural(questions, "вопрос", "вопроса", "вопросов")}`}</Badge>}
+      {waiting > 0 && <Badge variant="warning">{`${waiting} waiting`}</Badge>}
+      {working > 0 && <Badge variant="secondary">{`${working} working`}</Badge>}
+      {questions > 0 && <Badge variant="outline">{`${questions} ${plural(questions, "question", "questions")}`}</Badge>}
     </span>
   );
 }
 
-// --- «Обсудить» ------------------------------------------------------------------------------------------------------
+// --- «Discuss» -------------------------------------------------------------------------------------------------------
 
 type Topic = { record?: { path: string; title: string }; question?: string };
 
@@ -160,15 +160,15 @@ export function Discuss({ space, topic, onClose, start = api.newSession }: { spa
       onClose();
       await navigate({ to: "/s/$id", params: { id: res.session } });
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : "Сессия не началась.", "error");
+      toast(e instanceof ApiError ? e.message : "The session did not start.", "error");
     } finally {
       setBusy(false);
     }
   }
 
-  const what = topic?.record ? "Запись" : topic?.question ? "Открытый вопрос" : "";
+  const what = topic?.record ? "Record" : topic?.question ? "Open question" : "";
   return (
-    <Dialog open={topic !== null} onClose={onClose} title={what ? `Обсудить: ${what.toLowerCase()}` : "Новая сессия"}>
+    <Dialog open={topic !== null} onClose={onClose} title={what ? `Discuss: ${what.toLowerCase()}` : "New session"}>
       <form
         className="flex flex-col gap-3"
         onSubmit={(e) => {
@@ -177,7 +177,7 @@ export function Discuss({ space, topic, onClose, start = api.newSession }: { spa
         }}
       >
         <p className="text-sm text-muted-foreground">
-          Новая сессия в Пространстве «{spaceTitle(space, sphere)}»{what ? ", первым сообщением уйдёт:" : "."}
+          New session in the Space “{spaceTitle(space, sphere)}”{what ? ", the first message will be:" : "."}
         </p>
         {what && (
           <blockquote data-testid="discuss-head" className="max-h-40 overflow-y-auto rounded-md border bg-muted/40 p-2 text-sm whitespace-pre-wrap">
@@ -186,7 +186,7 @@ export function Discuss({ space, topic, onClose, start = api.newSession }: { spa
         )}
         {!sphere && tracks.length > 1 && (
           <fieldset className="flex flex-wrap gap-2">
-            <legend className="mb-1 text-sm font-medium">Трек</legend>
+            <legend className="mb-1 text-sm font-medium">Track</legend>
             {tracks.map((t) => (
               <label key={t.name} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border px-3 has-[:checked]:border-primary has-[:checked]:bg-accent">
                 <input type="radio" name="track" checked={chosen === t.name} onChange={() => setTrack(t.name)} className="accent-primary" />
@@ -196,15 +196,15 @@ export function Discuss({ space, topic, onClose, start = api.newSession }: { spa
           </fieldset>
         )}
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">{what ? "Что спросить или сделать" : "Что сделать"}</span>
-          <Textarea value={own} onChange={(e) => setOwn(e.target.value)} rows={3} placeholder={what ? "Можно пусто" : ""} />
+          <span className="text-sm font-medium">{what ? "What should I ask or do?" : "What should I do?"}</span>
+          <Textarea value={own} onChange={(e) => setOwn(e.target.value)} rows={3} placeholder={what ? "Can be empty" : ""} />
         </label>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
-            Отмена
+            Cancel
           </Button>
           <Button type="submit" disabled={busy || !chosen || !text.trim()}>
-            {busy ? "Запускаю…" : "Начать"}
+            {busy ? "Starting…" : "Start"}
           </Button>
         </div>
       </form>
@@ -224,11 +224,11 @@ export function SpacesPage({ read = spacesApi.list }: { read?: typeof spacesApi.
   const badges = (row: SpaceRow) => (loaded ? (live_.get(row.name) ?? { waiting: 0, working: 0 }) : row);
   return (
     <div className="flex flex-col">
-      <Header title="Пространства" />
+      <Header title="Spaces" />
       <main className="mx-auto w-full max-w-3xl p-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {error && !data && <Empty>{error}</Empty>}
-        {!error && !data && <Empty>Загружаю…</Empty>}
-        {data && rows.length === 0 && <Empty>В Базе нет Пространств.</Empty>}
+        {!error && !data && <Empty>Loading…</Empty>}
+        {data && rows.length === 0 && <Empty>The Base has no Spaces.</Empty>}
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {rows.map((row) => {
             const sphere = sphereOf(spheres, row.name);
@@ -270,7 +270,7 @@ function SessionRow({ s }: { s: Session }) {
         <span className="min-w-0 flex-1">
           <span className={cn("block truncate text-[15px] md:text-sm", s.unread && "font-semibold")}>{s.title || s.track}</span>
           <span className="block truncate text-xs text-muted-foreground">
-            {waits ? "ждёт тебя" : sessionStateWord(s.state)} · {when(s.at)}
+            {waits ? "waiting for you" : sessionStateWord(s.state)} · {when(s.at)}
           </span>
         </span>
         {s.waiting > 0 && <Badge variant="warning">{s.waiting}</Badge>}
@@ -286,9 +286,9 @@ function Lines({ items, onDiscuss }: { items: ShowcaseItem[]; onDiscuss?: (item:
         <li key={i} className={cn("flex items-start gap-2 rounded-lg px-2 py-1.5", item.list ? "border bg-card" : "text-muted-foreground")}>
           <BaseMarkdown text={item.text} className="min-w-0 flex-1" />
           {item.list && onDiscuss && (
-            <Button size="sm" variant="ghost" className="shrink-0" onClick={() => onDiscuss(item)} aria-label="Обсудить вопрос">
+            <Button size="sm" variant="ghost" className="shrink-0" onClick={() => onDiscuss(item)} aria-label="Discuss the question">
               <MessageCircle />
-              <span className="hidden sm:inline">Обсудить</span>
+              <span className="hidden sm:inline">Discuss</span>
             </Button>
           )}
         </li>
@@ -316,7 +316,7 @@ function RecordLink({ space, nature, row }: { space: string; nature: Nature; row
                   {w.text}
                 </span>
               ))}
-              {row.big && `${words.length ? " · " : ""}большая — на компьютере`}
+              {row.big && `${words.length ? " · " : ""}large — on a computer`}
             </span>
           )}
         </span>
@@ -333,16 +333,16 @@ function Records({ space, view }: { space: string; view: SpaceView }) {
   const total = NATURES.reduce((n, k) => n + view.records[k].length, 0);
   const found = NATURES.map((nature) => ({ nature, rows: view.records[nature].filter(shown) })).filter((g) => g.rows.length);
   return (
-    <Section title="Записи" count={total}>
+    <Section title="Records" count={total}>
       <p className="px-1 text-sm text-muted-foreground">
         {NATURES.filter((n) => view.records[n].length)
           .map((n) => `${NATURE_WORDS[n]} ${view.records[n].length}`)
-          .join(" · ") || "Записей нет."}
+          .join(" · ") || "No Records."}
       </p>
       {total > 0 && (
-        <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Найти Запись" aria-label="Найти Запись" className="my-1" />
+        <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a Record" aria-label="Find a Record" className="my-1" />
       )}
-      {q && found.length === 0 && <Empty>Ничего не нашлось.</Empty>}
+      {q && found.length === 0 && <Empty>Nothing found.</Empty>}
       {found.map(({ nature, rows }) => (
         <div key={nature} className="flex flex-col">
           <h3 className="px-1 pt-2 text-sm font-medium">{NATURE_WORDS[nature]}</h3>
@@ -377,22 +377,22 @@ export function SpacePage({ space, read = spacesApi.space }: { space: string; re
   const other = view?.sections.filter((s) => s.kind === "other" && s.items.length) ?? [];
   const count = (items: ShowcaseItem[]) => items.filter((i) => i.list).length;
   const summary = [
-    waiting && `${waiting} ${plural(waiting, "ждёт", "ждут", "ждут")}`,
-    working && `${working} ${plural(working, "работает", "работают", "работают")}`,
-    count(questions) && `${count(questions)} ${plural(count(questions), "Открытый вопрос", "Открытых вопроса", "Открытых вопросов")}`,
+    waiting && `${waiting} waiting`,
+    working && `${working} working`,
+    count(questions) && `${count(questions)} ${plural(count(questions), "Open question", "Open questions")}`,
   ].filter(Boolean);
   return (
     <div className="flex flex-col">
-      <Header up={{ label: "К Пространствам" }} title={`${sphere?.icon ? `${sphere.icon} ` : ""}${spaceTitle(space, sphere, view?.title)}`} />
+      <Header up={{ label: "To the Spaces" }} title={`${sphere?.icon ? `${sphere.icon} ` : ""}${spaceTitle(space, sphere, view?.title)}`} />
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {summary.length > 0 && <p className="px-1 text-sm text-muted-foreground">{summary.join(" · ")}</p>}
         <Section
-          title="Сессии"
+          title="Sessions"
           count={mine.length}
           action={
-            <Button size="sm" variant="ghost" onClick={() => setTopic({})} aria-label="Новая сессия здесь">
+            <Button size="sm" variant="ghost" onClick={() => setTopic({})} aria-label="New session here">
               <Plus />
-              <span>Новая</span>
+              <span>New</span>
             </Button>
           }
         >
@@ -403,27 +403,27 @@ export function SpacePage({ space, read = spacesApi.space }: { space: string; re
               ))}
             </ul>
           ) : (
-            <Empty>Сессий здесь нет.</Empty>
+            <Empty>No sessions here.</Empty>
           )}
         </Section>
         {error && !view && <Empty>{error}</Empty>}
-        {!error && !view && <Empty>Загружаю Витрину…</Empty>}
+        {!error && !view && <Empty>Loading the Showcase…</Empty>}
         {view && (
           <>
-            <Section title="Открытые вопросы" count={count(questions)}>
+            <Section title="Open questions" count={count(questions)}>
               {questions.length ? (
                 <Lines items={questions} onDiscuss={(item) => setTopic({ question: item.text })} />
               ) : (
-                <Empty>Открытых вопросов нет.</Empty>
+                <Empty>No Open questions.</Empty>
               )}
             </Section>
-            <Section title="Задачи" count={count(tasks)}>
-              {tasks.length ? <Lines items={tasks} /> : <Empty>Задач нет.</Empty>}
+            <Section title="Tasks" count={count(tasks)}>
+              {tasks.length ? <Lines items={tasks} /> : <Empty>No Tasks.</Empty>}
             </Section>
             <Records space={space} view={view} />
             {other.map((s) => (
               <details key={s.heading} className="rounded-lg border px-3 py-2">
-                <summary className="cursor-pointer text-sm font-medium">{s.heading || "Без заголовка"}</summary>
+                <summary className="cursor-pointer text-sm font-medium">{s.heading || "Untitled"}</summary>
                 <div className="pt-2">
                   <Lines items={s.items} />
                 </div>
@@ -431,7 +431,7 @@ export function SpacePage({ space, read = spacesApi.space }: { space: string; re
             ))}
             {view.rules && (
               <details className="rounded-lg border px-3 py-2">
-                <summary className="cursor-pointer text-sm font-medium">Правила Пространства</summary>
+                <summary className="cursor-pointer text-sm font-medium">Rules of the Space</summary>
                 <BaseMarkdown text={view.rules} className="pt-2" />
               </details>
             )}
@@ -490,13 +490,13 @@ function RecordBody({ record }: { record: RecordView }) {
       </div>
       {source !== undefined && source !== null && source !== "" && (
         <details className="rounded-lg border px-3 py-2 text-sm">
-          <summary className="cursor-pointer font-medium">Источник</summary>
+          <summary className="cursor-pointer font-medium">Source</summary>
           <SourceText text={typeof source === "string" ? source : JSON.stringify(source)} />
         </details>
       )}
       {record.bad_head && (
         <p role="status" className="rounded-md bg-warning/20 px-2 py-1 text-sm">
-          Шапка Записи не читается — показываю файл как есть.
+          The Record's head does not parse — showing the file as it is.
         </p>
       )}
       <BaseMarkdown text={rest} />
@@ -514,7 +514,7 @@ function RecordBody({ record }: { record: RecordView }) {
   );
 }
 
-/** One Record. `pane`: shown beside a session on a wide screen — no header of its own but «Обсудить». */
+/** One Record. `pane`: shown beside a session on a wide screen — no header of its own but «Discuss». */
 export function RecordPage({ space, path, pane = false, read = spacesApi.record }: { space: string; path: string; pane?: boolean; read?: typeof spacesApi.record }) {
   const spheres = useSpheres();
   const sphere = sphereOf(spheres, space);
@@ -524,7 +524,7 @@ export function RecordPage({ space, path, pane = false, read = spacesApi.record 
   const discuss = record && (
     <Button size="sm" variant="outline" onClick={() => setTopic({ record: { path: record.path, title: record.title } })}>
       <MessageCircle />
-      Обсудить
+      Discuss
     </Button>
   );
   return (
@@ -532,12 +532,12 @@ export function RecordPage({ space, path, pane = false, read = spacesApi.record 
       {pane ? (
         <div className="flex justify-end p-2">{discuss}</div>
       ) : (
-        <Header up={{ space, label: `К Пространству «${spaceTitle(space, sphere)}»` }} title={spaceTitle(space, sphere)}>
+        <Header up={{ space, label: `To the Space “${spaceTitle(space, sphere)}”` }} title={spaceTitle(space, sphere)}>
           {discuss}
         </Header>
       )}
       <main className="mx-auto w-full max-w-[68ch] p-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
-        {record ? <RecordBody record={record} /> : <Empty>{error ?? "Загружаю Запись…"}</Empty>}
+        {record ? <RecordBody record={record} /> : <Empty>{error ?? "Loading the Record…"}</Empty>}
       </main>
       <Discuss key={JSON.stringify(topic)} space={space} topic={topic} onClose={() => setTopic(null)} />
     </div>

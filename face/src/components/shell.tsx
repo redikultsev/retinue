@@ -1,13 +1,13 @@
 // The app's frame around its tabs and sessions.
 //
-// - A phone: the page, and under it the tab bar «Сегодня · Сессии · ＋ · Пространства · Читать». «＋» is `/new`, an
+// - A phone: the page, and under it the tab bar «Today · Sessions · ＋ · Spaces · Read». «＋» is `/new`, an
 //   empty new task with the composer at the bottom (pages/new.tsx), as a new chat in Claude's apps. The bar is there on
 //   the tabs' own screens (a session's screen has its own input box and a way back), sits above the home indicator
 //   (the safe area) and steps aside while the keyboard is up.
-// - A wide screen (≥ 1024 px), three columns as in Claude's desktop app: on the left (272 px) «Новая задача», what
-//   waits («Сегодня» with its count), the sessions by sphere and the Spaces; in the middle the page — `/new` too; on
-//   the right one panel with tabs: a session's «Сводка» (foldable, components/session-summary.tsx) and, when one is
-//   open, a Record, a session's diff or a file (`?pane=`, lib/pane.ts). The pane's tab is the URL's; «Сводка» closes it.
+// - A wide screen (≥ 1024 px), three columns as in Claude's desktop app: on the left (272 px) «New task», what
+//   waits («Today» with its count), the sessions by sphere and the Spaces; in the middle the page — `/new` too; on
+//   the right one panel with tabs: a session's «Summary» (foldable, components/session-summary.tsx) and, when one is
+//   open, a Record, a session's diff or a file (`?pane=`, lib/pane.ts). The pane's tab is the URL's; «Summary» closes it.
 //   The columns are resized by dragging the lines between them (the left one folds away when dragged past its
 //   minimum, and comes back when dragged out); each layout is remembered in the browser.
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
@@ -15,16 +15,14 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Group, type Layout, type LayoutChangedMeta, Panel, Separator } from "react-resizable-panels";
 import { AppHeader } from "@/components/app-header";
 import { FileRow } from "@/components/files";
-import { Book, Close, Grid, Home, List, Plus } from "@/components/icons";
+import { Book, Chart, Close, Grid, Home, List, Plus } from "@/components/icons";
 import { SessionList } from "@/components/session-list";
 import { SessionSummary } from "@/components/session-summary";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import { useKeyboardUp } from "@/lib/keyboard";
-import { live, useLiveState } from "@/lib/live";
 import { useVeryWide, useWide } from "@/lib/media";
 import { type Pane, usePane } from "@/lib/pane";
-import { sphereLabel } from "@/lib/spheres";
 import { setSummaryOpen, useSummaryOpen } from "@/lib/summary";
 import type { OutFile } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -34,20 +32,20 @@ import { RecordPage } from "@/pages/spaces";
 const Changes = lazy(() => import("@/components/changes").then((m) => ({ default: m.Changes })));
 
 /** The screens the tab bar stands under on a phone. */
-export const TABBED = /^\/(today|sessions|new|read|spaces)(\/|$)/;
+export const TABBED = /^\/(today|sessions|new|read|spaces|week)(\/|$)/;
 
 const TABS = [
-  { to: "/today", label: "Сегодня", Icon: Home },
-  { to: "/sessions", label: "Сессии", Icon: List },
+  { to: "/today", label: "Today", Icon: Home },
+  { to: "/sessions", label: "Sessions", Icon: List },
   null, // «＋»
-  { to: "/spaces", label: "Пространства", Icon: Grid },
-  { to: "/read", label: "Читать", Icon: Book },
+  { to: "/spaces", label: "Spaces", Icon: Grid },
+  { to: "/read", label: "Read", Icon: Book },
 ] as const;
 
 export function TabBar({ pathname }: { pathname: string }) {
   return (
     <nav
-      aria-label="Разделы"
+      aria-label="Sections"
       className="grid shrink-0 grid-cols-[1fr_1fr_4rem_1fr_1fr] border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
     >
       {TABS.map((tab) =>
@@ -55,7 +53,7 @@ export function TabBar({ pathname }: { pathname: string }) {
           <div key="plus" className="flex items-center justify-center">
             <Link
               to="/new"
-              aria-label="Новая задача"
+              aria-label="New task"
               aria-current={pathname === "/new" ? "page" : undefined}
               className={cn(
                 "inline-flex size-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm active:scale-95",
@@ -91,46 +89,36 @@ const navClass = (on: boolean) =>
     on && "bg-accent font-medium",
   );
 
-/** The left column on a wide screen. */
+/** The left column on a wide screen: the app's places on top, fixed; under them the sessions, the one part that
+ * scrolls. Starting a session in a sphere is the composer's sphere picker (pages/new.tsx); the Spaces are a page. */
 export function Sidebar({ pathname, current, beside }: { pathname: string; current?: string; beside?: (id: string) => void }) {
-  useLiveState(); // the spheres come with the app's first snapshot (`live.meta`): read again once it is there
-  const spheres = live.meta?.spheres ?? [];
   return (
     <aside className="flex h-full w-full flex-col border-r bg-sidebar">
       <AppHeader />
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-4">
-        <nav aria-label="Разделы" className="flex flex-col pb-2">
-          <Link to="/new" className={navClass(pathname === "/new")}>
-            <Plus className="size-4" />
-            Новая задача
-          </Link>
-          <Link to="/today" className={navClass(pathname.startsWith("/today"))}>
-            <Home className="size-4" />
-            <span className="flex-1">Сегодня</span>
-            <TodayCount />
-          </Link>
-          <Link to="/read" className={navClass(pathname.startsWith("/read"))}>
-            <Book className="size-4" />
-            Читать
-          </Link>
-        </nav>
-        <SessionList current={current} beside={beside} />
-        <nav aria-label="Пространства" className="flex flex-col pt-4">
-          <Link to="/spaces" className="flex h-7 items-center px-2 text-xs text-muted-foreground hover:text-foreground">
-            Пространства
-          </Link>
-          {spheres.map((s) => (
-            <Link
-              key={s.name}
-              to="/spaces/$space"
-              params={{ space: s.name }}
-              className={navClass(pathname === `/spaces/${s.name}` || pathname.startsWith(`/spaces/${s.name}/`))}
-            >
-              {sphereLabel(s)}
-            </Link>
-          ))}
-        </nav>
-      </div>
+      <nav aria-label="Places" className="flex shrink-0 flex-col px-2 pt-2 pb-2">
+        <Link to="/new" className={navClass(pathname === "/new")}>
+          <Plus className="size-4" />
+          New task
+        </Link>
+        <Link to="/today" className={navClass(pathname.startsWith("/today"))}>
+          <Home className="size-4" />
+          <span className="flex-1">Today</span>
+          <TodayCount />
+        </Link>
+        <Link to="/read" className={navClass(pathname.startsWith("/read"))}>
+          <Book className="size-4" />
+          Read
+        </Link>
+        <Link to="/spaces" className={navClass(pathname.startsWith("/spaces"))}>
+          <Grid className="size-4" />
+          Spaces
+        </Link>
+        <Link to="/week" className={navClass(pathname.startsWith("/week"))}>
+          <Chart className="size-4" />
+          Week
+        </Link>
+      </nav>
+      <SessionList current={current} beside={beside} fill />
     </aside>
   );
 }
@@ -144,12 +132,12 @@ function FilePane({ id }: { id: string }) {
     api
       .file(id)
       .then(({ file: found }) => !gone && setFile(found))
-      .catch((e) => !gone && setMissing(e instanceof ApiError && e.status === 404 ? "Такого файла нет." : "Файл не загрузился."));
+      .catch((e) => !gone && setMissing(e instanceof ApiError && e.status === 404 ? "There is no such file." : "The file did not load."));
     return () => {
       gone = true;
     };
   }, [id]);
-  if (!file) return <p className="text-sm text-muted-foreground">{missing ?? "Загружаю…"}</p>;
+  if (!file) return <p className="text-sm text-muted-foreground">{missing ?? "Loading…"}</p>;
   return (
     <ul>
       <FileRow file={file} opened />
@@ -157,19 +145,19 @@ function FilePane({ id }: { id: string }) {
   );
 }
 
-const PANE_TITLES: Record<Pane["kind"], string> = { record: "Запись", diff: "Изменения", file: "Файл" };
+const PANE_TITLES: Record<Pane["kind"], string> = { record: "Record", diff: "Changes", file: "File" };
 
-/** The right column: one panel, its tabs a session's «Сводка» and what is open beside the page (`pane`). */
+/** The right column: one panel, its tabs a session's «Summary» and what is open beside the page (`pane`). */
 export function PaneView({ pane, session, onClose }: { pane: Pane | null; session?: string; onClose: () => void }) {
   const { open } = usePane();
   const active = pane ? pane.kind : "summary";
   const tabs = [
-    ...(session ? [{ key: "summary", label: "Сводка" }] : []),
+    ...(session ? [{ key: "summary", label: "Summary" }] : []),
     ...(pane ? [{ key: pane.kind, label: PANE_TITLES[pane.kind] }] : []),
   ];
   return (
     <aside
-      aria-label={pane ? PANE_TITLES[pane.kind] : "Сводка"}
+      aria-label={pane ? PANE_TITLES[pane.kind] : "Summary"}
       className="flex h-full w-full flex-col border-l bg-sidebar"
     >
       <header className="flex min-h-12 shrink-0 items-center gap-1 border-b px-2">
@@ -198,7 +186,7 @@ export function PaneView({ pane, session, onClose }: { pane: Pane | null; sessio
         <Button
           variant="ghost"
           size="icon"
-          aria-label="Закрыть"
+          aria-label="Close"
           onClick={() => (pane ? onClose() : setSummaryOpen(false))}
           className="size-8 md:size-8"
         >
@@ -215,7 +203,7 @@ export function PaneView({ pane, session, onClose }: { pane: Pane | null; sessio
         ) : pane?.kind === "record" ? (
           <RecordPage space={pane.space} path={pane.path} pane />
         ) : pane?.kind === "diff" ? (
-          <Suspense fallback={<p className="text-sm text-muted-foreground">Загружаю изменения…</p>}>
+          <Suspense fallback={<p className="text-sm text-muted-foreground">Loading the changes…</p>}>
             <Changes session={pane.session} />
           </Suspense>
         ) : pane ? (
@@ -271,13 +259,13 @@ function Columns({ sidebar, main, right, rightId }: { sidebar: React.ReactNode; 
       >
         {sidebar}
       </Panel>
-      <Separator aria-label="Ширина левой колонки" className={separatorClass} />
+      <Separator aria-label="Left column width" className={separatorClass} />
       <Panel id="main" minSize={360}>
         {main}
       </Panel>
       {rightId && (
         <>
-          <Separator aria-label="Ширина правой панели" className={separatorClass} />
+          <Separator aria-label="Right panel width" className={separatorClass} />
           <Panel
             key={rightId}
             id={rightId}
@@ -314,7 +302,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         }
       : undefined;
 
-  // «Сводка» beside one session (two sessions side by side take that room).
+  // «Summary» beside one session (two sessions side by side take that room).
   const summarized = current && !(veryWide && typeof search.with === "string") ? current : undefined;
   if (wide) {
     const rightId = pane ? "pane" : summarized && summaryOpen ? "summary" : null;

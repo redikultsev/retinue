@@ -40,7 +40,7 @@ export const BLOCKED = [
 export function ImageAsText({ alt, src }: { alt?: string; src?: unknown }) {
   return (
     <span data-testid="image-as-text" className="rounded bg-muted px-1 font-mono text-xs text-muted-foreground">
-      [изображение{alt ? `: ${alt}` : ""}]{typeof src === "string" && src ? ` ${src}` : ""}
+      [image{alt ? `: ${alt}` : ""}]{typeof src === "string" && src ? ` ${src}` : ""}
     </span>
   );
 }
@@ -104,7 +104,7 @@ export function Step({
   );
 }
 
-/** A labelled block inside an open step: «Ввод», «Результат». */
+/** A labelled block inside an open step: «Input», «Result». */
 function Labelled({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -128,8 +128,8 @@ export function Pre({ children, className }: { children: ReactNode; className?: 
 }
 
 function Status({ ok, error }: { ok: boolean | null; error?: boolean }) {
-  if (error || ok === false) return <span className="text-destructive">ошибка</span>;
-  if (ok === null) return <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-label="выполняется" role="img" />;
+  if (error || ok === false) return <span className="text-destructive">error</span>;
+  if (ok === null) return <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-label="running" role="img" />;
   return null;
 }
 
@@ -169,7 +169,7 @@ function EditItem({ data }: { data: Extract<ItemData, { kind: "edit" }>["data"] 
       : lineDiff("", data.content ?? "");
   const shownRows = rows.slice(0, 400);
   const { added, removed } = diffCounts(rows);
-  const verb = data.tool === "Write" ? "Записан" : "Правка";
+  const verb = data.tool === "Write" ? "Written" : "Edit";
   return (
     <Step
       icon={<Pencil />}
@@ -186,7 +186,7 @@ function EditItem({ data }: { data: Extract<ItemData, { kind: "edit" }>["data"] 
     >
       <DiffRows rows={shownRows} />
       {rows.length > shownRows.length && (
-        <p className="text-xs text-muted-foreground">Ещё {rows.length - shownRows.length} строк — во вкладке «Изменения».</p>
+        <p className="text-xs text-muted-foreground">{rows.length - shownRows.length} more lines — in the “Changes” tab.</p>
       )}
       {data.error && <Pre className="text-destructive">{data.error}</Pre>}
     </Step>
@@ -223,7 +223,7 @@ export function TodoList({ todos, small = false }: { todos: Todos; small?: boole
   );
 }
 
-const TOOL_WORDS: Record<string, string> = { Read: "Прочитан", Grep: "Поиск", Glob: "Файлы" };
+const TOOL_WORDS: Record<string, string> = { Read: "Read", Grep: "Search", Glob: "Files" };
 
 function input(tool: string, data: Record<string, unknown>): string {
   return tool === "Bash" && typeof data.command === "string" ? data.command : JSON.stringify(data, null, 2);
@@ -232,7 +232,7 @@ function input(tool: string, data: Record<string, unknown>): string {
 /** A tool's name as a verb: an MCP tool as «server · tool», the rest as the CLI names it. */
 export function toolName(tool: string): string {
   const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(tool);
-  return mcp ? `${mcp[1]} · ${mcp[2]}` : tool || "Вызов";
+  return mcp ? `${mcp[1]} · ${mcp[2]}` : tool || "Call";
 }
 
 function iconOf(tool: string): ReactNode {
@@ -290,12 +290,12 @@ function tallyOf(items: ItemData[]): { count: number; words: string; errors: num
     switch (it.kind) {
       case "reads":
         count += it.data.calls.length;
-        add("прочитано", it.data.calls.length);
+        add("read", it.data.calls.length);
         errors += it.data.calls.filter((c) => c.error).length;
         break;
       case "edit":
         count += 1;
-        add("правки");
+        add("edits");
         if (it.data.ok === false) errors += 1;
         if (it.data.ok === null) running = true;
         break;
@@ -307,12 +307,12 @@ function tallyOf(items: ItemData[]): { count: number; words: string; errors: num
         break;
       case "subagent":
         count += 1;
-        add("субагент");
+        add("subagent");
         if (it.data.result === null) running = true;
         break;
       case "plan":
         count += 1;
-        add("план");
+        add("plan");
         break;
       default:
         break;
@@ -322,19 +322,19 @@ function tallyOf(items: ItemData[]): { count: number; words: string; errors: num
   return { count, words, errors, running };
 }
 
-/** A run of consecutive calls folded into one line — «7 шагов · прочитано 4 · Bash 2 · правки» — as Claude's desktop
+/** A run of consecutive calls folded into one line — «7 steps · read 4 · Bash 2 · edits» — as Claude's desktop
  * app folds a turn's tool calls. Open while the turn still runs it (`open`), folded once it is done. */
 export function StepRun({ items, open }: { items: ItemData[]; open?: boolean }) {
   const { count, words, errors, running } = tallyOf(items);
   return (
     <Step
       icon={<Layers />}
-      verb={`${count} ${plural(count, "шаг", "шага", "шагов")}`}
+      verb={`${count} ${plural(count, "step", "steps")}`}
       target={<span className="font-sans text-[13px]">{words}</span>}
       meta={
         <>
-          {errors > 0 && <span className="text-destructive">{`${errors} ${plural(errors, "ошибка", "ошибки", "ошибок")}`}</span>}
-          {running && <span className="size-1.5 animate-pulse rounded-full bg-primary" role="img" aria-label="выполняется" />}
+          {errors > 0 && <span className="text-destructive">{`${errors} ${plural(errors, "error", "errors")}`}</span>}
+          {running && <span className="size-1.5 animate-pulse rounded-full bg-primary" role="img" aria-label="running" />}
         </>
       }
       open={open}
@@ -369,7 +369,7 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
       return (
         <Step
           icon={<FileSearch />}
-          verb={`Прочитано: ${calls.length} ${plural(calls.length, "вызов", "вызова", "вызовов")}`}
+          verb={`Read: ${calls.length} ${plural(calls.length, "call", "calls")}`}
           target={calls.length === 1 ? oneLine(calls[0]!.tool, calls[0]!.input) : undefined}
           meta={<span className="text-muted-foreground">{counts}</span>}
           tone={failed ? "error" : undefined}
@@ -398,7 +398,7 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
         return (
           <div className="rounded-lg border bg-card px-3 py-2.5">
             <div className="mb-1.5 flex items-center gap-2 text-[13px] font-medium [&_svg]:size-3.5">
-              <ListTodo /> План на утверждение
+              <ListTodo /> Plan for approval
             </div>
             <Markdown text={item.data.plan ?? ""} />
           </div>
@@ -406,7 +406,7 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
       const todos = item.data.todos;
       const done = todos.filter((t) => t.status === "completed").length;
       return (
-        <Step icon={<ListTodo />} verb="План" target={<span className="font-sans text-[13px]">{`${done} из ${todos.length}`}</span>}>
+        <Step icon={<ListTodo />} verb="Plan" target={<span className="font-sans text-[13px]">{`${done} of ${todos.length}`}</span>}>
           <TodoList todos={todos} small />
         </Step>
       );
@@ -416,26 +416,26 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
       return (
         <Step
           icon={<Bot />}
-          verb={<span>{`Субагент · ${item.data.agent || item.data.tool}: ${item.data.description}`}</span>}
+          verb={<span>{`Subagent · ${item.data.agent || item.data.tool}: ${item.data.description}`}</span>}
           meta={
             item.data.result === null ? (
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="size-1.5 animate-pulse rounded-full bg-primary" /> работает
+                <span className="size-1.5 animate-pulse rounded-full bg-primary" /> working
               </span>
             ) : (
-              <span className="text-muted-foreground">{`${steps} ${plural(steps, "шаг", "шага", "шагов")}`}</span>
+              <span className="text-muted-foreground">{`${steps} ${plural(steps, "step", "steps")}`}</span>
             )
           }
         >
           <details className="min-w-0">
             <summary className="flex h-6 cursor-pointer list-none items-center text-xs text-muted-foreground hover:text-foreground pointer-coarse:min-h-11">
-              Задание
+              Task
             </summary>
             <Pre>{item.data.prompt}</Pre>
           </details>
           <Inner items={item.data.items} />
           {item.data.result !== null && (
-            <Labelled label="Ответ субагента">
+            <Labelled label="Subagent's answer">
               <div className="rounded-md bg-muted/70 px-2.5 py-2">
                 <Markdown text={item.data.result} />
               </div>
@@ -448,7 +448,7 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
       return (
         <div className="rounded-lg border bg-card px-3 py-2.5 text-sm">
           <div className="mb-1.5 flex items-center gap-2 text-[13px] font-medium [&_svg]:size-3.5">
-            <Question /> Вопрос
+            <Question /> Question
           </div>
           {item.data.questions.map((q, i) => (
             <div key={i} className="mb-2">
@@ -467,11 +467,11 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
           ))}
           {item.data.answer !== null ? (
             <div className="text-[13px]">
-              <span className="text-muted-foreground">Ответ: </span>
+              <span className="text-muted-foreground">Answer: </span>
               {item.data.answer}
             </div>
           ) : (
-            <div className="text-[13px] text-muted-foreground">Ждёт ответа — в карточке вопроса.</div>
+            <div className="text-[13px] text-muted-foreground">Awaiting an answer — in the question card.</div>
           )}
         </div>
       );
@@ -484,12 +484,12 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
           meta={<Status ok={item.data.result === null ? null : !item.data.error} error={item.data.error} />}
           tone={item.data.error ? "error" : undefined}
         >
-          <Labelled label="Ввод">
+          <Labelled label="Input">
             <Pre>{input(item.data.tool, item.data.input)}</Pre>
           </Labelled>
           {item.data.result !== null && (
-            <Labelled label={item.data.error ? "Ошибка" : "Результат"}>
-              <Pre className={cn(item.data.error && "text-destructive")}>{item.data.result || "(пусто)"}</Pre>
+            <Labelled label={item.data.error ? "Error" : "Result"}>
+              <Pre className={cn(item.data.error && "text-destructive")}>{item.data.result || "(empty)"}</Pre>
             </Labelled>
           )}
         </Step>
@@ -498,7 +498,7 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
       const d = item.data;
       // A turn that simply ended says nothing: its summary marks the end. An error or a stop on a card does.
       if (!d.is_error && d.stop_reason !== "tool_deferred") return null;
-      const word = d.is_error ? `Ход оборвался ошибкой${d.text ? `: ${d.text}` : ""}` : "Остановлено: ждёт решения по вызову";
+      const word = d.is_error ? `The turn broke off with an error${d.text ? `: ${d.text}` : ""}` : "Stopped: awaiting a decision on a call";
       return (
         <div className={cn("flex items-center gap-1.5 text-xs text-muted-foreground [&_svg]:size-3.5", d.is_error && "text-destructive")}>
           {d.is_error ? <AlertCircle /> : <Clock />}

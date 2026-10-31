@@ -1,5 +1,5 @@
-// «Запушить» (retinue/topush.py): a repository's push card — the session's branch and the remote branch it goes to,
-// the PR's title, the commits and files, what is not committed, «Отправить», the diff, «Отмена». It is the same card
+// «Push» (retinue/topush.py): a repository's push card — the session's branch and the remote branch it goes to,
+// the PR's title, the commits and files, what is not committed, «Push», the diff, «Cancel». It is the same card
 // as its Telegram copies: a change here rewrites them, and one there comes here on the stream. Nothing is pushed
 // without a press; a press is taken once in either place, and never into the default branch.
 import { useEffect, useState } from "react";
@@ -16,19 +16,16 @@ import { cn } from "@/lib/utils";
 type Calls = Pick<typeof api, "pushTarget" | "pushTitle" | "pushSend" | "pushCancel" | "pushOpen" | "pushDiff">;
 
 const STATE_WORDS: Record<string, string> = {
-  pushing: "Отправляю…",
-  pushed: "Отправлено",
-  cancelled: "Отменено",
-  stale: "Устарела",
-  expired: "Истекла",
+  pushing: "Pushing…",
+  pushed: "Pushed",
+  cancelled: "Cancelled",
+  stale: "Stale",
+  expired: "Expired",
 };
 
-/** «3 коммита» */
+/** «3 commits» */
 export function commitsWord(n: number): string {
-  const tail = n % 100;
-  const word =
-    tail % 10 === 1 && tail !== 11 ? "коммит" : tail % 10 >= 2 && tail % 10 <= 4 && !(tail >= 12 && tail <= 14) ? "коммита" : "коммитов";
-  return `${n} ${word}`;
+  return `${n} ${n === 1 ? "commit" : "commits"}`;
 }
 
 function put(live: Live, card: Card | null) {
@@ -77,47 +74,47 @@ export function PushCardView({ card, calls = api, live = defaultLive, className 
     }
   }
 
-  /** «Отправить» with the fields as they show: an edit not saved yet is saved first. */
+  /** «Push» with the fields as they show: an edit not saved yet is saved first. */
   async function send() {
-    if (target.trim() && target !== card.target && !(await act(() => calls.pushTarget(card.id, target.trim()), "Ветка не сохранилась.")))
+    if (target.trim() && target !== card.target && !(await act(() => calls.pushTarget(card.id, target.trim()), "The branch was not saved.")))
       return;
-    if (title.trim() && title !== card.title && !(await act(() => calls.pushTitle(card.id, title.trim()), "Заголовок не сохранился.")))
+    if (title.trim() && title !== card.title && !(await act(() => calls.pushTitle(card.id, title.trim()), "The title was not saved.")))
       return;
-    await act(() => calls.pushSend(card.id), "Не отправилось.");
+    await act(() => calls.pushSend(card.id), "Not pushed.");
   }
 
   return (
-    <section data-testid="push-card" aria-label={card.view.head[0] ?? "Запушить"} className={cn("flex flex-col gap-3", className)}>
+    <section data-testid="push-card" aria-label={card.view.head[0] ?? "Push"} className={cn("flex flex-col gap-3", className)}>
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{card.view.head[0]}</span>
         {!shown && <Badge variant={card.state === "pushing" ? "warning" : "secondary"}>{STATE_WORDS[card.state] ?? card.state}</Badge>}
       </div>
       <label className="flex flex-col gap-1 text-sm">
         <span className="text-muted-foreground">
-          Ветка <span className="font-mono">{card.branch}</span> → на {card.repo}, PR в <span className="font-mono">{card.base}</span>
+          Branch <span className="font-mono">{card.branch}</span> → to {card.repo}, PR into <span className="font-mono">{card.base}</span>
         </span>
-        <Input aria-label="Ветка" className="font-mono" value={target} disabled={!shown || busy} onChange={(e) => setTarget(e.target.value)} />
+        <Input aria-label="Branch" className="font-mono" value={target} disabled={!shown || busy} onChange={(e) => setTarget(e.target.value)} />
       </label>
       <label className="flex flex-col gap-1 text-sm">
-        <span className="text-muted-foreground">Заголовок PR</span>
-        <Input aria-label="Заголовок PR" value={title} disabled={!shown || busy} onChange={(e) => setTitle(e.target.value)} />
+        <span className="text-muted-foreground">PR title</span>
+        <Input aria-label="PR title" value={title} disabled={!shown || busy} onChange={(e) => setTitle(e.target.value)} />
       </label>
       <p className="text-xs text-muted-foreground">
-        Уходит: {commitsWord(card.unpushed ?? card.commits.length)}
-        {card.bytes !== undefined ? `, ${sizeWord(card.bytes)}` : ""} — всё, что ниже, и ничего больше.
+        Going out: {commitsWord(card.unpushed ?? card.commits.length)}
+        {card.bytes !== undefined ? `, ${sizeWord(card.bytes)}` : ""} — everything below and nothing else.
       </p>
-      <ul className="flex flex-col gap-2" aria-label="Коммиты">
+      <ul className="flex flex-col gap-2" aria-label="Commits">
         {card.commits.map((c) => (
           <li key={c.sha} className="flex min-w-0 flex-col gap-1 text-sm">
             <div className="flex min-w-0 gap-2">
               <span className="shrink-0 font-mono text-xs text-muted-foreground">{c.sha.slice(0, 7)}</span>
               <span className="min-w-0 truncate font-medium">{c.subject}</span>
-              {(c.parents?.length ?? 1) > 1 && <span className="shrink-0 text-xs text-muted-foreground">слияние</span>}
+              {(c.parents?.length ?? 1) > 1 && <span className="shrink-0 text-xs text-muted-foreground">merge</span>}
             </div>
             {c.author && (
               <span className="pl-4 text-xs text-muted-foreground">
-                автор: {c.author}
-                {c.committer && c.committer !== c.author ? `; коммитил: ${c.committer}` : ""}
+                author: {c.author}
+                {c.committer && c.committer !== c.author ? `; committed by: ${c.committer}` : ""}
               </span>
             )}
             {c.message?.includes("\n") && (
@@ -131,8 +128,8 @@ export function PushCardView({ card, calls = api, live = defaultLive, className 
           </li>
         ))}
       </ul>
-      <p className="text-xs text-muted-foreground">В PR целиком:</p>
-      <ul className="flex flex-col gap-1" aria-label="Файлы">
+      <p className="text-xs text-muted-foreground">The whole PR:</p>
+      <ul className="flex flex-col gap-1" aria-label="Files">
         {card.files.map((f) => (
           <li key={f.path} className="flex min-w-0 items-center gap-2 text-sm">
             <span className="w-4 shrink-0 font-mono text-xs text-muted-foreground">{f.status}</span>
@@ -149,12 +146,12 @@ export function PushCardView({ card, calls = api, live = defaultLive, className 
         ))}
       </ul>
       {card.workflows.length > 0 && (
-        <p className="text-sm text-warning-foreground">Правки .github/workflows токен не пушит — убери их из ветки или запушь сам.</p>
+        <p className="text-sm text-warning-foreground">The token cannot push changes to .github/workflows — take them out of the branch or push yourself.</p>
       )}
       {card.dirty.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          Не закоммичено ({card.dirty.length}): {card.dirty.slice(0, 5).join(", ")}
-          {card.dirty.length > 5 ? "…" : ""} — в пуш не попадёт, попроси сессию закоммитить.
+          Not committed ({card.dirty.length}): {card.dirty.slice(0, 5).join(", ")}
+          {card.dirty.length > 5 ? "…" : ""} — will not go into the push; ask the session to commit it.
         </p>
       )}
       {card.said && (
@@ -164,21 +161,21 @@ export function PushCardView({ card, calls = api, live = defaultLive, className 
       )}
       {link && (
         <a href={link} target="_blank" rel="noreferrer noopener" className="text-sm text-primary underline">
-          Открыть PR
+          Open PR
         </a>
       )}
       <div className="flex flex-wrap gap-2">
         {shown && (
           <Button disabled={busy || card.workflows.length > 0} onClick={() => void send()}>
-            Отправить · {commitsWord(card.ahead)}
+            Push · {commitsWord(card.ahead)}
           </Button>
         )}
         <Button variant="outline" aria-expanded={diff} onClick={() => setDiff(!diff)}>
-          {diff ? "Скрыть дифф" : "Открыть дифф"}
+          {diff ? "Hide diff" : "Show diff"}
         </Button>
         {shown && (
-          <Button variant="ghost" disabled={busy} onClick={() => void act(() => calls.pushCancel(card.id), "Не отменилось.")}>
-            Отмена
+          <Button variant="ghost" disabled={busy} onClick={() => void act(() => calls.pushCancel(card.id), "Did not cancel.")}>
+            Cancel
           </Button>
         )}
       </div>
@@ -187,11 +184,11 @@ export function PushCardView({ card, calls = api, live = defaultLive, className 
   );
 }
 
-/** «3,2 МБ» */
+/** «3.2 MB» */
 function sizeWord(n: number): string {
-  if (n < 1024) return `${n} Б`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} КБ`;
-  return `${(n / 1024 / 1024).toFixed(1).replace(".", ",")} МБ`;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /** What a push carries, commit by commit with each one's message and diff, as text: never rendered as anything. */
@@ -202,14 +199,14 @@ function CommitsDiff({ id, tip, load }: { id: string; tip: string; load: Calls["
   useEffect(() => {
     let gone = false;
     load(id)
-      .then((d) => !gone && setText(d.truncated ? `${d.diff}\n… дифф больше 1 МБ — показано начало.` : d.diff))
-      .catch((e) => !gone && setError(e instanceof ApiError ? e.message : "Дифф не загрузился."));
+      .then((d) => !gone && setText(d.truncated ? `${d.diff}\n… the diff is over 1 MB — showing the start.` : d.diff))
+      .catch((e) => !gone && setError(e instanceof ApiError ? e.message : "The diff did not load."));
     return () => {
       gone = true;
     };
   }, [id, tip, load]);
   if (error) return <p className="text-sm text-destructive">{error}</p>;
-  if (text === null) return <p className="text-sm text-muted-foreground">Загружаю дифф…</p>;
+  if (text === null) return <p className="text-sm text-muted-foreground">Loading the diff…</p>;
   return (
     <pre data-testid="push-diff" className="max-h-[60vh] overflow-auto rounded-lg border p-2 font-mono text-xs whitespace-pre-wrap">
       {text}
@@ -217,16 +214,16 @@ function CommitsDiff({ id, tip, load }: { id: string; tip: string; load: Calls["
   );
 }
 
-/** «Запушить»: the session's card, opened or brought up to date by the platform. Its id, or null when there is
+/** «Push»: the session's card, opened or brought up to date by the platform. Its id, or null when there is
  * nothing to push (said as a toast). */
 export async function openPush(session: string, repo?: string, calls: Pick<Calls, "pushOpen"> = api, live: Live = defaultLive) {
   try {
     const res = await calls.pushOpen(session, repo);
     put(live, res.card);
-    if (!res.card) toast(res.toast || "Нечего пушить.");
+    if (!res.card) toast(res.toast || "Nothing to push.");
     return res.card?.id ?? null;
   } catch (e) {
-    toast(e instanceof ApiError ? e.message : "Карточка не открылась.", "error");
+    toast(e instanceof ApiError ? e.message : "The card did not open.", "error");
     return null;
   }
 }
@@ -236,18 +233,18 @@ export function PushDialog({ id, onClose }: { id: string | null; onClose: () => 
   const { pushes } = useLiveState();
   const card = id ? pushes[id] : undefined;
   return (
-    <Dialog open={id !== null} onClose={onClose} title="Запушить" className="max-w-2xl">
+    <Dialog open={id !== null} onClose={onClose} title="Push" className="max-w-2xl">
       {card && <PushCardView card={card} />}
       <div className="flex justify-end">
         <Button variant="ghost" onClick={onClose}>
-          Закрыть
+          Close
         </Button>
       </div>
     </Dialog>
   );
 }
 
-/** «Запушить · N»: under a session's last summary, in its feed row, in its menu. */
+/** «Push · N»: under a session's last summary, in its feed row, in its menu. */
 export function PushButton({
   session,
   count,
@@ -276,7 +273,7 @@ export function PushButton({
           setBusy(false);
         }}
       >
-        Запушить{repo ? ` ${repo}` : ""} · {count}
+        Push{repo ? ` ${repo}` : ""} · {count}
       </Button>
       <PushDialog id={id} onClose={() => setId(null)} />
     </>

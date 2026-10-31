@@ -44,7 +44,7 @@ export function ApprovalPage({ id, load = api.approval, decide, telegram = insid
         live.watch(found.session).catch(() => undefined);
       })
       .catch((e) => {
-        if (!gone) setMissing(e instanceof ApiError && e.status === 404 ? "Такой карточки нет." : "Карточка не загрузилась.");
+        if (!gone) setMissing(e instanceof ApiError && e.status === 404 ? "There is no such card." : "The card did not load.");
       });
     return () => {
       gone = true;
@@ -66,10 +66,10 @@ export function ApprovalPage({ id, load = api.approval, decide, telegram = insid
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="flex min-h-14 items-center gap-2 border-b px-2 pt-[env(safe-area-inset-top)]">
-        <Link to="/" aria-label="К списку" className="inline-flex size-11 items-center justify-center rounded-md hover:bg-accent">
+        <Link to="/" aria-label="To the list" className="inline-flex size-11 items-center justify-center rounded-md hover:bg-accent">
           <ArrowLeft className="size-5" />
         </Link>
-        <span className="font-semibold">Карточка {id}</span>
+        <span className="font-semibold">Card {id}</span>
       </header>
       <main className="mx-auto flex w-full max-w-2xl flex-col gap-3 p-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {approval ? (
@@ -77,15 +77,15 @@ export function ApprovalPage({ id, load = api.approval, decide, telegram = insid
             <ApprovalCard approval={approval} onDecided={decided} {...(decide ? { decide } : {})} />
             {closing && (
               <p role="status" className="text-center text-sm text-muted-foreground">
-                {approval.view.status || "Готово."} Закрываю…
+                {approval.view.status || "Done."} Closing…
               </p>
             )}
             <Link to="/s/$id" params={{ id: approval.session }} className="text-sm text-primary underline">
-              Открыть сессию{owner ? ` «${owner.title}»` : ""}
+              Open session{owner ? ` “${owner.title}”` : ""}
             </Link>
           </>
         ) : (
-          <p className="py-8 text-center text-sm text-muted-foreground">{missing ?? "Загружаю карточку…"}</p>
+          <p className="py-8 text-center text-sm text-muted-foreground">{missing ?? "Loading the card…"}</p>
         )}
       </main>
     </div>

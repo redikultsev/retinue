@@ -1,5 +1,5 @@
-// `/read`, «Читать»: the life hub's pages by section with search, «Продолжить» (opened, not finished) on top. A page
-// opens on the hub's own origin, never inside the app (lib/library.ts); what was opened and «Дочитал» are kept by the
+// `/read`, «Read»: the life hub's pages by section with search, «Continue» (opened, not finished) on top. A page
+// opens on the hub's own origin, never inside the app (lib/library.ts); what was opened and «Finished» are kept by the
 // platform, so the phone and the desktop agree.
 import { useMemo, useState } from "react";
 import { Check } from "@/components/icons";
@@ -21,14 +21,14 @@ import { openInTelegram } from "@/lib/telegram";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
-/** «42 мин · обновлена 27 окт. · открыта 14:05». */
+/** «42 min · updated 27 Oct · opened 14:05». */
 function details(page: LibraryPage, now: number): string {
   const parts: string[] = [];
-  if (page.minutes) parts.push(`${page.minutes} мин`);
+  if (page.minutes) parts.push(`${page.minutes} min`);
   const updated = dayStart(page.updated);
-  if (!Number.isNaN(updated)) parts.push(`обновлена ${when(updated, now)}`);
-  if (page.done !== null) parts.push(changedSinceDone(page) ? "изменилась после прочтения" : "дочитана");
-  else if (page.opened !== null) parts.push(`открыта ${when(page.opened, now)}`);
+  if (!Number.isNaN(updated)) parts.push(`updated ${when(updated, now)}`);
+  if (page.done !== null) parts.push(changedSinceDone(page) ? "changed since you finished it" : "finished");
+  else if (page.opened !== null) parts.push(`opened ${when(page.opened, now)}`);
   return parts.join(" · ");
 }
 
@@ -65,7 +65,7 @@ function PageRow({
             {title}
           </a>
         ) : (
-          <span className="text-[15px] md:text-sm" title="Адрес страницы не с хаба: не открываю">
+          <span className="text-[15px] md:text-sm" title="The page's address is not on the hub: not opening it">
             {title}
           </span>
         )}
@@ -75,11 +75,11 @@ function PageRow({
         size="sm"
         variant={done ? "secondary" : "outline"}
         aria-pressed={done}
-        title={done ? "Вернуть в непрочитанные" : "Отметить, что дочитал"}
+        title={done ? "Mark as unread" : "Mark as finished"}
         onClick={() => onDone(page, !done)}
       >
         {done && <Check />}
-        Дочитал
+        Finished
       </Button>
     </li>
   );
@@ -110,14 +110,14 @@ export function ReadView({
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       <header className="sticky top-0 z-10 flex shrink-0 flex-col gap-2 border-b bg-background px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
-        <h1 className="text-xl font-semibold">Читать</h1>
+        <h1 className="text-xl font-semibold">Read</h1>
         {pages.length > 0 && (
           <Input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Найти страницу"
-            aria-label="Найти страницу"
+            placeholder="Find a page"
+            aria-label="Find a page"
           />
         )}
       </header>
@@ -128,31 +128,31 @@ export function ReadView({
               <p className="text-sm text-destructive">{error}</p>
               {onRetry && (
                 <Button size="sm" variant="outline" onClick={onRetry}>
-                  Ещё раз
+                  Try again
                 </Button>
               )}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">Загружаю…</p>
+            <p className="text-sm text-muted-foreground">Loading…</p>
           )
         ) : pages.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {library.at === null
-              ? "Список страниц ещё не пришёл с хаба."
-              : "Страниц нет. Страница появится здесь, когда её опубликуют в хаб."}
+              ? "The list of pages has not come from the hub yet."
+              : "No pages. A page shows up here once it is published to the hub."}
           </p>
         ) : (
           <>
             {going.length > 0 && (
-              <section aria-label="Продолжить" className="flex flex-col gap-2">
+              <section aria-label="Continue" className="flex flex-col gap-2">
                 <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                  Продолжить <span className="tabular-nums">({going.length})</span>
+                  Continue <span className="tabular-nums">({going.length})</span>
                 </h2>
                 <ul className="flex flex-col gap-2">{going.map(row)}</ul>
               </section>
             )}
             {grouped.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Ничего не нашлось.</p>
+              <p className="text-sm text-muted-foreground">Nothing found.</p>
             ) : (
               grouped.map((section) => (
                 <section key={section.key || "-"} aria-label={section.title} className="flex flex-col gap-2">
@@ -178,13 +178,13 @@ export function ReadPage() {
     put({ ...page, opened: Date.now() / 1000 }); // at once: the tab may take the app to the background
     libraryApi.open(page.id).then(
       (r) => put(r.page),
-      () => undefined, // «открыта» is a convenience: the page opened either way
+      () => undefined, // «opened» is a convenience: the page opened either way
     );
   };
   const onDone = (page: LibraryPage, done: boolean) => {
     libraryApi.done(page.id, done).then(
       (r) => put(r.page),
-      (e: unknown) => toast(e instanceof Error ? e.message : "Не сохранилось.", "error"),
+      (e: unknown) => toast(e instanceof Error ? e.message : "Not saved.", "error"),
     );
   };
   return <ReadView library={library} error={error} onOpen={onOpen} onDone={onDone} onRetry={() => void reload()} />;

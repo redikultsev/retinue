@@ -122,7 +122,7 @@ describe("Live", () => {
     try {
       const { live, deps } = setup();
       const meta = deps.api.meta as ReturnType<typeof vi.fn>;
-      meta.mockRejectedValueOnce(new ApiError(0, "Нет связи с сервером.")).mockRejectedValueOnce(new ApiError(502, "x"));
+      meta.mockRejectedValueOnce(new ApiError(0, "No connection to the server.")).mockRejectedValueOnce(new ApiError(502, "x"));
       await live.start();
       expect(live.connection).toBe("offline");
       expect(FakeSource.all).toHaveLength(0);

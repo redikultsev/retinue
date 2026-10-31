@@ -1,6 +1,6 @@
-// A session's menu: its sphere, whether it is the sphere's main session, «В Базу» while its runs left Base files
-// uncommitted (retinue/tobase.py), and «Ответвить» — a new session from a copy of this one's conversation, with the
-// track's full rights (retinue/spheres.py); «Закрепить» too, since a phone's row shows its pin only once pinned. Each
+// A session's menu: its sphere, whether it is the sphere's main session, «To the Base» while its runs left Base files
+// uncommitted (retinue/tobase.py), and «Fork» — a new session from a copy of this one's conversation, with the
+// track's full rights (retinue/spheres.py); «Pin» too, since a phone's row shows its pin only once pinned. Each
 // change is the platform's: the answer's row goes into the store as the session's event, and every device shows it.
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
@@ -42,7 +42,7 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
       const res = await call();
       live.dispatch({ type: "event", id: null, event: { kind: "session", data: res.session } });
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : "Не получилось.", "error");
+      toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
     } finally {
       setBusy(false);
     }
@@ -58,7 +58,7 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
       close();
       await navigate({ to: "/s/$id", params: { id: res.session } });
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : "Не ответвилось.", "error");
+      toast(e instanceof ApiError ? e.message : "The fork did not start.", "error");
     } finally {
       setBusy(false);
     }
@@ -85,14 +85,14 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
       <Button
         variant="ghost"
         size="icon"
-        aria-label={`Меню: ${s.title}`}
-        title="Сфера, главная, ответвить"
+        aria-label={`Menu: ${s.title}`}
+        title="Sphere, main, fork"
         className={className}
         onClick={() => setOpen(true)}
       >
         <More />
       </Button>
-      <Dialog open={open} onClose={close} title={forking ? "Ответвить" : s.title || "Сессия"}>
+      <Dialog open={open} onClose={close} title={forking ? "Fork" : s.title || "Session"}>
         {forking ? (
           <form
             className="flex flex-col gap-3"
@@ -102,25 +102,25 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
             }}
           >
             <p className="text-sm text-muted-foreground">
-              Новая сессия начнёт с копии этого разговора и пойдёт своей дорогой, с теми же правами. Эта сессия не
-              изменится.
+              A new session starts from a copy of this conversation and goes its own way, with the same rights. This session
+              does not change.
             </p>
             <Textarea
-              aria-label="Первое сообщение"
+              aria-label="First message"
               value={text}
               onChange={(e) => {
                 setText(e.target.value);
                 setId(inputId());
               }}
               rows={3}
-              placeholder="Например: а если ехать поездом?"
+              placeholder="For example: what if we go by train?"
             />
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setForking(false)}>
-                Назад
+                Back
               </Button>
               <Button type="submit" disabled={busy || !text.trim()}>
-                {busy ? "Ответвляю…" : "Ответвить"}
+                {busy ? "Forking…" : "Fork"}
               </Button>
             </div>
           </form>
@@ -128,7 +128,7 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
           <div className="flex flex-col gap-4">
             {spheres.length > 0 && (
               <fieldset className="flex flex-col gap-2">
-                <legend className="mb-1 text-sm font-medium">Сфера</legend>
+                <legend className="mb-1 text-sm font-medium">Sphere</legend>
                 <div className="flex flex-wrap gap-2">
                   {spheres.map((sphere) => choice(sphere.name, sphereLabel(sphere)))}
                   {choice(null, NO_SPHERE)}
@@ -137,12 +137,12 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
             )}
             <Button variant="outline" disabled={busy} onClick={() => change(() => pin(s.id, !s.pinned))}>
               <Pin className={cn(s.pinned && "fill-current")} />
-              {s.pinned ? "Открепить" : "Закрепить"}
+              {s.pinned ? "Unpin" : "Pin"}
             </Button>
             {s.sphere && (
               <Button variant="outline" disabled={busy} onClick={() => change(() => calls.setMain(s.id, !s.main))}>
                 <Star className={cn(s.main && "fill-current")} />
-                {s.main ? "Больше не главная" : "Сделать главной в сфере"}
+                {s.main ? "No longer main" : "Make main in the sphere"}
               </Button>
             )}
             {(s.base ?? 0) > 0 && (
@@ -154,7 +154,7 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
                   setBase(await openBase(s.id));
                 }}
               >
-                <Database />В Базу · {s.base}
+                <Database />To the Base · {s.base}
               </Button>
             )}
             {(s.push ?? 0) > 0 && (
@@ -167,18 +167,18 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
                 }}
               >
                 <GitBranch />
-                Запушить · {s.push}
+                Push · {s.push}
               </Button>
             )}
             {!s.parent && (
               <Button variant="outline" onClick={() => setForking(true)}>
                 <Fork />
-                Ответвить…
+                Fork…
               </Button>
             )}
             <div className="flex justify-end">
               <Button variant="ghost" onClick={close}>
-                Закрыть
+                Close
               </Button>
             </div>
           </div>

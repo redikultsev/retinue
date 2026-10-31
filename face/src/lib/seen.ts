@@ -1,4 +1,4 @@
-// «Непрочитано» (retinue/sessions.py `mark_seen`): a session open on a visible screen tells the platform the owner
+// «Unread» (retinue/sessions.py `mark_seen`): a session open on a visible screen tells the platform the owner
 // has seen it — when it opens, when something new comes while it is open, and when the app comes back to the front.
 import { useEffect, useState } from "react";
 import { api } from "./api";

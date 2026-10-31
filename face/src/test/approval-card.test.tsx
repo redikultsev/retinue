@@ -5,7 +5,7 @@ import { ApiError } from "@/lib/api";
 import { Live } from "@/lib/live";
 import type { Approval } from "@/lib/types";
 
-const longCommand = `${"echo строка && ".repeat(400)}true`; // > 4096 characters: Telegram would only offer «Открыть»
+const longCommand = `${"echo line && ".repeat(400)}true`; // > 4096 characters: Telegram would only offer «Open»
 
 const approval = (over: Partial<Approval> = {}): Approval => ({
   id: "5f3a9c21",
@@ -18,8 +18,8 @@ const approval = (over: Partial<Approval> = {}): Approval => ({
   cwd: "/work/retinue",
   digest: "digest-of-the-call",
   view: {
-    head: ["Разрешение · retinue · сессия a1b2c3d4", "Инструмент: Bash", "Папка: /work/retinue", "Ввод, 6404 знаков:"],
-    body: "Ввод длинный — целиком он придёт файлом по кнопке «Открыть».",
+    head: ["Approval · retinue · session a1b2c3d4", "Tool: Bash", "Folder: /work/retinue", "Input, 6404 characters:"],
+    body: "The input is long — the whole of it comes as a file under «Open».",
   },
   created: 1,
   at: 1,
@@ -39,15 +39,15 @@ const fakeLive = () =>
 describe("ApprovalCard", () => {
   it("shows the header code built and the FULL input, never cut", () => {
     render(<ApprovalCard approval={approval()} live={fakeLive()} />);
-    expect(screen.getByText("Разрешение · retinue · сессия a1b2c3d4")).toBeTruthy();
-    expect(screen.getByText("Папка: /work/retinue")).toBeTruthy();
+    expect(screen.getByText("Approval · retinue · session a1b2c3d4")).toBeTruthy();
+    expect(screen.getByText("Folder: /work/retinue")).toBeTruthy();
     expect(screen.getByTestId("approval-input").textContent).toBe(longCommand);
-    expect(screen.getByRole("button", { name: "Разрешить" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Отказать" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Allow" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
   });
 
   it("shows JSON input of a non-Bash tool indented, as approvals.input_text does", () => {
-    const input = { file_path: "/work/notes/a.md", content: "текст" };
+    const input = { file_path: "/work/notes/a.md", content: "text" };
     render(<ApprovalCard approval={approval({ tool: "Write", input })} live={fakeLive()} />);
     expect(screen.getByTestId("approval-input").textContent).toBe(JSON.stringify(input, null, 2));
   });
@@ -55,49 +55,49 @@ describe("ApprovalCard", () => {
   it("writes invisible characters as their codes", () => {
     render(<ApprovalCard approval={approval({ input: { command: "rm‮fdp.exe" } })} live={fakeLive()} />);
     expect(screen.getByTestId("approval-input").textContent).toBe("rm⟦U+202E⟧fdp.exe");
-    expect(screen.getByText(/невидимые символы/)).toBeTruthy();
+    expect(screen.getByText(/invisible characters/)).toBeTruthy();
   });
 
   it("approve posts the action with the card's digest and applies the returned approval", async () => {
     const live = fakeLive();
-    const decided = approval({ state: "granted", at: 2, view: { head: [], status: "Разрешено — выполняю." } });
-    const decide = vi.fn().mockResolvedValue({ toast: "Разрешено.", approval: decided });
+    const decided = approval({ state: "granted", at: 2, view: { head: [], status: "Allowed — running it." } });
+    const decide = vi.fn().mockResolvedValue({ toast: "Allowed.", approval: decided });
     render(<ApprovalCard approval={approval()} live={live} decide={decide} />);
-    fireEvent.click(screen.getByRole("button", { name: "Разрешить" }));
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
     await waitFor(() => expect(live.getState().approvals["5f3a9c21"]?.state).toBe("granted"));
     expect(decide).toHaveBeenCalledWith(expect.objectContaining({ id: "5f3a9c21", digest: "digest-of-the-call" }), "approve");
   });
 
   it("reject posts reject", async () => {
-    const decide = vi.fn().mockResolvedValue({ toast: "Отказано.", approval: approval({ state: "rejected" }) });
+    const decide = vi.fn().mockResolvedValue({ toast: "Denied.", approval: approval({ state: "rejected" }) });
     render(<ApprovalCard approval={approval()} live={fakeLive()} decide={decide} />);
-    fireEvent.click(screen.getByRole("button", { name: "Отказать" }));
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
     await waitFor(() => expect(decide).toHaveBeenCalledWith(expect.anything(), "reject"));
   });
 
   it("keeps the buttons usable after a failed request", async () => {
-    const decide = vi.fn().mockRejectedValue(new ApiError(0, "Нет связи с сервером."));
+    const decide = vi.fn().mockRejectedValue(new ApiError(0, "No connection to the server."));
     render(<ApprovalCard approval={approval()} live={fakeLive()} decide={decide} />);
-    fireEvent.click(screen.getByRole("button", { name: "Разрешить" }));
-    await waitFor(() => expect((screen.getByRole("button", { name: "Разрешить" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Allow" }) as HTMLButtonElement).disabled).toBe(false));
   });
 
   it("a decided card and a courier card have no approve/reject buttons", () => {
     const { unmount } = render(<ApprovalCard approval={approval({ state: "executed" })} live={fakeLive()} />);
-    expect(screen.queryByRole("button", { name: "Разрешить" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
     unmount();
     render(
       <ApprovalCard
         approval={approval({
           kind: "courier",
           input: { command: "git push origin main" },
-          view: { head: ["Курьер · retinue · сессия a1b2c3d4"], status: "Не выполняю: это делаешь ты сам — команда выше целиком." },
+          view: { head: ["Courier · retinue · session a1b2c3d4"], status: "Not running it: you do this yourself — the whole command is above." },
         })}
         live={fakeLive()}
       />,
     );
-    expect(screen.queryByRole("button", { name: "Разрешить" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Скопировать команду" })).toBeTruthy();
-    expect(screen.getByText(/это делаешь ты сам/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Copy command" })).toBeTruthy();
+    expect(screen.getByText(/you do this yourself/)).toBeTruthy();
   });
 });

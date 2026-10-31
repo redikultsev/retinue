@@ -1,7 +1,7 @@
-// «Ждут тебя»: one queue grouped by what the owner does — answer a question, decide a card, choose a reply, read a
+// «Waiting for you»: one queue grouped by what the owner does — answer a question, decide a card, choose a reply, read a
 // finished turn, and the assistant's items — not by where it came from. Each row: where it came from (icon), its
 // sphere, its title, how long it waits and its one line; the action itself in place where it is small (a question's
-// buttons, «Разрешить» / «Отказать», the suggested replies), so the home screen is a peek, not a way elsewhere. The
+// buttons, «Allow» / «Deny», the suggested replies), so the home screen is a peek, not a way elsewhere. The
 // assistant's items open the bot's chat: sending and deciding them stays in Telegram, under her cards' buttons.
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
@@ -44,16 +44,16 @@ const ICONS: Record<string, (props: React.SVGProps<SVGSVGElement>) => React.Reac
 const SMALL_CHARS = 240;
 const SMALL_LINES = 4;
 const SOURCE_WORDS: Record<string, string> = {
-  question: "вопрос",
-  approval: "разрешение",
-  courier: "курьер",
-  session: "сессия",
-  letter: "письмо",
+  question: "question",
+  approval: "approval",
+  courier: "courier",
+  session: "session",
+  letter: "letter",
   chat: "Telegram",
-  draft: "черновик",
-  deadline: "срок",
-  base: "В Базу",
-  push: "Запушить",
+  draft: "draft",
+  deadline: "deadline",
+  base: "To the Base",
+  push: "Push",
 };
 
 /** The card as the app knows it now: a press here or in Telegram may be newer than the feed's copy. */
@@ -75,7 +75,7 @@ function CardAction({ approval, essence }: { approval: Approval; essence: string
     <div className="flex flex-col gap-1.5">
       <p className="line-clamp-2 font-mono text-[13px] break-all text-muted-foreground">{essence}</p>
       <Button variant="outline" className="w-fit" aria-expanded={false} onClick={() => setOpen(true)}>
-        {current.kind === "courier" ? "Показать команду" : "Показать и решить"}
+        {current.kind === "courier" ? "Show the command" : "Show and decide"}
       </Button>
     </div>
   );
@@ -133,7 +133,7 @@ function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
       {row.action === "choose" && <Replies row={row} />}
       {row.action === "choose" && !row.replies?.length && row.session && (
         <Link to="/s/$id" params={{ id: row.session }} className="text-sm text-primary underline-offset-4 hover:underline">
-          Открыть и ответить
+          Open and answer
         </Link>
       )}
       {row.action === "assistant" &&
@@ -144,10 +144,10 @@ function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
             rel="noopener noreferrer"
             className="w-fit text-sm text-primary underline-offset-4 hover:underline"
           >
-            Открыть в Telegram
+            Open in Telegram
           </a>
         ) : (
-          <span className="text-sm text-muted-foreground">в Telegram</span>
+          <span className="text-sm text-muted-foreground">in Telegram</span>
         ))}
     </li>
   );
@@ -156,7 +156,7 @@ function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
 export function FeedView({
   feed,
   now = Date.now() / 1000,
-  empty = "Ничего не ждёт тебя.",
+  empty = "Nothing is waiting for you.",
   className,
   skip,
   heading = "h1",
@@ -176,12 +176,12 @@ export function FeedView({
   const Heading = heading;
   const Sub = heading === "h1" ? "h2" : "h3";
   return (
-    <section aria-label="Ждут тебя" className={cn("flex flex-col gap-3", className)}>
+    <section aria-label="Waiting for you" className={cn("flex flex-col gap-3", className)}>
       <Heading className={cn("px-1 font-semibold", heading === "h1" ? "text-xl" : "text-base")}>
-        Ждут тебя {feed && count > 0 && <span className="tabular-nums">({count})</span>}
+        Waiting for you {feed && count > 0 && <span className="tabular-nums">({count})</span>}
       </Heading>
       {!feed ? (
-        <p className="px-1 text-sm text-muted-foreground">Загружаю…</p>
+        <p className="px-1 text-sm text-muted-foreground">Loading…</p>
       ) : count === 0 ? (
         <p className="px-1 text-sm text-muted-foreground">{empty}</p>
       ) : (
@@ -191,7 +191,7 @@ export function FeedView({
               {group.title} <span className="tabular-nums">({group.rows.length})</span>
             </Sub>
             {group.action === "assistant" && feed.assistant_at !== null && now - feed.assistant_at > STALE_DIGEST_S && (
-              <p className="px-1 text-xs text-warning-foreground">Список ассистентки от {when(feed.assistant_at, now)}: новее не приходил.</p>
+              <p className="px-1 text-xs text-warning-foreground">The assistant's list is from {when(feed.assistant_at, now)}: no newer one has come.</p>
             )}
             <ul className="flex flex-col gap-2">
               {group.rows.map((row) => (
@@ -217,8 +217,8 @@ export function FeedCount() {
   return (
     <Link
       to="/today"
-      aria-label={`Ждут тебя: ${feed.count}`}
-      title="Ждут тебя"
+      aria-label={`Waiting for you: ${feed.count}`}
+      title="Waiting for you"
       className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-warning px-2 text-xs font-semibold text-warning-foreground tabular-nums"
     >
       {feed.count}

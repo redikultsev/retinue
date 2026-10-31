@@ -1,7 +1,7 @@
 // An approval card (or a courier card) as the face shows it: the header lines code built, the FULL input in a
 // monospace block (never cut: the face has no 4096 limit; wrapped, so nothing hides past the right edge; long
 // whitespace runs, many blank lines and invisible characters shown as labels), every other field of a Bash call,
-// the status, and «Разрешить» / «Отказать» while it can be pressed. The decision is bound to the card's digest,
+// the status, and «Allow» / «Deny» while it can be pressed. The decision is bound to the card's digest,
 // exactly as a Telegram press. A question card (AskUserQuestion) is drawn by QuestionCard wherever a card is shown.
 import { useState } from "react";
 import { QuestionCard } from "@/components/question-card";
@@ -38,8 +38,8 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const courier = approval.kind === "courier";
   const pressable = !courier && approval.state === "shown";
-  const [title, ...head] = approval.view.head.length ? approval.view.head : [`Разрешение · ${approval.tool}`];
-  // The last header line names the input («Ввод, N знаков:»); the face shows the input itself below it.
+  const [title, ...head] = approval.view.head.length ? approval.view.head : [`Approval · ${approval.tool}`];
+  // The last header line names the input («Input, N characters:»); the face shows the input itself below it.
   const body = markInput(inputText(approval));
   const fields = extraFields(approval);
   const link = approval.view.link && approval.view.link.length === 2 ? approval.view.link : null;
@@ -53,7 +53,7 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
       if (res.approval) live.dispatch({ type: "event", id: null, event: { kind: "approval", data: res.approval } });
       if (res.approval && res.approval.state !== "shown" && res.approval.state !== "stale") onDecided?.(res.approval);
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : "Не получилось.", "error");
+      toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
     } finally {
       setBusy(null);
     }
@@ -62,9 +62,9 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
   async function copy() {
     try {
       await navigator.clipboard.writeText(inputText(approval));
-      toast("Команда скопирована.");
+      toast("Command copied.");
     } catch {
-      toast("Скопировать не вышло — выдели текст вручную.", "error");
+      toast("Couldn't copy — select the text by hand.", "error");
     }
   }
 
@@ -81,7 +81,7 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
         {head.length > 0 && (
           <div className="flex flex-col gap-0.5 text-[13px] text-muted-foreground">
             {head.map((line, i) => (
-              <div key={i} className={cn("break-words", line.startsWith("Внимание") && "font-medium text-destructive")}>
+              <div key={i} className={cn("break-words", line.startsWith("Warning") && "font-medium text-destructive")}>
                 {line}
               </div>
             ))}
@@ -90,8 +90,8 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
       </CardHeader>
       <CardContent>
         <div className="mb-1 text-[11px] text-muted-foreground">
-          {body.lines} {plural(body.lines, "строка", "строки", "строк")} · {body.chars}{" "}
-          {plural(body.chars, "знак", "знака", "знаков")}
+          {body.lines} {plural(body.lines, "line", "lines")} · {body.chars}{" "}
+          {plural(body.chars, "character", "characters")}
         </div>
         <pre
           data-testid="approval-input"
@@ -99,7 +99,7 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
         >
           {body.segments.map((seg, i) =>
             seg.mark ? (
-              <mark key={i} title="скрытое в вводе" className="rounded-sm bg-destructive/15 px-0.5 font-semibold text-destructive">
+              <mark key={i} title="hidden in the input" className="rounded-sm bg-destructive/15 px-0.5 font-semibold text-destructive">
                 {seg.mark}
               </mark>
             ) : (
@@ -109,7 +109,7 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
         </pre>
         {body.marked && (
           <p className="mt-2 text-sm font-medium text-destructive">
-            Во вводе скрытое: длинные пробелы, пустые строки или невидимые символы — показаны метками ⟦…⟧
+            The input hides something: long runs of spaces, blank lines or invisible characters — shown as ⟦…⟧ labels
           </p>
         )}
         {fields.length > 0 && (
@@ -132,17 +132,17 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, class
       {pressable && (
         <CardFooter className="grid grid-cols-2 sm:flex">
           <Button disabled={busy !== null} onClick={() => press("approve")}>
-            {busy === "approve" ? "Отправляю…" : "Разрешить"}
+            {busy === "approve" ? "Sending…" : "Allow"}
           </Button>
           <Button variant="outline" disabled={busy !== null} onClick={() => press("reject")}>
-            {busy === "reject" ? "Отправляю…" : "Отказать"}
+            {busy === "reject" ? "Sending…" : "Deny"}
           </Button>
         </CardFooter>
       )}
       {courier && (
         <CardFooter>
           <Button variant="outline" onClick={copy}>
-            Скопировать команду
+            Copy command
           </Button>
         </CardFooter>
       )}

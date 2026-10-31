@@ -1,6 +1,6 @@
 // shadcn/ui Dialog's look (MIT) on the native <dialog> element instead of Radix: focus trap, Esc and the top layer
 // come from the browser, one dependency fewer. `sheet`: a bottom sheet on a phone (a centred panel on a wide screen),
-// its own header with «Закрыть», its body scrolling above the home indicator.
+// its own header with «Close», its body scrolling above the home indicator.
 import { useEffect, useRef } from "react";
 import type * as React from "react";
 import { cn } from "@/lib/utils";
@@ -40,7 +40,7 @@ function Dialog({ open, onClose, title, sheet = false, className, children, ...p
             <h2 className="flex-1 text-sm font-semibold">{title}</h2>
             <button
               type="button"
-              aria-label="Закрыть"
+              aria-label="Close"
               onClick={onClose}
               className="inline-flex size-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent"
             >

@@ -7,9 +7,9 @@ const session = (id: string, over: Partial<Session> = {}): Session => ({
   ...over,
 });
 const SPHERES: Sphere[] = [
-  { name: "travel", title: "Путешествия", icon: "✈️", track: "notes" },
-  { name: "work", title: "Работа", icon: "", track: "notes" },
-  { name: "home", title: "Дом", icon: "", track: "notes" },
+  { name: "travel", title: "Travel", icon: "✈️", track: "notes" },
+  { name: "work", title: "Work", icon: "", track: "notes" },
+  { name: "home", title: "Home", icon: "", track: "notes" },
 ];
 const NOW = 1_000_000;
 const ids = (g: { rows: { session: Session; depth: number }[] }) => g.rows.map((r) => `${r.session.id}@${r.depth}`);
@@ -34,10 +34,10 @@ describe("sphereGroups", () => {
       NOW,
     );
     expect(groups.map((g) => [g.key, g.title])).toEqual([
-      ["travel", "✈️ Путешествия"],
-      ["work", "Работа"],
+      ["travel", "✈️ Travel"],
+      ["work", "Work"],
       ["mars", "mars"],
-      ["", "Без сферы"],
+      ["", "No sphere"],
     ]);
     expect(ids(groups[0]!)).toEqual(["main@0", "fork@1", "fork2@2", "new@0", "old@0", "side@1"]);
     expect(groups[0]!.rows.find((r) => r.session.id === "side")!.side).toBe(true);

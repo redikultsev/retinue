@@ -22,7 +22,7 @@ const page = (id: string, over: Partial<LibraryPage> = {}): LibraryPage => ({
   url: `${HUB}/pages/${id}.html`,
   updated: "2026-10-27",
   section: "education",
-  section_title: "Учёба",
+  section_title: "Study",
   section_icon: "🎓",
   minutes: 42,
   opened: null,
@@ -35,10 +35,10 @@ const LIBRARY: Library = {
   hub: HUB,
   at: NOW - 60,
   pages: [
-    page("regex", { title: "Курс по Regex", opened: NOW - 3600 }),
-    page("sql-cheatsheet", { title: "SQL: шпаргалка", updated: "2026-10-20", opened: NOW - 60 }),
+    page("regex", { title: "Regex course", opened: NOW - 3600 }),
+    page("sql-cheatsheet", { title: "SQL: cheat sheet", updated: "2026-10-20", opened: NOW - 60 }),
     page("ёлки", { title: "Ёлки и сосны", section: null, section_title: null, section_icon: null, minutes: null }),
-    page("travel-notes", { title: "Заметки к поездке", section: "travel", section_title: "Путешествия", section_icon: "✈️", done: NOW - 86400 * 3, opened: NOW - 86400 * 4 }),
+    page("travel-notes", { title: "Notes for the trip", section: "travel", section_title: "Travel", section_icon: "✈️", done: NOW - 86400 * 3, opened: NOW - 86400 * 4 }),
   ],
 };
 
@@ -63,13 +63,13 @@ describe("the library's rules", () => {
 
   it("groups by section, the sectionless last, and searches title and section with ё as е", () => {
     expect(sections(LIBRARY.pages).map((s) => [s.title, s.pages.map((p) => p.id)])).toEqual([
-      ["Путешествия", ["travel-notes"]],
-      ["Учёба", ["regex", "sql-cheatsheet"]],
+      ["Study", ["regex", "sql-cheatsheet"]],
+      ["Travel", ["travel-notes"]],
       [NO_SECTION, ["ёлки"]],
     ]);
     expect(sections(LIBRARY.pages, "елки").flatMap((s) => s.pages.map((p) => p.id))).toEqual(["ёлки"]);
-    expect(sections(LIBRARY.pages, "учёба regex").flatMap((s) => s.pages.map((p) => p.id))).toEqual(["regex"]);
-    expect(sections(LIBRARY.pages, "нет такого")).toEqual([]);
+    expect(sections(LIBRARY.pages, "study regex").flatMap((s) => s.pages.map((p) => p.id))).toEqual(["regex"]);
+    expect(sections(LIBRARY.pages, "no such thing")).toEqual([]);
   });
 
   it("says a finished page changed when it was updated on a later day", () => {
@@ -91,7 +91,7 @@ describe("the library's rules", () => {
   });
 });
 
-describe("«Читать»", () => {
+describe("«Read»", () => {
   const view = (library: Library | null, extra: Partial<Parameters<typeof ReadView>[0]> = {}) => {
     const onOpen = vi.fn();
     const onDone = vi.fn();
@@ -99,51 +99,51 @@ describe("«Читать»", () => {
     return { onOpen, onDone };
   };
 
-  it("shows «Продолжить» above the sections, each page a link to the hub in a tab of its own", () => {
+  it("shows «Continue» above the sections, each page a link to the hub in a tab of its own", () => {
     view(LIBRARY);
     const [one, ...rest] = screen.getAllByRole("region");
     const first = one!;
-    expect(first.getAttribute("aria-label")).toBe("Продолжить");
+    expect(first.getAttribute("aria-label")).toBe("Continue");
     expect(within(first).getAllByTestId("library-page").map((li) => li.textContent)).toEqual([
-      expect.stringContaining("SQL: шпаргалка"),
-      expect.stringContaining("Курс по Regex"),
+      expect.stringContaining("SQL: cheat sheet"),
+      expect.stringContaining("Regex course"),
     ]);
-    expect(rest.map((r) => r.getAttribute("aria-label"))).toEqual(["Путешествия", "Учёба", NO_SECTION]);
-    const link = within(first).getByRole("link", { name: "Курс по Regex" });
+    expect(rest.map((r) => r.getAttribute("aria-label"))).toEqual(["Study", "Travel", NO_SECTION]);
+    const link = within(first).getByRole("link", { name: "Regex course" });
     expect(link.getAttribute("href")).toBe(`${HUB}/pages/regex.html`);
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(within(first).getAllByTestId("library-page")[1]!.textContent).toContain("42 мин · обновлена");
-    expect(screen.getByText(/изменилась после прочтения/)).toBeTruthy(); // finished on the 25th, updated on the 27th
+    expect(within(first).getAllByTestId("library-page")[1]!.textContent).toContain("42 min · updated");
+    expect(screen.getByText(/changed since you finished it/)).toBeTruthy(); // finished on the 25th, updated on the 27th
     expect(document.querySelector("iframe")).toBeNull();
   });
 
   it("does not draw a link the hub did not give", () => {
-    view({ ...LIBRARY, pages: [page("bad", { title: "Чужая", url: "https://evil.example/pages/bad.html" })] });
+    view({ ...LIBRARY, pages: [page("bad", { title: "Foreign", url: "https://evil.example/pages/bad.html" })] });
     expect(screen.queryByRole("link")).toBeNull();
-    expect(screen.getByText("Чужая")).toBeTruthy();
+    expect(screen.getByText("Foreign")).toBeTruthy();
   });
 
-  it("searches, and hides «Продолжить» while it does", () => {
+  it("searches, and hides «Continue» while it does", () => {
     view(LIBRARY);
-    fireEvent.change(screen.getByLabelText("Найти страницу"), { target: { value: "поездк" } });
-    expect(screen.queryByRole("region", { name: "Продолжить" })).toBeNull();
-    expect(screen.getAllByTestId("library-page").map((li) => li.textContent)).toEqual([expect.stringContaining("Заметки к поездке")]);
-    fireEvent.change(screen.getByLabelText("Найти страницу"), { target: { value: "quantum" } });
-    expect(screen.getByText("Ничего не нашлось.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Find a page"), { target: { value: "trip" } });
+    expect(screen.queryByRole("region", { name: "Continue" })).toBeNull();
+    expect(screen.getAllByTestId("library-page").map((li) => li.textContent)).toEqual([expect.stringContaining("Notes for the trip")]);
+    fireEvent.change(screen.getByLabelText("Find a page"), { target: { value: "quantum" } });
+    expect(screen.getByText("Nothing found.")).toBeTruthy();
   });
 
-  it("reports an open and a «Дочитал», and the button says which it is", () => {
+  it("reports an open and a «Finished», and the button says which it is", () => {
     const { onOpen, onDone } = view(LIBRARY);
     const regex = screen.getAllByTestId("library-page").find((li) => li.textContent?.includes("Regex"))!;
     fireEvent.click(within(regex).getByRole("link"));
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: "regex" }));
-    const button = within(regex).getByRole("button", { name: /Дочитал/ });
+    const button = within(regex).getByRole("button", { name: /Finished/ });
     expect(button.getAttribute("aria-pressed")).toBe("false");
     fireEvent.click(button);
     expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ id: "regex" }), true);
-    const notes = screen.getAllByTestId("library-page").find((li) => li.textContent?.includes("поездке"))!;
-    fireEvent.click(within(notes).getByRole("button", { name: /Дочитал/ }));
+    const notes = screen.getAllByTestId("library-page").find((li) => li.textContent?.includes("trip"))!;
+    fireEvent.click(within(notes).getByRole("button", { name: /Finished/ }));
     expect(onDone).toHaveBeenLastCalledWith(expect.objectContaining({ id: "travel-notes" }), false);
   });
 
@@ -151,7 +151,7 @@ describe("«Читать»", () => {
     const openLink = vi.fn();
     (window as unknown as { Telegram: unknown }).Telegram = { WebApp: { openLink } };
     const { onOpen } = view(LIBRARY);
-    const link = screen.getAllByRole("link", { name: "Курс по Regex" })[0]!;
+    const link = screen.getAllByRole("link", { name: "Regex course" })[0]!;
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
     link.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
@@ -161,15 +161,15 @@ describe("«Читать»", () => {
 
   it("says when the list never came, when it is empty, and when it failed", () => {
     view({ ...LIBRARY, at: null, pages: [] });
-    expect(screen.getByText("Список страниц ещё не пришёл с хаба.")).toBeTruthy();
-    expect(screen.queryByLabelText("Найти страницу")).toBeNull();
+    expect(screen.getByText("The list of pages has not come from the hub yet.")).toBeTruthy();
+    expect(screen.queryByLabelText("Find a page")).toBeNull();
     document.body.innerHTML = "";
     view({ ...LIBRARY, pages: [] });
-    expect(screen.getByText(/Страниц нет/)).toBeTruthy();
+    expect(screen.getByText(/No pages/)).toBeTruthy();
     document.body.innerHTML = "";
     const onRetry = vi.fn();
-    view(null, { error: "Нет связи с сервером.", onRetry });
-    fireEvent.click(screen.getByRole("button", { name: "Ещё раз" }));
+    view(null, { error: "No connection to the server.", onRetry });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRetry).toHaveBeenCalled();
   });
 
@@ -181,12 +181,12 @@ describe("«Читать»", () => {
     const link = await screen.findByRole("link", { name: "Ёлки и сосны" });
     fireEvent.click(link);
     expect(open).toHaveBeenCalledWith("ёлки");
-    await waitFor(() => expect(screen.getByRole("region", { name: "Продолжить" }).textContent).toContain("Ёлки"));
-    const regex = within(screen.getByRole("region", { name: "Продолжить" }))
+    await waitFor(() => expect(screen.getByRole("region", { name: "Continue" }).textContent).toContain("Ёлки"));
+    const regex = within(screen.getByRole("region", { name: "Continue" }))
       .getAllByTestId("library-page")
       .find((li) => li.textContent?.includes("Regex"))!;
-    fireEvent.click(within(regex).getByRole("button", { name: /Дочитал/ }));
+    fireEvent.click(within(regex).getByRole("button", { name: /Finished/ }));
     expect(done).toHaveBeenCalledWith("regex", true);
-    await waitFor(() => expect(within(screen.getByRole("region", { name: "Продолжить" })).queryByText("Курс по Regex")).toBeNull());
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "Continue" })).queryByText("Regex course")).toBeNull());
   });
 });

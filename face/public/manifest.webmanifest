@@ -1,8 +1,8 @@
 {
   "name": "Retinue",
   "short_name": "Retinue",
-  "description": "Сессии, карточки и изменения Retinue",
-  "lang": "ru",
+  "description": "Retinue sessions, cards and changes",
+  "lang": "en",
   "id": "/",
   "start_url": "/",
   "scope": "/",

@@ -16,7 +16,7 @@ export function InputBubble({ input }: { input: Input }) {
               <img
                 key={`${input.input_id}/${n}`}
                 src={api.thumbUrl(input.session, input.input_id, n)}
-                alt={f.name || "фото"}
+                alt={f.name || "photo"}
                 title={f.what}
                 loading="lazy"
                 className="max-h-40 max-w-full rounded-xl border object-cover"

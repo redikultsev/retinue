@@ -7,10 +7,10 @@ import { cn } from "@/lib/utils";
 
 const WORDS: Record<Connection, string> = {
   idle: "",
-  connecting: "подключаюсь…",
+  connecting: "connecting…",
   live: "",
-  offline: "нет связи",
-  outdated: "обновляю приложение…",
+  offline: "offline",
+  outdated: "updating the app…",
 };
 
 export function AppHeader() {
@@ -22,12 +22,12 @@ export function AppHeader() {
         <span className="text-[15px] font-semibold">Retinue</span>
         <span
           className={cn("size-1.5 rounded-full", connection === "live" ? "bg-success" : connection === "offline" ? "bg-destructive" : "bg-warning")}
-          title={connection === "live" ? "на связи" : WORDS[connection]}
+          title={connection === "live" ? "online" : WORDS[connection]}
         />
         {WORDS[connection] && <span className="truncate text-xs text-muted-foreground">{WORDS[connection]}</span>}
         <FeedCount />
       </div>
-      <Button size="icon" variant="ghost" aria-label="Выйти" title="Выйти" onClick={async () => {
+      <Button size="icon" variant="ghost" aria-label="Log out" title="Log out" onClick={async () => {
         await api.logout().catch(() => undefined);
         live.stop();
         window.location.assign("/login");

@@ -1,4 +1,4 @@
-// «Читать»: the life hub's pages (`GET /api/library`, retinue/library.py) — the owner's own HTML pages the hub serves
+// «Read»: the life hub's pages (`GET /api/library`, retinue/library.py) — the owner's own HTML pages the hub serves
 // under /pages/, as the router last pushed their list. A page is never fetched or framed here: it opens on the hub's
 // own origin in a tab of its own (Telegram's openLink inside the Mini App), so its scripts stay away from the app's
 // login. What the owner opened and finished is the platform's row, the same on every device.
@@ -21,7 +21,7 @@ export interface LibraryPage {
   minutes: number | null;
   /** When the owner last opened it (seconds), or null. */
   opened: number | null;
-  /** When he said «Дочитал» (seconds), or null. */
+  /** When he said «Finished» (seconds), or null. */
   done: number | null;
 }
 
@@ -55,7 +55,7 @@ export function safeUrl(url: string, hub: string): string | null {
   }
 }
 
-/** «Продолжить»: opened and not finished, the last opened first. */
+/** «Continue»: opened and not finished, the last opened first. */
 export function continuing(pages: LibraryPage[]): LibraryPage[] {
   return pages.filter((p) => p.opened !== null && p.done === null).sort((a, b) => (b.opened ?? 0) - (a.opened ?? 0));
 }
@@ -67,11 +67,11 @@ export interface Section {
   pages: LibraryPage[];
 }
 
-export const NO_SECTION = "Без раздела";
+export const NO_SECTION = "No section";
 
 const fold = (text: string) => text.toLocaleLowerCase("ru").replaceAll("ё", "е");
 
-/** The pages that match `query` (title or section, any case, ё as е), by section: sections by title, «Без раздела»
+/** The pages that match `query` (title or section, any case, ё as е), by section: sections by title, «No section»
  * last; in each, the latest changed first. */
 export function sections(pages: LibraryPage[], query = ""): Section[] {
   const words = fold(query).split(/\s+/).filter(Boolean);
@@ -115,7 +115,7 @@ export function useLibrary() {
       setLibrary(await libraryApi.list());
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось загрузить.");
+      setError(e instanceof Error ? e.message : "Couldn't load.");
     }
   }, []);
   useEffect(() => {

@@ -44,7 +44,7 @@ export function LoginPage({ next, loginCode = api.loginCode, loginTelegram = api
       await loginCode(value.trim().toUpperCase());
       finish(safeNext(next));
     } catch (e) {
-      setError(e instanceof ApiError && e.status !== 401 ? e.message : "Код не подошёл: он одноразовый и живёт 10 минут. Попроси новый: /app.");
+      setError(e instanceof ApiError && e.status !== 401 ? e.message : "The code did not work: it is single-use and lives 10 minutes. Ask for a new one: /app.");
       setBusy(false);
     }
   }
@@ -63,7 +63,7 @@ export function LoginPage({ next, loginCode = api.loginCode, loginTelegram = api
           finish(card ? `/a/${card}` : safeNext(next));
         })
         .catch((e) => {
-          setError(e instanceof ApiError && e.status !== 401 ? e.message : "Telegram не подтвердил вход. Открой приложение из бота ещё раз.");
+          setError(e instanceof ApiError && e.status !== 401 ? e.message : "Telegram did not confirm the login. Open the app from the bot again.");
           setBusy(false);
         });
       return;
@@ -82,7 +82,7 @@ export function LoginPage({ next, loginCode = api.loginCode, loginTelegram = api
         <img src="/icons/icon.svg" alt="" className="size-16 rounded-2xl" />
         <h1 className="text-2xl font-semibold">Retinue</h1>
         <p className="text-sm text-muted-foreground">
-          {telegram ? "Вхожу через Telegram…" : "Отправь боту /app — он пришлёт ссылку и код из 10 знаков."}
+          {telegram ? "Logging in through Telegram…" : "Send the bot /app — it replies with a link and a 10-character code."}
         </p>
       </div>
       {!telegram && (
@@ -94,7 +94,7 @@ export function LoginPage({ next, loginCode = api.loginCode, loginTelegram = api
           }}
         >
           <label className="flex flex-col gap-1">
-            <span className="text-sm font-medium">Код входа</span>
+            <span className="text-sm font-medium">Login code</span>
             <Input
               value={code}
               onChange={(e) => setCode(e.target.value)}
@@ -109,7 +109,7 @@ export function LoginPage({ next, loginCode = api.loginCode, loginTelegram = api
             />
           </label>
           <Button type="submit" size="lg" disabled={busy || code.trim().length !== 10}>
-            {busy ? "Вхожу…" : "Войти"}
+            {busy ? "Logging in…" : "Log in"}
           </Button>
         </form>
       )}

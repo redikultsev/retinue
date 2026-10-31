@@ -1,4 +1,4 @@
-// «Сводка»: a session at a glance, as the right panel of Claude's desktop app has it — where it runs, its context, its
+// «Summary»: a session at a glance, as the right panel of Claude's desktop app has it — where it runs, its context, its
 // plan, what hangs under it, what it changed and handed over, its connectors. Only what the platform knows: a section
 // with nothing known is left out, and what the platform cannot know is said once at the bottom.
 import { Link } from "@tanstack/react-router";
@@ -56,7 +56,7 @@ export function Dot({ s }: { s: Session }) {
 
 interface Props {
   id: string;
-  /** Open the session's diff: the right pane on a wide screen, the «Изменения» tab on a phone. */
+  /** Open the session's diff: the right pane on a wide screen, the «Changes» tab on a phone. */
   onDiff?: () => void;
   /** Open a handed-over file: the right pane, or its own page. */
   onFile?: (id: string) => void;
@@ -80,10 +80,10 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
         .sort((a, b) => b.at - a.at),
     [state.pushes, id],
   );
-  if (!s) return <p className="p-3 text-sm text-muted-foreground">Загружаю…</p>;
+  if (!s) return <p className="p-3 text-sm text-muted-foreground">Loading…</p>;
   const sphere = live.meta?.spheres?.find((x) => x.name === s.sphere);
   const up = s.sub_of ?? (s.side || s.parent ? s.parent : null) ?? s.fork_of ?? null;
-  const upWord = s.sub_of ? "подсессия" : s.parent ? "вопрос к" : "ветка от";
+  const upWord = s.sub_of ? "sub-session of" : s.parent ? "side question on" : "fork of";
   const upTitle = up ? state.sessions[up]?.title || up : "";
   const step = plan ? planLine(plan) : null;
   const go = (to: string) => (
@@ -94,23 +94,23 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
 
   return (
     <div data-testid="session-summary" className="flex flex-col">
-      <Section title="Окружение">
+      <Section title="Environment">
         <dl className="flex flex-col gap-1">
-          <Field name="Состояние">
+          <Field name="State">
             {sessionStateWord(s.state)}
             {s.queued && ` · ${QUEUED}`}
           </Field>
-          <Field name="Трек">
+          <Field name="Track">
             {s.track} · {s.lane}
-            {s.kind === "code" && " · код"}
+            {s.kind === "code" && " · code"}
           </Field>
           {about?.cwd && (
-            <Field name="Папка" mono title={about.cwd}>
+            <Field name="Folder" mono title={about.cwd}>
               {about.cwd}
             </Field>
           )}
           {about?.model && (
-            <Field name="Модель" mono>
+            <Field name="Model" mono>
               {about.model}
             </Field>
           )}
@@ -120,40 +120,40 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
             </Field>
           )}
           {about?.permission_mode && (
-            <Field name="Режим" mono>
+            <Field name="Mode" mono>
               {about.permission_mode}
             </Field>
           )}
-          <Field name="Сфера">
+          <Field name="Sphere">
             {sphere ? sphereLabel(sphere) : s.sphere || "—"}
-            {s.main && " · главная"}
+            {s.main && " · main"}
           </Field>
           {up && (
-            <Field name="Под" title={upTitle}>
+            <Field name="Under" title={upTitle}>
               {upWord} {go(up)}
             </Field>
           )}
-          <Field name="Начата">{when(s.created)}</Field>
+          <Field name="Started">{when(s.created)}</Field>
         </dl>
       </Section>
 
       {about?.context_tokens != null && (
-        <Section title="Контекст">
+        <Section title="Context">
           <p className="text-[13px]">
-            <span className="font-medium tabular-nums">{tokensWord(about.context_tokens)}</span> токенов в последнем
-            запросе
+            <span className="font-medium tabular-nums">{tokensWord(about.context_tokens)}</span> tokens in the last
+            request
           </p>
         </Section>
       )}
 
       {plan && step && (
-        <Section title="План" aside={<span className="tabular-nums">{`${step.done} из ${step.total}`}</span>}>
+        <Section title="Plan" aside={<span className="tabular-nums">{`${step.done} of ${step.total}`}</span>}>
           <TodoList todos={plan} small />
         </Section>
       )}
 
       {kids.length > 0 && (
-        <Section title="Подсессии" aside={<span className="tabular-nums">{kids.length}</span>}>
+        <Section title="Sub-sessions" aside={<span className="tabular-nums">{kids.length}</span>}>
           <ul className="flex flex-col">
             {kids.map(({ session: k, how }) => (
               <li key={k.id}>
@@ -166,7 +166,7 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
                   <Dot s={k} />
                   <span className="min-w-0 flex-1 truncate">{k.title || k.track}</span>
                   <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {k.queued ? "в очереди" : how === "подсессия" ? sessionStateWord(k.state) : `${how} · ${sessionStateWord(k.state)}`}
+                    {k.queued ? "queued" : how === "sub-session" ? sessionStateWord(k.state) : `${how} · ${sessionStateWord(k.state)}`}
                   </span>
                 </Link>
               </li>
@@ -176,7 +176,7 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
       )}
 
       {(s.kind === "code" || (s.base ?? 0) > 0 || (s.push ?? 0) > 0 || s.push_why || prs.length > 0) && (
-        <Section title="Изменения">
+        <Section title="Changes">
           <div className="flex flex-wrap gap-1.5">
             {s.kind === "code" && onDiff && (
               <button
@@ -185,13 +185,13 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
                 className="inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs hover:bg-accent pointer-coarse:h-9 [&_svg]:size-3.5"
               >
                 <GitBranch />
-                Дифф сессии
+                Session diff
               </button>
             )}
             {(s.base ?? 0) > 0 && <BaseButton session={id} count={s.base!} />}
             {(s.push ?? 0) > 0 && <PushButton session={id} count={s.push!} />}
           </div>
-          {s.push_why && <p className="text-xs text-muted-foreground">Запушить нельзя — {s.push_why}</p>}
+          {s.push_why && <p className="text-xs text-muted-foreground">Cannot push — {s.push_why}</p>}
           {prs.map((p) => (
             <a
               key={p.id}
@@ -207,7 +207,7 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
       )}
 
       {files.length > 0 && (
-        <Section title="Файлы" aside={<span className="tabular-nums">{files.length}</span>}>
+        <Section title="Files" aside={<span className="tabular-nums">{files.length}</span>}>
           <ul className="flex flex-col">
             {files.map((f) => (
               <li key={f.id}>
@@ -227,7 +227,7 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
       )}
 
       {(about?.mcp.length ?? 0) > 0 && (
-        <Section title="Коннекторы">
+        <Section title="Connectors">
           <ul className="flex flex-col gap-1">
             {about!.mcp.map((m) => (
               <li key={m.name} className="flex items-center gap-2 text-[13px]">
@@ -247,8 +247,8 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
       )}
 
       <p className="px-3 py-3 text-[11px] leading-snug text-muted-foreground">
-        Фоновых задач и размера окна контекста платформа не знает — их здесь нет.
-        {!about && " Модель, папка и коннекторы появятся, когда платформа их пришлёт."}
+        The platform does not know the background tasks or the context window size — they are not shown here.
+        {!about && " The model, folder and connectors appear once the platform sends them."}
       </p>
     </div>
   );

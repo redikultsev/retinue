@@ -32,7 +32,7 @@ const card = (over: Partial<PushCard> = {}): PushCard => ({
   said: "",
   created: 10,
   at: 10,
-  view: { head: ["Запушить · retinue · code · сессия a1b2c3d4"], body: "", status: "" },
+  view: { head: ["Push · retinue · code · session a1b2c3d4"], body: "", status: "" },
   ...over,
 });
 
@@ -51,7 +51,7 @@ const calls = (answer: Partial<PushCard> = {}) => {
   return {
     pushTarget: vi.fn().mockResolvedValue(res),
     pushTitle: vi.fn().mockResolvedValue(res),
-    pushSend: vi.fn().mockResolvedValue({ toast: "Отправляю…", card: card({ ...answer, state: "pushing", at: 11 }) }),
+    pushSend: vi.fn().mockResolvedValue({ toast: "Pushing…", card: card({ ...answer, state: "pushing", at: 11 }) }),
     pushCancel: vi.fn().mockResolvedValue(res),
     pushOpen: vi.fn().mockResolvedValue(res),
     pushDiff: vi.fn().mockResolvedValue({ diff: "", truncated: false }),
@@ -68,16 +68,16 @@ describe("PushCardView", () => {
     const c = calls();
     const store = fakeLive();
     render(<PushCardView card={card()} calls={c} live={store} />);
-    expect((screen.getByLabelText("Ветка") as HTMLInputElement).value).toBe("retinue/a1b2c3d4-fix-login");
-    const commits = screen.getByRole("list", { name: "Коммиты" });
+    expect((screen.getByLabelText("Branch") as HTMLInputElement).value).toBe("retinue/a1b2c3d4-fix-login");
+    const commits = screen.getByRole("list", { name: "Commits" });
     expect(within(commits).getByText("Add test")).toBeTruthy();
     expect(within(commits).getByText(/Why it matters/)).toBeTruthy();
     expect(within(commits).getByText("A tests/t.py")).toBeTruthy();
-    expect(within(commits).getByText(/автор: A <a@e.x>/)).toBeTruthy();
-    expect(screen.getByText(/Уходит: 2 коммита, 3 КБ/)).toBeTruthy();
-    expect(within(screen.getByRole("list", { name: "Файлы" })).getByText("+3")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Ветка"), { target: { value: "fix/login" } });
-    fireEvent.click(screen.getByRole("button", { name: "Отправить · 2 коммита" }));
+    expect(within(commits).getByText(/author: A <a@e.x>/)).toBeTruthy();
+    expect(screen.getByText(/Going out: 2 commits, 3 KB/)).toBeTruthy();
+    expect(within(screen.getByRole("list", { name: "Files" })).getByText("+3")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Branch"), { target: { value: "fix/login" } });
+    fireEvent.click(screen.getByRole("button", { name: "Push · 2 commits" }));
     await waitFor(() => expect(c.pushSend).toHaveBeenCalledWith("f00dbabe"));
     expect(c.pushTarget).toHaveBeenCalledWith("f00dbabe", "fix/login");
     expect(c.pushTarget.mock.invocationCallOrder[0]).toBeLessThan(c.pushSend.mock.invocationCallOrder[0]!);
@@ -88,18 +88,18 @@ describe("PushCardView", () => {
     const { rerender } = render(
       <PushCardView card={card({ workflows: [".github/workflows/ci.yml"], dirty: ["README.md"] })} calls={calls()} live={fakeLive()} />,
     );
-    expect((screen.getByRole("button", { name: "Отправить · 2 коммита" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/токен не пушит/)).toBeTruthy();
-    expect(screen.getByText(/Не закоммичено \(1\): README.md/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Push · 2 commits" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/token cannot push/)).toBeTruthy();
+    expect(screen.getByText(/Not committed \(1\): README.md/)).toBeTruthy();
     rerender(<PushCardView card={card({ state: "pushed", url: "https://github.com/o/r/pull/7" })} calls={calls()} live={fakeLive()} />);
-    expect(screen.getByRole("link", { name: "Открыть PR" }).getAttribute("href")).toBe("https://github.com/o/r/pull/7");
-    expect(screen.queryByRole("button", { name: /Отправить/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "Open PR" }).getAttribute("href")).toBe("https://github.com/o/r/pull/7");
+    expect(screen.queryByRole("button", { name: /^Push/ })).toBeNull();
     rerender(<PushCardView card={card({ state: "pushed", url: "https://evil.example/pull/7" })} calls={calls()} live={fakeLive()} />);
-    expect(screen.queryByRole("link", { name: "Открыть PR" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open PR" })).toBeNull();
   });
 
-  it("counts commits in Russian", () => {
-    expect([1, 2, 5, 11, 21, 22].map(commitsWord)).toEqual(["1 коммит", "2 коммита", "5 коммитов", "11 коммитов", "21 коммит", "22 коммита"]);
+  it("counts commits in English", () => {
+    expect([0, 1, 2, 5, 11, 21].map(commitsWord)).toEqual(["0 commits", "1 commit", "2 commits", "5 commits", "11 commits", "21 commits"]);
   });
 });
 

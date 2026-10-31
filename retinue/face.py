@@ -44,7 +44,7 @@ from urllib.parse import parse_qsl, quote
 
 from aiohttp import web
 
-from . import changes, inbox, pings, spaces, tobase, topush
+from . import changes, inbox, pings, signals, spaces, tobase, topush
 from .cliengine import UUID4
 from .sessions import PlatformStore
 from .speech import Scribe, SpeechError
@@ -57,6 +57,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("retinue.face")
 
 SCHEMA = 1
+STATS_WEEKS = 8           # the «Week» screen: this many seven-day spans, for its sparklines
+WEEK_S = 7 * 86400
 COOKIE = "__Host-retinue"
 CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"  # no 0/O, 1/I/L: typed by hand into an installed PWA
 CODE_LEN = 10
@@ -91,8 +93,8 @@ SPEECH_TYPES = {"audio/webm": "webm", "video/webm": "webm", "audio/mp4": "m4a", 
 # dictation: Scribe drops fillers and false starts and expects the owner's terms; any language (he mixes ru and en).
 # en: English, word for word — the «uh» and the slips are what the session's corrections work on.
 SPEECH_MODES = {"dictate": {"no_verbatim": True}, "en": {"language": "en", "no_verbatim": False}}
-CODE_FAILED = "Код не подошёл: он неверный, истёк или уже использован. Пришли боту /app ещё раз."
-TELEGRAM_FAILED = "Telegram не подтвердил вход. Закрой приложение и открой его из чата с ботом снова."
+CODE_FAILED = "The code did not work: it is wrong, expired or already used. Send the bot /app again."
+TELEGRAM_FAILED = "Telegram did not confirm the login. Close the app and open it again from the chat with the bot."
 
 
 def _hash(secret: str) -> str:
@@ -299,20 +301,21 @@ class Face:
             web.post("/api/approvals/{id}/decide", self.decide), web.post("/api/approvals/{id}/answer", self.answer),
             web.get("/api/files/{id}", self.file), web.get("/api/files/{id}/view", self.view),
             web.get("/api/files/{id}/meta", self.file_meta), web.get("/api/feed", self.feed),
+            web.get("/api/stats", self.stats),
             web.get("/api/events", self.events),
             # Spheres (`spheres.py`): a session's sphere, its sphere's main session, a fork, what is unread.
             web.post("/api/sessions/{id}/sphere", self.sphere), web.post("/api/sessions/{id}/main", self.main),
             web.post("/api/sessions/{id}/seen", self.seen), web.post("/api/sessions/{id}/fork", self.fork),
-            # «В Базу» (`tobase.py`): the session's commit card, the same one its Telegram copies show.
+            # «To the Base» (`tobase.py`): the session's commit card, the same one its Telegram copies show.
             web.post("/api/sessions/{id}/base", self.base_open), web.get("/api/base/{id}", self.base_card),
             web.get("/api/base/{id}/diff", self.base_diff), web.post("/api/base/{id}/{action:toggle|subject|commit|cancel}",
                                                                      self.base_act),
-            # «Запушить» (`topush.py`): a repository's push card, the same one its Telegram copies show.
+            # «Push» (`topush.py`): a repository's push card, the same one its Telegram copies show.
             web.post("/api/sessions/{id}/push", self.push_open), web.get("/api/push/{id}", self.push_card),
             web.get("/api/push/{id}/diff", self.push_diff),
             web.post("/api/push/{id}/{action:target|title|send|cancel}", self.push_act),
             *self.spaces.routes(),
-            # «Читать» (`library.py`): the hub's pages, what was opened and finished.
+            # «Read» (`library.py`): the hub's pages, what was opened and finished.
             web.get("/api/library", self.library), web.post("/api/library/{id}/{action:open|done}", self.library_act),
             # The owner's voice (`speech.py`): a recording in, its text out.
             web.post("/api/speech", self.speech)])
@@ -332,15 +335,15 @@ class Face:
         if request.method == "POST":
             origin = request.headers.get("Origin")
             if request.headers.get("X-Retinue") != "1" or (origin is not None and origin != self.cfg.face_origin):
-                return _error(403, "Запрос не со страницы приложения.")
+                return _error(403, "The request is not from the app's page.")
         if request.path.startswith("/api/auth/"):
             if self.store.auth_blocked(now):
-                return _error(429, "Слишком много неудачных входов — попробуй через десять минут.")
+                return _error(429, "Too many failed logins — try again in ten minutes.")
             return await handler(request)
         token = request.cookies.get(COOKIE, "")
         expires = self.store.login_expires(_hash(token), now) if token else None
         if expires is None:
-            return _error(401, "Нужно войти: пришли боту /app.")
+            return _error(401, "Log in first: send the bot /app.")
         response = await handler(request)
         if not response.prepared and expires - now < LOGIN_TTL_S - LOGIN_SLIDE_S:
             self.store.extend_login(_hash(token), now + LOGIN_TTL_S)
@@ -394,7 +397,7 @@ class Face:
     async def session(self, request: web.Request) -> web.Response:
         session_id = request.match_info["id"]
         if (session := self.store.face_session(session_id)) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         return web.json_response({"schema": SCHEMA, "cursor": self.store.cursor(), "session": session,
                                   "items": self.store.face_items(session_id),
                                   "approvals": self.store.face_approvals(session_id),
@@ -406,24 +409,31 @@ class Face:
                                   "about": self.store.face_about(session_id)})
 
     async def feed(self, request: web.Request) -> web.Response:
-        """«Ждут тебя»: one queue by action across the sessions and the assistant's world (`feed.Feed`). Built on
+        """«Waiting for you»: one queue by action across the sessions and the assistant's world (`feed.Feed`). Built on
         each read; the app reads it again when a session, a card or a summary changes, and once a minute."""
         return web.json_response({"schema": SCHEMA, **self.platform.feed.face(self.clock())})
 
+    async def stats(self, request: web.Request) -> web.Response:
+        """The «Week» screen: the platform's tally (`signals.tally`) of the last STATS_WEEKS seven-day spans, the
+        newest first, each ending where the next one starts — the screen compares and draws them, never counts."""
+        now = self.clock()
+        weeks = [signals.tally(self.store, now - (n + 1) * WEEK_S, now - n * WEEK_S) for n in range(STATS_WEEKS)]
+        return web.json_response({"schema": SCHEMA, "now": now, "weeks": weeks})
+
     async def library(self, request: web.Request) -> web.Response:
-        """«Читать»: the hub's pages as the router last pushed them, with what the owner opened and finished."""
+        """«Read»: the hub's pages as the router last pushed them, with what the owner opened and finished."""
         return web.json_response({"schema": SCHEMA, **self.platform.library.face()})
 
     async def library_act(self, request: web.Request) -> web.Response:
-        """`open`: he opened the page (it goes to «Продолжить»); `done {done}`: «Дочитал», or taken back."""
+        """`open`: he opened the page (it goes to «Continue»); `done {done}`: «Finished», or taken back."""
         page_id, action, body = request.match_info["id"], request.match_info["action"], await _body(request)
         if action == "done" and type(body.get("done")) is not bool:
-            return _error(400, "done: true или false.")
+            return _error(400, "done: true or false.")
         library = self.platform.library
         page = library.opened(page_id, self.clock()) if action == "open" else \
             library.finished(page_id, body["done"], self.clock())
         if page is None:
-            return _error(404, "Такой страницы в библиотеке нет.")
+            return _error(404, "There is no such page in the library.")
         return web.json_response({"page": page})
 
     async def thumb(self, request: web.Request) -> web.Response:
@@ -433,14 +443,14 @@ class Face:
         jpeg = self.store.input_thumb(request.match_info["id"], input_id, int(request.match_info["n"])) \
             if ANY_INPUT_ID.fullmatch(input_id) else None
         if jpeg is None:
-            return _error(404, "Нет такой картинки.")
+            return _error(404, "No such image.")
         return web.Response(body=jpeg, content_type="image/jpeg",
                             headers={"Content-Disposition": "inline", "Content-Security-Policy": "default-src 'none'"})
 
     async def approval(self, request: web.Request) -> web.Response:
         """One card, for the link a Telegram card's Mini App button opens (`/a/<id>`)."""
         if (approval := self.store.face_approval(request.match_info["id"])) is None:
-            return _error(404, "Нет такой карточки.")
+            return _error(404, "No such card.")
         return web.json_response({"approval": approval})
 
     async def diff(self, request: web.Request) -> web.Response:
@@ -448,7 +458,7 @@ class Face:
         running anything in the lane. `cwd`: the directory the session ran in, or the track's as configured."""
         session_id = request.match_info["id"]
         if (session := self.store.session(session_id)) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         cwd, found = self.store.changes_of(session_id)
         if not cwd and (track := self.platform.tracks.get(session["track"])) is not None:
             cwd = self.platform.cwd_of(session, track)
@@ -459,15 +469,15 @@ class Face:
         with, never sniffed, and under the sandbox policy — opened by itself, even an SVG is a document of no origin,
         never the face's."""
         if (found := self.platform.out.content(request.match_info["id"])) is None:
-            return _error(404, "Нет такого файла.")
+            return _error(404, "No such file.")
         data, body = found
         return web.Response(body=body, headers={"Content-Type": data["mime"], "Content-Security-Policy": FILE_CSP,
                                                 "Content-Disposition": _attachment(data["name"])})
 
     async def file_meta(self, request: web.Request) -> web.Response:
-        """One handed-over file's row, for the page a Telegram message's «Открыть» opens (`/f/<id>`)."""
+        """One handed-over file's row, for the page a Telegram message's «Open» opens (`/f/<id>`)."""
         if (found := self.platform.out.face_file(request.match_info["id"])) is None:
-            return _error(404, "Нет такого файла.")
+            return _error(404, "No such file.")
         return web.json_response({"file": found})
 
     async def view(self, request: web.Request) -> web.StreamResponse:
@@ -476,7 +486,7 @@ class Face:
         nothing loads but its own inline styles and `data:` images. Only the face may frame it."""
         found = self.platform.out.content(request.match_info["id"])
         if found is None or not found[0]["mime"].startswith("text/html"):
-            return _error(404, "Нет такой страницы.")
+            return _error(404, "No such page.")
         policy = f"{VIEW_CSP}; frame-ancestors {self.cfg.face_origin or NO_FRAME}"
         return web.Response(body=found[1], headers={"Content-Type": found[0]["mime"],
                                                     "Content-Security-Policy": policy})
@@ -486,10 +496,10 @@ class Face:
         A cursor whose events were pruned gets 410: the client reloads its snapshot."""
         given = request.headers.get("Last-Event-ID") or request.query.get("since")
         if given is not None and not given.isdigit():
-            return _error(400, "since: не номер")
+            return _error(400, "since: not a number")
         cursor = int(given) if given is not None else self.store.cursor()
         if self.store.events_gone(cursor):
-            return _error(410, "События с этого места уже удалены — загрузи сессии заново.")
+            return _error(410, "The events from this point are already gone — load the sessions again.")
         response = web.StreamResponse(headers={"Content-Type": "text/event-stream", "Cache-Control": "no-store",
                                                "X-Accel-Buffering": "no"})
         stream = _Stream(_hash(request.cookies.get(COOKIE, "")), request)
@@ -542,7 +552,7 @@ class Face:
         track = body.get("track") or (known.track if known else None)
         if not isinstance(input_id, str) or not INPUT_ID.fullmatch(input_id) or not isinstance(track, str) or \
                 not isinstance(text, str) or not (sphere is None or isinstance(sphere, str)):
-            return _error(400, "input_id (face:<uuid4>), track или sphere, text: не те")
+            return _error(400, "input_id (face:<uuid4>), track or sphere, text: invalid")
         answer = await self.platform.new_session(input_id, track, text, attachments=body.get("attachments"),
                                                  sphere=sphere)
         if not answer["ok"]:
@@ -554,23 +564,23 @@ class Face:
         if "reply" in body:  # a ping's reply pressed: its own input, the same press as in Telegram (`pings.press`)
             reply = body["reply"] if isinstance(body["reply"], dict) else {}
             if type(reply.get("seq")) is not int or type(reply.get("n")) is not int:
-                return _error(400, "reply: {seq: номер, n: номер}")
+                return _error(400, "reply: {seq: number, n: number}")
             if self.store.session(session_id) is None:
-                return _error(404, "Нет такой сессии.")
+                return _error(404, "No such session.")
             say = await pings.press(self.platform, session_id, reply["seq"], reply["n"])
             return web.json_response({"say": say, "summary": pings.face_summary(self.store, session_id, reply["seq"])})
         input_id, text, attachments = body.get("input_id"), body.get("text", ""), body.get("attachments")
         if not isinstance(input_id, str) or not INPUT_ID.fullmatch(input_id) or not isinstance(text, str) or \
                 not (text.strip() or attachments):
-            return _error(400, "input_id (face:<uuid4>), text: не те")
+            return _error(400, "input_id (face:<uuid4>), text: invalid")
         if self.store.session(session_id) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         return web.json_response({"say": await self.platform.write(input_id, session_id, text, attachments)})
 
     async def stop(self, request: web.Request) -> web.Response:
         session_id = request.match_info["id"]
         if self.store.session(session_id) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         return web.json_response({"ok": await self.platform.stop(session_id)})
 
     async def pin(self, request: web.Request) -> web.Response:
@@ -579,7 +589,7 @@ class Face:
         if type(body.get("pinned")) is not bool:
             return _error(400, "pinned: true | false")
         if not self.store.set_pinned(session_id, body["pinned"]):
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         return web.json_response({"session": self.store.face_session(session_id)})
 
     async def sphere(self, request: web.Request) -> web.Response:
@@ -587,9 +597,9 @@ class Face:
         body, session_id = await _body(request), request.match_info["id"]
         sphere = body.get("sphere", False)
         if not (sphere is None or isinstance(sphere, str) and sphere in self.platform.spheres.by_name):
-            return _error(400, "sphere: имя сферы из настроек или null")
+            return _error(400, "sphere: a sphere name from the settings, or null")
         if not self.store.set_sphere(session_id, sphere):
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         return web.json_response({"session": self.store.face_session(session_id)})
 
     async def main(self, request: web.Request) -> web.Response:
@@ -598,29 +608,29 @@ class Face:
         if type(body.get("main")) is not bool:
             return _error(400, "main: true | false")
         if self.store.session(session_id) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         if not self.store.set_main(session_id, body["main"]):
-            return _error(400, "Сначала выбери сессии сферу.")
+            return _error(400, "Choose the session's sphere first.")
         return web.json_response({"session": self.store.face_session(session_id)})
 
     async def seen(self, request: web.Request) -> web.Response:
         """The owner has the session open: nothing in it is unread."""
         session_id = request.match_info["id"]
         if self.store.session(session_id) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         self.store.mark_seen(session_id, self.clock())
         return web.json_response({"session": self.store.face_session(session_id)})
 
     async def fork(self, request: web.Request) -> web.Response:
-        """«Ответвить»: a new session from a copy of this one's conversation, with the track's full rights
+        """«Fork»: a new session from a copy of this one's conversation, with the track's full rights
         (`Spheres.fork`); the owner's first message to it is `text`."""
         body, session_id = await _body(request), request.match_info["id"]
         input_id, text = body.get("input_id"), body.get("text")
         if not isinstance(input_id, str) or not INPUT_ID.fullmatch(input_id) or not isinstance(text, str) or \
                 not text.strip():
-            return _error(400, "input_id (face:<uuid4>), text: не те")
+            return _error(400, "input_id (face:<uuid4>), text: invalid")
         if self.store.session(session_id) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         answer = await self.platform.spheres.fork(input_id, session_id, text.strip())
         if not answer["ok"]:
             return _error(400, answer["say"])
@@ -633,9 +643,9 @@ class Face:
         input_id, text = body.get("input_id"), body.get("text")
         if not isinstance(input_id, str) or not INPUT_ID.fullmatch(input_id) or not isinstance(text, str) or \
                 not text.strip():
-            return _error(400, "input_id (face:<uuid4>), text: не те")
+            return _error(400, "input_id (face:<uuid4>), text: invalid")
         if self.store.session(session_id) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         answer = await self.platform.side(input_id, session_id, text.strip())
         if not answer["ok"]:
             return _error(400, answer["say"])
@@ -645,9 +655,9 @@ class Face:
         body, approval_id = await _body(request), request.match_info["id"]
         action, digest = body.get("action"), body.get("digest")
         if action not in ACTIONS or not isinstance(digest, str):
-            return _error(400, "action: approve | reject; digest: строка")
+            return _error(400, "action: approve | reject; digest: string")
         if (approval := self.store.approval(approval_id)) is None or self.store.face_approval(approval_id) is None:
-            return _error(404, "Нет такой карточки.")
+            return _error(404, "No such card.")
         toast, _ = await self.platform.decide(approval, action, digest, from_face=True)
         return web.json_response({"toast": toast, "approval": self.store.face_approval(approval_id)})
 
@@ -656,9 +666,9 @@ class Face:
         (`Platform.answer`, the rules of a Telegram press); the Telegram message of that question is rewritten."""
         body, approval_id = await _body(request), request.match_info["id"]
         if not isinstance(body.get("digest"), str) or type(body.get("question")) is not int:
-            return _error(400, "digest: строка; question: номер; labels: [строки] или text: строка")
+            return _error(400, "digest: string; question: number; labels: [strings] or text: string")
         if (approval := self.store.approval(approval_id)) is None or self.store.face_approval(approval_id) is None:
-            return _error(404, "Нет такой карточки.")
+            return _error(404, "No such card.")
         toast = await self.platform.answer(approval, body["question"], body.get("labels"), body.get("text"),
                                            body["digest"])
         return web.json_response({"toast": toast, "approval": self.store.face_approval(approval_id)})
@@ -668,9 +678,9 @@ class Face:
     def _speech_off(self) -> str | None:
         """Why the voice cannot work here, or None."""
         if not self.scribe.key:
-            return "Голос не настроен: нет ключа ElevenLabs (ELEVENLABS_API_KEY у платформы)."
+            return "Voice is not set up: no ElevenLabs key (the platform's ELEVENLABS_API_KEY)."
         if not self.cfg.speech.proxy:
-            return "Голос не настроен: у платформы нет выхода к ElevenLabs (speech.proxy или code.proxy)."
+            return "Voice is not set up: the platform has no way to reach ElevenLabs (speech.proxy or code.proxy)."
         return None
 
     async def _abandon(self, call: asyncio.Task, upload: _Upload) -> None:
@@ -699,25 +709,25 @@ class Face:
         if mode not in SPEECH_MODES:
             return _error(400, "mode: dictate | en")
         if (ext := SPEECH_TYPES.get(request.content_type)) is None:
-            return _error(415, "Запись не в том формате: нужен WebM, MP4, OGG, MP3 или WAV.")
+            return _error(415, "The recording is in the wrong format: WebM, MP4, OGG, MP3 or WAV is needed.")
         if why := self._speech_off():
             return _error(503, why)
         if (request.content_length or 0) > SPEECH_MAX:
-            return _error(413, "Запись слишком длинная: не больше 10 минут.")
+            return _error(413, "The recording is too long: 10 minutes at most.")
         if self.hearing:
-            return _error(429, "Уже расшифровываю другую запись — подожди немного.")
+            return _error(429, "Already transcribing another recording — wait a little.")
         self.hearing = True
         try:
             data = await _read_at_most(request, SPEECH_MAX)
             if data is None:
-                return _error(413, "Запись слишком длинная: не больше 10 минут.")
+                return _error(413, "The recording is too long: 10 minutes at most.")
             if not data:
-                return _error(400, "Запись пустая.")
+                return _error(400, "The recording is empty.")
             options = dict(SPEECH_MODES[mode])
             if mode == "dictate":
                 options["keyterms"] = self.cfg.speech.keyterms
-            if _gone(request):  # «Отмена» while it was uploading: nothing goes to ElevenLabs
-                return _error(400, "Отменено.")
+            if _gone(request):  # «Cancel» while it was uploading: nothing goes to ElevenLabs
+                return _error(400, "Cancelled.")
             upload = _Upload(data)
             del data
             call = asyncio.create_task(self.scribe.transcribe(upload, f"voice.{ext}", request.content_type, **options))
@@ -726,58 +736,58 @@ class Face:
                     # Gone while a cancelled one still ends in the background: this one is waited out instead.
                     if _gone(request) and not (upload.sent and self.finishing):
                         await self._abandon(call, upload)
-                        return _error(400, "Отменено.")
+                        return _error(400, "Cancelled.")
             except asyncio.CancelledError:  # a server that cancels the handler when the app goes away
                 await self._abandon(call, upload)
                 raise
             try:
                 text = call.result()
             except SpeechError as exc:
-                return _error(502, f"Не удалось расшифровать: {exc}.")
+                return _error(502, f"Could not transcribe: {exc}.")
             if not text:
-                return _error(422, "Не удалось разобрать речь — запиши ещё раз.")
+                return _error(422, "Could not make out the speech — record again.")
             return web.json_response({"text": text, **({"message": VERBATIM_MARK + text} if mode == "en" else {})})
         finally:
             self.hearing = False
 
-    # --- «В Базу» ----------------------------------------------------------------------------------------------------
+    # --- «To the Base» -----------------------------------------------------------------------------------------------
 
     async def base_open(self, request: web.Request) -> web.Response:
-        """The session's menu «В Базу», the button under its summary or its feed row: its card, opened or brought up
-        to date — the same card a press in Telegram opens."""
+        """The session's menu «To the Base», the button under its summary or its feed row: its card, opened or brought
+        up to date — the same card a press in Telegram opens."""
         session_id = request.match_info["id"]
         if self.store.session(session_id) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         toast, card = await self.platform.tobase.open(session_id, telegram=False)
         return web.json_response({"toast": toast, "card": card})
 
     async def base_card(self, request: web.Request) -> web.Response:
         """One card, for the link a Telegram copy's Mini App button opens (`/b/<id>`)."""
         if (card := self.platform.tobase.card(request.match_info["id"])) is None:
-            return _error(404, "Нет такой карточки.")
+            return _error(404, "No such card.")
         return web.json_response({"card": self.platform.tobase.face(card)})
 
     async def base_diff(self, request: web.Request) -> web.Response:
         """The card's files turned on, as a unified diff the app renders (`base.BaseRepo.diff`, bounded)."""
         tobase_ = self.platform.tobase
         if (card := tobase_.card(request.match_info["id"])) is None:
-            return _error(404, "Нет такой карточки.")
+            return _error(404, "No such card.")
         text = await tobase_.diff(card)
         return web.json_response({"diff": text, "truncated": len(text.encode()) >= tobase.DIFF_LIMIT})
 
     async def base_act(self, request: web.Request) -> web.Response:
-        """A file turned on or off (`{path, on}`), the subject (`{subject}`), «Закоммитить», «Отмена»: by the rules of
+        """A file turned on or off (`{path, on}`), the subject (`{subject}`), «Commit», «Cancel»: by the rules of
         a Telegram press, and every Telegram copy rewritten."""
         body, action, tobase_ = await _body(request), request.match_info["action"], self.platform.tobase
         if (card := tobase_.card(request.match_info["id"])) is None:
-            return _error(404, "Нет такой карточки.")
+            return _error(404, "No such card.")
         if action == "toggle":
             if not isinstance(body.get("path"), str) or type(body.get("on")) is not bool:
-                return _error(400, "path: строка; on: true | false")
+                return _error(400, "path: string; on: true | false")
             toast, _ = tobase_.toggle(card, body["path"], body["on"])
         elif action == "subject":
             if not isinstance(body.get("subject"), str):
-                return _error(400, "subject: строка")
+                return _error(400, "subject: string")
             toast, _ = tobase_.set_subject(card, body["subject"])
         elif action == "commit":
             toast, _ = await tobase_.commit(card)
@@ -787,42 +797,42 @@ class Face:
         return web.json_response({"toast": toast, "card": tobase_.face(now) if now else None})
 
 
-    # --- «Запушить» -------------------------------------------------------------------------------------------------
+    # --- «Push» -----------------------------------------------------------------------------------------------------
 
     async def push_open(self, request: web.Request) -> web.Response:
-        """The session's «Запушить» (`{repo?}`): its card, opened or brought up to date — the same card a press in
+        """The session's «Push» (`{repo?}`): its card, opened or brought up to date — the same card a press in
         Telegram opens."""
         session_id, body = request.match_info["id"], await _body(request)
         if self.store.session(session_id) is None:
-            return _error(404, "Нет такой сессии.")
+            return _error(404, "No such session.")
         repo = body.get("repo")
         if repo is not None and not isinstance(repo, str):
-            return _error(400, "repo: строка")
+            return _error(400, "repo: string")
         toast, card = await self.platform.topush.open(session_id, repo, telegram=False)
         return web.json_response({"toast": toast, "card": card})
 
     async def push_card(self, request: web.Request) -> web.Response:
         """One card, for the link a Telegram copy's Mini App button opens (`/p/<id>`)."""
         if (card := self.platform.topush.card(request.match_info["id"])) is None:
-            return _error(404, "Нет такой карточки.")
+            return _error(404, "No such card.")
         return web.json_response({"card": self.platform.topush.face(card)})
 
     async def push_diff(self, request: web.Request) -> web.Response:
         topush_ = self.platform.topush
         if (card := topush_.card(request.match_info["id"])) is None:
-            return _error(404, "Нет такой карточки.")
+            return _error(404, "No such card.")
         text = await topush_.diff(card)
         return web.json_response({"diff": text, "truncated": len(text.encode()) >= topush.DIFF_LIMIT})
 
     async def push_act(self, request: web.Request) -> web.Response:
-        """The remote branch (`{target}`), the PR's title (`{title}`), «Отправить», «Отмена»: by the rules of a
+        """The remote branch (`{target}`), the PR's title (`{title}`), «Push», «Cancel»: by the rules of a
         Telegram press, and every Telegram copy rewritten."""
         body, action, topush_ = await _body(request), request.match_info["action"], self.platform.topush
         if (card := topush_.card(request.match_info["id"])) is None:
-            return _error(404, "Нет такой карточки.")
+            return _error(404, "No such card.")
         if action in ("target", "title"):
             if not isinstance(body.get(action), str):
-                return _error(400, f"{action}: строка")
+                return _error(400, f"{action}: string")
             toast, _ = (topush_.set_target if action == "target" else topush_.set_title)(card, body[action])
         elif action == "send":
             toast, _ = await topush_.send(card)
@@ -848,8 +858,8 @@ class _Upload(io.BytesIO):
 
 
 def _gone(request: web.Request) -> bool:
-    """The app went away — «Отмена», or the phone lost the connection. aiohttp goes on with the handler regardless; nginx
-    closes its connection to us when the browser closes its own."""
+    """The app went away — «Cancel», or the phone lost the connection. aiohttp goes on with the handler regardless;
+    nginx closes its connection to us when the browser closes its own."""
     return request.transport is None or request.transport.is_closing()
 
 

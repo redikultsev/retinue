@@ -25,7 +25,7 @@ const session: Session = {
   state: "idle",
   created: 1,
   at: 1,
-  title: "отчёт",
+  title: "report",
   waiting: 0,
 };
 
@@ -53,21 +53,21 @@ describe("the files of a session in the store", () => {
 describe("Files", () => {
   it("lists each file with its download, a picture as itself, and says when there is none", () => {
     const { rerender } = render(<Files files={[]} />);
-    expect(screen.getByText("Сессия пока не отдала ни одного файла.")).toBeTruthy();
+    expect(screen.getByText("The session has not handed over any files yet.")).toBeTruthy();
     rerender(<Files files={[file("chart", { path: "img/chart.png", name: "chart.png", mime: "image/png", size: 3 * 1024 * 1024 })]} />);
     expect(screen.getByText("img/chart.png")).toBeTruthy();
-    expect(screen.getByText(/3,0 МБ/)).toBeTruthy();
-    const link = screen.getByText("Скачать") as HTMLAnchorElement;
+    expect(screen.getByText(/3.0 MB/)).toBeTruthy();
+    const link = screen.getByText("Download") as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("/api/files/chart");
     expect(link.getAttribute("download")).toBe("chart.png");
     expect((screen.getByAltText("chart.png") as HTMLImageElement).getAttribute("src")).toBe("/api/files/chart");
-    expect(screen.queryByText("Открыть")).toBeNull();
+    expect(screen.queryByText("Open")).toBeNull();
   });
 
   it("opens an HTML page only in a frame sandboxed with nothing allowed", () => {
     render(<Files files={[file("page", { path: "page.html", name: "page.html", mime: "text/html; charset=utf-8" })]} />);
     expect(document.querySelector("iframe")).toBeNull();
-    fireEvent.click(screen.getByText("Открыть"));
+    fireEvent.click(screen.getByText("Open"));
     const frame = document.querySelector("iframe")!;
     expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("src")).toBe("/api/files/page/view");
@@ -75,11 +75,11 @@ describe("Files", () => {
   });
 
   it("renders Markdown with the transcript's renderer: no image loads from the network", async () => {
-    const fetched = vi.fn(async () => new Response("# Итог\n\n![x](https://evil.example/leak.png)\n\n<img src=https://evil.example/a>"));
+    const fetched = vi.fn(async () => new Response("# Result\n\n![x](https://evil.example/leak.png)\n\n<img src=https://evil.example/a>"));
     vi.stubGlobal("fetch", fetched);
     render(<Files files={[file("report")]} />);
-    fireEvent.click(screen.getByText("Открыть"));
-    await waitFor(() => expect(screen.getByText("Итог")).toBeTruthy());
+    fireEvent.click(screen.getByText("Open"));
+    await waitFor(() => expect(screen.getByText("Result")).toBeTruthy());
     expect(fetched).toHaveBeenCalledWith("/api/files/report", { credentials: "same-origin" });
     expect(document.querySelector("img")).toBeNull();
     expect(screen.getByTestId("image-as-text").textContent).toContain("https://evil.example/leak.png");
@@ -89,7 +89,7 @@ describe("Files", () => {
     expect(kindOf({ mime: "application/json" })).toBe("text");
     expect(kindOf({ mime: "application/pdf" })).toBe("other");
     expect(kindOf({ mime: "image/svg+xml" })).toBe("image");
-    expect([size(10), size(2048), size(1536 * 1024)]).toEqual(["10 Б", "2 КБ", "1,5 МБ"]);
+    expect([size(10), size(2048), size(1536 * 1024)]).toEqual(["10 B", "2 KB", "1.5 MB"]);
   });
 });
 
@@ -106,7 +106,7 @@ describe("FilePage", () => {
     return render(<RouterProvider router={router} />);
   }
 
-  it("opens the page Telegram's «Открыть» names at once, in the sandboxed frame", async () => {
+  it("opens the page Telegram's «Open» names at once, in the sandboxed frame", async () => {
     mount(async () => ({ file: file("page", { path: "page.html", name: "page.html", mime: "text/html; charset=utf-8" }) }));
     expect(await screen.findByText("page.html")).toBeTruthy();
     const frame = document.querySelector("iframe")!;

@@ -33,7 +33,7 @@ beforeEach(() => {
   vi.spyOn(feedSource, "start").mockImplementation(() => undefined);
   live.meta = {
     schema: 1, owner_ok: true, face_origin: "", tracks: [{ name: "notes", lane: "private", kind: "private" }],
-    spheres: [{ name: "travel", title: "Путешествия", icon: "✈️", track: "notes" }],
+    spheres: [{ name: "travel", title: "Travel", icon: "✈️", track: "notes" }],
   };
 });
 
@@ -46,12 +46,12 @@ afterEach(() => {
 });
 
 describe("the routes", () => {
-  it("start at «Сегодня»: `/` goes there with its hash (a Mini App's signed data rides in it)", async () => {
+  it("start at «Today»: `/` goes there with its hash (a Mini App's signed data rides in it)", async () => {
     phone(false);
     const router = await open("/#tgWebAppData=abc");
     await waitFor(() => expect(router.state.location.pathname).toBe("/today"));
     expect(router.state.location.hash).toBe("tgWebAppData=abc");
-    expect(await screen.findByRole("heading", { name: /^Сегодня/ })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: /^Today/ })).toBeTruthy();
   });
 
   it("keep the old links: a session, a card, a file, a commit card, a push card", async () => {
@@ -77,22 +77,22 @@ describe("the tab bar", () => {
     phone(false);
     feedSource.feed = { schema: 1, count: 3, groups: [], bot: "", assistant_at: null };
     const router = await open("/today");
-    const bar = await screen.findByRole("navigation", { name: "Разделы" });
-    expect(bar.textContent).toContain("Сегодня");
-    expect(screen.getByLabelText("ждут: 3")).toBeTruthy();
-    expect(within(bar).getByRole("link", { name: /Сегодня/ }).getAttribute("aria-current")).toBe("page");
+    const bar = await screen.findByRole("navigation", { name: "Sections" });
+    expect(bar.textContent).toContain("Today");
+    expect(screen.getByLabelText("3 waiting")).toBeTruthy();
+    expect(within(bar).getByRole("link", { name: /Today/ }).getAttribute("aria-current")).toBe("page");
 
-    fireEvent.click(within(bar).getByRole("link", { name: "Новая задача" }));
+    fireEvent.click(within(bar).getByRole("link", { name: "New task" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/new"));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(await screen.findByRole("textbox", { name: "Что сделать" })).toBeTruthy();
-    const newBar = screen.getByRole("navigation", { name: "Разделы" });
-    expect(within(newBar).getByRole("link", { name: "Новая задача" }).getAttribute("aria-current")).toBe("page");
+    expect(await screen.findByRole("textbox", { name: "What should I do?" })).toBeTruthy();
+    const newBar = screen.getByRole("navigation", { name: "Sections" });
+    expect(within(newBar).getByRole("link", { name: "New task" }).getAttribute("aria-current")).toBe("page");
 
     await act(async () => {
       await router.navigate({ to: "/s/$id", params: { id: "a1b2c3d4" } });
     });
-    expect(screen.queryByRole("navigation", { name: "Разделы" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Sections" })).toBeNull();
   });
 
   it("steps aside while the keyboard is up, and only then: not for a focus alone, not for a pinch zoom", async () => {
@@ -100,14 +100,14 @@ describe("the tab bar", () => {
     const viewport = Object.assign(new EventTarget(), { height: 844, scale: 1 });
     vi.stubGlobal("visualViewport", viewport);
     vi.stubGlobal("innerHeight", 844);
-    const bar = () => screen.queryByRole("navigation", { name: "Разделы" });
+    const bar = () => screen.queryByRole("navigation", { name: "Sections" });
     const resize = (height: number, scale = 1) =>
       act(() => {
         Object.assign(viewport, { height, scale });
         viewport.dispatchEvent(new Event("resize"));
       });
     await open("/sessions");
-    expect(await screen.findByRole("navigation", { name: "Разделы" })).toBeTruthy();
+    expect(await screen.findByRole("navigation", { name: "Sections" })).toBeTruthy();
     const field = document.createElement("input");
     document.body.append(field);
     act(() => field.focus());
@@ -135,8 +135,8 @@ describe("the tab bar", () => {
   it("scrolls the page itself, so a page that just grows never spills past the bar", async () => {
     phone(false);
     await open("/spaces");
-    const page = await screen.findByRole("heading", { name: "Пространства" });
-    const scroller = screen.getByRole("navigation", { name: "Разделы" }).previousElementSibling as HTMLElement;
+    const page = await screen.findByRole("heading", { name: "Spaces" });
+    const scroller = screen.getByRole("navigation", { name: "Sections" }).previousElementSibling as HTMLElement;
     expect(scroller.contains(page) && scroller.className).toMatch(/min-h-0.*overflow-y-auto/);
   });
 
@@ -156,7 +156,7 @@ describe("the right pane", () => {
     expect(parsePane("r:work/profile/acme/2026-10-01-x.v2.md")).toMatchObject({ path: "profile/acme/2026-10-01-x.v2.md" });
     for (const bad of ["r:travel/../x.md", "r:travel/.scratch/x.md", "r:Travel/x.md", "r:travel/", "d:a/b", "x:1", 5, undefined,
       "r:travel/x.txt", "r:travel/a b.md", "r:travel/a?.md", "r:travel/a#b.md", "r:travel/a%2e.md", "r:travel/a/b/c/d.md",
-      "r:travel/зурбаган.md", "r:travel/.md"])
+      "r:travel/über.md", "r:travel/.md"])
       expect(parsePane(bad)).toBeNull();
     expect(paneValue({ kind: "record", space: "travel", path: "a/b.md" })).toBe("r:travel/a/b.md");
   });
@@ -174,12 +174,12 @@ describe("the right pane", () => {
       removeEventListener: () => undefined,
     }));
     live.dispatch({ type: "list", snapshot: { schema: 1, cursor: 1, sessions: [
-      { id: "a1b2c3d4", track: "retinue", lane: "code", kind: "code", state: "idle", created: 1, at: 1, title: "Код", waiting: 0 },
+      { id: "a1b2c3d4", track: "retinue", lane: "code", kind: "code", state: "idle", created: 1, at: 1, title: "Code", waiting: 0 },
     ] } });
     const router = await open("/s/a1b2c3d4?pane=r:travel/a.md");
-    fireEvent.click(await screen.findByRole("tab", { name: "Изменения" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Changes" }));
     await waitFor(() => expect(router.state.location.search).toMatchObject({ tab: "changes", pane: "r:travel/a.md" }));
-    expect(screen.getByRole("complementary", { name: "Запись" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Record" })).toBeTruthy();
   });
 
   it("opens a Record beside the page on a wide screen", async () => {
@@ -190,11 +190,11 @@ describe("the right pane", () => {
     }));
     const record = vi.spyOn(spacesApi, "record").mockReturnValue(new Promise(() => undefined));
     await open("/today?pane=r:travel/knowledge/ensk.md");
-    await screen.findByRole("complementary", { name: "Запись" });
-    expect(document.querySelector("main.overflow-y-auto.min-h-0")?.textContent).toContain("Сегодня"); // the middle scrolls
+    await screen.findByRole("complementary", { name: "Record" });
+    expect(document.querySelector("main.overflow-y-auto.min-h-0")?.textContent).toContain("Today"); // the middle scrolls
     await waitFor(() => expect(record).toHaveBeenCalledWith("travel", "knowledge/ensk.md")); // B's RecordPage, in the pane
-    expect(screen.getByRole("navigation", { name: "Пространства" }).textContent).toContain("✈️ Путешествия");
-    fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Запись" })).toBeNull());
+    expect(screen.getByRole("navigation", { name: "Places" }).textContent).toContain("Spaces");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Record" })).toBeNull());
   });
 });

@@ -16,7 +16,7 @@ describe("lineDiff", () => {
   it("folds long unchanged runs", () => {
     const same = Array.from({ length: 20 }, (_, i) => `line ${i}`);
     const rows = lineDiff([...same, "old"].join("\n"), [...same, "new"].join("\n"), 2);
-    expect(rows[0]).toEqual({ type: "…", text: "18 без изменений" });
+    expect(rows[0]).toEqual({ type: "…", text: "18 unchanged" });
     expect(rows.slice(1).map((r) => r.type)).toEqual([" ", " ", "-", "+"]);
   });
 

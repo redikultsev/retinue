@@ -27,6 +27,7 @@ import { type SessionSearch, SessionPage } from "@/pages/session";
 import { SessionsPage } from "@/pages/sessions";
 import { RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
 import { TodayPage } from "@/pages/today";
+import { WeekPage } from "@/pages/week";
 import { visits } from "@/lib/today";
 
 const tabOf = (v: unknown) => (v === "changes" || v === "chat" || v === "files" ? v : undefined);
@@ -100,7 +101,7 @@ function Root() {
 
 const rootRoute = createRootRoute({ component: Root });
 
-// The start is «Сегодня»: `/` — an old link, a bookmark, the PWA's start_url, the bot's menu button — goes there. The
+// The start is «Today»: `/` — an old link, a bookmark, the PWA's start_url, the bot's menu button — goes there. The
 // hash goes along: a Mini App's signed data is in it (`tgWebAppData`), and the login needs it.
 const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -126,6 +127,7 @@ const sessionsRoute = createRoute({ getParentRoute: () => shellRoute, path: "/se
 // «＋»: a new task, where a session would be (pages/new.tsx).
 const newRoute = createRoute({ getParentRoute: () => shellRoute, path: "/new", component: () => <NewPage /> });
 const readRoute = createRoute({ getParentRoute: () => shellRoute, path: "/read", component: ReadPage });
+const weekRoute = createRoute({ getParentRoute: () => shellRoute, path: "/week", component: () => <WeekPage /> });
 const spacesRoute = createRoute({ getParentRoute: () => shellRoute, path: "/spaces", component: SpacesPage });
 const spaceRoute = createRoute({
   getParentRoute: () => shellRoute,
@@ -220,7 +222,7 @@ const pushRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   homeRoute,
   loginRoute,
-  shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, readRoute, spacesRoute, spaceRoute, recordRoute, sessionRoute]),
+  shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, readRoute, weekRoute, spacesRoute, spaceRoute, recordRoute, sessionRoute]),
   approvalRoute,
   fileRoute,
   baseRoute,
@@ -235,7 +237,7 @@ export function makeRouter(history?: RouterHistory) {
     // Search values stay plain strings: the default parsing would turn a session id like 77889900 into a number.
     parseSearch: parseSearch,
     stringifySearch: stringifySearch,
-    defaultNotFoundComponent: () => <p className="p-6 text-sm text-muted-foreground">Такой страницы нет.</p>,
+    defaultNotFoundComponent: () => <p className="p-6 text-sm text-muted-foreground">There is no such page.</p>,
   });
 }
 

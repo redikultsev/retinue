@@ -3,10 +3,10 @@ export const NATURES = ["knowledge", "profile", "journal", "artifacts"] as const
 export type Nature = (typeof NATURES)[number];
 
 export const NATURE_WORDS: Record<Nature, string> = {
-  knowledge: "Знание",
-  profile: "Профиль",
-  journal: "Журнал",
-  artifacts: "Артефакты",
+  knowledge: "Knowledge",
+  profile: "Profile",
+  journal: "Journal",
+  artifacts: "Artifacts",
 };
 
 export interface SpaceRow {

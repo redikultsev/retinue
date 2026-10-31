@@ -1,11 +1,12 @@
-// `/today`, the home screen: «Ждут тебя» — the feed, grouped by action — then «Работают» (each running
-// session with its sphere, title, last line and how long it runs), «Готово» (finished since the owner last had the
-// app open, not read yet), «Сроки» (the base's dates of the week, from the router's digest) and the hub's status
+// `/today`, the home screen: «Waiting for you» — the feed, grouped by action — then «Working» (each running
+// session with its sphere, title, last line and how long it runs), «Done» (finished since the owner last had the
+// app open, not read yet), «Deadlines» (the base's dates of the week, from the router's digest) and the hub's status
 // chips. Everything comes from what the app already reads: the session rows, the stream, the feed.
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-header";
 import { FeedView } from "@/components/feed";
+import { Chart } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { type Chip, type Deadline, type Feed, useFeed } from "@/lib/feed";
 import { when } from "@/lib/format";
@@ -80,7 +81,7 @@ function Running({ sessions, spheres, now: given }: { sessions: Session[]; spher
                 <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">{elapsed(turnStart(s), now)}</span>
               </span>
               <span className="truncate text-xs text-muted-foreground">{where(s, spheres)}</span>
-              <span className="truncate text-sm text-muted-foreground">{line || "думает…"}</span>
+              <span className="truncate text-sm text-muted-foreground">{line || "thinking…"}</span>
             </Link>
           </li>
         );
@@ -100,7 +101,7 @@ function Done({ sessions, spheres, now }: { sessions: Session[]; spheres: Sphere
             data-testid="done-row"
             className="flex min-h-12 items-center gap-2 rounded-lg border bg-background px-3 py-2 hover:bg-accent"
           >
-            <span role="img" aria-label="непрочитано" className="size-2.5 shrink-0 rounded-full bg-primary" />
+            <span role="img" aria-label="unread" className="size-2.5 shrink-0 rounded-full bg-primary" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[15px] font-medium md:text-sm">{s.title || s.track}</span>
               <span className="block truncate text-xs text-muted-foreground">{where(s, spheres)}</span>
@@ -163,7 +164,7 @@ const CHIP_TONES: Record<string, string> = {
 export function Chips({ chips }: { chips: Chip[] }) {
   if (!chips.length) return null;
   return (
-    <ul aria-label="Состояние" className="flex flex-wrap gap-1.5">
+    <ul aria-label="Status" className="flex flex-wrap gap-1.5">
       {chips.map((c) => (
         <li key={c.key} className={cn("rounded-full border px-2.5 py-0.5 text-xs", CHIP_TONES[c.level] ?? "")}>
           {c.text}
@@ -195,32 +196,39 @@ export function TodayView({
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-3 pt-3 pb-6 md:px-6">
       <div className="flex flex-col gap-2 px-1">
-        <h1 className="text-xl font-semibold">Сегодня · {todayWord(today)}</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="min-w-0 flex-1 text-xl font-semibold">Today · {todayWord(today)}</h1>
+          {/* the phone's way to «Week»: the tab bar has no room for it; the sidebar has it on a wide screen */}
+          <Link to="/week" className="inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground lg:hidden">
+            <Chart className="size-4" />
+            Week
+          </Link>
+        </div>
         <Chips chips={feed?.chips ?? []} />
       </div>
       <FeedView
         feed={feed}
         now={now}
         heading="h2"
-        empty="Ничего не ждёт тебя."
-        // each thing once: what finished since he last looked is under «Готово», a base's date under «Сроки»
+        empty="Nothing is waiting for you."
+        // each thing once: what finished since he last looked is under «Done», a base's date under «Deadlines»
         skip={(row) =>
           (row.action === "read" && !!row.session && doneIds.has(row.session)) ||
           (row.action === "assistant" && row.source === "deadline" && deadlineIds.has(row.ref))
         }
       />
       {busy.length > 0 && (
-        <Section title="Работают" count={busy.length}>
+        <Section title="Working" count={busy.length}>
           <Running sessions={busy} spheres={spheres} now={now} />
         </Section>
       )}
       {done.length > 0 && (
-        <Section title="Готово" count={done.length}>
+        <Section title="Done" count={done.length}>
           <Done sessions={done} spheres={spheres} now={now} />
         </Section>
       )}
       {deadlines.length > 0 && (
-        <Section title="Сроки" count={deadlines.length}>
+        <Section title="Deadlines" count={deadlines.length}>
           <Deadlines items={deadlines} today={today} />
         </Section>
       )}
@@ -250,7 +258,7 @@ export function TodayCount({ className }: { className?: string }) {
   const feed = useFeed();
   if (!feed || feed.count === 0) return null;
   return (
-    <Badge variant="warning" className={className} aria-label={`ждут: ${feed.count}`}>
+    <Badge variant="warning" className={className} aria-label={`${feed.count} waiting`}>
       {feed.count}
     </Badge>
   );

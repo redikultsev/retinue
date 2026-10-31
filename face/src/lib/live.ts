@@ -206,7 +206,7 @@ export class Live {
     ) {
       for (const l of this.cardListeners) l(event.data);
     }
-    // A session that starts waiting: load its snapshot so its card is in «Ждут тебя» with the full input.
+    // A session that starts waiting: load its snapshot so its card is in «Waiting for you» with the full input.
     if (event.kind === "session" && event.data.waiting > 0 && !this.watched.has(event.data.id)) {
       this.watch(event.data.id).catch(() => undefined);
     }

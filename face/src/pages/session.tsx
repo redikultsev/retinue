@@ -70,7 +70,7 @@ function DiffBeside({ id }: { id: string }) {
   const { pane, open } = usePane();
   if (sessions[id]?.kind !== "code" || (pane?.kind === "diff" && pane.session === id)) return null;
   return (
-    <Button variant="ghost" size="icon" aria-label="Изменения справа" title="Изменения справа" onClick={() => open({ kind: "diff", session: id })}>
+    <Button variant="ghost" size="icon" aria-label="Changes on the right" title="Changes on the right" onClick={() => open({ kind: "diff", session: id })}>
       <GitBranch />
     </Button>
   );

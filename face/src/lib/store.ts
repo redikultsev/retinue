@@ -50,13 +50,13 @@ export interface State {
   fileAt: Record<string, Record<string, number>>;
   /** The live text of a running turn, not stored by the server; the final item replaces it. */
   deltas: Record<string, string>;
-  /** «В Базу» cards by id, and the id of the event that last set each. */
+  /** «To the Base» cards by id, and the id of the event that last set each. */
   bases: Record<string, BaseCard>;
   baseAt: Record<string, number>;
-  /** «Запушить» cards by id, the same way. */
+  /** «Push» cards by id, the same way. */
   pushes: Record<string, PushCard>;
   pushAt: Record<string, number>;
-  /** Per session: «Сводка»'s environment, as of its last snapshot (not on the stream). */
+  /** Per session: «Summary»'s environment, as of its last snapshot (not on the stream). */
   about: Record<string, About>;
 }
 
@@ -371,7 +371,7 @@ export function orderedFiles(files: Record<string, OutFile> | undefined): OutFil
 export const sessionItems = (state: State, session: string) => orderedItems(state.items[session]);
 export const sessionApprovals = (state: State, session: string) => approvalsOf(state.approvals, session);
 
-/** A session's «В Базу» card still open (shown or committing), the newest; pass `state.bases`. */
+/** A session's «To the Base» card still open (shown or committing), the newest; pass `state.bases`. */
 export function openBaseCard(bases: Record<string, BaseCard>, session: string): BaseCard | undefined {
   return Object.values(bases)
     .filter((b) => b.session === session && (b.state === "shown" || b.state === "committing"))
@@ -401,8 +401,8 @@ export const RECENT_S = 7 * 86400;
 
 const isWaiting = (s: Session) => s.state === "waiting" || s.waiting > 0;
 
-/** «Ждут тебя» / «Закреплены» / «Работают» / «Готово» (idle, and closed in the last week), newest first. A pinned
- * session that waits stays under «Ждут тебя» with its cards; a side session whose main session is listed goes under
+/** «Waiting for you» / «Pinned» / «Working» / «Done» (idle, and closed in the last week), newest first. A pinned
+ * session that waits stays under «Waiting for you» with its cards; a side session whose main session is listed goes under
  * it — unless it waits on a card itself, which always comes to the top. */
 export function groupSessions(sessions: Session[], now: number): Groups {
   const recent = (s: Session) => s.state !== "closed" || now - s.at < RECENT_S;

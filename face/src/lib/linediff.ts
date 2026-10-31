@@ -1,5 +1,5 @@
 // A small line diff for the edits shown inline in a transcript (an Edit's old_string → new_string): LCS over
-// lines, unchanged runs longer than 2·context folded. The «Изменения» tab renders `git diff` with @pierre/diffs.
+// lines, unchanged runs longer than 2·context folded. The «Changes» tab renders `git diff` with @pierre/diffs.
 
 export interface DiffRow {
   type: " " | "-" | "+" | "…";
@@ -52,12 +52,12 @@ function fold(rows: DiffRow[], context: number): DiffRow[] {
   let skipped = 0;
   rows.forEach((row, k) => {
     if (keep[k]) {
-      if (skipped) out.push({ type: "…", text: `${skipped} без изменений` });
+      if (skipped) out.push({ type: "…", text: `${skipped} unchanged` });
       skipped = 0;
       out.push(row);
     } else skipped++;
   });
-  if (skipped && out.length) out.push({ type: "…", text: `${skipped} без изменений` });
+  if (skipped && out.length) out.push({ type: "…", text: `${skipped} unchanged` });
   return out;
 }
 

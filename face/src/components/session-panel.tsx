@@ -1,7 +1,7 @@
-// One session on screen: its header, «Переписка» (the transcript and the input box), for a code session
-// «Изменения», and «Файлы» once it has handed any over. Two of these stand side by side on a wide screen, both fed by
+// One session on screen: its header, «Chat» (the transcript and the input box), for a code session
+// «Changes», and «Files» once it has handed any over. Two of these stand side by side on a wide screen, both fed by
 // the app's one stream. The transcript is a reading column (~720 px), the plan Claude Code pins under its last message
-// sits above the input box, and «Сводка» (components/session-summary.tsx) opens from the header: the right panel on a
+// sits above the input box, and «Summary» (components/session-summary.tsx) opens from the header: the right panel on a
 // wide screen, a sheet on a phone.
 import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { lazy, type ReactNode, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils";
 import { approvalsOf, orderedFiles, orderedInputs, orderedItems, orderedSummaries } from "@/lib/store";
 import { QUEUED } from "@/lib/types";
 
-// The diff renderer (@pierre/diffs and Shiki) is loaded only when «Изменения» is opened.
+// The diff renderer (@pierre/diffs and Shiki) is loaded only when «Changes» is opened.
 const Changes = lazy(() => import("@/components/changes").then((m) => ({ default: m.Changes })));
 
 export type Tab = "chat" | "changes" | "files";
@@ -41,7 +41,7 @@ interface Props {
   /** Side by side: closes this panel. */
   onClose?: () => void;
   extra?: ReactNode;
-  /** The right panel can show this session's «Сводка» (a wide screen, one session in the middle). */
+  /** The right panel can show this session's «Summary» (a wide screen, one session in the middle). */
   panel?: boolean;
 }
 
@@ -55,8 +55,8 @@ function PinnedPlan({ items }: { items: ReturnType<typeof orderedItems> }) {
     <details data-testid="pinned-plan" className="group/plan mx-auto mb-1.5 w-full max-w-[46rem] rounded-lg border bg-card">
       <summary className="flex h-8 cursor-pointer list-none items-center gap-2 px-2.5 text-[13px] select-none pointer-coarse:min-h-11 [&_svg]:size-3.5">
         <ListTodo className="text-muted-foreground" />
-        <span className="shrink-0 tabular-nums text-muted-foreground">{`${done} из ${total}`}</span>
-        <span className="min-w-0 flex-1 truncate">{now ?? "План"}</span>
+        <span className="shrink-0 tabular-nums text-muted-foreground">{`${done} of ${total}`}</span>
+        <span className="min-w-0 flex-1 truncate">{now ?? "Plan"}</span>
         <ChevronRight className="fold-chevron size-3 text-muted-foreground transition-transform" />
       </summary>
       <div className="max-h-48 overflow-y-auto border-t px-2.5 py-2">
@@ -94,7 +94,7 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
 
   useEffect(() => {
     setError(null);
-    live.watch(id).catch(() => setError("Сессия не загрузилась."));
+    live.watch(id).catch(() => setError("The session did not load."));
   }, [id]);
 
   // Stay at the bottom while new text comes, unless the owner scrolled up to read.
@@ -107,9 +107,9 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
 
   const code = session?.kind === "code";
   const tabs: { value: Tab; label: string }[] = [
-    { value: "chat", label: "Переписка" },
-    ...(code ? [{ value: "changes" as const, label: "Изменения" }] : []),
-    ...(files.length || tab === "files" ? [{ value: "files" as const, label: `Файлы · ${files.length}` }] : []),
+    { value: "chat", label: "Chat" },
+    ...(code ? [{ value: "changes" as const, label: "Changes" }] : []),
+    ...(files.length || tab === "files" ? [{ value: "files" as const, label: `Files · ${files.length}` }] : []),
   ];
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-col" aria-label={session?.title ?? id}>
@@ -117,8 +117,8 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
         {back && (
           <Link
             to="/sessions"
-            aria-label="Назад"
-            // back where the owner came from (Сегодня, a Space, the list); opened by a link, to the list
+            aria-label="Back"
+            // back where the owner came from (Today, a Space, the list); opened by a link, to the list
             onClick={(e) => {
               if (router.history.canGoBack()) {
                 e.preventDefault();
@@ -143,7 +143,7 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
                 )}
               />
             )}
-            <span className="truncate text-[15px] font-medium md:text-sm">{session?.title ?? "Сессия"}</span>
+            <span className="truncate text-[15px] font-medium md:text-sm">{session?.title ?? "Session"}</span>
           </div>
           <div className="flex min-w-0 items-center gap-1.5 truncate text-[11px] text-muted-foreground">
             <span>{session?.track}</span>
@@ -165,7 +165,7 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
               <>
                 <span>·</span>
                 <Link to="/s/$id" params={{ id: session.parent }} className="underline">
-                  вопрос к {session.parent}
+                  side question on {session.parent}
                 </Link>
               </>
             )}
@@ -173,7 +173,7 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
               <>
                 <span>·</span>
                 <Link to="/s/$id" params={{ id: session.fork_of }} className="underline">
-                  ветка от {session.fork_of}
+                  fork of {session.fork_of}
                 </Link>
               </>
             )}
@@ -186,8 +186,8 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
           <Button
             variant="ghost"
             size="icon"
-            aria-label="Сводка"
-            title="Сводка"
+            aria-label="Summary"
+            title="Summary"
             aria-pressed={panel && wide ? summaryOpen : sheet}
             onClick={() => (panel && wide ? setSummaryOpen(!summaryOpen) : setSheet(true))}
           >
@@ -195,7 +195,7 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
           </Button>
         )}
         {onClose && (
-          <Button variant="ghost" size="icon" aria-label="Закрыть панель" onClick={onClose}>
+          <Button variant="ghost" size="icon" aria-label="Close panel" onClick={onClose}>
             <Close />
           </Button>
         )}
@@ -216,9 +216,9 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : !loaded ? (
-          <p className="text-sm text-muted-foreground">Загружаю…</p>
+          <p className="text-sm text-muted-foreground">Loading…</p>
         ) : tab === "changes" && code ? (
-          <Suspense fallback={<p className="text-sm text-muted-foreground">Загружаю изменения…</p>}>
+          <Suspense fallback={<p className="text-sm text-muted-foreground">Loading the changes…</p>}>
             <Changes session={id} />
           </Suspense>
         ) : tab === "files" ? (
@@ -247,7 +247,7 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
           </div>
         </div>
       )}
-      <Dialog open={sheet} onClose={() => setSheet(false)} title="Сводка" sheet>
+      <Dialog open={sheet} onClose={() => setSheet(false)} title="Summary" sheet>
         <SessionSummary
           id={id}
           onLeave={() => setSheet(false)}

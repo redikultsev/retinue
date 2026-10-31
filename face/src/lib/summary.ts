@@ -1,4 +1,4 @@
-// «Сводка»: what a session's right panel (a wide screen) or sheet (a phone) shows, read from what the app already has —
+// «Summary»: what a session's right panel (a wide screen) or sheet (a phone) shows, read from what the app already has —
 // the session's row, its snapshot's `about`, its items, files and cards. Nothing here is fetched on its own.
 import { useSyncExternalStore } from "react";
 import type { Item, ItemData, Session } from "./types";
@@ -15,7 +15,7 @@ export function latestPlan(items: Item[]): Todo[] | null {
   return null;
 }
 
-/** «2 из 5», and the step in work in its own words («Чиню …»), for a plan's one-line bar. */
+/** «2 of 5», and the step in work in its own words («Fixing …»), for a plan's one-line bar. */
 export function planLine(todos: Todo[]): { done: number; total: number; now: string | null } {
   const doing = todos.find((t) => t.status === "in_progress");
   return {
@@ -30,18 +30,18 @@ export function childrenOf(sessions: Record<string, Session>, id: string): { ses
   const out: { session: Session; how: string }[] = [];
   for (const s of Object.values(sessions)) {
     if (s.id === id) continue;
-    if (s.sub_of === id) out.push({ session: s, how: "подсессия" });
-    else if (s.parent === id) out.push({ session: s, how: "вопрос" });
-    else if (s.fork_of === id) out.push({ session: s, how: "ветка" });
+    if (s.sub_of === id) out.push({ session: s, how: "sub-session" });
+    else if (s.parent === id) out.push({ session: s, how: "side question" });
+    else if (s.fork_of === id) out.push({ session: s, how: "fork" });
   }
   return out.sort((a, b) => b.session.at - a.session.at);
 }
 
-/** Tokens as the owner reads them: «840», «84 тыс.», «1,2 млн». */
+/** Tokens as the owner reads them: «840», «84k», «1.2M». */
 export function tokensWord(n: number): string {
   if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${Math.round(n / 1000)} тыс.`;
-  return `${(n / 1_000_000).toFixed(1).replace(".", ",")} млн`;
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 // The wide screen's panel is open or folded away; the device remembers it. One value for every session.

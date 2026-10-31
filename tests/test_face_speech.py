@@ -19,7 +19,7 @@ from test_face import POST, FaceWorld, faced
 from test_platformd import short_wait  # noqa: F401 — the fixture is autouse
 
 PROXY = "http://platform-egress:3128"
-HEARD = "Проверь KV cache и сделай eval для RAG"
+HEARD = "Check the KV cache and make an eval for RAG"
 
 
 class Ears:
@@ -111,7 +111,7 @@ def test_english_is_word_for_word_and_comes_back_as_the_message(tmp_path):
         await world.login()
         status, data = await say(world, mode="en", kind="audio/mp4")
         assert status == 200 and data == {"text": "So, um, I think, uh, it works",
-                                          "message": "(голосом, дословно) So, um, I think, uh, it works"}
+                                          "message": "(by voice, verbatim) So, um, I think, uh, it works"}
         fields = sent(ears.posts()[0])
         assert fields["language_code"] == [b"en"] and fields["no_verbatim"] == [b"false"]
         assert "keyterms" not in fields, "no terms: what he said, not what he meant"
@@ -130,7 +130,7 @@ def test_what_is_refused_before_anything_is_sent(tmp_path):
         assert (await say(world, body=b""))[0] == 400
         too_big = b"\0" * (face.SPEECH_MAX + 1)
         status, data = await say(world, body=too_big)
-        assert status == 413 and "10 минут" in data["error"], "by its length"
+        assert status == 413 and "10 minutes" in data["error"], "by its length"
 
         async def stream():
             for _ in range(face.SPEECH_MAX // face.SPEECH_CHUNK + 2):
@@ -143,12 +143,12 @@ def test_what_is_refused_before_anything_is_sent(tmp_path):
 
         hear(world, ears, key="")
         status, data = await say(world)
-        assert status == 503 and "нет ключа ElevenLabs" in data["error"]
+        assert status == 503 and "no ElevenLabs key" in data["error"]
         assert (await world.get("/api/meta"))["speech"] is False, "the app knows before it records"
         hear(world, ears)
         world.cfg.speech.proxy = ""
         status, data = await say(world)
-        assert status == 503 and "нет выхода к ElevenLabs" in data["error"]
+        assert status == 503 and "no way to reach ElevenLabs" in data["error"]
         world.cfg.speech.proxy = PROXY
         assert (await world.get("/api/meta"))["speech"] is True
         assert ears.seen == []
@@ -166,7 +166,7 @@ def test_one_recording_at_a_time(tmp_path):
         while not ears.posts():
             await asyncio.sleep(0.01)
         status, data = await say(world)
-        assert status == 429 and "Уже расшифровываю" in data["error"]
+        assert status == 429 and "Already transcribing" in data["error"]
         ears.release.set()
         assert (await first)[0] == 200
         assert (await say(world))[0] == 200, "free again"
@@ -179,11 +179,11 @@ def test_every_failure_is_a_short_line(tmp_path):
         await world.login()
         for answer, status, line in [
             (httpx.Response(402, json={"detail": {"status": "insufficient_credits"}}), 502,
-             "Не удалось расшифровать: кончились кредиты ElevenLabs — пополни баланс."),
+             "Could not transcribe: ElevenLabs is out of credits — top up the balance."),
             (httpx.Response(422, json={"detail": {"status": "invalid_file"}}), 502,
-             "Не удалось расшифровать: ElevenLabs не принял файл."),
+             "Could not transcribe: ElevenLabs did not accept the file."),
             (httpx.Response(200, json={"text": "  ", "transcription_id": "tr-2"}), 422,
-             "Не удалось разобрать речь — запиши ещё раз."),
+             "Could not make out the speech — record again."),
         ]:
             hear(world, Ears(lambda request, answer=answer: answer))
             assert await say(world) == (status, {"error": line})
@@ -250,7 +250,7 @@ async def server(world: FaceWorld, kind: str):
 
 @pytest.mark.parametrize("kind", ["cancelled", "polled"])
 def test_cancelled_after_elevenlabs_has_it_finishes_in_the_background_and_frees_the_next(tmp_path, kind):
-    """«Отмена» once the recording reached ElevenLabs: it is billed anyway, so the call ends — its transcript deleted
+    """«Cancel» once the recording reached ElevenLabs: it is billed anyway, so the call ends — its transcript deleted
     there — but the app's next recording does not wait for it, and nothing comes back."""
     async def body(world: FaceWorld):
         ears = Ears()

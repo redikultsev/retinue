@@ -244,3 +244,4 @@ export const GitPullRequest = icon(
     <path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12" />
   </>,
 );
+export const Chart = icon("Chart", <path d="M3 3v16a2 2 0 0 0 2 2h16M7 16l4-4 3 3 5-6" />);

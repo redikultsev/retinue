@@ -1,6 +1,6 @@
 // The desktop's right pane: a Record of the Base, a session's diff or a handed-over file, open beside whatever is in
 // the middle. It lives in the URL's `pane` search value (`r:<space>/<path>`, `d:<session>`, `f:<file id>`), so a
-// reload or a copied link keeps it and «Назад» closes it. On a phone there is no pane: the same thing opens as its
+// reload or a copied link keeps it and «Back» closes it. On a phone there is no pane: the same thing opens as its
 // own page.
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { useWide } from "./media";

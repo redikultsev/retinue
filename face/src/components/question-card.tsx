@@ -1,6 +1,6 @@
 // A question card (AskUserQuestion, retinue/questions.py): each question with its options as full-width buttons, the
-// description on a second line. A single choice is sent by its tap; a multi-select is ticked and sent by «Готово»;
-// «Свой ответ…» opens a field for the owner's own words. Every answer is bound to the card's digest, by the same rules
+// description on a second line. A single choice is sent by its tap; a multi-select is ticked and sent by «Done»;
+// «Own answer…» opens a field for the owner's own words. Every answer is bound to the card's digest, by the same rules
 // as a Telegram press — an answer here retires that question's Telegram buttons, and one there shows here.
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -74,7 +74,7 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
         setWriting((w) => ({ ...w, [n]: undefined }));
       if (res.approval && res.approval.state === "answered") onDecided?.(res.approval);
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : "Не получилось.", "error");
+      toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
     } finally {
       setBusy(null);
     }
@@ -90,8 +90,8 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
     <Card data-testid="question-card" className={cn(open && "border-warning/70 bg-warning/5 ring-1 ring-warning/30", className)}>
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
-          <CardTitle className="text-sm">Вопрос · сессия {approval.session}</CardTitle>
-          <Badge variant={open ? "warning" : "secondary"}>{open ? "Ждёт ответа" : approvalStateWord(approval.state)}</Badge>
+          <CardTitle className="text-sm">Question · session {approval.session}</CardTitle>
+          <Badge variant={open ? "warning" : "secondary"}>{open ? "Awaiting an answer" : approvalStateWord(approval.state)}</Badge>
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -105,7 +105,7 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
               <div className="font-medium break-words whitespace-pre-wrap">{q.question}</div>
               {answered ? (
                 <div data-testid="question-answer" className="text-sm">
-                  <span className="text-muted-foreground">{answered.other ? "Свой ответ: " : "Ответ: "}</span>
+                  <span className="text-muted-foreground">{answered.other ? "Own answer: " : "Answer: "}</span>
                   {answered.value}
                 </div>
               ) : open ? (
@@ -136,13 +136,13 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
                         disabled={busy !== null || picked.length === 0}
                         onClick={() => send(n, { labels: picked })}
                       >
-                        {busy === n ? "Отправляю…" : `Готово${picked.length ? ` (${picked.length})` : ""}`}
+                        {busy === n ? "Sending…" : `Done${picked.length ? ` (${picked.length})` : ""}`}
                       </Button>
                     )}
                   </div>
                   {text === undefined ? (
                     <Button variant="ghost" className="self-start" onClick={() => setWriting((w) => ({ ...w, [n]: "" }))}>
-                      Свой ответ…
+                      Own answer…
                     </Button>
                   ) : (
                     <form
@@ -153,13 +153,13 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
                       }}
                     >
                       <Textarea
-                        aria-label="Свой ответ"
+                        aria-label="Own answer"
                         autoFocus
                         value={text}
                         onChange={(e) => setWriting((w) => ({ ...w, [n]: e.target.value }))}
                       />
                       <Button type="submit" disabled={busy !== null || !text.trim()}>
-                        {busy === n ? "Отправляю…" : "Отправить"}
+                        {busy === n ? "Sending…" : "Send"}
                       </Button>
                     </form>
                   )}

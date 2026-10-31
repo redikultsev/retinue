@@ -10,10 +10,10 @@ import type { Approval, Session } from "@/lib/types";
 
 const card = (over: Partial<Approval> = {}): Approval => ({
   id: "c1", session: "s2", tool_use_id: "t", kind: "approval", state: "shown", tool: "Bash", input: { command: "ls" },
-  cwd: "/work", digest: "d", view: { head: ["Разрешение"] }, created: 1, at: 1, ...over,
+  cwd: "/work", digest: "d", view: { head: ["Approval"] }, created: 1, at: 1, ...over,
 });
 const session = (id: string, over: Partial<Session> = {}): Session => ({
-  id, track: "code", lane: "code", kind: "code", state: "waiting", created: 1, at: 1, title: "Почини тесты", waiting: 1,
+  id, track: "code", lane: "code", kind: "code", state: "waiting", created: 1, at: 1, title: "Fix the tests", waiting: 1,
   ...over,
 });
 
@@ -21,8 +21,8 @@ describe("a card for another session", () => {
   it("is announced unless its session is on screen or its own page is open", () => {
     expect(visibleSessions("/s/s1", "?with=s3&tab=chat")).toEqual(["s1", "s3"]);
     expect(visibleSessions("/", "")).toEqual([]);
-    expect(cardNotice(card(), session("s2"), ["s1"])).toEqual({ text: "Ждёт решения: code · Почини тесты", href: "/s/s2" });
-    expect(cardNotice(card(), undefined, [])?.text).toBe("Ждёт решения: сессия s2");
+    expect(cardNotice(card(), session("s2"), ["s1"])).toEqual({ text: "Awaiting decision: code · Fix the tests", href: "/s/s2" });
+    expect(cardNotice(card(), undefined, [])?.text).toBe("Awaiting decision: session s2");
     expect(cardNotice(card(), session("s2"), ["s1", "s2"])).toBeNull();
     expect(cardNotice(card(), session("s2"), [], "/a/c1")).toBeNull();
   });
@@ -52,7 +52,7 @@ describe("a card for another session", () => {
     expect(told).toEqual([]); // the snapshot's card was there before
     sources[0]!.emit("approval", card({ id: "new", state: "pending" }), 11);
     sources[0]!.emit("approval", card({ id: "new" }), 12);
-    sources[0]!.emit("approval", card({ id: "new", view: { head: ["Разрешение", "Сессия простаивает 55 мин — …"] } }), 13);
+    sources[0]!.emit("approval", card({ id: "new", view: { head: ["Approval", "Session idle for 55 min — …"] } }), 13);
     sources[0]!.emit("approval", card({ id: "courier", kind: "courier" }), 14);
     expect(told).toEqual(["new"]);
     live.stop();
@@ -65,7 +65,7 @@ describe("a card for another session", () => {
       history: createMemoryHistory({ initialEntries: ["/"] }),
     });
     render(<RouterProvider router={router} />);
-    await act(async () => toast("Ждёт решения: code · Почини тесты", "info", 8000, "/s/s2"));
+    await act(async () => toast("Awaiting decision: code · Fix the tests", "info", 8000, "/s/s2"));
     const link = await screen.findByRole("status");
     expect(link.tagName).toBe("A");
     expect(link.getAttribute("href")).toBe("/s/s2");

@@ -9,7 +9,7 @@ export function SessionsPage() {
   if (wide)
     return (
       <div className="flex h-full items-center justify-center p-6">
-        <p className="text-sm text-muted-foreground">Выбери сессию слева.</p>
+        <p className="text-sm text-muted-foreground">Pick a session on the left.</p>
       </div>
     );
   return (

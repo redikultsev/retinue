@@ -24,7 +24,7 @@ const session = (id: string, over: Partial<Session> = {}): Session => ({
   state: "active",
   created: 1000,
   at: 1000,
-  title: "Почини тесты",
+  title: "Fix the tests",
   waiting: 0,
   ...over,
 });
@@ -47,7 +47,7 @@ const approval = (id: string, over: Partial<Approval> = {}): Approval => ({
   input: { command: "make test" },
   cwd: "/work/retinue",
   digest: "d1",
-  view: { head: ["Разрешение · code · сессия s1"], body: "make test" },
+  view: { head: ["Approval · code · session s1"], body: "make test" },
   created: 10,
   at: 10,
   ...over,
@@ -67,15 +67,15 @@ describe("reduce", () => {
 
   it("upserts items by <session>/<turn>/<n> and keeps (turn, n) order", () => {
     const st = run([
-      ev(1, { kind: "item", data: message("s1", 1, 0, "второй ход") }),
-      ev(2, { kind: "item", data: message("s1", 0, 1, "б") }),
-      ev(3, { kind: "item", data: message("s1", 0, 0, "а") }),
-      ev(4, { kind: "item", data: message("s1", 0, 1, "б, исправлено") }),
+      ev(1, { kind: "item", data: message("s1", 1, 0, "second turn") }),
+      ev(2, { kind: "item", data: message("s1", 0, 1, "b") }),
+      ev(3, { kind: "item", data: message("s1", 0, 0, "a") }),
+      ev(4, { kind: "item", data: message("s1", 0, 1, "b, corrected") }),
     ]);
     expect(sessionItems(st, "s1").map((i) => (i.kind === "message" ? i.data.text : ""))).toEqual([
-      "а",
-      "б, исправлено",
-      "второй ход",
+      "a",
+      "b, corrected",
+      "second turn",
     ]);
   });
 
@@ -94,12 +94,12 @@ describe("reduce", () => {
     const st = run([
       ev(1, { kind: "approval", data: approval("a1") }),
       ev(2, { kind: "approval", data: approval("a1", { state: "granted", at: 11 }) }),
-      ev(3, { kind: "summary", data: { session: "s1", seq: 7, head: "Итог", text: "два", at: 2 } }),
-      ev(4, { kind: "summary", data: { session: "s1", seq: 5, head: "Итог", text: "раз", at: 1 } }),
-      ev(5, { kind: "summary", data: { session: "s1", seq: 7, head: "Итог", text: "два, исправлено", at: 2 } }),
+      ev(3, { kind: "summary", data: { session: "s1", seq: 7, head: "Result", text: "two", at: 2 } }),
+      ev(4, { kind: "summary", data: { session: "s1", seq: 5, head: "Result", text: "one", at: 1 } }),
+      ev(5, { kind: "summary", data: { session: "s1", seq: 7, head: "Result", text: "two, corrected", at: 2 } }),
     ]);
     expect(st.approvals.a1?.state).toBe("granted");
-    expect(orderedSummaries(st.summaries.s1).map((x) => x.text)).toEqual(["раз", "два, исправлено"]);
+    expect(orderedSummaries(st.summaries.s1).map((x) => x.text)).toEqual(["one", "two, corrected"]);
     expect(shownApprovals(st.approvals)).toEqual([]);
   });
 
@@ -116,27 +116,27 @@ describe("reduce", () => {
   it("a snapshot older than events already applied keeps those events (the request raced the stream)", () => {
     const old = { schema: 1, cursor: 50 };
     const st = run([
-      ev(51, { kind: "item", data: message("s1", 0, 0, "новее снимка") }),
-      ev(52, { kind: "item", data: message("s1", 0, 3, "появилось после снимка") }),
+      ev(51, { kind: "item", data: message("s1", 0, 0, "newer than the snapshot") }),
+      ev(52, { kind: "item", data: message("s1", 0, 3, "came after the snapshot") }),
       ev(53, { kind: "approval", data: approval("a1", { state: "granted", at: 40 }) }),
       ev(54, { kind: "items_reset", data: { session: "s1", turn: 1, count: 1 } }),
-      ev(55, { kind: "summary", data: { session: "s1", seq: 9, head: "Итог", text: "после снимка", at: 9 } }),
+      ev(55, { kind: "summary", data: { session: "s1", seq: 9, head: "Result", text: "after the snapshot", at: 9 } }),
       {
         type: "session",
         snapshot: {
           ...old,
           session: session("s1", { state: "waiting", waiting: 1 }),
-          items: [message("s1", 0, 0, "из снимка"), message("s1", 1, 0, "a"), message("s1", 1, 1, "сброшено после снимка")],
+          items: [message("s1", 0, 0, "from the snapshot"), message("s1", 1, 0, "a"), message("s1", 1, 1, "dropped after the snapshot")],
           approvals: [approval("a1", { state: "shown" }), approval("a2", { state: "shown" })],
-          summaries: [{ session: "s1", seq: 8, head: "Итог", text: "из снимка", at: 8 }],
+          summaries: [{ session: "s1", seq: 8, head: "Result", text: "from the snapshot", at: 8 }],
         },
       },
     ]);
     const texts = sessionItems(st, "s1").map((i) => `${i.turn}/${i.n} ${i.kind === "message" ? i.data.text : ""}`);
-    expect(texts).toEqual(["0/0 новее снимка", "0/3 появилось после снимка", "1/0 a"]);
+    expect(texts).toEqual(["0/0 newer than the snapshot", "0/3 came after the snapshot", "1/0 a"]);
     expect(st.approvals.a1?.state).toBe("granted");
     expect(st.approvals.a2?.state).toBe("shown");
-    expect(orderedSummaries(st.summaries.s1).map((x) => x.text)).toEqual(["из снимка", "после снимка"]);
+    expect(orderedSummaries(st.summaries.s1).map((x) => x.text)).toEqual(["from the snapshot", "after the snapshot"]);
     // and a later snapshot that already holds those events takes over completely
     const later = run(
       [{ type: "session", snapshot: { schema: 1, cursor: 60, session: session("s1"), items: [], approvals: [], summaries: [] } }],
@@ -148,13 +148,13 @@ describe("reduce", () => {
 
   it("appends deltas and drops them when the final message item arrives", () => {
     let st = run([
-      { type: "delta", session: "s1", text: "Смотрю " },
-      { type: "delta", session: "s1", text: "тесты" },
+      { type: "delta", session: "s1", text: "Looking at " },
+      { type: "delta", session: "s1", text: "the tests" },
     ]);
-    expect(st.deltas.s1).toBe("Смотрю тесты");
+    expect(st.deltas.s1).toBe("Looking at the tests");
     // a delta carries no id: the cursor does not move
     expect(st.cursor).toBeNull();
-    st = run([ev(7, { kind: "item", data: message("s1", 0, 0, "Смотрю тесты.") })], st);
+    st = run([ev(7, { kind: "item", data: message("s1", 0, 0, "Looking at the tests.") })], st);
     expect(st.deltas.s1).toBeUndefined();
   });
 
@@ -174,17 +174,17 @@ describe("reduce", () => {
           schema: 1,
           cursor: 50,
           session: session("s1", { state: "waiting", waiting: 1 }),
-          items: [message("s1", 0, 0, "новое")],
+          items: [message("s1", 0, 0, "new")],
           approvals: [approval("a1")],
           summaries: [],
         },
       },
-      ev(49, { kind: "item", data: message("s1", 0, 0, "старое") }),
+      ev(49, { kind: "item", data: message("s1", 0, 0, "old") }),
       ev(48, { kind: "session", data: session("s1", { state: "active" }) }),
       ev(51, { kind: "approval", data: approval("a1", { state: "granted" }) }),
     ]);
     expect(sessionItems(st, "s1")[0]?.kind === "message" && sessionItems(st, "s1")[0]?.data).toMatchObject({
-      text: "новое",
+      text: "new",
     });
     expect(st.sessions.s1?.state).toBe("waiting");
     expect(st.approvals.a1?.state).toBe("granted");
@@ -236,7 +236,7 @@ describe("reduce", () => {
 
 describe("groups", () => {
   const now = 100 * 86400;
-  it("puts sessions under «Ждут тебя», «Работают», «Готово», newest first", () => {
+  it("puts sessions under «Waiting for you», «Working», «Done», newest first", () => {
     const g = groupSessions(
       [
         session("w", { state: "waiting", waiting: 2, at: now - 10 }),
@@ -289,10 +289,10 @@ describe("groups", () => {
   });
 
   it("peeks at the text being written, else the last model message, else the last summary", () => {
-    const items = [message("s", 0, 0, "первое"), message("s", 0, 1, "последнее")];
-    expect(lastWords(items, "пишу…", [])).toBe("пишу…");
-    expect(lastWords(items, undefined, [])).toBe("последнее");
-    expect(lastWords([], "", [{ session: "s", head: "Итог", text: "итог", at: 1 }])).toBe("итог");
+    const items = [message("s", 0, 0, "first"), message("s", 0, 1, "last")];
+    expect(lastWords(items, "writing…", [])).toBe("writing…");
+    expect(lastWords(items, undefined, [])).toBe("last");
+    expect(lastWords([], "", [{ session: "s", head: "Result", text: "result", at: 1 }])).toBe("result");
     expect(lastWords([], undefined, [])).toBe("");
   });
 
@@ -323,9 +323,9 @@ describe("the owner's messages", () => {
   });
 
   it("are upserted by input_id from the stream and merged with a snapshot, the newer side winning", () => {
-    const photo = { kind: "image", name: "", size: 10, what: "фото 40×20", thumb: true };
+    const photo = { kind: "image", name: "", size: 10, what: "photo 40×20", thumb: true };
     const st = run([
-      ev(51, { kind: "input", data: input("face:b", "после снимка", 2, { attachments: [photo] }) }),
+      ev(51, { kind: "input", data: input("face:b", "after the snapshot", 2, { attachments: [photo] }) }),
       {
         type: "session",
         snapshot: {
@@ -335,13 +335,13 @@ describe("the owner's messages", () => {
           items: [],
           approvals: [],
           summaries: [],
-          inputs: [input("tg:1", "из снимка", 1)],
+          inputs: [input("tg:1", "from the snapshot", 1)],
         },
       },
     ]);
     expect(orderedInputs(st.inputs.s1).map((x) => [x.input_id, x.text, x.attachments.length])).toEqual([
-      ["tg:1", "из снимка", 0],
-      ["face:b", "после снимка", 1],
+      ["tg:1", "from the snapshot", 0],
+      ["face:b", "after the snapshot", 1],
     ]);
     const old = run([{ type: "session", snapshot: { schema: 1, cursor: 9, session: session("s2"), items: [], approvals: [], summaries: [] } }]);
     expect(orderedInputs(old.inputs.s2)).toEqual([]);
@@ -350,7 +350,7 @@ describe("the owner's messages", () => {
 
 describe("inputs, files and questions together", () => {
   it("fold side by side from the stream and from a snapshot", () => {
-    const mine: Input = { session: "s1", input_id: "tg:2", text: "вот лог", at: 3, turn: 1, n: 0, attachments: [] };
+    const mine: Input = { session: "s1", input_id: "tg:2", text: "here is the log", at: 3, turn: 1, n: 0, attachments: [] };
     const file = { id: "f1", session: "s1", path: "report.pdf", name: "report.pdf", size: 10, mime: "application/pdf", at: 4 };
     const question = approval("q1", { kind: "question", tool: "AskUserQuestion" });
     const st = run([

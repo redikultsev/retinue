@@ -1,39 +1,39 @@
-// «Пространства» in the mock (retinue/spaces.py's answers): a small synthetic Base — two Spaces, a few Records.
+// «Spaces» in the mock (retinue/spaces.py's answers): a small synthetic Base — two Spaces, a few Records.
 import type { RecordView, SpaceRow, SpaceView } from "../src/lib/space-types.ts";
 
 const HEAD = "0123456789abcdef0123456789abcdef01234567";
 
 const travel: SpaceView = {
   name: "travel",
-  title: "Путешествия",
-  rules: "## Правила домена\n\n- Цены — только живые, со ссылкой.\n- Билеты сравниваем на двух сайтах.",
+  title: "Travel",
+  rules: "## Rules of the domain\n\n- Live prices only, with a link.\n- Compare tickets on two sites.",
   marker: true,
   counts: { questions: 2, tasks: 1 },
   sections: [
-    { heading: "Задачи", kind: "tasks", items: [{ text: "Перепроверить правила [пересадки](/spaces/travel/r/knowledge/transit.md) до 01.05.", list: true }] },
+    { heading: "Tasks", kind: "tasks", items: [{ text: "Recheck the [transfer](/spaces/travel/r/knowledge/transit.md) rules before 01.05.", list: true }] },
     {
-      heading: "Открытые вопросы",
+      heading: "Open questions",
       kind: "questions",
       items: [
-        { text: "Брать ли пересадку через хаб или лететь прямым?", list: true },
-        { text: "Нужна ли страховка с покрытием активного отдыха?", list: true },
+        { text: "Transfer through the hub or fly direct?", list: true },
+        { text: "Is insurance covering active holidays needed?", list: true },
       ],
     },
   ],
   records: {
     knowledge: [
-      { path: "knowledge/transit.md", folder: "", title: "Пересадка в аэропорту", verified: "2026-09-21", practice: "diverges", stale_after: "2026-12-21", status: "current" },
-      { path: "knowledge/airport-hotels.md", folder: "", title: "Отели у аэропорта", verified: "2026-10-02", status: "current" },
+      { path: "knowledge/transit.md", folder: "", title: "Airport transfer", verified: "2026-09-21", practice: "diverges", stale_after: "2026-12-21", status: "current" },
+      { path: "knowledge/airport-hotels.md", folder: "", title: "Airport hotels", verified: "2026-10-02", status: "current" },
     ],
-    profile: [{ path: "profile/docs/passport.md", folder: "docs", title: "Загранпаспорт", from: "2020-01-01", until: "2030-01-01" }],
-    journal: [{ path: "journal/2026-10-01-baggage.md", folder: "", title: "Беру билеты с багажом в цене", type: "decision", date: "2026-10-01" }],
+    profile: [{ path: "profile/docs/passport.md", folder: "docs", title: "Passport", from: "2020-01-01", until: "2030-01-01" }],
+    journal: [{ path: "journal/2026-10-01-baggage.md", folder: "", title: "Taking tickets with baggage included", type: "decision", date: "2026-10-01" }],
     artifacts: [],
   },
 };
 
 const work: SpaceView = {
   name: "work",
-  title: "Дела",
+  title: "Work",
   rules: "",
   marker: true,
   counts: { questions: 0, tasks: 0 },
@@ -46,23 +46,23 @@ const records: Record<string, RecordView> = {
     space: "travel",
     path: "knowledge/transit.md",
     nature: "knowledge",
-    title: "Пересадка в аэропорту",
+    title: "Airport transfer",
     head: {
-      written_by: "Claude Code (Opus 5)", created: "2026-09-21", updated: "2026-10-02", id: "transit", title: "Пересадка в аэропорту",
-      type: "knowledge", source: "Правила перевозчика, https://example.org/rules", verified: "2026-09-21",
+      written_by: "Claude Code (Opus 5)", created: "2026-09-21", updated: "2026-10-02", id: "transit", title: "Airport transfer",
+      type: "knowledge", source: "The carrier's rules, https://example.org/rules", verified: "2026-09-21",
       stale_after: "2026-12-21", status: "current", practice: "diverges",
     },
     bad_head: false,
-    body: "# Пересадка в аэропорту\n\n## Коротко\n\n- По правилам на пересадку хватает 40 минут.\n- На деле нужно не меньше полутора часов.\n\nСм. [загранпаспорт](/spaces/travel/r/profile/docs/passport.md).",
+    body: "# Airport transfer\n\n## In short\n\n- By the rules 40 minutes is enough for a transfer.\n- In practice it takes at least an hour and a half.\n\nSee the [passport](/spaces/travel/r/profile/docs/passport.md).",
   },
   "travel/profile/docs/passport.md": {
     space: "travel",
     path: "profile/docs/passport.md",
     nature: "profile",
-    title: "Загранпаспорт",
-    head: { written_by: "Владелец", created: "2026-09-01", id: "passport", type: "profile", from: "2020-01-01", until: "2030-01-01", learned: "2026-09-01", source: "паспорт" },
+    title: "Passport",
+    head: { written_by: "Владелец", created: "2026-09-01", id: "passport", type: "profile", from: "2020-01-01", until: "2030-01-01", learned: "2026-09-01", source: "passport" },
     bad_head: false,
-    body: "Действует до января 2030.",
+    body: "Valid until January 2030.",
   },
 };
 
@@ -77,8 +77,8 @@ export function mockSpaces(path: string): { status: number; data: unknown } | nu
   const m = /^\/api\/spaces\/([^/]+)(?:\/r\/(.+))?$/.exec(path);
   if (!m) return null;
   const view = views[decodeURIComponent(m[1]!)];
-  if (!view) return { status: 404, data: { error: "Нет такого Пространства." } };
+  if (!view) return { status: 404, data: { error: "No such Space." } };
   if (!m[2]) return { status: 200, data: { head: HEAD, space: view } };
   const record = records[`${view.name}/${decodeURIComponent(m[2])}`];
-  return record ? { status: 200, data: { head: HEAD, record } } : { status: 404, data: { error: "Нет такой Записи." } };
+  return record ? { status: 200, data: { head: HEAD, record } } : { status: 404, data: { error: "No such Record." } };
 }

@@ -1,6 +1,6 @@
-// «Изменения»: the lane's `git diff HEAD` of a code session's directory, rendered by @pierre/diffs. A tap on a line
+// «Changes»: the lane's `git diff HEAD` of a code session's directory, rendered by @pierre/diffs. A tap on a line
 // opens a comment box under it; the comment goes to the session as its next message:
-// `Комментарий к <file>:<line>: <text>`.
+// `Comment on <file>:<line>: <text>`.
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata } from "@pierre/diffs/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -11,7 +11,7 @@ import { toast } from "@/lib/toast";
 import type { DiffResponse } from "@/lib/types";
 
 export function commentText(file: string, line: number, text: string): string {
-  return `Комментарий к ${file}:${line}: ${text.trim()}`;
+  return `Comment on ${file}:${line}: ${text.trim()}`;
 }
 
 interface Target {
@@ -34,13 +34,13 @@ function CommentBox({
   return (
     <div className="flex flex-col gap-2 border-y bg-background p-2 font-sans">
       <div className="text-xs text-muted-foreground">
-        Комментарий к {target.file}:{target.line}
+        Comment on {target.file}:{target.line}
       </div>
       <Textarea
         autoFocus
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Что здесь не так?"
+        placeholder="What is wrong here?"
         rows={2}
       />
       <div className="flex gap-2">
@@ -51,10 +51,10 @@ function CommentBox({
             await onSend(text).finally(() => setBusy(false));
           }}
         >
-          Отправить в сессию
+          Send to the session
         </Button>
         <Button variant="ghost" onClick={onCancel}>
-          Отмена
+          Cancel
         </Button>
       </div>
     </div>
@@ -104,7 +104,7 @@ export function Changes({ session }: { session: string }) {
     try {
       setData(await api.diff(session));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Не получилось загрузить изменения.");
+      setError(e instanceof ApiError ? e.message : "Couldn't load the changes.");
     }
   }, [session]);
 
@@ -124,10 +124,10 @@ export function Changes({ session }: { session: string }) {
   async function send(t: Target, text: string) {
     try {
       const res = await api.input(session, commentText(t.file, t.line, text));
-      toast(res.say || "Отправлено.");
+      toast(res.say || "Sent.");
       setTarget(null);
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : "Не отправилось.", "error");
+      toast(e instanceof ApiError ? e.message : "Not sent.", "error");
     }
   }
 
@@ -136,30 +136,30 @@ export function Changes({ session }: { session: string }) {
       <div className="flex flex-col items-start gap-2 p-4 text-sm">
         <p className="text-destructive">{error}</p>
         <Button variant="outline" onClick={load}>
-          Ещё раз
+          Try again
         </Button>
       </div>
     );
-  if (!data) return <p className="p-4 text-sm text-muted-foreground">Загружаю изменения…</p>;
+  if (!data) return <p className="p-4 text-sm text-muted-foreground">Loading the changes…</p>;
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 truncate font-mono text-xs text-muted-foreground">{data.cwd}</div>
         <Button size="sm" variant="outline" onClick={load}>
-          Обновить
+          Refresh
         </Button>
       </div>
       {data.stat && (
         <pre className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs whitespace-pre">{data.stat}</pre>
       )}
       {data.truncated && (
-        <p className="text-sm text-warning-foreground">Дифф больше 1 МБ — показано начало.</p>
+        <p className="text-sm text-warning-foreground">The diff is over 1 MB — showing the start.</p>
       )}
       {files.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">Изменений нет.</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">No changes.</p>
       ) : (
         <>
-          <p className="text-xs text-muted-foreground">Нажми на строку, чтобы оставить комментарий.</p>
+          <p className="text-xs text-muted-foreground">Tap a line to leave a comment.</p>
           {files.map((f) => (
             <ChangedFile key={f.name} file={f} target={target} setTarget={setTarget} send={send} />
           ))}

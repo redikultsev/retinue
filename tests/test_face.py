@@ -85,7 +85,7 @@ def signed(fields: dict, key: str = WEBAPP_KEY) -> str:
 
 def init_data(now: float, user: int = OWNER, **extra) -> str:
     return signed({"auth_date": str(int(now)), "query_id": "AAH", "signature": "sig",
-                   "user": json.dumps({"id": user, "first_name": "Д"}), **extra})
+                   "user": json.dumps({"id": user, "first_name": "A"}), **extra})
 
 
 def input_id() -> str:
@@ -210,7 +210,7 @@ def test_ten_failed_logins_close_logins_for_ten_minutes(tmp_path):
             assert (await world.call("POST", "/api/auth/code", {"code": "WRONGWRONG"}))[0] == 401
         code = (await world.owner("login", {}))["code"]
         status, data, _ = await world.call("POST", "/api/auth/code", {"code": code})
-        assert status == 429 and "десять минут" in data["error"], "even the right code"
+        assert status == 429 and "ten minutes" in data["error"], "even the right code"
         assert (await world.call("POST", "/api/auth/telegram", {"init_data": init_data(world.clock.now)}))[0] == 429
         world.clock.now += face.FAIL_BLOCK_S - 1
         assert (await world.call("POST", "/api/auth/code", {"code": code}))[0] == 429
@@ -286,7 +286,7 @@ def replayed(store: sessions.PlatformStore, since: int = 0) -> dict:
 
 
 def test_a_turn_counts_from_its_start_not_from_the_last_card_it_waited_on(tmp_path):
-    """«Работают» on «Сегодня»: `turn_started` is set when a turn begins and stays through a card's resume, which moves
+    """«Working» on «Today»: `turn_started` is set when a turn begins and stays through a card's resume, which moves
     `at`; a new turn after idle sets it again."""
     async def body(world: FaceWorld):
         await world.login()
@@ -362,14 +362,14 @@ def test_a_session_of_a_retired_lane_is_listed_and_readable_and_takes_nothing_in
         snapshot = await world.get(f"/api/sessions/{session}")
         assert snapshot["items"] and snapshot["approvals"], "its transcript and its card, as they were"
         status, said, _ = await world.call("POST", f"/api/sessions/{session}/input",
-                                           {"text": "ещё", "input_id": input_id()})
+                                           {"text": "more", "input_id": input_id()})
         assert status == 200 and said["say"] == platformd.RETIRED
         approval = world.store.approval(card["approval"])
         status, decided, _ = await world.call("POST", f"/api/approvals/{approval['id']}/decide",
                                               {"action": "approve", "digest": approval["digest"]})
         assert status == 200 and decided["toast"] == platformd.RETIRED
         assert world.store.approval(card["approval"])["state"] == "shown" and world.store.queued() == []
-        assert (await world.owner("input", {"input_id": "tg:9", "session": session, "text": "ау"})) == \
+        assert (await world.owner("input", {"input_id": "tg:9", "session": session, "text": "hey"})) == \
             {"say": platformd.RETIRED}, "the same line in Telegram"
         assert len(world.lanes["code"].runs()) == 1, "nothing ran"
 
@@ -380,11 +380,11 @@ def test_a_long_title_is_cut_and_an_empty_first_input_names_the_track(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
         quiet = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": ""}))["session"]
-        long = (await world.owner("new", {"input_id": "tg:2", "track": "notes", "text": "я" * 200}))["session"]
+        long = (await world.owner("new", {"input_id": "tg:2", "track": "notes", "text": "z" * 200}))["session"]
         titles = {s["id"]: s["title"] for s in (await world.get("/api/sessions"))["sessions"]}
-        assert titles == {quiet: "notes", long: "я" * 80}
-        await world.owner("input", {"input_id": "tg:3", "session": quiet, "text": "теперь есть"})
-        assert world.store.face_session(quiet)["title"] == "теперь есть"
+        assert titles == {quiet: "notes", long: "z" * 80}
+        await world.owner("input", {"input_id": "tg:3", "session": quiet, "text": "now there is one"})
+        assert world.store.face_session(quiet)["title"] == "now there is one"
 
     faced(tmp_path, body)
 
@@ -401,7 +401,7 @@ def test_every_change_the_face_shows_is_an_event_and_replaying_them_gives_the_sn
         await world.hook("PostToolUse", resume, pre_tool_use())
         world.lanes["code"].add(session, resume["run"], *fixture("resumed"))
         await world.poll()
-        notes = (await world.owner("new", {"input_id": "tg:9", "track": "notes", "text": "заметка"}))["session"]
+        notes = (await world.owner("new", {"input_id": "tg:9", "track": "notes", "text": "a note"}))["session"]
 
         model = replayed(world.store)
         for sid in (session, notes):
@@ -413,7 +413,7 @@ def test_every_change_the_face_shows_is_an_event_and_replaying_them_gives_the_sn
             assert [v for v in model["inputs"].values() if v["session"] == sid] == snapshot["inputs"]
         assert model["approvals"][card["approval"]]["state"] == "executed"
         [summary] = [v for v in model["summaries"].values() if v["session"] == session]
-        assert summary["head"] == f"Итог · retinue · сессия {session}" and summary["at"] == world.clock.now
+        assert summary["head"] == f"Result · retinue · session {session}" and summary["at"] == world.clock.now
         last = max(k[1] for k in model["items"] if k[0] == session)
         assert summary["turn"] == last > 0, "placed after the turn it ends: the resumed one"
         keys = [key for (key,) in world.store.db.execute("SELECT key FROM events WHERE kind = 'summary'")]
@@ -425,7 +425,7 @@ def test_every_change_the_face_shows_is_an_event_and_replaying_them_gives_the_sn
 
 
 def test_about_is_read_from_the_newest_top_level_init_line_and_the_sessions_row(tmp_path):
-    """«Сводка»: what the platform was told, nothing more — a subagent's init line is not the session's."""
+    """«Summary»: what the platform was told, nothing more — a subagent's init line is not the session's."""
     store = sessions.PlatformStore(str(tmp_path / "p.sqlite"))
     session = store.new_session("retinue", "code", "code", 0.0)
     assert store.face_about(session) == {"cwd": None, "context_tokens": None, "model": None, "cli_version": None,
@@ -472,7 +472,7 @@ def test_a_card_never_shown_is_not_the_faces_and_a_courier_card_is(tmp_path):
     pending = store.add_approval(session, "r1", "t1", "approval", "Bash", {"command": "ls"}, "/work", "", "d", 1.0)
     store.move(pending, ("pending",), "dropped", 2.0)  # a parallel call the CLI dropped before any card
     courier = store.add_approval(session, "r1", "t2", "courier", "Bash", {"command": "git push"}, "/work", "", "", 3.0,
-                                 state="dropped", view={"head": ["Курьер"], "body": "git push", "status": "x"})
+                                 state="dropped", view={"head": ["Courier"], "body": "git push", "status": "x"})
     assert [a["id"] for a in store.face_approvals(session)] == [courier]
     assert [json.loads(d)["id"] for _, k, d in store.events_after(0) if k == "approval"] == [courier]
 
@@ -530,8 +530,8 @@ async def stream(world: FaceWorld, headers: dict | None = None, query: str = "")
 def test_a_stream_resumes_after_its_last_event_id_and_one_carries_every_session(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
-        a = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "первая"}))["session"]
-        b = (await world.owner("new", {"input_id": "tg:2", "track": "retinue", "text": "вторая"}))["session"]
+        a = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "the first"}))["session"]
+        b = (await world.owner("new", {"input_id": "tg:2", "track": "retinue", "text": "the second"}))["session"]
         rows = world.store.events_after(0, 1000)
         middle = rows[len(rows) // 2][0]
         status, reader = await stream(world, {"Last-Event-ID": str(middle)}, "?since=0")
@@ -640,15 +640,15 @@ def test_frames_put_each_text_piece_after_the_event_it_followed_and_join_a_sessi
     from collections import deque
 
     rows = [(5, "item", '{"n": 0}'), (6, "item", '{"n": 1}')]
-    deltas = deque([(4, "s1", "При"), (4, "s1", "вет"), (5, "s2", "Ку"), (5, "s1", "!"), (9, "s1", "позже")])
+    deltas = deque([(4, "s1", "Hel"), (4, "s1", "lo"), (5, "s2", "Hi"), (5, "s1", "!"), (9, "s1", "later")])
     text, cursor = frames(rows, deltas, 4)
     assert cursor == 6
-    assert text == ('event: delta\ndata: {"session": "s1", "text": "Привет"}\n\n'
+    assert text == ('event: delta\ndata: {"session": "s1", "text": "Hello"}\n\n'
                     'id: 5\nevent: item\ndata: {"n": 0}\n\n'
-                    'event: delta\ndata: {"session": "s2", "text": "Ку"}\n\n'
+                    'event: delta\ndata: {"session": "s2", "text": "Hi"}\n\n'
                     'event: delta\ndata: {"session": "s1", "text": "!"}\n\n'
                     'id: 6\nevent: item\ndata: {"n": 1}\n\n')
-    assert list(deltas) == [(9, "s1", "позже")], "after an event not read yet: it waits"
+    assert list(deltas) == [(9, "s1", "later")], "after an event not read yet: it waits"
 
 
 def partial(text: str, parent: str | None = None) -> str:
@@ -660,23 +660,23 @@ def partial(text: str, parent: str | None = None) -> str:
 def test_partial_lines_reach_the_stream_as_text_and_are_never_stored(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
-        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "привет"}))["session"]
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "hello"}))["session"]
         [run] = world.lanes["private"].runs()
         _, reader = await stream(world)
         start = json.dumps({"type": "stream_event", "parent_tool_use_id": None,
                             "event": {"type": "message_start", "message": {}}})
         message = json.dumps({"type": "assistant", "parent_tool_use_id": None,
-                              "message": {"role": "assistant", "content": [{"type": "text", "text": "Привет!"}]}})
-        world.lanes["private"].add(session, run["run"], start, partial("При"), partial("вет"),
-                                   partial("чужое", parent="toolu_sub"), partial("!"), message)
+                              "message": {"role": "assistant", "content": [{"type": "text", "text": "Hello!"}]}})
+        world.lanes["private"].add(session, run["run"], start, partial("Hel"), partial("lo"),
+                                   partial("someone else's", parent="toolu_sub"), partial("!"), message)
         await world.poll()
         frames_ = []
         while not any(f.get("event") == "item" for f in frames_):
             frames_.append(await reader.frame())
         live = [f for f in frames_ if f.get("event") in ("delta", "item")]
-        assert live[0] == {"event": "delta", "data": json.dumps({"session": session, "text": "Привет!"},
+        assert live[0] == {"event": "delta", "data": json.dumps({"session": session, "text": "Hello!"},
                                                                 ensure_ascii=False)}, "joined, no id, no subagent"
-        assert json.loads(live[-1]["data"])["data"] == {"role": "assistant", "text": "Привет!"}
+        assert json.loads(live[-1]["data"])["data"] == {"role": "assistant", "text": "Hello!"}
         stored = [row[0] for row in world.store.db.execute("SELECT line FROM raw")]
         assert stored == [message], "no stream_event in raw"
         assert [i["kind"] for i in world.store.face_items(session)] == ["message"]
@@ -691,7 +691,7 @@ def test_a_partial_line_after_a_deferred_call_leaves_the_card_pressable(tmp_path
         session, run, card = await deferred_session(world)
         world.lanes["code"].add(session, run["run"], partial("late"))
         await world.poll()
-        assert (await world.owner("press", {"button": card["data"]["buttons"][0][1]}))["toast"] == "Разрешено."
+        assert (await world.owner("press", {"button": card["data"]["buttons"][0][1]}))["toast"] == "Allowed."
 
     faced(tmp_path, body)
 
@@ -706,23 +706,23 @@ def test_a_card_decided_in_the_face_is_decided_once_and_its_telegram_card_retire
         digest = world.store.approval(approval)["digest"]
         status, wrong, _ = await world.call("POST", f"/api/approvals/{approval}/decide",
                                             {"action": "approve", "digest": "0" * 64})
-        assert status == 200 and wrong["toast"] == "Карточка устарела — решение не принято."
+        assert status == 200 and wrong["toast"] == "The card has expired — no decision taken."
         assert wrong["approval"]["state"] == "shown", "a digest not the card's decides nothing"
 
         status, decided, _ = await world.call("POST", f"/api/approvals/{approval}/decide",
                                               {"action": "approve", "digest": digest})
-        assert status == 200 and decided["toast"] == "Разрешено."
+        assert status == 200 and decided["toast"] == "Allowed."
         assert decided["approval"]["state"] == "granted"
-        assert decided["approval"]["view"]["status"] == "Разрешено — выполняю."
+        assert decided["approval"]["view"]["status"] == "Allowed — running."
         [update] = world.notes("update")
         assert update["approval"] == approval and update["data"] == {"view": decided["approval"]["view"],
                                                                      "buttons": []}
         assert len(world.lanes["code"].runs()) == 2, "one resume"
 
         again = (await world.call("POST", f"/api/approvals/{approval}/decide", {"action": "reject", "digest": digest}))[1]
-        assert again["toast"] == "Карточка устарела — решение не принято." and again["approval"]["state"] == "granted"
+        assert again["toast"] == "The card has expired — no decision taken." and again["approval"]["state"] == "granted"
         pressed = await world.owner("press", {"button": card["data"]["buttons"][1][1]})
-        assert pressed == {"toast": "Карточка устарела — решение не принято."}, "the Telegram button lost"
+        assert pressed == {"toast": "The card has expired — no decision taken."}, "the Telegram button lost"
         assert len(world.lanes["code"].runs()) == 2
         resume = world.lanes["code"].runs()[-1]
         assert decision(await world.hook("PreToolUse", resume, pre_tool_use())) == "allow"
@@ -737,7 +737,7 @@ def test_a_card_pressed_in_telegram_is_decided_there_and_the_face_hears_it(tmp_p
         approval = card["approval"]
         digest = world.store.approval(approval)["digest"]
         _, reader = await stream(world, query=f"?since={world.store.cursor()}")
-        assert (await world.owner("press", {"button": card["data"]["buttons"][1][1]}))["toast"] == "Отказано."
+        assert (await world.owner("press", {"button": card["data"]["buttons"][1][1]}))["toast"] == "Denied."
         events = []
         while not any(f["event"] == "session" and json.loads(f["data"])["waiting"] == 0 for f in events):
             events += await reader.events(1)
@@ -745,10 +745,10 @@ def test_a_card_pressed_in_telegram_is_decided_there_and_the_face_hears_it(tmp_p
         assert json.loads(event["data"])["state"] == "rejected", "the card, then its session waiting on nothing"
         decided = (await world.call("POST", f"/api/approvals/{approval}/decide",
                                     {"action": "approve", "digest": digest}))[1]
-        assert decided["toast"] == "Карточка устарела — решение не принято." and decided["approval"]["state"] == \
+        assert decided["toast"] == "The card has expired — no decision taken." and decided["approval"]["state"] == \
             "rejected"
         [update] = world.notes("update")  # the press edits its card at once; the note keeps the latest state last
-        assert update["data"] == {"view": {**card["data"]["view"], "status": "Отказано."}, "buttons": []}
+        assert update["data"] == {"view": {**card["data"]["view"], "status": "Denied."}, "buttons": []}
         assert len(world.lanes["code"].runs()) == 2
         reader.response.close()
 
@@ -766,7 +766,7 @@ def test_a_card_decided_in_the_face_an_hour_after_a_restart_runs_once(tmp_path):
         await world.login()
         decided = (await world.call("POST", f"/api/approvals/{card['approval']}/decide",
                                     {"action": "approve", "digest": digest}))[1]
-        assert decided["toast"] == "Разрешено."
+        assert decided["toast"] == "Allowed."
         resume = world.lanes["code"].runs()[-1]
         assert decision(await world.hook("PreToolUse", resume, pre_tool_use())) == "allow"
         assert decision(await world.hook("PreToolUse", resume, pre_tool_use())) != "allow"
@@ -784,9 +784,9 @@ def test_decide_refuses_what_is_not_a_decision_on_a_card(tmp_path):
         assert (await world.call("POST", "/api/approvals/00000000/decide", {"action": "approve", "digest": "x"}))[0] \
             == 404
         courier = world.store.add_approval(session, "r", "t", "courier", "Bash", {"command": "git push"}, "/w", "", "",
-                                           world.clock.now, state="dropped", view={"head": ["Курьер"], "body": "x"})
+                                           world.clock.now, state="dropped", view={"head": ["Courier"], "body": "x"})
         answer = (await world.call("POST", f"/api/approvals/{courier}/decide", {"action": "approve", "digest": ""}))[1]
-        assert answer["toast"] == "Карточка устарела — решение не принято."
+        assert answer["toast"] == "The card has expired — no decision taken."
 
     faced(tmp_path, body)
 
@@ -795,19 +795,19 @@ def test_the_face_starts_a_session_once_per_input_id_writes_into_it_and_stops_it
     async def body(world: FaceWorld):
         await world.login()
         first = input_id()
-        status, started, _ = await world.call("POST", "/api/sessions", {"track": "notes", "text": "план", "input_id": first})
+        status, started, _ = await world.call("POST", "/api/sessions", {"track": "notes", "text": "a plan", "input_id": first})
         assert status == 200 and started["session"]
         session = started["session"]
-        again = (await world.call("POST", "/api/sessions", {"track": "notes", "text": "план", "input_id": first}))[1]
+        again = (await world.call("POST", "/api/sessions", {"track": "notes", "text": "a plan", "input_id": first}))[1]
         assert again["session"] == session and len(world.lanes["private"].runs()) == 1, "a retried POST"
         assert (await world.call("POST", "/api/sessions", {"track": "nope", "text": "x", "input_id": input_id()}))[0] \
             == 400
         assert (await world.call("POST", "/api/sessions", {"track": "notes", "text": "x", "input_id": "tg:1"}))[0] \
             == 400, "the router's ids are not the face's"
 
-        said = (await world.call("POST", f"/api/sessions/{session}/input", {"input_id": input_id(), "text": "ещё"}))[1]
-        assert said == {"say": "Передал в сессию."}
-        assert world.lanes["private"].commands[-1] == ("/answer", {"session": session, "prompt": "ещё"})
+        said = (await world.call("POST", f"/api/sessions/{session}/input", {"input_id": input_id(), "text": "more"}))[1]
+        assert said == {"say": "Passed to the session."}
+        assert world.lanes["private"].commands[-1] == ("/answer", {"session": session, "prompt": "more"})
         assert (await world.call("POST", f"/api/sessions/{session}/input", {"input_id": input_id(), "text": " "}))[0] \
             == 400
         assert (await world.call("POST", "/api/sessions/00000000/input", {"input_id": input_id(), "text": "x"}))[0] \
@@ -840,11 +840,11 @@ def test_every_read_needs_a_login(tmp_path, path):
 def test_a_partial_line_given_again_after_a_crash_reaches_no_stream(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
-        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "привет"}))["session"]
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "hello"}))["session"]
         [run] = world.lanes["private"].runs()
         message = json.dumps({"type": "assistant", "parent_tool_use_id": None,
-                              "message": {"role": "assistant", "content": [{"type": "text", "text": "Привет!"}]}})
-        world.lanes["private"].add(session, run["run"], partial("Привет!"), message)
+                              "message": {"role": "assistant", "content": [{"type": "text", "text": "Hello!"}]}})
+        world.lanes["private"].add(session, run["run"], partial("Hello!"), message)
         await world.poll()
         given = []
         world.platform.on_delta = lambda session, text: given.append(text)
@@ -852,9 +852,9 @@ def test_a_partial_line_given_again_after_a_crash_reaches_no_stream(tmp_path):
             line["given"] = False
         await world.poll()
         assert given == [], "its message is already whole in the transcript"
-        world.lanes["private"].add(session, run["run"], partial("Дальше"))
+        world.lanes["private"].add(session, run["run"], partial("Next"))
         await world.poll()
-        assert given == ["Дальше"]
+        assert given == ["Next"]
 
     faced(tmp_path, body)
 
@@ -906,12 +906,12 @@ def test_a_side_question_from_the_face_starts_a_session_under_the_main_one(tmp_p
         session, _, _ = await deferred_session(world)
         qid = input_id()
         status, data, _ = await world.call("POST", f"/api/sessions/{session}/side",
-                                           {"input_id": qid, "text": " зачем? "})
+                                           {"input_id": qid, "text": " what for? "})
         assert status == 200, data
         side = data["session"]
         row = world.store.face_session(side)
-        assert (row["parent"], row["title"], row["track"]) == (session, "зачем?", "retinue")
-        again = await world.call("POST", f"/api/sessions/{session}/side", {"input_id": qid, "text": "зачем?"})
+        assert (row["parent"], row["title"], row["track"]) == (session, "what for?", "retinue")
+        again = await world.call("POST", f"/api/sessions/{session}/side", {"input_id": qid, "text": "what for?"})
         assert again[1]["session"] == side, "a retried POST is one question"
         assert world.store.session(session)["state"] == "waiting" and \
             world.store.first_input(session) == "почини", "the main session got nothing"
@@ -929,15 +929,15 @@ def test_a_message_with_attachments_from_the_app_goes_in_and_its_picture_comes_b
 
     async def body(world: FaceWorld):
         await world.login()
-        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "привет"}))["session"]
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "hello"}))["session"]
         input_id = f"face:{uuid.uuid4()}"
         photo = _wire("IMG_1.png", _png(), "image/png")
         status, data, _ = await world.call("POST", f"/api/sessions/{session}/input",
                                            {"input_id": input_id, "attachments": [photo]})
-        assert status == 200 and data["say"] in ("Принято.", "Передал в сессию.")
+        assert status == 200 and data["say"] in ("Accepted.", "Passed to the session.")
         [_, mine] = (await world.get(f"/api/sessions/{session}"))["inputs"]
         assert mine["text"] == "" and mine["attachments"] == [
-            {"kind": "image", "name": "IMG_1.png", "size": len(_png()), "what": "картинка «IMG_1.png», 40×20",
+            {"kind": "image", "name": "IMG_1.png", "size": len(_png()), "what": 'picture "IMG_1.png", 40×20',
              "thumb": True}]
 
         async def raw(path, cookie=True):

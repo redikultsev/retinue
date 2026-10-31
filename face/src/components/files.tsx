@@ -1,4 +1,4 @@
-// «Файлы»: what a session handed over from `out/` (retinue/outfiles.py), newest first, each with a download. A picture
+// «Files»: what a session handed over from `out/` (retinue/outfiles.py), newest first, each with a download. A picture
 // shows as itself; Markdown is rendered by the transcript's own renderer (no raw HTML, no remote image); plain text
 // as text; an HTML page only inside a frame that is sandboxed twice — the frame's `sandbox` attribute and the
 // platform's `sandbox` policy on `/api/files/{id}/view` — so it runs no script and never gets the face's origin.
@@ -24,16 +24,16 @@ export function kindOf(file: Pick<OutFile, "mime">): Kind {
 }
 
 export function size(bytes: number): string {
-  if (bytes < 1024) return `${bytes} Б`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
-  return `${(bytes / 1024 / 1024).toFixed(1).replace(".", ",")} МБ`;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export function Files({ files }: { files: OutFile[] }) {
   if (!files.length)
-    return <p className="text-sm text-muted-foreground">Сессия пока не отдала ни одного файла.</p>;
+    return <p className="text-sm text-muted-foreground">The session has not handed over any files yet.</p>;
   return (
-    <ul className="flex flex-col gap-3" aria-label="Файлы сессии">
+    <ul className="flex flex-col gap-3" aria-label="Session files">
       {files.map((file) => (
         <FileRow key={file.id} file={file} />
       ))}
@@ -57,7 +57,7 @@ export function FileRow({ file, opened = false }: { file: OutFile; opened?: bool
         </div>
         {opens && (
           <Button variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
-            {open ? "Свернуть" : "Открыть"}
+            {open ? "Collapse" : "Open"}
           </Button>
         )}
         <a
@@ -65,7 +65,7 @@ export function FileRow({ file, opened = false }: { file: OutFile; opened?: bool
           download={file.name}
           className="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium hover:bg-accent md:h-8"
         >
-          Скачать
+          Download
         </a>
       </div>
       {kind === "image" && (
@@ -97,14 +97,14 @@ function TextOf({ file, markdown }: { file: OutFile; markdown: boolean }) {
         if (!gone) setText(body);
       })
       .catch(() => {
-        if (!gone) setError("Файл не загрузился.");
+        if (!gone) setError("The file did not load.");
       });
     return () => {
       gone = true;
     };
   }, [file]);
   if (error) return <p className="mt-2 text-sm text-destructive">{error}</p>;
-  if (text === null) return <p className="mt-2 text-sm text-muted-foreground">Загружаю…</p>;
+  if (text === null) return <p className="mt-2 text-sm text-muted-foreground">Loading…</p>;
   const cut = text.length > TEXT_LIMIT;
   const shown = cut ? text.slice(0, TEXT_LIMIT) : text;
   return (
@@ -114,7 +114,7 @@ function TextOf({ file, markdown }: { file: OutFile; markdown: boolean }) {
       ) : (
         <pre className="whitespace-pre-wrap break-words font-mono text-xs">{shown}</pre>
       )}
-      {cut && <p className="mt-2 text-xs text-muted-foreground">Показано начало — целиком в «Скачать».</p>}
+      {cut && <p className="mt-2 text-xs text-muted-foreground">Showing the start — the whole file is under “Download”.</p>}
     </div>
   );
 }

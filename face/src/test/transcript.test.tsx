@@ -9,10 +9,10 @@ const item = (data: ItemData, n = 0): Item => ({ ...data, session: "s1", turn: 0
 
 describe("TranscriptItem", () => {
   it("renders an assistant message as markdown and the owner's as plain text", async () => {
-    const { container } = render(<TranscriptItem item={{ kind: "message", data: { role: "assistant", text: "Это **важно**" } }} />);
-    expect((await within(container).findByText("важно")).tagName).toMatch(/STRONG|SPAN/);
-    render(<TranscriptItem item={{ kind: "message", data: { role: "user", text: "**не markdown**" } }} />);
-    expect(screen.getByText("**не markdown**")).toBeTruthy();
+    const { container } = render(<TranscriptItem item={{ kind: "message", data: { role: "assistant", text: "This is **important**" } }} />);
+    expect((await within(container).findByText("important")).tagName).toMatch(/STRONG|SPAN/);
+    render(<TranscriptItem item={{ kind: "message", data: { role: "user", text: "**not markdown**" } }} />);
+    expect(screen.getByText("**not markdown**")).toBeTruthy();
   });
 
   it("collapses a tool call to one line with its command, expandable to input and result", () => {
@@ -44,7 +44,7 @@ describe("TranscriptItem", () => {
         }}
       />,
     );
-    expect(screen.getByText("Прочитано: 3 вызова")).toBeTruthy();
+    expect(screen.getByText("Read: 3 calls")).toBeTruthy();
     expect(screen.getByText("Read ×2, Grep")).toBeTruthy();
   });
 
@@ -70,17 +70,17 @@ describe("TranscriptItem", () => {
             id: "p",
             tool: "TodoWrite",
             todos: [
-              { content: "Найти", status: "completed" },
-              { content: "Починить", status: "in_progress", activeForm: "Чиню" },
-              { content: "Проверить", status: "pending" },
+              { content: "Find", status: "completed" },
+              { content: "Fix", status: "in_progress", activeForm: "Fixing" },
+              { content: "Check", status: "pending" },
             ],
           },
         }}
       />,
     );
-    expect(screen.getByText("Найти").className).toContain("line-through");
-    expect(screen.getByText("Чиню")).toBeTruthy();
-    expect(screen.getByText("Проверить")).toBeTruthy();
+    expect(screen.getByText("Find").className).toContain("line-through");
+    expect(screen.getByText("Fixing")).toBeTruthy();
+    expect(screen.getByText("Check")).toBeTruthy();
   });
 
   it("shows a subagent with its own items and its answer", () => {
@@ -91,18 +91,18 @@ describe("TranscriptItem", () => {
           data: {
             id: "s",
             tool: "Task",
-            description: "Найти причину",
+            description: "Find the cause",
             agent: "Explore",
-            prompt: "Пройди путь карточки",
+            prompt: "Trace the card's path",
             items: [{ kind: "tool", data: { id: "i", tool: "Bash", input: { command: "ls" }, result: "a", error: false } }],
-            result: "Причина в gate.py",
+            result: "The cause is in gate.py",
           },
         }}
       />,
     );
-    expect(screen.getByText(/Субагент · Explore: Найти причину/)).toBeTruthy();
-    expect(screen.getByText("1 шаг")).toBeTruthy();
-    expect(screen.getByText("Пройди путь карточки")).toBeTruthy();
+    expect(screen.getByText(/Subagent · Explore: Find the cause/)).toBeTruthy();
+    expect(screen.getByText("1 step")).toBeTruthy();
+    expect(screen.getByText("Trace the card's path")).toBeTruthy();
   });
 
   it("shows a question with its options and the answer", () => {
@@ -110,17 +110,17 @@ describe("TranscriptItem", () => {
       <TranscriptItem
         item={{
           kind: "question",
-          data: { id: "q", questions: [{ question: "Где жить?", options: [{ label: "Центр" }, { label: "Окраина" }] }], answer: "Центр" },
+          data: { id: "q", questions: [{ question: "Where to stay?", options: [{ label: "Centre" }, { label: "Outskirts" }] }], answer: "Centre" },
         }}
       />,
     );
-    expect(screen.getByText("Где жить?")).toBeTruthy();
-    expect(screen.getByText("Ответ:")).toBeTruthy();
+    expect(screen.getByText("Where to stay?")).toBeTruthy();
+    expect(screen.getByText("Answer:")).toBeTruthy();
   });
 
   it("marks the end of a turn, and an error", () => {
-    render(<TranscriptItem item={{ kind: "result", data: { stop_reason: "", is_error: true, text: "лимит", deferred: null } }} />);
-    expect(screen.getByText("Ход оборвался ошибкой: лимит")).toBeTruthy();
+    render(<TranscriptItem item={{ kind: "result", data: { stop_reason: "", is_error: true, text: "limit", deferred: null } }} />);
+    expect(screen.getByText("The turn broke off with an error: limit")).toBeTruthy();
   });
 });
 
@@ -135,14 +135,14 @@ describe("Transcript", () => {
     input: { command: "make test" },
     cwd: "/work",
     digest: "d",
-    view: { head: ["Разрешение · code · сессия s1"] },
+    view: { head: ["Approval · code · session s1"] },
     created: 1,
     at: 1,
     ...over,
   });
   const items = [
     item({ kind: "tool", data: { id: "t1", tool: "Bash", input: { command: "make test" }, result: null, error: false } }, 0),
-    item({ kind: "message", data: { role: "assistant", text: "дальше" } }, 1),
+    item({ kind: "message", data: { role: "assistant", text: "next" } }, 1),
   ];
 
   it("folds consecutive calls into one line, never a call with a card, and breaks at an owner's message or a summary", () => {
@@ -150,7 +150,7 @@ describe("Transcript", () => {
       item({ kind: "tool", data: { id, tool: "Bash", input: { command: `step ${n}` }, result: "ok", error: n === 2 } }, n);
     const run = [
       bash(0), bash(1), bash(2),
-      item({ kind: "message", data: { role: "assistant", text: "между" } }, 3),
+      item({ kind: "message", data: { role: "assistant", text: "between" } }, 3),
       bash(4), bash(5, "carded"), bash(6), bash(7),
     ];
     const none = new Map<number, unknown>();
@@ -164,9 +164,9 @@ describe("Transcript", () => {
     const { container } = render(<Transcript items={run.slice(0, 4)} approvals={[]} running={false} />);
     const fold = container.querySelector("details")!;
     expect(fold.open).toBe(false);
-    expect(fold.querySelector("summary")!.textContent).toContain("3 шага");
+    expect(fold.querySelector("summary")!.textContent).toContain("3 steps");
     expect(fold.querySelector("summary")!.textContent).toContain("Bash 3");
-    expect(fold.querySelector("summary")!.textContent).toContain("1 ошибка");
+    expect(fold.querySelector("summary")!.textContent).toContain("1 error");
     expect(within(screen.getByTestId("step-run")).getAllByText("Bash")).toHaveLength(3);
   });
 
@@ -185,12 +185,12 @@ describe("Transcript", () => {
   });
 
   it("shows the live delta while a turn runs", () => {
-    render(<Transcript items={items} approvals={[]} delta="Печатаю ответ" running />);
-    expect(screen.getByTestId("delta").textContent).toContain("Печатаю ответ");
+    render(<Transcript items={items} approvals={[]} delta="Typing an answer" running />);
+    expect(screen.getByTestId("delta").textContent).toContain("Typing an answer");
   });
 
   it("the comment on a diff line goes out in the agreed form", () => {
-    expect(commentText("retinue/gate.py", 84, " убери ")).toBe("Комментарий к retinue/gate.py:84: убери");
+    expect(commentText("retinue/gate.py", 84, " remove this ")).toBe("Comment on retinue/gate.py:84: remove this");
   });
 });
 
@@ -199,12 +199,12 @@ describe("summaries", () => {
   const msg = (turn: number, n: number, text: string): Item =>
     ({ kind: "message", data: { role: "assistant", text }, session: "s1", turn, n }) as Item;
   const sum = (seq: number, turn: number | undefined, text: string): Summary => ({
-    session: "s1", seq, head: `Итог · code · сессия s1 #${seq}`, text, at: seq, ...(turn === undefined ? {} : { turn }),
+    session: "s1", seq, head: `Result · code · session s1 #${seq}`, text, at: seq, ...(turn === undefined ? {} : { turn }),
   });
 
   it("are placed at the end of the turn they were said for", () => {
-    const items = [msg(0, 0, "a"), msg(0, 1, "готово"), msg(2, 0, "b")];
-    const placed = placeSummaries(items, [sum(1, 0, "готово"), sum(2, 1, "лимит"), sum(3, 2, "b")]);
+    const items = [msg(0, 0, "a"), msg(0, 1, "done"), msg(2, 0, "b")];
+    const placed = placeSummaries(items, [sum(1, 0, "done"), sum(2, 1, "limit"), sum(3, 2, "b")]);
     expect(placed.get(1)?.map((s) => s.seq)).toEqual([1, 2]); // turn 1 has no items: after turn 0's last
     expect(placed.get(-1)?.map((s) => s.seq)).toEqual([3]); // after the last item: the end
     const old = placeSummaries(items, [sum(1, undefined, "x"), sum(2, undefined, "y")]);
@@ -212,19 +212,19 @@ describe("summaries", () => {
   });
 
   it("show each turn's end inline: a header when it repeats the last message, whole when it says more", () => {
-    const items = [msg(0, 0, "Готово, тесты зелёные."), msg(1, 0, "Дальше.")];
+    const items = [msg(0, 0, "Done, the tests are green."), msg(1, 0, "Next.")];
     render(
       <Transcript
         items={items}
         approvals={[]}
         running={false}
-        summaries={[sum(1, 0, "Готово, тесты зелёные."), sum(2, 1, "Ход оборвался ошибкой: overloaded")]}
+        summaries={[sum(1, 0, "Done, the tests are green."), sum(2, 1, "The turn broke off with an error: overloaded")]}
       />,
     );
     const [first, second] = screen.getAllByTestId("summary");
-    expect(first!.textContent).toBe("Итог · code · сессия s1 #1");
-    expect(second!.textContent).toContain("Ход оборвался ошибкой: overloaded");
-    expect(screen.getAllByText("Готово, тесты зелёные.")).toHaveLength(1);
+    expect(first!.textContent).toBe("Result · code · session s1 #1");
+    expect(second!.textContent).toContain("The turn broke off with an error: overloaded");
+    expect(screen.getAllByText("Done, the tests are green.")).toHaveLength(1);
   });
 });
 
@@ -234,7 +234,7 @@ describe("the owner's messages in the transcript", () => {
   const input = (id: string, turn: number | null, n: number | null, over: Partial<Input> = {}): Input => ({
     session: "s1",
     input_id: id,
-    text: `текст ${id}`,
+    text: `text ${id}`,
     at: 1,
     turn,
     n,
@@ -254,41 +254,41 @@ describe("the owner's messages in the transcript", () => {
 
   it("shows a picture as the platform's thumbnail and a file by its name and size", () => {
     const attachments = [
-      { kind: "image", name: "IMG_1.png", size: 2048, what: "картинка «IMG_1.png», 40×20", thumb: true },
-      { kind: "file", name: "logs.zip", size: 3 * 1024 * 1024, what: "файл «logs.zip»", thumb: false },
+      { kind: "image", name: "IMG_1.png", size: 2048, what: "image “IMG_1.png”, 40×20", thumb: true },
+      { kind: "file", name: "logs.zip", size: 3 * 1024 * 1024, what: "file “logs.zip”", thumb: false },
     ];
     render(
       <Transcript
-        items={[at(0, 0, "Смотрю.")]}
+        items={[at(0, 0, "Looking.")]}
         approvals={[]}
         running={false}
-        inputs={[input("face:x", 0, 0, { text: "что тут?", attachments })]}
+        inputs={[input("face:x", 0, 0, { text: "what is here?", attachments })]}
       />,
     );
     const bubble = screen.getByTestId("input");
     const img = within(bubble).getByAltText("IMG_1.png") as HTMLImageElement;
     expect(img.getAttribute("src")).toBe("/api/sessions/s1/inputs/face%3Ax/0");
     expect(within(bubble).getByText("logs.zip")).toBeTruthy();
-    expect(within(bubble).getByText("3,0 МБ")).toBeTruthy();
-    expect(within(bubble).getByText("что тут?")).toBeTruthy();
-    expect(bubble.compareDocumentPosition(screen.getByText("Смотрю.")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(bubble).getByText("3.0 MB")).toBeTruthy();
+    expect(within(bubble).getByText("what is here?")).toBeTruthy();
+    expect(bubble.compareDocumentPosition(screen.getByText("Looking.")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("puts a message written after the last summary below it and above the running turn", () => {
-    const summary: Summary = { session: "s1", seq: 1, head: "Итог · notes", text: "Готово, вот итог.", at: 5, turn: 0 };
+    const summary: Summary = { session: "s1", seq: 1, head: "Result · notes", text: "Done, here is the result.", at: 5, turn: 0 };
     render(
       <Transcript
-        items={[at(0, 0, "Ответ.")]}
+        items={[at(0, 0, "Answer.")]}
         approvals={[]}
         running
         summaries={[summary]}
-        inputs={[input("tg:2", 1, 0, { text: "и ещё", at: 6 })]}
+        inputs={[input("tg:2", 1, 0, { text: "and more", at: 6 })]}
       />,
     );
     const order = (a: Element, b: Element) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     const note = screen.getByTestId("summary");
     const mine = screen.getByTestId("input");
     expect(order(note, mine)).toBe(true);
-    expect(order(mine, screen.getByText("Работает…"))).toBe(true);
+    expect(order(mine, screen.getByText("Working…"))).toBe(true);
   });
 });

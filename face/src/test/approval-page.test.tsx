@@ -16,7 +16,7 @@ const card: Approval = {
   input: { command: "make test" },
   cwd: "/work/retinue",
   digest: "d",
-  view: { head: ["Разрешение · retinue · сессия a1b2c3d4"] },
+  view: { head: ["Approval · retinue · session a1b2c3d4"] },
   created: 1,
   at: 1,
 };
@@ -28,7 +28,7 @@ function mount(load: (id: string) => Promise<{ approval: Approval }>, extra: Par
     path: "/a/$id",
     component: () => <ApprovalPage id="5f3a9c21" load={load} {...extra} />,
   });
-  const session = createRoute({ getParentRoute: () => root, path: "/s/$id", component: () => <p>Сессия открыта</p> });
+  const session = createRoute({ getParentRoute: () => root, path: "/s/$id", component: () => <p>Session opened</p> });
   const index = createRoute({ getParentRoute: () => root, path: "/", component: () => null });
   const router = createRouter({
     routeTree: root.addChildren([page, session, index]),
@@ -42,28 +42,28 @@ describe("ApprovalPage", () => {
     const watch = vi.spyOn(live, "watch").mockResolvedValue();
     const load = vi.fn().mockResolvedValue({ approval: card });
     mount(load);
-    expect(await screen.findByText("Разрешение · retinue · сессия a1b2c3d4")).toBeTruthy();
+    expect(await screen.findByText("Approval · retinue · session a1b2c3d4")).toBeTruthy();
     expect(load).toHaveBeenCalledWith("5f3a9c21");
     expect(watch).toHaveBeenCalledWith("a1b2c3d4");
-    expect(screen.getByRole("button", { name: "Разрешить" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Allow" })).toBeTruthy();
     watch.mockRestore();
     live.stop();
   });
 
   it("says so when the card does not exist", async () => {
     mount(vi.fn().mockRejectedValue(new ApiError(404, "x")));
-    expect(await screen.findByText("Такой карточки нет.")).toBeTruthy();
+    expect(await screen.findByText("There is no such card.")).toBeTruthy();
   });
 
   it("in Telegram closes the Mini App a second after a decision, the result shown till then", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const watch = vi.spyOn(live, "watch").mockResolvedValue();
     const close = vi.fn().mockReturnValue(true);
-    const decided = { ...card, state: "granted" as const, view: { ...card.view, status: "Разрешено — выполняю." } };
-    const decide = vi.fn().mockResolvedValue({ toast: "Разрешено.", approval: decided });
+    const decided = { ...card, state: "granted" as const, view: { ...card.view, status: "Allowed — running it." } };
+    const decide = vi.fn().mockResolvedValue({ toast: "Allowed.", approval: decided });
     mount(vi.fn().mockResolvedValue({ approval: card }), { decide, telegram: () => true, close });
-    fireEvent.click(await screen.findByRole("button", { name: "Разрешить" }));
-    expect(await screen.findByText("Разрешено — выполняю. Закрываю…")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    expect(await screen.findByText("Allowed — running it. Closing…")).toBeTruthy();
     expect(close).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTime(1000));
     expect(close).toHaveBeenCalledTimes(1);
@@ -75,17 +75,17 @@ describe("ApprovalPage", () => {
   it("elsewhere goes on to the session; a stale press stays", async () => {
     const watch = vi.spyOn(live, "watch").mockResolvedValue();
     const close = vi.fn();
-    const stale = vi.fn().mockResolvedValue({ toast: "Карточка устарела — решение не принято.", approval: { ...card, state: "stale" } });
+    const stale = vi.fn().mockResolvedValue({ toast: "The card is stale — the decision was not taken.", approval: { ...card, state: "stale" } });
     const first = mount(vi.fn().mockResolvedValue({ approval: card }), { decide: stale, telegram: () => false, close });
-    fireEvent.click(await screen.findByRole("button", { name: "Разрешить" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
     await vi.waitFor(() => expect(stale).toHaveBeenCalled());
-    expect(screen.queryByText("Сессия открыта")).toBeNull();
+    expect(screen.queryByText("Session opened")).toBeNull();
     first.unmount();
     live.stop();
-    const decide = vi.fn().mockResolvedValue({ toast: "Отказано.", approval: { ...card, state: "rejected" } });
+    const decide = vi.fn().mockResolvedValue({ toast: "Denied.", approval: { ...card, state: "rejected" } });
     mount(vi.fn().mockResolvedValue({ approval: card }), { decide, telegram: () => false, close });
-    fireEvent.click(await screen.findByRole("button", { name: "Отказать" }));
-    expect(await screen.findByText("Сессия открыта")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Deny" }));
+    expect(await screen.findByText("Session opened")).toBeTruthy();
     expect(close).not.toHaveBeenCalled();
     watch.mockRestore();
     live.stop();

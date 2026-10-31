@@ -1,5 +1,5 @@
 // The owner's voice in the session's composer and in «＋» (lib/voice.ts): 🎙 with «EN» beside it while idle; while
-// recording, the time, a level meter, «Отмена» and the stop button in place of the field; «Расшифровываю…» after.
+// recording, the time, a level meter, «Cancel» and the stop button in place of the field; «Transcribing…» after.
 import { Mic, Stop } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -7,7 +7,7 @@ import { clock, MAX_MS, UNAVAILABLE, type Voice } from "@/lib/voice";
 
 /** 🎙 and «EN». Without a microphone here the button stays tappable and says why, rather than vanish. */
 export function MicButtons({ voice, disabled = false, compact = false }: { voice: Voice; disabled?: boolean; compact?: boolean }) {
-  const label = voice.unavailable ? UNAVAILABLE : voice.en ? "Сказать по-английски" : "Диктовать";
+  const label = voice.unavailable ? UNAVAILABLE : voice.en ? "Say it in English" : "Dictate";
   return (
     <span className="flex shrink-0 items-center">
       <Button
@@ -26,7 +26,7 @@ export function MicButtons({ voice, disabled = false, compact = false }: { voice
         type="button"
         aria-pressed={voice.en}
         aria-label="EN"
-        title={voice.en ? "Английский дословно: текст уйдёт сразу" : "По-английски дословно — сразу в сессию"}
+        title={voice.en ? "English, word for word: the text goes at once" : "In English, word for word — straight to the session"}
         disabled={disabled || voice.state !== "idle"}
         onClick={() => voice.setEn(!voice.en)}
         className={cn(
@@ -41,18 +41,18 @@ export function MicButtons({ voice, disabled = false, compact = false }: { voice
   );
 }
 
-/** While asking for the microphone, recording or sending: what stands where the field was, «Отмена» always in it. */
+/** While asking for the microphone, recording or sending: what stands where the field was, «Cancel» always in it. */
 export function RecordingBar({ voice }: { voice: Voice }) {
   const sending = voice.state === "sending";
   const starting = voice.state === "starting";
   return (
     <div
       role="status"
-      aria-label={sending ? "Расшифровываю" : starting ? "Жду микрофон" : "Идёт запись"}
+      aria-label={sending ? "Transcribing" : starting ? "Waiting for the microphone" : "Recording"}
       className="flex min-h-11 flex-1 items-center gap-3 rounded-2xl border bg-muted/40 px-3"
     >
       {sending || starting ? (
-        <span className="flex-1 text-sm text-muted-foreground">{sending ? "Расшифровываю…" : "Жду микрофон…"}</span>
+        <span className="flex-1 text-sm text-muted-foreground">{sending ? "Transcribing…" : "Waiting for the microphone…"}</span>
       ) : (
         <>
           <span className="size-2.5 shrink-0 animate-pulse rounded-full bg-destructive" aria-hidden="true" />
@@ -70,14 +70,14 @@ export function RecordingBar({ voice }: { voice: Voice }) {
         </>
       )}
       <Button type="button" variant="ghost" size="sm" onClick={voice.cancel}>
-        Отмена
+        Cancel
       </Button>
       {voice.state === "recording" && (
         <Button
           type="button"
           size="icon"
-          aria-label="Остановить и расшифровать"
-          title="Остановить и расшифровать"
+          aria-label="Stop and transcribe"
+          title="Stop and transcribe"
           onClick={voice.toggle}
           className="rounded-full"
         >

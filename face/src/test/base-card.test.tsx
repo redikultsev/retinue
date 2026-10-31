@@ -15,12 +15,12 @@ const card = (over: Partial<BaseCard> = {}): BaseCard => ({
   id: "c0ffee00",
   session: "a1b2c3d4",
   state: "shown",
-  place: "✈️ Путешествия",
+  place: "✈️ Travel",
   files: [
     { path: "travel/hotel.md", status: "A", add: 12, del: 0, on: true, shared: false },
     { path: "travel/route.md", status: "M", add: 3, del: 1, on: true, shared: true },
   ],
-  subject: "travel: отель в Зурбагане",
+  subject: "travel: hotel in Zurbagan",
   custom: false,
   others: { files: 2, sessions: 1 },
   sha: null,
@@ -29,7 +29,7 @@ const card = (over: Partial<BaseCard> = {}): BaseCard => ({
   committed: [],
   created: 10,
   at: 10,
-  view: { head: ["В Базу · ✈️ Путешествия · сессия a1b2c3d4", "Тема: travel: отель в Зурбагане"], body: "", status: "" },
+  view: { head: ["To the Base · ✈️ Travel · session a1b2c3d4", "Subject: travel: hotel in Zurbagan"], body: "", status: "" },
   ...over,
 });
 
@@ -48,7 +48,7 @@ const calls = (answer: Partial<BaseCard> = {}) => {
   return {
     baseToggle: vi.fn().mockResolvedValue(res),
     baseSubject: vi.fn().mockResolvedValue(res),
-    baseCommit: vi.fn().mockResolvedValue({ toast: "Коммичу…", card: card({ ...answer, state: "committing", at: 11 }) }),
+    baseCommit: vi.fn().mockResolvedValue({ toast: "Committing…", card: card({ ...answer, state: "committing", at: 11 }) }),
     baseCancel: vi.fn().mockResolvedValue(res),
     baseOpen: vi.fn().mockResolvedValue(res),
   };
@@ -58,7 +58,7 @@ function mount(node: React.ReactNode, at = "/") {
   const root = createRootRoute();
   const home = createRoute({ getParentRoute: () => root, path: "/", component: () => node });
   const base = createRoute({ getParentRoute: () => root, path: "/b/$id", component: () => node });
-  const one = createRoute({ getParentRoute: () => root, path: "/s/$id", component: () => <p>открыта сессия</p> });
+  const one = createRoute({ getParentRoute: () => root, path: "/s/$id", component: () => <p>session opened</p> });
   const router = createRouter({
     routeTree: root.addChildren([home, base, one]),
     history: createMemoryHistory({ initialEntries: [at] }),
@@ -75,14 +75,14 @@ afterEach(() => {
 describe("BaseCardView", () => {
   it("lists the files with A/M/D and their lines, marks a shared one and counts the others without naming them", () => {
     render(<BaseCardView card={card()} calls={calls()} live={fakeLive()} />);
-    const files = screen.getByRole("list", { name: "Файлы" });
+    const files = screen.getByRole("list", { name: "Files" });
     expect(within(files).getAllByRole("checkbox").map((c) => (c as HTMLInputElement).checked)).toEqual([true, true]);
     expect(within(files).getByText("travel/hotel.md")).toBeTruthy();
     expect(within(files).getByText("+12")).toBeTruthy();
-    expect(within(files).getByTitle("Файл менялся и в другой сессии")).toBeTruthy();
-    expect(screen.getByText("Ещё 2 файла не закоммичено в других сессиях (1).")).toBeTruthy();
-    expect((screen.getByLabelText("Тема коммита") as HTMLInputElement).value).toBe("travel: отель в Зурбагане");
-    expect(screen.getByRole("button", { name: "Закоммитить · 2" })).toBeTruthy();
+    expect(within(files).getByTitle("The file was also changed in another session")).toBeTruthy();
+    expect(screen.getByText("2 files more not committed in other sessions (1).")).toBeTruthy();
+    expect((screen.getByLabelText("Commit subject") as HTMLInputElement).value).toBe("travel: hotel in Zurbagan");
+    expect(screen.getByRole("button", { name: "Commit · 2" })).toBeTruthy();
   });
 
   it("a toggle, a subject and the commit go to the platform, and its card goes into the store", async () => {
@@ -93,57 +93,49 @@ describe("BaseCardView", () => {
     await waitFor(() => expect(c.baseToggle).toHaveBeenCalledWith("c0ffee00", "travel/route.md", false));
     await waitFor(() => expect(store.getState().bases.c0ffee00?.files[1]?.on).toBe(false));
 
-    fireEvent.change(screen.getByLabelText("Тема коммита"), { target: { value: "travel: отель" } });
-    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-    await waitFor(() => expect(c.baseSubject).toHaveBeenCalledWith("c0ffee00", "travel: отель"));
+    fireEvent.change(screen.getByLabelText("Commit subject"), { target: { value: "travel: hotel" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(c.baseSubject).toHaveBeenCalledWith("c0ffee00", "travel: hotel"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Закоммитить · 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Commit · 2" }));
     await waitFor(() => expect(c.baseCommit).toHaveBeenCalledWith("c0ffee00"));
     await waitFor(() => expect(store.getState().bases.c0ffee00?.state).toBe("committing"));
   });
 
-  it("«Закоммитить» saves an edited subject first, with the commit after it", async () => {
+  it("«Commit» saves an edited subject first, with the commit after it", async () => {
     const c = calls();
     render(<BaseCardView card={card()} calls={c} live={fakeLive()} />);
-    fireEvent.change(screen.getByLabelText("Тема коммита"), { target: { value: "travel: другое" } });
-    fireEvent.click(screen.getByRole("button", { name: "Закоммитить · 2" }));
+    fireEvent.change(screen.getByLabelText("Commit subject"), { target: { value: "travel: something else" } });
+    fireEvent.click(screen.getByRole("button", { name: "Commit · 2" }));
     await waitFor(() => expect(c.baseCommit).toHaveBeenCalledWith("c0ffee00"));
-    expect(c.baseSubject).toHaveBeenCalledWith("c0ffee00", "travel: другое");
+    expect(c.baseSubject).toHaveBeenCalledWith("c0ffee00", "travel: something else");
     expect(c.baseSubject.mock.invocationCallOrder[0]!).toBeLessThan(c.baseCommit.mock.invocationCallOrder[0]!);
   });
 
   it("marks nobody's file and says what it is", () => {
     render(<BaseCardView card={card({ files: [{ path: "MAP.md", status: "M", add: 1, del: 0, on: false, shared: false, nobody: true }] })} calls={calls()} live={fakeLive()} />);
-    expect(screen.getByTitle("Ни одна сессия его не меняла")).toBeTruthy();
-    expect(screen.getByText(/«ничей» — изменён, но ни одной сессией/)).toBeTruthy();
+    expect(screen.getByTitle("No session changed it")).toBeTruthy();
+    expect(screen.getByText(/“nobody's” — changed, but by no session/)).toBeTruthy();
   });
 
   it("a decided card shows its result and no commit; nothing turned on, nothing to commit", () => {
     const { unmount } = render(
       <BaseCardView
-        card={card({ state: "committed", sha: "abc1234def", said: "Закоммичено: abc1234 · 1 файл." })}
+        card={card({ state: "committed", sha: "abc1234def", said: "Committed: abc1234 · 1 file." })}
         calls={calls()}
         live={fakeLive()}
       />,
     );
-    expect(screen.getByRole("status").textContent).toBe("Закоммичено: abc1234 · 1 файл.");
-    expect(screen.queryByRole("button", { name: /Закоммитить/ })).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("Committed: abc1234 · 1 file.");
+    expect(screen.queryByRole("button", { name: /Commit/ })).toBeNull();
     expect(screen.getAllByRole("checkbox").every((c) => (c as HTMLInputElement).disabled)).toBe(true);
     unmount();
     render(<BaseCardView card={card({ files: card().files.map((f) => ({ ...f, on: false })) })} calls={calls()} live={fakeLive()} />);
-    expect((screen.getByRole("button", { name: "Закоммитить · 0" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Commit · 0" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("says Russian plurals of files", () => {
-    expect([1, 2, 5, 11, 21, 22, 112].map(filesWord)).toEqual([
-      "1 файл",
-      "2 файла",
-      "5 файлов",
-      "11 файлов",
-      "21 файл",
-      "22 файла",
-      "112 файлов",
-    ]);
+  it("says English plurals of files", () => {
+    expect([0, 1, 2, 5, 11, 21].map(filesWord)).toEqual(["0 files", "1 file", "2 files", "5 files", "11 files", "21 files"]);
   });
 });
 
@@ -169,7 +161,7 @@ describe("the store", () => {
 });
 
 describe("where the button is", () => {
-  const summary = (seq: number): Summary => ({ session: "a1b2c3d4", seq, head: `Итог ${seq}`, text: `Готово ${seq}.`, at: seq, turn: null });
+  const summary = (seq: number): Summary => ({ session: "a1b2c3d4", seq, head: `Result ${seq}`, text: `Done ${seq}.`, at: seq, turn: null });
 
   it("under the session's last summary only, while it has Base files", () => {
     const { rerender } = render(
@@ -177,12 +169,12 @@ describe("where the button is", () => {
     );
     const notes = screen.getAllByTestId("summary");
     expect(notes).toHaveLength(1); // only the latest of summaries without a turn is shown
-    expect(within(notes[0]!).getByRole("button", { name: "В Базу · 2" })).toBeTruthy();
+    expect(within(notes[0]!).getByRole("button", { name: "To the Base · 2" })).toBeTruthy();
     rerender(<Transcript items={[]} approvals={[]} running={false} summaries={[summary(1), summary(2)]} base={{ session: "a1b2c3d4", count: 0 }} />);
-    expect(screen.queryByRole("button", { name: /В Базу/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /To the Base/ })).toBeNull();
   });
 
-  it("in the feed's «Решить» row, and a press opens the card", async () => {
+  it("in the feed's «Decide» row, and a press opens the card", async () => {
     const opened = vi.spyOn(api, "baseOpen").mockResolvedValue({ toast: "", card: card() });
     const row: FeedRow = {
       key: "base:a1b2c3d4",
@@ -193,16 +185,16 @@ describe("where the button is", () => {
       sphere: null,
       sphere_title: null,
       sphere_icon: null,
-      title: "добавь отель",
+      title: "add the hotel",
       since: 0,
-      essence: "В Базу: 2 файла",
+      essence: "To the Base: 2 files",
       ref: "a1b2c3d4",
       base: 2,
     };
-    mount(<FeedView feed={{ schema: 1, count: 1, bot: "", assistant_at: null, groups: [{ action: "decide", title: "Решить", rows: [row] }] }} now={100} />);
-    const decide = await screen.findByRole("region", { name: "Решить" });
-    expect(within(decide).getByText("В Базу: 2 файла")).toBeTruthy();
-    fireEvent.click(within(decide).getByRole("button", { name: "В Базу · 2" }));
+    mount(<FeedView feed={{ schema: 1, count: 1, bot: "", assistant_at: null, groups: [{ action: "decide", title: "Decide", rows: [row] }] }} now={100} />);
+    const decide = await screen.findByRole("region", { name: "Decide" });
+    expect(within(decide).getByText("To the Base: 2 files")).toBeTruthy();
+    fireEvent.click(within(decide).getByRole("button", { name: "To the Base · 2" }));
     await waitFor(() => expect(opened).toHaveBeenCalledWith("a1b2c3d4"));
     expect(await screen.findByTestId("base-card")).toBeTruthy();
   });
@@ -217,8 +209,8 @@ describe("BasePage", () => {
     expect(await screen.findByTestId("base-card")).toBeTruthy();
     expect(load).toHaveBeenCalledWith("c0ffee00");
     vi.useFakeTimers();
-    act(() => live.dispatch({ type: "event", id: 9, event: { kind: "base", data: card({ state: "committed", at: 20, said: "Закоммичено." }) } }));
-    expect(screen.getByText("Закрываю…")).toBeTruthy();
+    act(() => live.dispatch({ type: "event", id: 9, event: { kind: "base", data: card({ state: "committed", at: 20, said: "Committed." }) } }));
+    expect(screen.getByText("Closing…")).toBeTruthy();
     act(() => vi.advanceTimersByTime(CLOSE_AFTER_MS));
     expect(close).toHaveBeenCalledOnce();
   });

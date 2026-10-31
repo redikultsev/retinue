@@ -61,9 +61,9 @@ export interface Session {
   fork_of?: string | null;
   /** A summary or a card came after the owner last looked at it. */
   unread?: boolean;
-  /** Its Base files not committed yet (retinue/tobase.py): «В Базу · N». Absent from a platform before the Base. */
+  /** Its Base files not committed yet (retinue/tobase.py): «To the Base · N». Absent from a platform before the Base. */
   base?: number;
-  /** Commits in the repositories it worked in that no branch of the remote has (retinue/topush.py): «Запушить · N». */
+  /** Commits in the repositories it worked in that no branch of the remote has (retinue/topush.py): «Push · N». */
   push?: number;
   /** Why a repository it worked in cannot be pushed now («<repo>: <reason>», retinue/topush.py); absent: nothing. */
   push_why?: string;
@@ -74,7 +74,7 @@ export interface Session {
 }
 
 /** What the face says of a session whose run waits for room. */
-export const QUEUED = "ждёт места в комнате";
+export const QUEUED = "waiting for room on the lane";
 
 export type ApprovalState =
   | "pending"
@@ -150,7 +150,7 @@ export interface Summary {
 
 export type PingKind = "done" | "decision" | "failed";
 
-/** One file of a «В Базу» card: A/M/D, its lines added and removed (null: not counted), turned on, also changed in
+/** One file of a «To the Base» card: A/M/D, its lines added and removed (null: not counted), turned on, also changed in
  * another session's run. */
 export interface BaseFile {
   path: string;
@@ -165,7 +165,7 @@ export interface BaseFile {
 
 export type BaseCardState = "shown" | "committing" | "committed" | "failed" | "cancelled" | "stale" | "expired";
 
-/** «В Базу»: a session's commit card (retinue/tobase.py), the same object as its Telegram copies. */
+/** «To the Base»: a session's commit card (retinue/tobase.py), the same object as its Telegram copies. */
 export interface BaseCard {
   id: string;
   session: string;
@@ -313,11 +313,11 @@ export interface SessionSnapshot {
   inputs?: Input[];
   /** The files the session handed over, oldest first; absent from a platform before them. */
   files?: OutFile[];
-  /** Its «В Базу» cards: the open one and the last few decided; absent from a platform before the Base. */
+  /** Its «To the Base» cards: the open one and the last few decided; absent from a platform before the Base. */
   base_cards?: BaseCard[];
-  /** Its «Запушить» cards, the same way; absent from a platform before the code. */
+  /** Its «Push» cards, the same way; absent from a platform before the code. */
   push_cards?: PushCard[];
-  /** What «Сводка» says of it beyond its row; absent from a platform before it. */
+  /** What «Summary» says of it beyond its row; absent from a platform before it. */
   about?: About;
 }
 
@@ -340,7 +340,7 @@ export interface BaseResponse {
 
 export type PushCardState = "shown" | "pushing" | "pushed" | "cancelled" | "stale" | "expired";
 
-/** «Запушить»: a repository's push card (retinue/topush.py), the same object as its Telegram copies. */
+/** «Push»: a repository's push card (retinue/topush.py), the same object as its Telegram copies. */
 export interface PushCard {
   id: string;
   session: string;
@@ -372,7 +372,7 @@ export interface PushCard {
   unpushed?: number;
   objects?: number;
   bytes?: number;
-  /** Files under .github/workflows: the token cannot push them; «Отправить» refuses. */
+  /** Files under .github/workflows: the token cannot push them; «Push» refuses. */
   workflows: string[];
   /** What in the work tree is not committed: it does not go. */
   dirty: string[];
@@ -430,3 +430,29 @@ export const EVENT_KINDS: readonly EventKind[] = [
   "base",
   "push",
 ];
+
+/** One seven-day span of the platform's tally (`GET /api/stats`, signals.tally). */
+export interface Tally {
+  since: number;
+  until: number;
+  sessions: number;
+  sub_sessions: number;
+  runs: number;
+  owner: { messages: number; stops: number };
+  engine: { tool_errors: number; tool_errors_by_tool: Record<string, number>; compactions: number; run_errors: number };
+  gate: { calls: number; by_decision: Record<string, number>; reasons: Record<string, number> };
+  cards: {
+    approval: CardTally;
+    question: CardTally;
+    courier: number;
+  };
+}
+
+export interface CardTally {
+  shown: number;
+  granted: number;
+  answered: number;
+  rejected: number;
+  open: number;
+  lapsed: number;
+}

@@ -1,4 +1,4 @@
-// «Ждут тебя»: one queue by action across the sessions and the assistant's world, built by the platform on each read
+// «Waiting for you»: one queue by action across the sessions and the assistant's world, built by the platform on each read
 // (`GET /api/feed`, retinue/feed.py). The app does not fold it from its own store — the store holds the cards and
 // summaries only of the sessions it has opened — it reads the feed again whenever a session, a card or a summary
 // changes on the stream (debounced), and once a minute for the assistant's digest, which comes on no stream.
@@ -40,14 +40,14 @@ export interface FeedRow {
   /** Its one line: the question, the command, the summary's first line, the assistant's title. */
   essence: string;
   ref: string;
-  /** «Ответить на вопрос», «Решить»: the card itself, decided in place. */
+  /** «Answer», «Decide»: the card itself, decided in place. */
   approval?: Approval;
-  /** «Выбрать»: the turn's suggested replies (may be empty). */
+  /** «Choose»: the turn's suggested replies (may be empty). */
   replies?: string[];
   summary?: number | null;
-  /** «Решить» · «В Базу»: the session's Base files not committed yet (retinue/tobase.py). */
+  /** «Decide» · «To the Base»: the session's Base files not committed yet (retinue/tobase.py). */
   base?: number;
-  /** «Решить» · «Запушить»: commits no branch of the remote has, and in which repositories (retinue/topush.py). */
+  /** «Decide» · «Push»: commits no branch of the remote has, and in which repositories (retinue/topush.py). */
   push?: number;
   repos?: string[];
 }
@@ -66,7 +66,7 @@ export interface Feed {
   bot: string;
   /** When the router last pushed its digest (seconds), or null. */
   assistant_at: number | null;
-  /** «Сроки»: the base's dates of the next week (and the overdue), by day — from the router's digest. Absent from a
+  /** «Deadlines»: the base's dates of the next week (and the overdue), by day — from the router's digest. Absent from a
    * platform before them. */
   deadlines?: Deadline[];
   /** The hub's status chips, as the router last pushed them. */
@@ -77,7 +77,7 @@ export interface Deadline {
   id: string;
   /** `YYYY-MM-DD` */
   when: string;
-  /** The router's words: «через 3 дня: Абонемент в спортзал — действует до». */
+  /** The router's words: «in 3 days: Gym membership — valid until». */
   title: string;
   /** The Space (a sphere's name when it is one). */
   sphere: string | null;
@@ -200,11 +200,11 @@ export function useFeed(source: FeedSource = feedSource): Feed | null {
   return useSyncExternalStore(source.subscribe, source.getFeed);
 }
 
-/** How long a row waits: «5 мин», «3 ч», «2 дн». */
+/** How long a row waits: «5 min», «3 h», «2 d». */
 export function waited(since: number, now: number = Date.now() / 1000): string {
   const minutes = Math.max(1, Math.round((now - since) / 60));
-  if (minutes < 60) return `${minutes} мин`;
+  if (minutes < 60) return `${minutes} min`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} ч`;
-  return `${Math.round(hours / 24)} дн`;
+  if (hours < 24) return `${hours} h`;
+  return `${Math.round(hours / 24)} d`;
 }

@@ -8,10 +8,10 @@ export function inputText(approval: Pick<Approval, "tool" | "input">): string {
   return JSON.stringify(approval.input, null, 2);
 }
 
-const time = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" });
-const day = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
+const time = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" });
+const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
 
-/** «14:05» today, «3 окт.» before. `at` in seconds (the platform's clock). */
+/** «14:05» today, «3 Oct» before. `at` in seconds (the platform's clock). */
 export function when(at: number, now: number = Date.now() / 1000): string {
   const date = new Date(at * 1000);
   const today = new Date(now * 1000);
@@ -36,34 +36,30 @@ export function oneLine(tool: string, input: Record<string, unknown>): string {
 }
 
 const STATE_WORDS: Record<string, string> = {
-  pending: "Готовится",
-  shown: "Ждёт решения",
-  granted: "Разрешено",
-  executing: "Выполняется",
-  executed: "Выполнено",
-  rejected: "Отказано",
-  stale: "Устарела",
-  expired: "Истекла",
-  dropped: "Снята",
-  answered: "Отвечено",
+  pending: "Preparing",
+  shown: "Awaiting decision",
+  granted: "Allowed",
+  executing: "Running",
+  executed: "Done",
+  rejected: "Denied",
+  stale: "Stale",
+  expired: "Expired",
+  dropped: "Withdrawn",
+  answered: "Answered",
 };
 export const approvalStateWord = (state: string) => STATE_WORDS[state] ?? state;
 
 const SESSION_WORDS: Record<string, string> = {
-  active: "работает",
-  waiting: "ждёт тебя",
-  idle: "ждёт сообщения",
-  closed: "закрыта",
+  active: "working",
+  waiting: "waiting for you",
+  idle: "waiting for a message",
+  closed: "closed",
 };
 export const sessionStateWord = (state: string) => SESSION_WORDS[state] ?? state;
 
-/** Russian plural: 1 карточка, 2 карточки, 5 карточек. */
-export function plural(n: number, one: string, few: string, many: string): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
-  return many;
+/** English plural: 1 card, 2 cards, 0 cards. */
+export function plural(n: number, one: string, many: string): string {
+  return Math.abs(n) === 1 ? one : many;
 }
 
 // Characters nobody sees, or that change how the rest is shown (retinue/courier.py INVISIBLE).
@@ -100,7 +96,7 @@ const HIDING = /(\n(?:[ \t]*\n){3,})|([ \t]{8,})|([\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Cn
 
 /** A call's input as the card shows it: everything that could hide part of a command from a reader —
  * `ls<300 spaces>; curl … | sh`, a tail after many blank lines, bidi or zero-width characters — becomes a visible
- * label: ⟦пробелы ×300⟧, ⟦пустые строки ×40⟧, ⟦U+202E⟧ (the last as the platform's own card writes it). */
+ * label: ⟦spaces ×300⟧, ⟦blank lines ×40⟧, ⟦U+202E⟧ (the last as the platform's own card writes it). */
 export function markInput(text: string): MarkedInput {
   const segments: Segment[] = [];
   let last = 0;
@@ -109,8 +105,8 @@ export function markInput(text: string): MarkedInput {
     const [whole, blank, spaces, char] = m;
     const at = m.index ?? 0;
     let mark: string | undefined;
-    if (blank) mark = `\n⟦пустые строки ×${blank.split("\n").length - 2}⟧\n`;
-    else if (spaces) mark = `⟦пробелы ×${spaces.length}⟧`;
+    if (blank) mark = `\n⟦blank lines ×${blank.split("\n").length - 2}⟧\n`;
+    else if (spaces) mark = `⟦spaces ×${spaces.length}⟧`;
     else if (char && char !== "\n" && char !== "\t") mark = `⟦U+${char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟧`;
     if (!mark) continue;
     if (at > last) segments.push({ text: text.slice(last, at) });

@@ -1,7 +1,7 @@
 // A session's transcript: its items in (turn, n) order, each approval, courier or question card inline after the call
 // it is about (a question's card in place of its item), each summary at the end of the turn it was said for, the
 // owner's own messages where they came (with what he attached), and the live text of a running turn. Consecutive tool
-// calls fold into one line («7 шагов · …», as Claude's desktop app folds them): open while the turn runs them, folded
+// calls fold into one line («7 steps · …», as Claude's desktop app folds them): open while the turn runs them, folded
 // once it moved on. A call with a card is never folded — the card is the owner's to answer.
 import { type ReactNode, useMemo } from "react";
 import { ApprovalCard } from "@/components/approval-card";
@@ -121,7 +121,7 @@ function turnText(items: Item[], index: number): string {
 }
 
 function SummaryNote({ summary, repeats, base }: { summary: Summary; repeats: boolean; base?: ReactNode }) {
-  // A ping's suggested replies under it, while they can be pressed; the one that went in after; «В Базу · N» on the
+  // A ping's suggested replies under it, while they can be pressed; the one that went in after; «To the Base · N» on the
   // last one while the session has Base files uncommitted.
   const replies = (
     <>
@@ -160,9 +160,9 @@ interface Props {
   summaries?: Summary[];
   /** The owner's messages, oldest first: each before what the session wrote after it. */
   inputs?: Input[];
-  /** The session's Base files not committed yet (retinue/tobase.py): «В Базу · N» under its last summary. */
+  /** The session's Base files not committed yet (retinue/tobase.py): «To the Base · N» under its last summary. */
   base?: { session: string; count: number };
-  /** Its commits no branch of the remote has (retinue/topush.py): «Запушить · N» there too. */
+  /** Its commits no branch of the remote has (retinue/topush.py): «Push · N» there too. */
   push?: { session: string; count: number; why?: string };
 }
 
@@ -190,7 +190,7 @@ export function Transcript({ items: given, approvals, delta, running, summaries 
           <>
             {base && base.count > 0 && <BaseButton session={base.session} count={base.count} />}
             {push && push.count > 0 && <PushButton session={push.session} count={push.count} />}
-            {push?.why && <p className="text-xs text-muted-foreground">Запушить нельзя — {push.why}</p>}
+            {push?.why && <p className="text-xs text-muted-foreground">Cannot push — {push.why}</p>}
           </>
         ) : null
       }
@@ -199,7 +199,7 @@ export function Transcript({ items: given, approvals, delta, running, summaries 
   return (
     <div className="flex flex-col gap-3">
       {items.length === 0 && inputs.length === 0 && !delta && (
-        <p className="py-8 text-center text-sm text-muted-foreground">Пока пусто.</p>
+        <p className="py-8 text-center text-sm text-muted-foreground">Nothing yet.</p>
       )}
       {runs.map((run, r) => {
         const first = run.at[0]!;
@@ -235,7 +235,7 @@ export function Transcript({ items: given, approvals, delta, running, summaries 
         running && (
           <div className="flex items-center gap-2 text-[13px] text-muted-foreground" aria-live="polite">
             <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-            <span className="animate-pulse">Работает…</span>
+            <span className="animate-pulse">Working…</span>
           </div>
         )
       )}

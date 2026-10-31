@@ -17,10 +17,10 @@ export function visibleSessions(pathname: string, search: string): string[] {
   return out;
 }
 
-/** «Ждёт решения: <track> · <title>», linking to the session — or nothing when that session is on screen, where the
+/** «Awaiting decision: <track> · <title>», linking to the session — or nothing when that session is on screen, where the
  * card already shows inline, or on the card's own page. */
 export function cardNotice(approval: Approval, session: Session | undefined, visible: string[], pathname = ""): CardNotice | null {
   if (visible.includes(approval.session) || pathname === `/a/${approval.id}`) return null;
-  const where = session ? `${session.track} · ${session.title || session.track}` : `сессия ${approval.session}`;
-  return { text: `Ждёт решения: ${where}`, href: `/s/${encodeURIComponent(approval.session)}` };
+  const where = session ? `${session.track} · ${session.title || session.track}` : `session ${approval.session}`;
+  return { text: `Awaiting decision: ${where}`, href: `/s/${encodeURIComponent(approval.session)}` };
 }

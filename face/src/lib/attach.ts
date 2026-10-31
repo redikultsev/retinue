@@ -13,16 +13,16 @@ export interface Encoded {
   sha256: string;
 }
 
-const mb = (n: number) => `${Math.round(n / 2 ** 20)} МБ`;
+const mb = (n: number) => `${Math.round(n / 2 ** 20)} MB`;
 
 /** Why these files cannot go together, or null when they can. */
 export function overLimits(files: File[]): string | null {
-  if (files.length > MAX_FILES) return `Не больше ${MAX_FILES} файлов в одном сообщении.`;
+  if (files.length > MAX_FILES) return `No more than ${MAX_FILES} files in one message.`;
   const big = files.find((f) => f.size > MAX_FILE);
-  if (big) return `«${big.name}»: ${mb(big.size)} — больше ${mb(MAX_FILE)}.`;
-  if (files.some((f) => f.size === 0)) return "Пустой файл не отправить.";
+  if (big) return `“${big.name}”: ${mb(big.size)} — over ${mb(MAX_FILE)}.`;
+  if (files.some((f) => f.size === 0)) return "An empty file can't be sent.";
   const total = files.reduce((n, f) => n + f.size, 0);
-  if (total > MAX_TOTAL) return `Файлы вместе больше ${mb(MAX_TOTAL)}.`;
+  if (total > MAX_TOTAL) return `The files together are over ${mb(MAX_TOTAL)}.`;
   return null;
 }
 
@@ -43,9 +43,9 @@ export async function encodeFile(file: File): Promise<Encoded> {
   };
 }
 
-/** «12 КБ», «1,4 МБ» */
+/** «12 KB», «1.4 MB» */
 export function sizeWord(n: number): string {
-  if (n < 1024) return `${n} Б`;
-  if (n < 2 ** 20) return `${Math.round(n / 1024)} КБ`;
-  return `${(n / 2 ** 20).toFixed(1).replace(".", ",")} МБ`;
+  if (n < 1024) return `${n} B`;
+  if (n < 2 ** 20) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 2 ** 20).toFixed(1)} MB`;
 }

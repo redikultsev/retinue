@@ -1,4 +1,4 @@
-// «Сегодня»: what the home screen folds from what the app already has — the session rows (sphere, state, unread), the
+// «Today»: what the home screen folds from what the app already has — the session rows (sphere, state, unread), the
 // stream's items and the text being written, the feed's deadlines. Nothing here asks the server anything.
 import { useSyncExternalStore } from "react";
 import { plural } from "./format";
@@ -9,17 +9,17 @@ const isWaiting = (s: Session) => s.state === "waiting" || s.waiting > 0;
 /** When a running session's turn began: the platform's `turn_started`, else (an older platform) its row's `at`. */
 export const turnStart = (s: Session) => s.turn_started ?? s.at;
 
-/** «Работают»: the sessions running a turn now (not those waiting on the owner), the longest running first. */
+/** «Working»: the sessions running a turn now (not those waiting on the owner), the longest running first. */
 export function running(sessions: Session[]): Session[] {
   return sessions.filter((s) => s.state === "active" && !isWaiting(s)).sort((a, b) => turnStart(a) - turnStart(b));
 }
 
-/** How often «Работают» ticks: every second while a turn is under a minute old, else every 30 s. */
+/** How often «Working» ticks: every second while a turn is under a minute old, else every 30 s. */
 export function tickMs(sessions: Session[], now: number): number {
   return sessions.some((s) => now - turnStart(s) < 60) ? 1000 : 30_000;
 }
 
-/** «Готово»: the sessions that finished since `since` and that the owner has not read yet, newest first. A session
+/** «Done»: the sessions that finished since `since` and that the owner has not read yet, newest first. A session
  * still running or waiting on him is not done. */
 export function finished(sessions: Session[], since: number): Session[] {
   return sessions
@@ -48,15 +48,15 @@ function itemLine(item: Item): string {
       return cut(what ? `${item.data.tool}: ${what}` : item.data.tool);
     }
     case "reads":
-      return `читает: ${item.data.calls.length} ${plural(item.data.calls.length, "файл", "файла", "файлов")}`;
+      return `reading ${item.data.calls.length} ${plural(item.data.calls.length, "file", "files")}`;
     case "edit":
-      return cut(`правит ${item.data.path}`);
+      return cut(`editing ${item.data.path}`);
     case "subagent":
-      return cut(`субагент: ${item.data.description || item.data.agent}`);
+      return cut(`subagent: ${item.data.description || item.data.agent}`);
     case "plan":
-      return item.data.tool === "TodoWrite" ? "обновляет план" : "предлагает план";
+      return item.data.tool === "TodoWrite" ? "updating the plan" : "proposing a plan";
     case "question":
-      return "задаёт вопрос";
+      return "asking a question";
     case "result":
       return "";
   }
@@ -72,24 +72,24 @@ export function lastLine(items: Item[], delta: string | undefined): string {
   return "";
 }
 
-/** How long a turn has run: «40 с», «12 мин», «1 ч 05 мин». */
+/** How long a turn has run: «40 s», «12 min», «1 h 05 min». */
 export function elapsed(since: number, now: number): string {
   const s = Math.max(0, Math.round(now - since));
-  if (s < 60) return `${s} с`;
+  if (s < 60) return `${s} s`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} мин`;
-  return `${Math.floor(m / 60)} ч ${String(m % 60).padStart(2, "0")} мин`;
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
 }
 
-const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
-const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** «вт 28 окт» */
+/** «Tue 28 Oct» */
 export function todayWord(now: Date): string {
   return `${WEEKDAYS[now.getDay()]} ${now.getDate()} ${MONTHS[now.getMonth()]}`;
 }
 
-/** A deadline's day (`YYYY-MM-DD`) against today, in the owner's words: «пт 31.10» and «через 3 дня». */
+/** A deadline's day (`YYYY-MM-DD`) against today, in the owner's words: «Fri 31.10» and «in 3 days». */
 export function dayWords(when: string, now: Date): { date: string; rel: string; overdue: boolean } {
   const [y, m, d] = when.split("-").map(Number) as [number, number, number];
   const day = new Date(y, m - 1, d);
@@ -98,24 +98,24 @@ export function dayWords(when: string, now: Date): { date: string; rel: string; 
   const date = `${WEEKDAYS[day.getDay()]} ${String(d).padStart(2, "0")}.${String(m).padStart(2, "0")}`;
   const rel =
     days === 0
-      ? "сегодня"
+      ? "today"
       : days === 1
-        ? "завтра"
+        ? "tomorrow"
         : days > 1
-          ? `через ${days} ${plural(days, "день", "дня", "дней")}`
-          : `просрочено ${-days} ${plural(-days, "день", "дня", "дней")}`;
+          ? `in ${days} ${plural(days, "day", "days")}`
+          : `${-days} ${plural(-days, "day", "days")} overdue`;
   return { date, rel, overdue: days < 0 };
 }
 
-// --- since when «Готово» counts ----------------------------------------------------------------------------------
+// --- since when «Done» counts -----------------------------------------------------------------------------------
 
 export const SEEN_KEY = "retinue-app-seen";
-/** First run on this device: «Готово» looks back a day. */
+/** First run on this device: «Done» looks back a day. */
 const FIRST_LOOK_S = 86_400;
 /** Away for less than this is the same visit. */
 const SAME_VISIT_S = 60;
 
-/** When the owner last had the app in front of him, kept on the device: where «Готово» starts. Read once when the
+/** When the owner last had the app in front of him, kept on the device: where «Done» starts. Read once when the
  * app loads; while it runs, coming back after more than a minute away moves it to when he left. */
 export class Visits {
   private since: number;
@@ -151,7 +151,7 @@ export class Visits {
     try {
       this.storage?.setItem(SEEN_KEY, String(Math.floor(this.hiddenAt)));
     } catch {
-      // storage unavailable: «Готово» counts from this load
+      // storage unavailable: «Done» counts from this load
     }
   }
 

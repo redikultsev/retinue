@@ -55,7 +55,7 @@ describe("LoginPage", () => {
     const done = vi.fn();
     render(<LoginPage next="/s/a1b2c3d4" loginCode={loginCode} loginTelegram={vi.fn()} done={done} />);
     fireEvent.change(screen.getByPlaceholderText("XXXXXXXXXX"), { target: { value: "rtne7k2qxp" } });
-    fireEvent.click(screen.getByRole("button", { name: "Войти" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
     await waitFor(() => expect(done).toHaveBeenCalledWith("/s/a1b2c3d4"));
     expect(loginCode).toHaveBeenCalledWith("RTNE7K2QXP");
   });
@@ -74,13 +74,13 @@ describe("LoginPage", () => {
     const loginCode = vi
       .fn()
       .mockRejectedValueOnce(new ApiError(401, "x"))
-      .mockRejectedValueOnce(new ApiError(429, "Слишком много попыток — подожди 10 минут."));
+      .mockRejectedValueOnce(new ApiError(429, "Too many attempts — wait 10 minutes."));
     render(<LoginPage loginCode={loginCode} loginTelegram={vi.fn()} done={vi.fn()} />);
     fireEvent.change(screen.getByPlaceholderText("XXXXXXXXXX"), { target: { value: "AAAAAAAAAA" } });
-    fireEvent.click(screen.getByRole("button", { name: "Войти" }));
-    expect((await screen.findByRole("alert")).textContent).toMatch(/одноразовый/);
-    fireEvent.click(screen.getByRole("button", { name: "Войти" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/Слишком много попыток/));
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/single-use/);
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/Too many attempts/));
   });
 
   it("inside the Mini App posts initData and opens the card it was launched for", async () => {
@@ -98,7 +98,7 @@ describe("LoginPage", () => {
     const done = vi.fn();
     render(<LoginPage next="//evil.example" loginCode={vi.fn().mockResolvedValue({})} loginTelegram={vi.fn()} done={done} />);
     fireEvent.change(screen.getByPlaceholderText("XXXXXXXXXX"), { target: { value: "AAAAAAAAAA" } });
-    fireEvent.click(screen.getByRole("button", { name: "Войти" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
     await waitFor(() => expect(done).toHaveBeenCalledWith("/"));
   });
 });

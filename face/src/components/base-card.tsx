@@ -1,5 +1,5 @@
-// «В Базу» (retinue/tobase.py): a session's commit card — the Base files its runs changed, each a toggle, the commit's
-// subject, «Закоммитить», the diff, «Отмена». It is the same card as its Telegram copies: a change here rewrites them,
+// «To the Base» (retinue/tobase.py): a session's commit card — the Base files its runs changed, each a toggle, the commit's
+// subject, «Commit», the diff, «Cancel». It is the same card as its Telegram copies: a change here rewrites them,
 // and one there comes here on the stream. Nothing commits without a press; a press is taken once in either place.
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -18,20 +18,17 @@ const BaseDiff = lazy(() => import("@/components/base-diff").then((m) => ({ defa
 type Calls = Pick<typeof api, "baseToggle" | "baseSubject" | "baseCommit" | "baseCancel" | "baseOpen">;
 
 const STATE_WORDS: Record<string, string> = {
-  committing: "Коммичу…",
-  committed: "Закоммичено",
-  failed: "Не закоммичено",
-  cancelled: "Отменено",
-  stale: "Устарела",
-  expired: "Истекла",
+  committing: "Committing…",
+  committed: "Committed",
+  failed: "Not committed",
+  cancelled: "Cancelled",
+  stale: "Stale",
+  expired: "Expired",
 };
 
-/** «3 файла» */
+/** «3 files» */
 export function filesWord(n: number): string {
-  const tail = n % 100;
-  const word =
-    tail % 10 === 1 && tail !== 11 ? "файл" : tail % 10 >= 2 && tail % 10 <= 4 && !(tail >= 12 && tail <= 14) ? "файла" : "файлов";
-  return `${n} ${word}`;
+  return `${n} ${n === 1 ? "file" : "files"}`;
 }
 
 function put(live: Live, card: Card | null) {
@@ -68,15 +65,15 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
     }
   }
 
-  /** «Закоммитить» with the subject as the field shows it: an edit not saved yet is saved first. */
+  /** «Commit» with the subject as the field shows it: an edit not saved yet is saved first. */
   async function commit() {
     const edited = subject.trim() && subject !== card.subject;
-    if (edited && !(await act(() => calls.baseSubject(card.id, subject), "Тема не сохранилась."))) return;
-    await act(() => calls.baseCommit(card.id), "Не закоммитилось.");
+    if (edited && !(await act(() => calls.baseSubject(card.id, subject), "The subject was not saved."))) return;
+    await act(() => calls.baseCommit(card.id), "The commit did not go through.");
   }
 
   return (
-    <section data-testid="base-card" aria-label={card.view.head[0] ?? "В Базу"} className={cn("flex flex-col gap-3", className)}>
+    <section data-testid="base-card" aria-label={card.view.head[0] ?? "To the Base"} className={cn("flex flex-col gap-3", className)}>
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{card.view.head[0]}</span>
         {!shown && <Badge variant={card.state === "committing" ? "warning" : "secondary"}>{STATE_WORDS[card.state] ?? card.state}</Badge>}
@@ -85,17 +82,17 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
         className="flex gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (subject.trim() && subject !== card.subject) void act(() => calls.baseSubject(card.id, subject), "Тема не сохранилась.");
+          if (subject.trim() && subject !== card.subject) void act(() => calls.baseSubject(card.id, subject), "The subject was not saved.");
         }}
       >
-        <Input aria-label="Тема коммита" value={subject} disabled={!shown || busy} onChange={(e) => setSubject(e.target.value)} />
+        <Input aria-label="Commit subject" value={subject} disabled={!shown || busy} onChange={(e) => setSubject(e.target.value)} />
         {shown && subject !== card.subject && subject.trim() && (
           <Button type="submit" variant="outline" disabled={busy}>
-            Сохранить
+            Save
           </Button>
         )}
       </form>
-      <ul className="flex flex-col gap-1" aria-label="Файлы">
+      <ul className="flex flex-col gap-1" aria-label="Files">
         {card.files.map((f) => (
           <li key={f.path}>
             <label className={cn("flex min-h-9 items-center gap-2 rounded-md px-1 text-sm", shown && "hover:bg-accent")}>
@@ -105,19 +102,19 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
                 checked={f.on}
                 disabled={!shown || busy}
                 aria-label={f.path}
-                onChange={(e) => void act(() => calls.baseToggle(card.id, f.path, e.target.checked), "Не переключилось.")}
+                onChange={(e) => void act(() => calls.baseToggle(card.id, f.path, e.target.checked), "Did not switch.")}
               />
               <span className="w-4 shrink-0 font-mono text-xs text-muted-foreground">{f.status}</span>
               <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={f.path}>
                 {f.path}
               </span>
               {f.nobody && (
-                <span className="shrink-0 text-xs text-muted-foreground" title="Ни одна сессия его не меняла">
-                  ничей
+                <span className="shrink-0 text-xs text-muted-foreground" title="No session changed it">
+                  nobody's
                 </span>
               )}
               {f.shared && (
-                <span className="shrink-0 text-xs text-warning-foreground" title="Файл менялся и в другой сессии">
+                <span className="shrink-0 text-xs text-warning-foreground" title="The file was also changed in another session">
                   ⇄
                 </span>
               )}
@@ -132,36 +129,36 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
         ))}
       </ul>
       {card.files.some((f) => f.shared) && (
-        <p className="text-xs text-muted-foreground">⇄ — файл менялся и в другой сессии: реши, чей он.</p>
+        <p className="text-xs text-muted-foreground">⇄ — the file was also changed in another session: decide whose it is.</p>
       )}
       {card.files.some((f) => f.nobody) && (
         <p className="text-xs text-muted-foreground">
-          «ничей» — изменён, но ни одной сессией. Выключен: включи, чтобы закоммитить.
+          “nobody's” — changed, but by no session. Off: turn it on to commit it.
         </p>
       )}
       {card.others.files > 0 && (
         <p className="text-xs text-muted-foreground">
-          Ещё {filesWord(card.others.files)} не закоммичено в других сессиях ({card.others.sessions}).
+          {filesWord(card.others.files)} more not committed in other sessions ({card.others.sessions}).
         </p>
       )}
       {card.said && <p role="status" className="text-sm whitespace-pre-line">{card.said}</p>}
       <div className="flex flex-wrap gap-2">
         {shown && (
           <Button disabled={busy || chosen === 0} onClick={() => void commit()}>
-            Закоммитить · {chosen}
+            Commit · {chosen}
           </Button>
         )}
         <Button variant="outline" aria-expanded={diff} onClick={() => setDiff(!diff)}>
-          {diff ? "Скрыть дифф" : "Открыть дифф"}
+          {diff ? "Hide diff" : "Show diff"}
         </Button>
         {shown && (
-          <Button variant="ghost" disabled={busy} onClick={() => void act(() => calls.baseCancel(card.id), "Не отменилось.")}>
-            Отмена
+          <Button variant="ghost" disabled={busy} onClick={() => void act(() => calls.baseCancel(card.id), "Did not cancel.")}>
+            Cancel
           </Button>
         )}
       </div>
       {diff && (
-        <Suspense fallback={<p className="text-sm text-muted-foreground">Загружаю дифф…</p>}>
+        <Suspense fallback={<p className="text-sm text-muted-foreground">Loading the diff…</p>}>
           <BaseDiff id={card.id} on={card.files.filter((f) => f.on).map((f) => f.path).join("\n")} />
         </Suspense>
       )}
@@ -169,16 +166,16 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
   );
 }
 
-/** «В Базу»: the session's card, opened or brought up to date by the platform. Its id, or null when there is
+/** «To the Base»: the session's card, opened or brought up to date by the platform. Its id, or null when there is
  * nothing to commit (said as a toast). */
 export async function openBase(session: string, calls: Pick<Calls, "baseOpen"> = api, live: Live = defaultLive) {
   try {
     const res = await calls.baseOpen(session);
     put(live, res.card);
-    if (!res.card) toast(res.toast || "Нечего коммитить.");
+    if (!res.card) toast(res.toast || "Nothing to commit.");
     return res.card?.id ?? null;
   } catch (e) {
-    toast(e instanceof ApiError ? e.message : "Карточка не открылась.", "error");
+    toast(e instanceof ApiError ? e.message : "The card did not open.", "error");
     return null;
   }
 }
@@ -188,18 +185,18 @@ export function BaseDialog({ id, onClose }: { id: string | null; onClose: () => 
   const { bases } = useLiveState();
   const card = id ? bases[id] : undefined;
   return (
-    <Dialog open={id !== null} onClose={onClose} title="В Базу" className="max-w-2xl">
+    <Dialog open={id !== null} onClose={onClose} title="To the Base" className="max-w-2xl">
       {card && <BaseCardView card={card} />}
       <div className="flex justify-end">
         <Button variant="ghost" onClick={onClose}>
-          Закрыть
+          Close
         </Button>
       </div>
     </Dialog>
   );
 }
 
-/** «В Базу · N»: under a session's last summary, in its feed row. */
+/** «To the Base · N»: under a session's last summary, in its feed row. */
 export function BaseButton({ session, count, calls = api, className }: { session: string; count: number; calls?: Pick<Calls, "baseOpen">; className?: string }) {
   const [id, setId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -216,7 +213,7 @@ export function BaseButton({ session, count, calls = api, className }: { session
           setBusy(false);
         }}
       >
-        В Базу · {count}
+        To the Base · {count}
       </Button>
       <BaseDialog id={id} onClose={() => setId(null)} />
     </>

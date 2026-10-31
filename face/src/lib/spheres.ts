@@ -7,16 +7,16 @@ import type { Session, Sphere } from "./types";
 export type Filter = "all" | "waiting" | "active" | "done" | "pinned";
 
 export const FILTERS: readonly { value: Filter; label: string }[] = [
-  { value: "all", label: "Все" },
-  { value: "waiting", label: "Ждут" },
-  { value: "active", label: "Работают" },
-  { value: "done", label: "Готово" },
-  { value: "pinned", label: "Закреплены" },
+  { value: "all", label: "All" },
+  { value: "waiting", label: "Waiting" },
+  { value: "active", label: "Working" },
+  { value: "done", label: "Done" },
+  { value: "pinned", label: "Pinned" },
 ];
 
 /** How deep a fork of a fork is indented at most: the phone's row keeps its width. */
 export const MAX_DEPTH = 3;
-export const NO_SPHERE = "Без сферы";
+export const NO_SPHERE = "No sphere";
 
 export const isWaiting = (s: Session) => s.state === "waiting" || s.waiting > 0;
 
@@ -62,7 +62,7 @@ const parentOf = (s: Session) => s.sub_of || (isSide(s) ? s.parent : null) || s.
 const newestFirst = (a: Session, b: Session) => b.at - a.at;
 
 /** The sessions the list shows — not closed, closed in the last week, waiting, pinned or a sphere's main one — that
- * pass `filter`, grouped by sphere in the platform's order, then the spheres it no longer names, then «Без сферы».
+ * pass `filter`, grouped by sphere in the platform's order, then the spheres it no longer names, then «No sphere».
  * `empty`: the spheres with no session listed at all, for starting one there. */
 export function sphereGroups(
   sessions: Session[],

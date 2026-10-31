@@ -431,7 +431,7 @@ def test_the_sync_gathers_own_plugin_and_desktop_skills_and_prints_the_commands(
     assert "allowed-tools" not in tdd and "stripped acme-tdd: allowed-tools" in done.stdout
     assert "skipped acme-skills:write-ru: the owner's own write-ru wins" in done.stdout
     assert "excluded anthropic-morning" in done.stdout
-    assert f"rsync -r --delete '{out}/skills/' '<ssh-host>:retinue-skills/'" in done.stdout
+    assert f"tar -C '{out}' -cf - skills | ssh <ssh-host> 'rm -rf ~/retinue-skills" in done.stdout
     assert "ssh -t <ssh-host> 'sudo bash /opt/retinue/deploy/skills/install-skills.sh ~/retinue-skills'" in done.stdout
     (out / "notes.txt").write_text("mine\n")
     again = subprocess.run(["bash", str(ROOT / "deploy" / "skills" / "sync-skills.sh")], capture_output=True,

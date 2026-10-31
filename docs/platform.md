@@ -303,7 +303,7 @@ a turn at most.
   with the brief whole, «Start» and «Not now» ([face.md](face.md#the-feed)); `/wait` in Telegram lists it with «Start
   it or set it aside in the app.». No ping of its own: the session's turn ends with its own.
 - **«Start»** runs the very start a tool call would (`Subs._spawn`) under the key `proposal:<id>` — the limits, the
-  framed brief, the quiet ping — so a second press, here or on another device, names the child already started.
+  framed brief — so a second press, here or on another device, names the child already started.
   **One piece of work, one child**: any start of the same title and brief — your press, or `start_subsession` after
   you said «start it» in the chat — marks every open proposal of it `started` with that child in the same commit as
   the child, so a later press names it and a «Not now» meanwhile finds nothing open. Your press is your word to the
@@ -329,8 +329,8 @@ The parent does not write into a child you stopped or wrote into (above), nor in
 Your place in the room is kept by the reserved slot rather than by putting your messages ahead of the queue: that
 would reorder one session's own messages.
 **«Stop» on a parent** stops its family: queued runs dropped, running ones stopped, cards stale, each closed, held
-reports dropped. **What you see**: a quiet ping when a sub-session starts («Started by session …: <title>», the brief
-whole in its transcript); its done turns are quiet (the parent reads them), its cards and failures ring as usual; the
+reports dropped. **What you see**: no ping when a sub-session starts — it is in the list at once, its brief whole in
+its transcript, and its report is the news; its done turns are quiet (the parent reads them), its cards and failures ring as usual; the
 parent's next ping that needs you rings. The session JSON has `sub_of`, `children` (open), `queued`, and `side` for a
 side question ([face.md](face.md#api)).
 

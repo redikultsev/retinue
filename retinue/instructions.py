@@ -25,14 +25,14 @@ The room (lane-private, which has the web) gets them like any lane; only the ret
 (`RETINUE_LANE_WEB=1`), whatever the platform asks.
 
 The owner's skills are a read-only folder the operator fills (`deploy/skills/install-skills.sh`) and the room mounts
-at /lane/skills. The CLI takes it as a plugin (`--plugin-dir`), which loads skills under
-`--setting-sources ""` — and also a plugin's hooks, MCP servers, agents and commands, and a skill's own `hooks`,
-all run outside the sandbox (probed). So a folder is used only as a plugin with nothing but skills
-(`check_skills`): `skills/<name>/SKILL.md` and the files beside it, no link anywhere, a frontmatter of a plain YAML
-subset with only keys that carry no behaviour (`frontmatter_keys`), no inline shell (`!`…``), which the managed
-settings switch off as well (`disableSkillShellExecution`). The install script refuses such a folder before it is in
-place, the lane host checks it again for every run and runs without skills when it fails, and the gate lets the
-read-only file tools into it only while it passes.
+at /lane/skills. The CLI takes it as a plugin (`--plugin-dir`), which loads skills under `--setting-sources ""` —
+and also a plugin's hooks, MCP servers, agents and commands, and a skill's own `hooks`, all run outside the sandbox
+(probed). So a folder is used only as a plugin with nothing but skills (`check_skills`): `skills/<name>/SKILL.md`
+and the files beside it, no link anywhere, a frontmatter of a plain YAML subset with only keys that carry no
+behaviour (`frontmatter_keys`), no inline shell (`!`…``), which the managed settings switch off as well
+(`disableSkillShellExecution`). The install script leaves out each skill that fails (`prune_skills`) and refuses a
+folder before it is in place, the lane host checks it again for every run and runs without skills when it fails, and
+the gate lets the read-only file tools into it only while it passes.
 
 The owner's memory is a read-only snapshot of his Mac's Claude Code memory, checked the same way (`check_memory`:
 plain Markdown files and nothing else): its index goes into every run's prompt before the repository's rules, its
@@ -45,6 +45,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import stat
 import sys
 from dataclasses import dataclass, field
@@ -197,11 +198,15 @@ def unread(error: BaseException) -> str:
 # --- the owner's skills ------------------------------------------------------------------------------------------
 
 SKILL_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
-# The frontmatter keys a skill may carry: text the CLI shows or ignores, none of them behaviour (2.1.304: `version`
-# is bookkeeping, `when_to_use` and `argument-hint` are text, `metadata` and `license` it does not read for a skill).
-# Every other key is refused — `hooks` (run outside the sandbox), `allowed-tools`, `model`, `shell`, `paths`,
-# `context`, `agent`, whatever a later CLI adds. Only `metadata` may hold a mapping.
-ALLOWED_KEYS = ("name", "description", "when_to_use", "argument-hint", "version", "license", "metadata")
+# The frontmatter keys a skill may carry: text the CLI shows or ignores, or a switch that only narrows who may invoke
+# the skill — none of them grants a tool, a model or runs anything (2.1.304: `version` is bookkeeping, `when_to_use`
+# and `argument-hint` are text, `metadata`, `license` and `compatibility` it "accepts but doesn't act on";
+# `disable-model-invocation: true` keeps the skill out of the model's listing so only the owner's `/name` loads it,
+# `user-invocable: false` hides it from the `/` menu — code.claude.com/docs/en/skills, "Frontmatter reference").
+# Every other key is refused — `hooks` (run outside the sandbox), `allowed-tools`, `model`, `effort`, `shell`,
+# `paths`, `context`, `agent`, an agent's `tools`, whatever a later CLI adds. Only `metadata` may hold a mapping.
+ALLOWED_KEYS = ("name", "description", "when_to_use", "argument-hint", "version", "license", "metadata",
+                "compatibility", "disable-model-invocation", "user-invocable")
 INLINE_SHELL = re.compile(r"(?:^|\s)!`[^`\n]+`|^\s*```!", re.MULTILINE)
 MAX_ENTRIES = 5000
 MAX_BYTES = 64 * 1024 * 1024
@@ -299,36 +304,105 @@ def check_skills(root: str | Path) -> list[str]:
         if sorted(os.listdir(root)) != ["skills"]:
             extra = sorted(set(os.listdir(root)) - {"skills"})
             raise SkillsRefused(f"{root}: only skills/ may be here, not {', '.join(extra) or 'nothing'}")
-        entries, size = 0, 0
-        for here, dirs, files in os.walk(root, followlinks=False):
-            for name in dirs + files:
-                entries += 1
-                info = os.lstat(os.path.join(here, name))
-                if stat.S_ISLNK(info.st_mode):
-                    raise SkillsRefused(f"{os.path.join(here, name)}: a link (copy it as a file: rsync -L)")
-                if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
-                    raise SkillsRefused(f"{os.path.join(here, name)}: not a file or a folder")
-                size += info.st_size if stat.S_ISREG(info.st_mode) else 0
-            if entries > MAX_ENTRIES or size > MAX_BYTES:
-                raise SkillsRefused(f"{root}: over {MAX_ENTRIES} entries or {MAX_BYTES} bytes")
+        _walk(root)
         names = sorted(os.listdir(root / "skills"))
         for name in names:
-            folder = root / "skills" / name
-            if not SKILL_NAME.fullmatch(name) or not folder.is_dir():
-                raise SkillsRefused(f"{folder}: not a skill folder (a name of a-z, 0-9, . _ -)")
-            if not (folder / "SKILL.md").is_file():
-                raise SkillsRefused(f"{folder}: no SKILL.md")
-            # As written, a CRLF read as one break (as YAML reads it), a lone CR left for the check to refuse.
-            text = (folder / "SKILL.md").read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
-            try:
-                frontmatter_keys(text)
-            except SkillsRefused as exc:
-                raise SkillsRefused(f"{folder}/SKILL.md: {exc}") from None
-            if INLINE_SHELL.search(text):
-                raise SkillsRefused(f"{folder}/SKILL.md: inline shell (!`…`)")
+            check_skill(root / "skills" / name)
         return names
     except OSError as exc:
         raise SkillsRefused(f"{root}: {type(exc).__name__}: {exc.strerror}") from None
+
+
+def _walk(root: Path) -> None:
+    """Nothing under `root` but files and folders, no link, within the bounds; raises `SkillsRefused`."""
+    entries, size = 0, 0
+    for here, dirs, files in os.walk(root, followlinks=False):
+        for name in dirs + files:
+            entries += 1
+            info = os.lstat(os.path.join(here, name))
+            if stat.S_ISLNK(info.st_mode):
+                raise SkillsRefused(f"{os.path.join(here, name)}: a link (copy it as a file: rsync -L)")
+            if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+                raise SkillsRefused(f"{os.path.join(here, name)}: not a file or a folder")
+            size += info.st_size if stat.S_ISREG(info.st_mode) else 0
+        if entries > MAX_ENTRIES or size > MAX_BYTES:
+            raise SkillsRefused(f"{root}: over {MAX_ENTRIES} entries or {MAX_BYTES} bytes")
+
+
+def check_skill(folder: Path) -> None:
+    """One skill folder of `skills/` (its contents walked by the caller); raises `SkillsRefused`."""
+    if os.path.islink(folder):
+        raise SkillsRefused(f"{folder}: a link (copy it as a file: rsync -L)")
+    if not SKILL_NAME.fullmatch(folder.name) or not folder.is_dir():
+        raise SkillsRefused(f"{folder}: not a skill folder (a name of a-z, 0-9, . _ -)")
+    if not (folder / "SKILL.md").is_file():
+        raise SkillsRefused(f"{folder}: no SKILL.md")
+    # As written, a CRLF read as one break (as YAML reads it), a lone CR left for the check to refuse.
+    text = (folder / "SKILL.md").read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
+    try:
+        frontmatter_keys(text)
+    except SkillsRefused as exc:
+        raise SkillsRefused(f"{folder}/SKILL.md: {exc}") from None
+    if INLINE_SHELL.search(text):
+        raise SkillsRefused(f"{folder}/SKILL.md: inline shell (!`…`)")
+
+
+TOP_KEY = re.compile(r"([A-Za-z0-9][A-Za-z0-9_-]*):(?: |$)")
+
+
+def strip_frontmatter(text: str, name: str) -> tuple[str, list[str]]:
+    """A SKILL.md's text with its `name` set to `name` and each top-level key outside `ALLOWED_KEYS` taken out with
+    the lines of its value, and the keys taken out. For the Mac's sync, never the server's check: it reads lines, not
+    YAML, so what it leaves is only ever used after `check_skill` has read it strictly. No frontmatter: unchanged."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines[0] != "---" or "---" not in lines[1:]:
+        return text, []
+    end = lines.index("---", 1)
+    front, kept, stripped, i = lines[1:end], [], [], 0
+    while i < len(front):
+        m = TOP_KEY.match(front[i])
+        if m and (m.group(1) == "name" or m.group(1) not in ALLOWED_KEYS):
+            if m.group(1) != "name":
+                stripped.append(m.group(1))
+            i += 1
+            while i < len(front) and (not front[i].strip() or front[i].startswith((" ", "-"))):
+                i += 1  # its value: lines indented deeper, an indentless sequence, blank lines
+            continue
+        kept.append(front[i])
+        i += 1
+    return "\n".join(["---", f"name: {name}", *kept, *lines[end:]]), stripped
+
+
+def prune_skills(root: str | Path, strip: bool = False) -> tuple[list[str], list[str]]:
+    """Take out of `<root>/skills` each skill the check refuses, so that one refused skill costs only itself: the
+    skills kept and a line for each taken out, with the reason. With `strip` (the Mac's sync), each SKILL.md first
+    gets its folder's name and loses the keys outside `ALLOWED_KEYS` (`strip_frontmatter`), said in the lines too.
+    Only for a folder being put together: the lane host never prunes — the CLI loads the whole mounted folder as one
+    plugin, so a refused skill left in it would load with its hooks; there the whole folder is refused."""
+    folder = Path(root) / "skills"
+    kept, lines = [], []
+    for name in sorted(os.listdir(folder)):
+        skill = folder / name
+        try:
+            if not os.path.islink(skill) and skill.is_dir():
+                _walk(skill)
+                if strip and SKILL_NAME.fullmatch(name) and (skill / "SKILL.md").is_file():
+                    original = (skill / "SKILL.md").read_bytes().decode("utf-8", "replace")
+                    text, stripped = strip_frontmatter(original, name)
+                    if text != original:
+                        (skill / "SKILL.md").write_bytes(text.encode())
+                    if stripped:
+                        lines.append(f"stripped {name}: {', '.join(stripped)}")
+            check_skill(skill)
+            kept.append(name)
+        except (SkillsRefused, OSError) as exc:
+            reason = str(exc).replace(f"{skill}/", "").replace(f"{skill}: ", "")
+            lines.append(f"skipped {name}: {reason}")
+            if os.path.islink(skill) or not skill.is_dir():
+                skill.unlink()
+            else:
+                shutil.rmtree(skill)
+    return kept, lines
 
 
 def usable_skills(root: str) -> str | None:
@@ -460,17 +534,30 @@ def owner_memory(root: str, nonce: str | None = None) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """`python -m retinue.instructions check-skills|check-memory <folder>`: the install scripts' checks, the lane
-    host's own."""
+    host's own. `prune-skills [--strip] <folder>`: the install script's and the Mac sync's step before the check —
+    each refused skill taken out and named; it fails only when there were skills and none is left."""
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2 or args[0] not in ("check-skills", "check-memory"):
-        print("usage: python -m retinue.instructions check-skills|check-memory <folder>", file=sys.stderr)
+    strip = args[1:2] == ["--strip"] and args[0] == "prune-skills"
+    if strip:
+        args = [args[0], *args[2:]]
+    if len(args) != 2 or args[0] not in ("check-skills", "check-memory", "prune-skills"):
+        print("usage: python -m retinue.instructions check-skills|check-memory|prune-skills [--strip] <folder>",
+              file=sys.stderr)
         return 2
     try:
         if args[0] == "check-memory":
             print(f"{len(check_memory(args[1]))} memory files")
             return 0
+        if args[0] == "prune-skills":
+            kept, lines = prune_skills(args[1], strip=strip)
+            for line in lines:
+                print(line)
+            if not kept and any(line.startswith("skipped") for line in lines):
+                print("refused: every skill was taken out", file=sys.stderr)
+                return 1
+            return 0
         names = check_skills(args[1])
-    except (SkillsRefused, MemoryRefused) as exc:
+    except (SkillsRefused, MemoryRefused, OSError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
     print(f"{len(names)} skills: {', '.join(names)}")

@@ -210,6 +210,11 @@ def test_a_folder_of_skills_with_their_files_is_loaded(tmp_path):
     (lambda r: skill(r, "x", "hooks:\n  PreToolUse: []\n"), "'hooks' is not one of"),
     (lambda r: skill(r, "x", "allowed-tools: Bash(python3:*)\n"), "'allowed-tools' is not one of"),
     (lambda r: skill(r, "x", "model: opus\n"), "'model' is not one of"),
+    (lambda r: skill(r, "x", "tools: Read, Bash\n"), "'tools' is not one of"),
+    (lambda r: skill(r, "x", "effort: max\n"), "'effort' is not one of"),
+    (lambda r: skill(r, "x", "context: fork\nagent: general-purpose\n"), "'context' is not one of"),
+    (lambda r: skill(r, "x", "shell: powershell\n"), "'shell' is not one of"),
+    (lambda r: skill(r, "x", "paths: src/**\n"), "'paths' is not one of"),
     (lambda r: skill(r, "x", body="Сначала !`git log -3` потом.\n"), "inline shell"),
     (lambda r: skill(r, "x", body="```!\nls\n```\n"), "inline shell"),
     (lambda r: (r / "skills" / "x").mkdir(parents=True), "no SKILL.md"),
@@ -284,6 +289,16 @@ def test_the_plain_subset_holds_what_the_owners_skills_use(tmp_path):
         ["name", "description", "when_to_use", "argument-hint", "version", "license", "metadata"]
 
 
+def test_the_keys_that_only_narrow_who_invokes_a_skill_or_are_ignored_pass(tmp_path):
+    """code.claude.com/docs/en/skills: `disable-model-invocation: true` keeps a skill out of the model's listing (the
+    owner's `/name` still loads it), `user-invocable: false` hides it from the `/` menu, `compatibility` the CLI
+    "accepts but doesn't act on" — none grants a tool or runs anything. Plugins use them (a cooking-skills plugin
+    marks its command-only skills so)."""
+    skill(tmp_path, "plan-dinner", "argument-hint: \"[guests]\"\ndisable-model-invocation: true\n")
+    skill(tmp_path, "pantry-notes", "user-invocable: false\ncompatibility: \"Any shell; needs python3\"\n")
+    assert instructions.check_skills(tmp_path) == ["pantry-notes", "plan-dinner"]
+
+
 def test_no_folder_or_no_skills_in_it_is_no_skills_and_no_error(tmp_path, caplog):
     assert instructions.usable_skills(str(tmp_path / "absent")) is None
     assert instructions.usable_skills(str(tmp_path)) is None, "the empty mount setup.sh makes"
@@ -309,11 +324,119 @@ def test_the_install_script_copies_checks_and_swaps_the_skills_in_whole(tmp_path
     assert instructions.check_skills(dest) == ["write-ru"]
     assert oct((dest / "skills" / "write-ru" / "SKILL.md").stat().st_mode & 0o777) == "0o644"
     (source / "linked").symlink_to(source / "write-ru")
+    skill(tmp_path / "s2", "with-hooks", "hooks:\n  PreToolUse: []\n")
+    (tmp_path / "s2" / "skills" / "with-hooks").rename(source / "with-hooks")
     done = install(str(source))
-    assert done.returncode == 1 and "a link (copy it as a file: rsync -L)" in done.stderr
-    assert sorted(os.listdir(dest / "skills")) == ["write-ru"], "the installed set stays as it was"
+    assert done.returncode == 0, done.stderr
+    assert "skipped linked: a link (copy it as a file: rsync -L)" in done.stdout
+    assert "skipped with-hooks: SKILL.md: frontmatter line 5: 'hooks' is not one of" in done.stdout
+    assert sorted(os.listdir(dest / "skills")) == ["write-ru"], "one refused skill costs only itself"
+    (source / "write-ru").rename(source / "moved")
+    (source / "moved" / "SKILL.md").write_text("no frontmatter\n")
+    done = install(str(source))
+    assert done.returncode == 1 and "every skill was taken out" in done.stderr
+    assert sorted(os.listdir(dest / "skills")) == ["write-ru"], "nothing left: the installed set stays as it was"
     assert sorted(os.listdir(dest.parent)) == ["skills"], "no staging left behind"
     assert install("--empty").returncode == 0 and os.listdir(dest / "skills") == []
+
+
+def test_pruning_takes_out_only_the_refused_skills_and_says_why(tmp_path):
+    skill(tmp_path, "write-ru")
+    skill(tmp_path, "pick-model", "model: opus\n")
+    skill(tmp_path, "run-shell", body="Сначала !`date` потом.\n")
+    (tmp_path / "skills" / "loop").symlink_to(tmp_path / "skills" / "write-ru")
+    (tmp_path / "skills" / ".DS_Store").write_text("")
+    kept, lines = instructions.prune_skills(tmp_path)
+    assert kept == ["write-ru"] and instructions.check_skills(tmp_path) == ["write-ru"]
+    assert [line.split(":")[0] for line in lines] == \
+        ["skipped .DS_Store", "skipped loop", "skipped pick-model", "skipped run-shell"]
+    assert (tmp_path / "skills" / "write-ru" / "SKILL.md").is_file(), "a link is unlinked, never followed"
+
+
+def test_the_lane_host_still_refuses_the_whole_folder_for_one_refused_skill(tmp_path, caplog):
+    """The CLI loads the mounted folder as one plugin: a refused skill left in it would load, hooks and all."""
+    skill(tmp_path, "write-ru")
+    skill(tmp_path, "with-hooks", "hooks:\n  PreToolUse: []\n")
+    assert instructions.usable_skills(str(tmp_path)) is None
+    assert "with-hooks" in caplog.text
+
+
+STRIPPED = {
+    "allowed-tools inline": ("allowed-tools: Bash(git:*) Read\n", ["allowed-tools"]),
+    "allowed-tools as a list": ("allowed-tools:\n  - Bash\n  - Read\n", ["allowed-tools"]),
+    "allowed-tools as an indentless list": ("allowed-tools:\n- Bash\n- Read\n", ["allowed-tools"]),
+    "an agent's tools and model": ("tools: Read, Write\nmodel: opus\n", ["tools", "model"]),
+    "hooks": ("hooks:\n  PreToolUse:\n    - matcher: \"*\"\n      hooks:\n        - type: command\n"
+              "          command: touch /tmp/x\n", ["hooks"]),
+    "context and agent": ("context: fork\nagent: Explore\neffort: max\n", ["context", "agent", "effort"]),
+}
+
+
+@pytest.mark.parametrize("form", STRIPPED)
+def test_the_macs_sync_strips_the_refused_keys_and_names_the_skill_after_its_folder(tmp_path, form):
+    front, keys = STRIPPED[form]
+    folder = tmp_path / "skills" / "acme-review"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(f"---\nname: review\ndescription: >\n  Reviews.\n{front}"
+                                     "license: MIT\n---\nBody: `hooks:` stays text.\n")
+    kept, lines = instructions.prune_skills(tmp_path, strip=True)
+    assert kept == ["acme-review"] and lines == [f"stripped acme-review: {', '.join(keys)}"]
+    text = (folder / "SKILL.md").read_text()
+    assert instructions.frontmatter_keys(text) == ["name", "description", "license"]
+    assert text.startswith("---\nname: acme-review\n") and text.endswith("Body: `hooks:` stays text.\n")
+
+
+def test_stripping_reads_lines_so_what_it_cannot_read_is_still_refused(tmp_path):
+    """A smuggled key is no top-level `key:` line, so it is not stripped, and the strict check refuses the skill."""
+    for name, front in [("quoted", "\"hooks\": {}\n"), ("merge", "<<: {hooks: {}}\n"), ("flow", "{hooks: {}}\n")]:
+        skill(tmp_path, name, front)
+    kept, lines = instructions.prune_skills(tmp_path, strip=True)
+    assert kept == [] and all(line.startswith("skipped") for line in lines) and len(lines) == 3
+    assert instructions.main(["prune-skills", "--strip", str(tmp_path)]) == 0, "nothing left to refuse"
+
+
+def test_the_sync_gathers_own_plugin_and_desktop_skills_and_prints_the_commands(tmp_path):
+    claude, desktop, out = tmp_path / "claude", tmp_path / "desktop", tmp_path / "out"
+    skill(claude, "write-ru")
+    skill(tmp_path / "elsewhere", "linked-own")
+    (claude / "skills" / "linked-own").symlink_to(tmp_path / "elsewhere" / "skills" / "linked-own")
+    plugin = tmp_path / "cache" / "acme" / "acme-skills" / "1.0.0"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        '{"name": "acme-skills", "skills": ["./eng/skills/tdd"]}')
+    skill(plugin / "eng", "tdd", "disable-model-invocation: true\nallowed-tools: Bash\n")  # listed in plugin.json
+    skill(plugin, "write-ru")  # in the plugin's own skills/
+    skill(plugin / "draft", "unlisted")  # neither
+    (claude / "settings.json").write_text('{"enabledPlugins": {"acme-skills@acme": true, "off@acme": false}}')
+    (claude / "plugins").mkdir()
+    (claude / "plugins" / "installed_plugins.json").write_text(
+        f'{{"version": 2, "plugins": {{"acme-skills@acme": [{{"scope": "user", "installPath": "{plugin}"}}]}}}}')
+    app = desktop / "acct" / "org"
+    skill(app, "pdf")
+    skill(app, "morning")
+    skill(app, "off-skill")
+    (app / ".claude-plugin").mkdir()
+    (app / ".claude-plugin" / "plugin.json").write_text('{"name": "anthropic-skills"}')
+    (app / "manifest.json").write_text('{"skills": [{"name": "pdf", "enabled": true}, {"name": "morning"},'
+                                       ' {"name": "off-skill", "enabled": false}]}')
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "CLAUDE_CONFIG_DIR": str(claude),
+           "RETINUE_DESKTOP_SKILLS": str(desktop), "RETINUE_SKILLS_OUT": str(out),
+           "RETINUE_SKILLS_EXCLUDE": "anthropic-morning"}
+    done = subprocess.run(["bash", str(ROOT / "deploy" / "skills" / "sync-skills.sh")], capture_output=True,
+                          text=True, env=env)
+    assert done.returncode == 0, done.stderr
+    assert instructions.check_skills(out) == ["acme-tdd", "anthropic-pdf", "linked-own", "write-ru"]
+    tdd = (out / "skills" / "acme-tdd" / "SKILL.md").read_text()
+    assert tdd.startswith("---\nname: acme-tdd\n") and "disable-model-invocation: true" in tdd
+    assert "allowed-tools" not in tdd and "stripped acme-tdd: allowed-tools" in done.stdout
+    assert "skipped acme-skills:write-ru: the owner's own write-ru wins" in done.stdout
+    assert "excluded anthropic-morning" in done.stdout
+    assert f"rsync -r --delete '{out}/skills/' '<ssh-host>:retinue-skills/'" in done.stdout
+    assert "ssh -t <ssh-host> 'sudo bash /opt/retinue/deploy/skills/install-skills.sh ~/retinue-skills'" in done.stdout
+    (out / "notes.txt").write_text("mine\n")
+    again = subprocess.run(["bash", str(ROOT / "deploy" / "skills" / "sync-skills.sh")], capture_output=True,
+                           text=True, env=env)
+    assert again.returncode == 1 and (out / "notes.txt").exists(), "a folder with more than skills/ is not emptied"
 
 
 def test_the_check_runs_as_a_plain_script_with_the_hosts_python(tmp_path):

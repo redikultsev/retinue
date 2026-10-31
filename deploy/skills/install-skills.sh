@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # The owner's skills for the lanes: each folder of <source> that holds a SKILL.md (a folder of skills, as
 # ~/.claude/skills on the Mac) is copied into /srv/retinue/skills/skills, checked as the lane host checks it
-# (retinue/instructions.py: no link, no hook, no inline shell, nothing but skills) and swapped in whole. The room
-# (lane-private) mounts /srv/retinue/skills read-only; a session's next run sees the new set, no restart.
+# (retinue/instructions.py: no link, no hook, no inline shell, nothing but skills) and swapped in whole. A skill the
+# check refuses is left out and named, the rest go in; the set is refused, and the installed one stays, only when
+# every skill is refused or the whole is over the bounds. The room (lane-private) mounts /srv/retinue/skills
+# read-only; a session's next run sees the new set, no restart.
 #
-#   sudo bash deploy/skills/install-skills.sh ~/retinue-skills    # from the Mac: rsync -rL (links as files)
+#   sudo bash deploy/skills/install-skills.sh ~/retinue-skills    # from the Mac: deploy/skills/sync-skills.sh
 #   sudo bash deploy/skills/install-skills.sh --empty             # no skills
 set -euo pipefail
 
@@ -29,6 +31,7 @@ if [[ $src != --empty ]]; then
     fi
   done
 fi
+python3 -I "$REPO/retinue/instructions.py" prune-skills "$new"   # one refused skill costs only itself
 chmod -R u=rwX,go=rX "$new"
 if [[ $(id -u) == 0 ]]; then chown -R root:root "$new"; fi
 python3 -I "$REPO/retinue/instructions.py" check-skills "$new"

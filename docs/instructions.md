@@ -89,17 +89,23 @@ A plugin folder can bring more than skills, and under `--setting-sources ""` the
 plugin's `hooks/hooks.json`, a skill's own `hooks` in its frontmatter — command hooks outside the sandbox — and MCP
 servers, agents and commands. So the folder is a plugin with nothing but skills, checked by `check_skills` in the
 install script before it is in place and by the lane host again before every run (refused: run without skills, the
-reason in the lane's log):
+reason in the lane's log). The install script takes out each skill the check refuses, names it and installs the rest;
+the lane host cannot: the CLI loads the mounted folder as one plugin, every skill in it, so a refused skill left there
+would load with its hooks — there the whole folder is refused:
 
 - `skills/` and nothing else at the top (no `.claude-plugin/`, `hooks/`, `.mcp.json`, `agents/`, `commands/`);
 - in `skills/`, one folder per skill (`a-z 0-9 . _ -`), each with a `SKILL.md` that has a frontmatter, beside it any
   files and folders (references, scripts);
 - no link anywhere, nothing but files and folders, at most 5000 entries and 64 MiB;
 - a frontmatter in a plain subset of YAML with only the keys `name`, `description`, `when_to_use`, `argument-hint`,
-  `version`, `license`, `metadata` — none of them behaviour in 2.1.304 (`version` is bookkeeping, the next three are
-  text, `metadata` and `license` it does not read for a skill), only `metadata` holding a mapping. Every other key is
-  refused: `hooks` (run outside the sandbox), `allowed-tools`, `model`, `shell`, `paths`, `context`, `agent` and
-  whatever a later CLI adds. The CLI parses a frontmatter with Bun's full YAML, so a line-by-line look is not enough:
+  `version`, `license`, `metadata`, `compatibility`, `disable-model-invocation`, `user-invocable` — none of them grants
+  a tool or a model or runs anything (`version` is bookkeeping, `when_to_use` and `argument-hint` are text; `metadata`,
+  `license` and `compatibility` the CLI "accepts but doesn't act on"; `disable-model-invocation: true` keeps a skill out
+  of the model's listing, so only your `/skills:<name>` loads it, and `user-invocable: false` hides it from the `/`
+  menu — [the skills page](https://code.claude.com/docs/en/skills#frontmatter-reference); the last three are read from
+  the docs, not probed), only `metadata` holding a mapping. Every other key is refused: `hooks` (run outside the
+  sandbox), `allowed-tools`, `model`, `effort`, `shell`, `paths`, `context`, `agent`, an agent's `tools` and whatever a
+  later CLI adds. The CLI parses a frontmatter with Bun's full YAML, so a line-by-line look is not enough:
   `"hooks":`, `'hooks':`, a flow mapping, a merge key (`<<:`) and a complex key (`? hooks`) each register the hook
   (pinned in `tests/test_probes.py`). The check reads `key: value` lines, plain or one-line quoted values and block
   scalars, and refuses every other line: quoted keys, flow collections, `<<`, `?`, anchors, aliases, tags, a tab, a
@@ -110,18 +116,34 @@ reason in the lane's log):
 
 ### Installing them
 
-The source is yours: any folder with one folder per skill, as `~/.claude/skills` on your Mac. Only what is in it goes
-to the server. From the Mac (`-L` copies a linked skill as files: the check refuses links):
+The source is yours: the skills your Claude Code on the Mac has. `deploy/skills/sync-skills.sh` puts them together in
+one folder — each folder of `~/.claude/skills` under its own name (a linked one as its files), each enabled plugin's
+skills (`enabledPlugins` in `settings.json`, the install paths in `plugins/installed_plugins.json`, the skills its
+`plugin.json` lists and those in its `skills/`) and the desktop app's enabled `anthropic-skills` (its newest
+`manifest.json`) under the plugin's name as a prefix: `acme-tdd`, `anthropic-pdf`. The lanes load one plugin,
+`skills`, so the prefix is what keeps two skills of one name apart; a plugin's skill whose own name is one of yours is
+left out, yours wins. Each `SKILL.md` gets its folder's name (the CLI takes the command from `name`) and loses the keys
+the check refuses — said, skill by skill (`stripped acme-review: allowed-tools, model`); a skill the check
+still refuses (inline shell, a frontmatter off the subset) is left out and named. Then it checks the whole as the
+server will and prints the two commands, or runs them when you give it the server's ssh host:
 
 ```bash
-rsync -rL --delete ~/.claude/skills/ server:retinue-skills/
+bash deploy/skills/sync-skills.sh              # put together, check, print the commands
+bash deploy/skills/sync-skills.sh server       # and send and install: the two commands below
+rsync -r --delete <folder>/skills/ server:retinue-skills/
 ssh -t server 'sudo bash /opt/retinue/deploy/skills/install-skills.sh ~/retinue-skills'
 ```
 
-The script copies each folder that holds a `SKILL.md` (anything else is skipped, named), makes it root's and
-world-readable, checks it with the server's own `python3` and swaps `/srv/retinue/skills/skills` in whole; a refused
-set leaves the installed one as it was. The next run of a session sees the new set — no restart. `--empty` removes
-them all. `setup.sh` creates the empty `/srv/retinue/skills` once.
+Where things are comes from the environment (`CLAUDE_CONFIG_DIR`, `RETINUE_DESKTOP_SKILLS`, `RETINUE_SKILLS_OUT`,
+`RETINUE_REMOTE_SKILLS`, `RETINUE_REMOTE_REPO`); `RETINUE_SKILLS_EXCLUDE` leaves named skills out — a desktop skill
+for a tool the server has not (`anthropic-computer-use`) still costs its line in every listing. A skill built into the
+app or the CLI rather than kept in a folder is not there to send.
+
+The install script copies each folder that holds a `SKILL.md` (anything else is skipped, named), takes out each skill
+the check refuses (named), makes the rest root's and world-readable, checks them with the server's own `python3` and
+swaps `/srv/retinue/skills/skills` in whole; a set with no skill left, or over the bounds, is refused and leaves the
+installed one as it was. The next run of a session sees the new set — no restart. `--empty` removes them all.
+`setup.sh` creates the empty `/srv/retinue/skills` once.
 
 A skill written for the Mac may name Mac paths (`~/Desktop/…`, your own folders): on the server those are not there, and
 the session says so rather than guessing.

@@ -4,6 +4,7 @@ unread turn, the router's pushed digest — the digest's checks and caps, and th
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 
@@ -130,6 +131,115 @@ def test_a_press_on_her_row_goes_to_the_router_as_a_note_checked_by_its_shape_on
         assert note["data"] == {"t": TOKEN, "action": "later"}, "the router alone knows what the token names"
         status, _, _ = await world.call("POST", "/api/waiting/press", {"t": TOKEN, "action": "done"}, cookie="x")
         assert status == 401, "the owner's login only"
+
+    faced(tmp_path, body)
+
+
+GMAIL = "https://mail.google.com/mail/?authuser=me@example.com#all/18c2f0a1b2c3d4e5"
+
+
+def sheet(**over) -> dict:
+    return {"kind": "letter", "who": "Acme Hosting", "account": "me@example.com",
+            "asks": [{"need": "pay", "text": "The invoice for May.\nDue on Friday.", "deadline": "Friday", "at": NOW,
+                      "open": {"url": GMAIL, "label": "Open in Gmail"}}],
+            "more": 0, "open": {"url": GMAIL, "label": "Open in Gmail"}, **over}
+
+
+def test_a_sheet_is_taken_only_in_its_shape_with_links_of_the_routers_own_shapes():
+    taken = feed.clean_detail(sheet(who="Ivan <ivan@corp.example>"))
+    assert taken["asks"][0]["text"] == "The invoice for May.\nDue on Friday.", "lines kept"
+    assert taken["who"] == "Ivan <‹address›>", "a name, never an address"
+    assert feed.clean_detail(sheet(asks=[{"need": "reply", "text": "Mail me at x@y.example‮", "at": NOW}])) \
+        ["asks"][0]["text"] == "Mail me at ‹address›", "masked again, invisible characters dropped"
+    chat = {"url": "https://t.me/anna_example", "label": "Open the chat"}
+    assert feed.clean_detail(sheet(kind="chat", open=chat))["open"] == chat
+    for bad in ({"url": "https://evil.example/#all/18c2f0a1b2c3d4e5", "label": "Open in Gmail"},
+                {"url": "tg://user?id=123456789", "label": "Open the chat"},
+                {"url": "javascript:alert(1)", "label": "Open the chat"},
+                {"url": GMAIL, "label": "Open the chat"},
+                {"url": GMAIL + "?x", "label": "Open in Gmail"},
+                {"url": GMAIL, "label": "Open in Gmail", "x": 1}):
+        with pytest.raises(feed.Refused, match="link"):
+            feed.clean_detail(sheet(open=bad))
+    for bad in (sheet(kind="deadline"), sheet(address="anna@acme.example"), sheet(asks=[{"need": "read", "text": "",
+                "at": NOW}]), sheet(asks="x"), sheet(asks=[sheet()["asks"][0]] * 11), sheet(more=-1),
+                sheet(draft={"text": "Hi", "channel": "mail", "subject": "", "expires": NOW, "state": "shown"}),
+                {"kind": "letter", "who": "A"}):
+        with pytest.raises(feed.Refused):
+            feed.clean_detail(bad)
+    draft = feed.clean_detail(sheet(kind="draft", draft={"text": "Hello,\nyes.", "channel": "mail", "subject": "Re: May",
+                                                         "expires": NOW + HOUR, "state": "link"}))
+    assert draft["draft"]["text"] == "Hello,\nyes." and draft["draft"]["state"] == "link"
+
+
+def test_a_sheet_is_asked_of_the_router_by_its_long_call_and_relayed_never_kept(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        private_draft = item(4, id="draft:0000000d", kind="draft", who=feed.PRIVATE_WHO, sphere="home")
+        rows = [item(1, t=TOKEN), item(2, id="letter:000000000002", kind="letter"),
+                item(3, id="draft:0000000c", kind="draft"), private_draft, deadline(5)]
+        assert (await world.owner("waiting", {"items": rows}))["ok"]
+        feed_rows = {r["ref"]: r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]}
+        assert feed_rows["letter:000000000002"].get("private") and feed_rows["draft:0000000d"].get("private")
+        assert not feed_rows["chat:000000000001"].get("private") and not feed_rows["draft:0000000c"].get("private")
+
+        async def router(answer):
+            status, said = await world.post("/owner/waiting/asked", {})
+            assert status == 200
+            for ask in said["asked"]:
+                assert set(ask) <= {"r", "ref", "t"}, "the row's id and token, nothing else"
+                status, done = await world.post("/owner/waiting/detail", {"r": ask["r"], **answer(ask)})
+                assert status in (200, 400) and done.get("waited") is not False, done
+            return said["asked"]
+
+        opened = asyncio.create_task(world.call("POST", "/api/waiting/detail", {"ref": "chat:000000000001", "t": TOKEN}))
+        [ask] = await router(lambda ask: {"detail": sheet(kind="chat", open={"url": "https://t.me/anna_example",
+                                                                             "label": "Open the chat"})})
+        assert ask == {"r": ask["r"], "ref": "chat:000000000001", "t": TOKEN}
+        status, said, response = await opened
+        assert status == 200 and said["detail"]["open"]["url"] == "https://t.me/anna_example"
+        assert response.headers["Cache-Control"] == "no-store"
+        kept = json.dumps([list(r) for t in ("notes", "assistant_digest") for r in
+                           world.platform.store.db.execute(f"SELECT * FROM {t}")], ensure_ascii=False)
+        assert "anna_example" not in kept and "invoice" not in kept, "relayed, never written"
+
+        for answer, code in ((lambda ask: {"detail": None}, 410), (lambda ask: {"failed": True}, 502),
+                             (lambda ask: {"detail": sheet(open={"url": "https://evil.example", "label": "x"})}, 502)):
+            opened = asyncio.create_task(world.call("POST", "/api/waiting/detail", {"ref": "chat:000000000001",
+                                                                                   "t": TOKEN}))
+            await router(answer)
+            assert (await opened)[0] == code
+        for bad, code in (({"ref": "chat:000000000001"}, 410), ({"ref": "chat:000000000001", "t": "f" * 32}, 410),
+                          ({"ref": "letter:000000000002"}, 410), ({"ref": "draft:0000000d"}, 410),
+                          ({"ref": deadline(5)["id"]}, 410), ({"ref": "chat:000000000009", "t": TOKEN}, 410),
+                          ({"ref": "../x"}, 400), ({"ref": "chat:000000000001", "t": "x"}, 400)):
+            assert (await world.call("POST", "/api/waiting/detail", bad))[0] == code, bad
+        assert world.platform.details.waiting == {} and world.platform.details.queued == {}
+        status, _ = await world.post("/owner/waiting/asked", {}, {})
+        assert status == 401, "the router's token only"
+        assert (await world.call("POST", "/api/waiting/detail", {"ref": "draft:0000000c"}, cookie="x"))[0] == 401
+
+    faced(tmp_path, body)
+
+
+def test_a_sheet_nobody_answers_ends_its_wait_and_gives_its_place_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(feed, "DETAIL_WAIT_S", 0.2)
+    monkeypatch.setattr(feed.Details.wait, "__defaults__", (0.2,))
+
+    async def body(world: FaceWorld):
+        await world.login()
+        assert (await world.owner("waiting", {"items": [item(3, id="draft:0000000c", kind="draft")]}))["ok"]
+        status, _, _ = await world.call("POST", "/api/waiting/detail", {"ref": "draft:0000000c"})
+        assert status == 504
+        assert world.platform.details.waiting == {} and world.platform.details.queued == {}, "nothing left behind"
+        opened = [asyncio.create_task(world.call("POST", "/api/waiting/detail", {"ref": "draft:0000000c"}))
+                  for _ in range(feed.DETAIL_PENDING + 1)]
+        assert sorted(s for s, _, _ in await asyncio.gather(*opened)) == [429] + [504] * feed.DETAIL_PENDING
+        dropped = asyncio.create_task(world.call("POST", "/api/waiting/detail", {"ref": "draft:0000000c"}))
+        await asyncio.sleep(0.05)
+        dropped.cancel()  # the app went away: its place comes back
+        await asyncio.sleep(0.3)
+        assert world.platform.details.waiting == {}
 
     faced(tmp_path, body)
 

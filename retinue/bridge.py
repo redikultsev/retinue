@@ -35,6 +35,7 @@ from .channels.telegram import TelegramChannel, TelegramError, rows_of
 from . import inbox, pings
 from .core import ALBUM_S, defuse
 from .courier import CardView
+from .feed import DETAIL_HOLD_S
 from .mail import Unavailable
 from .outbox import Neighbour
 from .outfiles import ACTIVE, PHOTO_MAX, PHOTOS
@@ -102,6 +103,17 @@ class PlatformClient(Neighbour):
         its refusal, not silence: the same digest is not pushed again every look."""
         return await self._digest("/owner/waiting", body)
 
+    async def asked(self) -> list[dict]:
+        """The rows the app opened and waits to hear about (`/owner/waiting/asked`): the platform holds the call open
+        until there are any, at most `feed.DETAIL_HOLD_S`."""
+        data = await self._call("POST", "/owner/waiting/asked", {}, DETAIL_HOLD_S + 15)
+        asked = data.get("asked") if isinstance(data, dict) else None
+        return [a for a in asked if isinstance(a, dict)] if isinstance(asked, list) else []
+
+    async def detail(self, body: dict) -> dict:
+        """A row's sheet, the answer to one of them (`/owner/waiting/detail`), with a short wait."""
+        return await self._digest("/owner/waiting/detail", body)
+
     async def library(self, body: dict) -> dict:
         """The hub's list of pages for «Read» (`/owner/library`), the same way as the digest."""
         return await self._digest("/owner/library", body)
@@ -134,6 +146,9 @@ class PlatformBridge:
         self.counts: Callable[[float], dict] | None = None  # its two numbers: closed today, run out in the week
         # A press on a row of it in the app (`waiting.press`): the row's token and the mark; False — not known.
         self.press_waiting: Callable[[str, str, float], bool] | None = None
+        # A row's sheet the app asked for (`waiting.detail`): its id, its token, now; None — the router does not know it.
+        self.detail_waiting: Callable[[str, str, float], dict | None] | None = None
+        self._detailing: asyncio.Task | None = None
         self._looked, self._pushed, self._pushed_mark = 0.0, 0.0, ""
         self._pushing: asyncio.Task | None = None
         # The hub's pages for the face's «Read» (`Lifehub.library`): None until the hub has read them.
@@ -153,6 +168,8 @@ class PlatformBridge:
             log.exception("the albums left by the previous router were not taken up")
         if self.waiting is not None or self.library is not None:  # beside the notes: a hung push holds back no card
             self._pushing = asyncio.create_task(self.push_loop())
+        if self.detail_waiting is not None:  # and the sheets the app asks for, beside both: none waits behind a card
+            self._detailing = asyncio.create_task(self.detail_loop())
         wait = PUMP_S
         while True:
             try:
@@ -229,6 +246,39 @@ class PlatformBridge:
             log.warning("the platform refused the assistant's digest: %s", answer["error"])
         self._pushed, self._pushed_mark = now, mark
         return True
+
+    async def detail_loop(self) -> None:
+        """The rows the app opens, answered as soon as asked: a long call for what was asked (`PlatformClient.asked`),
+        then each answered on its own. Nothing of it goes through the notes' journal, so a sheet never waits behind a
+        card Telegram is slow to take. The platform away: tried again, waiting twice as long each time, up to
+        BACKOFF_MAX_S — the app has given up on what it asked by then, and asks again."""
+        wait = PUMP_S
+        while True:
+            try:
+                for ask in await self.neighbour.asked():
+                    await self.answer_detail(ask, time.time())
+                wait = 0.0
+            except Unavailable as exc:
+                wait = min(max(wait, PUMP_S) * 2, BACKOFF_MAX_S)
+                log.warning("the app's sheets not taken: %s (next try in %.0f s)", exc, wait)
+            except Exception:
+                log.exception("the app's sheets not taken")
+                wait = PUMP_S
+            await asyncio.sleep(wait)
+
+    async def answer_detail(self, ask: dict, now: float) -> None:
+        """One sheet, built by the router (`waiting.detail`) and sent back by the request's number; a failure to build it
+        is said as `failed`, so the app hears at once rather than at its wait's end. Logged by number only: what a
+        sheet says never reaches the log."""
+        number = str(ask.get("r") or "")
+        try:
+            body = {"r": number, "detail": self.detail_waiting(str(ask.get("ref") or ""), str(ask.get("t") or ""), now)}
+        except Exception:
+            log.exception("the sheet for request %s was not built", number)
+            body = {"r": number, "failed": True}
+        answer = await self.neighbour.detail(body)
+        if answer.get("error"):
+            log.warning("the platform refused the sheet for request %s: %s", number, answer["error"])
 
     def poke(self) -> None:
         """The digest changed by the owner's hand: looked at and pushed on the push loop's next turn, not in 30 s."""

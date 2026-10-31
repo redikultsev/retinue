@@ -319,6 +319,8 @@ class Face:
             web.get("/api/library", self.library), web.post("/api/library/{id}/{action:open|done}", self.library_act),
             # «Waiting for you»: a press on the assistant's row, for the router to apply (`feed.PRESSES`).
             web.post("/api/waiting/press", self.waiting_press),
+            # …and its sheet: what the row is about and where it is, asked of the router (`feed.Details`).
+            web.post("/api/waiting/detail", self.waiting_detail),
             # The owner's voice (`speech.py`): a recording in, its text out.
             web.post("/api/speech", self.speech)])
         app.on_startup.append(self._sweep)
@@ -432,6 +434,36 @@ class Face:
             return _error(400, "Need t — the row's token — and action: done, dismissed, later or open.")
         self.store.add_note("waiting-press", "", {"t": token, "action": action})
         return web.json_response({"ok": True})
+
+    async def waiting_detail(self, request: web.Request) -> web.Response:
+        """A row of «From the assistant» opened `{ref, t?}`: what it is about and where it is — her judgement, the
+        sender, the deadline, the letter's thread or the chat — which only the router has. Asked of it through
+        `feed.Details` (the row's id and token, nothing else) and answered when the router has taken it, within
+        `feed.DETAIL_WAIT_S`; relayed, never kept. Only a row of the digest on record — a person's with its own token, or
+        a draft that is not the private matter's: 410 when it is not there any more or the router no longer knows it,
+        504 when the router is silent, 502 when its answer is off the contract."""
+        body = await _body(request)
+        ref, token = body.get("ref"), body.get("t")
+        items, _, _ = self.platform.feed.digest()
+        row = next((i for i in items if isinstance(ref, str) and i["id"] == ref), None)
+        if not isinstance(ref, str) or not feed.DIGEST_ID.fullmatch(ref) or \
+                (token is not None and (not isinstance(token, str) or not feed.TOKEN.fullmatch(token))):
+            return _error(400, "Need ref — the row's id — and t, its token, on a person's row.")
+        if row is None or (row["kind"] in ("letter", "chat") and (token is None or row.get("t") != token)) or \
+                (row["kind"] == "draft" and (not feed.DRAFT_REF.fullmatch(ref) or row["who"] == feed.PRIVATE_WHO)) or \
+                row["kind"] == "deadline":
+            return _error(410, "This row is no longer in the list.")
+        details = self.platform.details
+        number = details.ask(ref, token)
+        if number is None:
+            return _error(429, "Too many rows asked at once — try again in a moment.")
+        how, detail = await details.wait(number)
+        if how == "ok":
+            return web.json_response({"detail": detail})
+        if how == "gone":
+            return _error(410, "The assistant no longer has this row: the list is out of date.")
+        return _error(504 if how == "late" else 502, "The assistant's side did not answer in time." if how == "late"
+                      else "The assistant's side could not say — try again.")
 
     async def library(self, request: web.Request) -> web.Response:
         """«Read»: the hub's pages as the router last pushed them, with what the owner opened and finished."""

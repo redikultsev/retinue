@@ -45,6 +45,9 @@ class FakePlatform:
     async def waiting(self, body):
         return await self.owner("waiting", body)
 
+    async def detail(self, body):
+        return await self.owner("waiting/detail", body)
+
 
 def make(tmp_path, notes=()):
     store = Store(str(tmp_path / "s.db"))
@@ -926,3 +929,55 @@ def test_a_press_in_the_app_is_marked_by_the_router_and_never_holds_back_the_car
     assert said.count(bridge_module.FAILED_PRESS) == 2, "the fault and the malformed note: told, no details"
     assert said[-1].startswith("Permission"), "the card behind a failed press went out"
     assert platform.confirmed == [5]
+
+
+def test_a_sheet_the_app_asked_for_is_answered_by_its_number_and_a_failure_is_said_as_such(tmp_path, caplog):
+    ch, bridge, platform = make(tmp_path)
+    sheet = {"kind": "chat", "who": "Anna", "asks": [], "more": 0}
+    seen = []
+
+    def built(ref, token, now):
+        seen.append((ref, token))
+        if ref == "chat:2":
+            raise RuntimeError("secret words of hers")
+        return sheet if ref == "chat:1" else None
+
+    bridge.detail_waiting = built
+    platform.answers = {"waiting/detail": {"ok": True, "waited": True}}
+
+    async def run():
+        await bridge.answer_detail({"r": "a" * 16, "ref": "chat:1", "t": "f" * 32}, 1.0)
+        await bridge.answer_detail({"r": "b" * 16, "ref": "draft:0000000c"}, 1.0)
+        await bridge.answer_detail({"r": "c" * 16, "ref": "chat:2", "t": "e" * 32}, 1.0)
+
+    asyncio.run(run())
+    assert seen == [("chat:1", "f" * 32), ("draft:0000000c", ""), ("chat:2", "e" * 32)]
+    assert [body for _, body in platform.calls] == [{"r": "a" * 16, "detail": sheet}, {"r": "b" * 16, "detail": None},
+                                                   {"r": "c" * 16, "failed": True}]
+    assert "c" * 16 in caplog.text, "logged by its number"
+
+
+def test_the_sheets_loop_takes_what_was_asked_beside_the_notes_and_waits_when_the_platform_is_away(tmp_path,
+                                                                                                    monkeypatch):
+    ch, bridge, platform = make(tmp_path)
+    asks = [[{"r": "a" * 16, "ref": "draft:0000000c"}], Unavailable("unavailable: the platform (ConnectError)")]
+    sleeps = []
+
+    async def asked():
+        if not asks:
+            raise asyncio.CancelledError
+        given = asks.pop(0)
+        if isinstance(given, Exception):
+            raise given
+        return given
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    platform.asked = asked
+    bridge.detail_waiting = lambda ref, token, now: None
+    monkeypatch.setattr(bridge_module.asyncio, "sleep", sleep)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(bridge.detail_loop())
+    assert [body for call, body in platform.calls if call == "waiting/detail"] == [{"r": "a" * 16, "detail": None}]
+    assert sleeps == [0.0, bridge_module.PUMP_S * 2], "at once after an answer; backing off when the platform is away"

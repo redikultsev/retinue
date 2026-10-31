@@ -437,3 +437,71 @@ def test_letters_read_before_their_head_was_kept_get_it_from_the_archive(tmp_pat
     room.core = c
     assert room.heads(NOW) == 2 and room.heads(NOW) == 0
     assert opened(c.mail.store) == [], "now it is"
+
+
+# --- a row's sheet: asked by the app for one row, answered to that request only ------------------------------------
+
+THREAD = "18c2f0a1b2c3d4e5"
+
+
+def test_a_persons_sheet_says_her_words_masked_and_where_the_thread_is_never_the_letter(tmp_path):
+    c = core(tmp_path)
+    data = {"box": "INBOX", "thread": THREAD, "head": {"message_id": "<m1@example.org>", "reply_to": ""}}
+    put(c.mail.store, asking("pay", data=data), asking("pay", message_id="<m2@example.org>", ts=NOW - HOUR, data={
+        **data, "head": {"message_id": "<m2@example.org>", "reply_to": ""}}))
+    c.mail.store.db.execute("UPDATE mail_items SET card = json_set(card, '$.text', ?, '$.quote', ?, "
+                            "'$.deadline_now', ?) WHERE seq = 2",
+                            ("Pay the invoice 12345678 at https://pay.example/x?t=1 or call +1 555 010 0199.\nBy Friday.",
+                             "VERBATIM QUOTE", "Fri"))
+    [row] = waiting.digest(c, NOW)
+    sheet = waiting.detail(c, row["id"], row["t"], NOW)
+    gmail = {"url": f"https://mail.google.com/mail/?authuser=me@example.com#all/{THREAD}", "label": "Open in Gmail"}
+    assert sheet["kind"] == "letter" and sheet["who"] == "Анна Петрова" and sheet["open"] == gmail
+    assert [a["at"] for a in sheet["asks"]] == [NOW - HOUR, NOW - 2 * HOUR], "newest first"
+    assert sheet["asks"][0]["text"] == "Pay the invoice ‹number› at ‹link› or call ‹number›.\nBy Friday."
+    assert sheet["asks"][0]["deadline"] == "Fri" and sheet["asks"][0]["open"] == gmail
+    said = json.dumps(sheet, ensure_ascii=False)
+    assert "VERBATIM" not in said and "anna@example.org" not in said, "no quote, no sender's address"
+    assert feed.clean_detail(sheet) == sheet, "the platform takes it as it is"
+    assert waiting.detail(c, row["id"], "0" * 32, NOW) is None, "a token it never showed"
+    assert waiting.detail(c, row["id"], row["t"], NOW + waiting.ROW_S + 1) is None, "a list older than a day"
+    waiting.press(c, row["t"], "done", NOW)
+    assert waiting.detail(c, row["id"], row["t"], NOW + 60) is None, "nothing under it asks any more"
+
+
+def test_a_chats_sheet_opens_the_chat_by_its_username_or_has_no_link(tmp_path):
+    c = core(tmp_path)
+    chat = {"source": "telegram", "account": "telegram", "data": {"chat": "777", "username": "anna_example",
+                                                                   "name": "Анна"}}
+    put(c.mail.store, {**chat, "fields": {"state": "later", "kind": "chat", "sender": "tg:777", "ts": NOW - HOUR,
+                                          "card": {"text": "Is a transfer needed?", "needs_now": "reply"}}},
+        {**chat, "data": {"chat": "888", "username": "", "name": "Пётр"},
+         "fields": {"state": "later", "kind": "chat", "sender": "tg:888", "ts": NOW - HOUR,
+                    "card": {"text": "Photos?", "needs_now": "reply"}}})
+    anna, petr = sorted(waiting.digest(c, NOW), key=lambda r: r["who"] != "Анна")
+    sheet = waiting.detail(c, anna["id"], anna["t"], NOW)
+    assert sheet["kind"] == "chat" and sheet["account"] == "" and \
+        sheet["open"] == {"url": "https://t.me/anna_example", "label": "Open the chat"}
+    bare = waiting.detail(c, petr["id"], petr["t"], NOW)
+    assert "open" not in bare and "open" not in bare["asks"][0], "no @username: Telegram's id links open nothing"
+    assert feed.clean_detail(sheet) and feed.clean_detail(bare)
+
+
+def test_a_drafts_sheet_has_its_text_and_its_letter_and_a_private_one_none(tmp_path):
+    c = core(tmp_path)
+    put(c.mail.store, asking(data={"box": "INBOX", "thread": THREAD, "head": {"message_id": "<m1@example.org>",
+                                                                               "reply_to": ""}}))
+    draft(c.outbox.store, "aaaa0001", reply_to="e<m1@example.org>", envelope={
+        "name": "Анна Петрова", "to": "anna@example.org", "account": "me@example.com", "subject": "Re: hosting",
+        "text": "Hello Anna,\n\nPaid, ref 99887766, code 4321.\n\nThanks", "thread": THREAD})
+    draft(c.outbox.store, "aaaa0002", private=1)
+    draft(c.outbox.store, "aaaa0003", expires=NOW - 1)
+    sheet = waiting.detail(c, "draft:aaaa0001", "", NOW)
+    assert sheet["kind"] == "draft" and sheet["who"] == "Анна Петрова" and sheet["account"] == "me@example.com"
+    assert sheet["draft"] == {"text": "Hello Anna,\n\nPaid, ref ‹number›, code ••••.\n\nThanks", "channel": "mail",
+                              "subject": "Re: hosting", "expires": NOW + HOUR, "state": "shown"}
+    assert sheet["open"]["url"].endswith(f"#all/{THREAD}") and sheet["asks"][0]["need"] == "reply"
+    assert "anna@example.org" not in json.dumps(sheet, ensure_ascii=False)
+    assert feed.clean_detail(sheet) == sheet
+    assert waiting.detail(c, "draft:aaaa0002", "", NOW) is None, "the private matter's draft waits behind «Show»"
+    assert waiting.detail(c, "draft:aaaa0003", "", NOW) is None and waiting.detail(c, "draft:ffff0000", "", NOW) is None

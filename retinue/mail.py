@@ -471,6 +471,12 @@ class MailStore:
         row = self.db.execute(f"SELECT {self._COLUMNS} FROM mail_items WHERE seq = ?", (seq,)).fetchone()
         return self._item(row) if row else None
 
+    def by_event(self, event_id: str) -> dict | None:
+        """The item kept as this archive event: the letter or message a draft answers (`drafts.reply_to`)."""
+        row = self.db.execute(f"SELECT {self._COLUMNS} FROM mail_items WHERE event_id = ? ORDER BY seq DESC LIMIT 1",
+                              (event_id,)).fetchone() if event_id else None
+        return self._item(row) if row else None
+
     def next_plain(self, now: float) -> dict | None:
         """The next item no model reads — his own letter, a calendar change — whatever its age: on record before her
         judgement of what came with it, so she sees whether he has answered."""

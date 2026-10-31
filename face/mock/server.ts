@@ -23,8 +23,8 @@ const now = () => Date.now() / 1000;
 const ASKS = [
   { key: "assistant:chat:1", source: "chat", sphere: "travel", sphere_title: "travel", title: "Anna Petrova", since: now() - 6 * 3600, essence: "reply: is an airport transfer needed", ref: "chat:1", t: "a".repeat(32) },
   { key: "assistant:letter:2", source: "letter", sphere: "home", sphere_title: "home", title: "Acme Hosting", since: now() - 2 * 86400, essence: "pay: the hosting invoice for May · deadline Friday (+2)", ref: "letter:2", t: "b".repeat(32) },
-  { key: "assistant:chat:3", source: "chat", sphere: null, sphere_title: null, title: "Ivan Example", since: now() - 9 * 86400, essence: "decide: whether to keep the shared server for another year or move everything to the new provider before the old contract renews on its own", ref: "chat:3", t: "c".repeat(32) },
-  { key: "assistant:letter:4", source: "letter", sphere: null, sphere_title: null, title: "Example Bank", since: now() - 4 * 86400, essence: "decide: a card payment of $30 was declined · deadline today", ref: "letter:4", t: "d".repeat(32) },
+  { key: "assistant:chat:3", source: "chat", sphere: null, sphere_title: null, title: "Ivan Example", since: now() - 9 * 86400, essence: "decide: which of the two venues to book for the team dinner, the one by the river or the one near the office, before both stop holding the date", ref: "chat:3", t: "c".repeat(32) },
+  { key: "assistant:letter:4", source: "letter", sphere: null, sphere_title: null, title: "Example Bank", since: now() - 4 * 86400, essence: "decide: confirm a sign-in from a new device · deadline today", ref: "letter:4", t: "d".repeat(32) },
 ];
 /** The others of hers: a draft waiting for «Send», and the private matter's row (no token, no sheet). */
 const OTHERS = [

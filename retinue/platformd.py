@@ -100,6 +100,7 @@ class Platform:
         self._sending: set[str] = set()  # runs whose `/run` is awaiting its answer
         self.out = outfiles.OutFiles(store, cfg.out_store_mb, cfg.out_day_mb)  # what sessions hand over from `out/`
         self.feed = feed.Feed(store, cfg)  # «Waiting for you»: the face's home and `/wait`, with the assistant's digest
+        self.details = feed.Details()  # a row's sheet of hers, relayed from the router to the app and never kept
         self.library = library_mod.Library(store, cfg)  # «Read»: the hub's pages, as the router pushes them
         self._looking = asyncio.Lock()
         pings.prepare(store)
@@ -132,6 +133,8 @@ class Platform:
                         web.post("/owner/file", self.owner_file), web.post("/owner/sphere", self.owner_sphere),
                         web.post("/owner/spheres", self.owner_spheres),
                         web.post("/owner/waiting", self.owner_waiting), web.post("/owner/feed", self.owner_feed),
+                        web.post("/owner/waiting/asked", self.owner_waiting_asked),
+                        web.post("/owner/waiting/detail", self.owner_waiting_detail),
                         web.post("/owner/library", self.owner_library), web.post("/owner/stats", self.owner_stats),
                         web.post("/items", self.items),
                         web.post("/items/confirm", self.confirm)])
@@ -293,6 +296,31 @@ class Platform:
             return web.json_response({"error": str(exc)}, status=400)
         self.feed.keep(items, bot, now, chips, counts)
         return web.json_response({"ok": True, "items": len(items)})
+
+    async def owner_waiting_asked(self, request: web.Request) -> web.Response:
+        """The router's long call for the rows the app opened (`feed.Details.asked`): `{asked: [{r, ref, t?}]}` as soon
+        as there are any, or empty after `feed.DETAIL_HOLD_S`."""
+        return web.json_response({"asked": await self.details.asked(feed.DETAIL_HOLD_S)})
+
+    async def owner_waiting_detail(self, request: web.Request) -> web.Response:
+        """The router's answer to a row's sheet the app asked for (`feed.Details`): `{r, detail}`, `detail` null when
+        the router no longer knows the row. Checked (`feed.clean_detail`) and handed to the waiting request — never
+        kept, never logged; a refused one is said to the router by its error alone."""
+        if request.content_length is None or request.content_length > feed.DETAIL_BYTES:
+            return web.json_response({"error": f"detail over {feed.DETAIL_BYTES} bytes"}, status=413)
+        body = await _body(request)
+        number = body.get("r")
+        if not isinstance(number, str) or not feed.DETAIL_REQUEST.fullmatch(number) or \
+                ("detail" not in body and body.get("failed") is not True):
+            return web.json_response({"error": "Need r — the request's number — and detail, or failed."}, status=400)
+        if body.get("failed") is True:
+            return web.json_response({"ok": True, "waited": self.details.answer(number, feed.Refused("not built"))})
+        try:
+            detail = None if body["detail"] is None else feed.clean_detail(body["detail"])
+        except feed.Refused as exc:
+            self.details.answer(number, exc)
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"ok": True, "waited": self.details.answer(number, detail)})
 
     async def owner_library(self, request: web.Request) -> web.Response:
         """The hub's list of pages from the router (`library.clean`), replacing the one before it whole."""

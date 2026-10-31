@@ -27,15 +27,17 @@ ahead) is no one's queue: the face shows it only under «Deadlines». The same p
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
+import secrets
 import unicodedata
 from datetime import date
 from typing import TYPE_CHECKING
 
 from . import questions
-from .courier import line
+from .courier import INVISIBLE, line
 from .tobase import files_word
 
 if TYPE_CHECKING:
@@ -76,6 +78,23 @@ CHIP_LEVELS = ("ok", "warn", "bad")
 CHIP_CHARS = 60
 EMAIL = re.compile(r"[^\s@<>()\[\]\"',;]+@[^\s@<>()\[\]\"',;]+\.[^\s@<>()\[\]\"',;]+")
 ADDRESS = "‹address›"
+# A row's sheet (`Details`): asked of the router for one row when the owner opens it, relayed, never kept.
+DETAIL_WAIT_S = 12.0         # the app's request waits this long for the router's answer: its pulls and the build
+DETAIL_PENDING = 8           # requests waiting at once, at most
+DETAIL_HOLD_S = 25.0         # the router's long call for what was asked is held open this long, at most
+DETAIL_BYTES = 24 * 1024
+DETAIL_REQUEST = re.compile(r"[0-9a-f]{16}")
+DETAIL_KINDS = ("letter", "chat", "draft")
+DETAIL_NEEDS = ("reply", "decide", "pay", "attend", "act")
+DETAIL_ASKS = 10
+DETAIL_JUDGED, DETAIL_DEADLINE, DETAIL_ADDRESS, DETAIL_DRAFT = 700, 40, 120, 4000
+DRAFT_REF = re.compile(r"draft:[0-9a-f]{8}")
+DRAFT_STATES = ("shown", "hidden", "link")
+# Where a thing is, in the only shapes the router makes: a Gmail thread in a mailbox, a Telegram chat.
+LINKS = {"Open in Gmail": re.compile(r"https://mail\.google\.com/mail/\?authuser=[^\s@/?#&]{1,64}@[^\s@/?#&]{1,190}"
+                                     r"#all/[0-9a-f]{10,24}"),
+         "Open the chat": re.compile(r"https://t\.me/[A-Za-z][A-Za-z0-9_]{3,31}")}
+PRIVATE_WHO = "Private"      # who the owner's private matter's row names: no one (`waiting`)
 
 
 class Refused(ValueError):
@@ -158,6 +177,133 @@ def _deadline(item: dict, n: int) -> dict:
     return out
 
 
+def _words(value: object, cap: int, field: str) -> str:
+    """Her words or a draft's for the sheet: a string, invisible characters dropped, lines kept, anything shaped as an
+    e-mail address written as ‹address› (the router masked them; this is the second look), cut."""
+    if not isinstance(value, str):
+        raise Refused(f"{field}: not a string")
+    kept = EMAIL.sub(ADDRESS, "".join(c for c in unicodedata.normalize("NFKC", value)
+                                      if unicodedata.category(c) not in INVISIBLE or c == "\n"))
+    return kept if len(kept) <= cap else kept[:cap - 1] + "…"
+
+
+def _link(value: object, field: str) -> dict:
+    """`{url, label}` of one of LINKS' shapes, with the label that goes with it; anything else refuses the sheet."""
+    if not isinstance(value, dict) or set(value) != {"url", "label"} or value["label"] not in LINKS or \
+            not isinstance(value["url"], str) or not LINKS[value["label"]].fullmatch(value["url"]):
+        raise Refused(f"{field}: not a link of a known shape")
+    return {"url": value["url"], "label": value["label"]}
+
+
+def _time(value: object, field: str) -> float:
+    if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+        raise Refused(f"{field}: not a time")
+    return float(value)
+
+
+def clean_detail(body: object) -> dict:
+    """A row's sheet from the router (`waiting.detail`), checked as the digest is — its fields, their types and caps,
+    a link only of a shape the router makes — before it goes to the app. Relayed, never kept."""
+    if not isinstance(body, dict) or set(body) - {"kind", "who", "account", "asks", "more", "draft", "open"} \
+            or not {"kind", "who", "asks"} <= set(body) or body["kind"] not in DETAIL_KINDS:
+        raise Refused("detail: wrong fields")
+    asks = body["asks"]
+    if not isinstance(asks, list) or len(asks) > DETAIL_ASKS:
+        raise Refused("asks: not a list")
+    out_asks = []
+    for n, ask in enumerate(asks):
+        if not isinstance(ask, dict) or set(ask) - {"need", "text", "deadline", "at", "open"} or \
+                not {"need", "text", "at"} <= set(ask) or ask["need"] not in DETAIL_NEEDS:
+            raise Refused(f"asks[{n}]: wrong fields")
+        out_asks.append({"need": ask["need"], "text": _words(ask["text"], DETAIL_JUDGED, f"asks[{n}].text"),
+                         "deadline": line(_words(ask.get("deadline", ""), 4 * DETAIL_DEADLINE, f"asks[{n}].deadline"),
+                                          DETAIL_DEADLINE),
+                         "at": _time(ask["at"], f"asks[{n}].at"),
+                         **({"open": _link(ask["open"], f"asks[{n}].open")} if "open" in ask else {})})
+    more = body.get("more", 0)
+    if type(more) is not int or not 0 <= more <= COUNT_MAX:
+        raise Refused("more: not a number")
+    out = {"kind": body["kind"], "who": _text(_words(body["who"], 4 * WHO_CHARS, "who"), WHO_CHARS),
+           "account": line(body.get("account", "") if isinstance(body.get("account", ""), str) else "", DETAIL_ADDRESS),
+           "asks": out_asks, "more": more}
+    if "open" in body:
+        out["open"] = _link(body["open"], "open")
+    if "draft" in body:
+        draft = body["draft"]
+        if body["kind"] != "draft" or not isinstance(draft, dict) or \
+                set(draft) != {"text", "channel", "subject", "expires", "state"} or \
+                draft["channel"] not in ("mail", "telegram") or draft["state"] not in DRAFT_STATES:
+            raise Refused("draft: wrong fields")
+        out["draft"] = {"text": _words(draft["text"], DETAIL_DRAFT, "draft.text"), "channel": draft["channel"],
+                        "subject": line(_words(draft["subject"], 4 * TITLE_CHARS, "draft.subject"), TITLE_CHARS),
+                        "expires": _time(draft["expires"], "draft.expires"), "state": draft["state"]}
+    return out
+
+
+class Details:
+    """The relay of a row's sheet. The app asks (`ask`: the row's id and token, queued in memory); the router's own
+    long call (`asked`, `POST /owner/waiting/asked`) takes what was asked as soon as it is, and the router answers by
+    the request's number (`answer`); the app's request, still waiting, gets it. The platform never calls the router, and
+    nothing goes through the notes' journal: a request is not held back behind the cards, and none outlives the app's
+    wait. What the router said is held only while that request waits — never written, never logged; an answer nobody
+    waits for any more is dropped."""
+
+    def __init__(self) -> None:
+        self.waiting: dict[str, asyncio.Future] = {}
+        self.queued: dict[str, dict] = {}  # asked, not yet taken by the router: number → {r, ref, t?}
+        self._asked = asyncio.Event()
+
+    def ask(self, ref: str, token: str | None) -> str | None:
+        """A new request's number, queued for the router; None while DETAIL_PENDING already wait."""
+        if len(self.waiting) >= DETAIL_PENDING:
+            return None
+        number = secrets.token_hex(8)
+        self.waiting[number] = asyncio.get_running_loop().create_future()
+        self.queued[number] = {"r": number, "ref": ref, **({"t": token} if token else {})}
+        self._asked.set()
+        return number
+
+    async def asked(self, hold: float) -> list[dict]:
+        """What the app asked and the router has not taken — at once, or as soon as something is, or nothing after
+        `hold` seconds."""
+        if not self.queued:
+            self._asked.clear()
+            try:
+                await asyncio.wait_for(self._asked.wait(), hold)
+            except TimeoutError:
+                return []
+        taken = list(self.queued.values())
+        self.queued.clear()
+        return taken
+
+    async def wait(self, number: str, timeout: float = DETAIL_WAIT_S) -> tuple[str, dict | None]:
+        """How it went and the sheet: `ok` with it; `gone` — the router does not know the row any more; `refused` —
+        what it said was off the contract; `late` — it said nothing in time. However it ends — the app gone too — the
+        request is forgotten."""
+        try:
+            detail = await asyncio.wait_for(self.waiting[number], timeout)
+        except TimeoutError:
+            return "late", None
+        except Refused:
+            return "refused", None
+        finally:
+            self.waiting.pop(number, None)
+            self.queued.pop(number, None)
+        return ("ok", detail) if detail is not None else ("gone", None)
+
+    def answer(self, number: str, detail: dict | None | Refused) -> bool:
+        """The router's answer to a request — the sheet, None, or why it was refused; False when no request of that
+        number waits."""
+        future = self.waiting.get(number)
+        if future is None or future.done():
+            return False
+        if isinstance(detail, Refused):
+            future.set_exception(detail)
+        else:
+            future.set_result(detail)
+        return True
+
+
 def clean_chips(body: object) -> list[dict]:
     """The hub's status chips beside the digest: `chips: [{key, text, level}]`, at most one of each key, or none. One
     off the contract refuses the whole push (`Refused`), as an item does."""
@@ -212,6 +358,13 @@ def spheres(cfg) -> dict[str, dict]:
         if isinstance(get("name"), str):
             out[get("name")] = {"title": str(get("title") or get("name")), "icon": str(get("icon") or "")}
     return out
+
+
+def _private(item: dict) -> bool:
+    """The owner's private matter in her digest: a letter's row with no token, or a draft that names no one. Its
+    words and buttons wait behind «Show» in Telegram; the app never asks for its sheet."""
+    return (item["kind"] in ("letter", "chat") and not item.get("t")) or \
+        (item["kind"] == "draft" and item["who"] == PRIVATE_WHO)
 
 
 class Feed:
@@ -324,7 +477,7 @@ class Feed:
         out["assistant"] = [{"key": f"assistant:{i['id']}", "action": "assistant", "source": i["kind"],
                              "session": None, "track": None, **self._sphere(i.get("sphere")), "title": i["who"],
                              "since": i["since"], "essence": i["title"], "ref": i["id"],
-                             **({"t": i["t"]} if i.get("t") else {})}
+                             **({"t": i["t"]} if i.get("t") else {}), **({"private": True} if _private(i) else {})}
                             for i in items if i["since"] <= now]  # a deadline days ahead waits under «Deadlines» only
         return [row for action, _ in ACTIONS for row in out[action]]
 

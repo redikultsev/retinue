@@ -199,6 +199,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/files/{id}/meta` | `{file}` — one file's row, for the page `/f/<id>` that Telegram's “Open” opens |
 | `GET /api/feed` | `{schema, count, groups: [{action, title, rows}], bot, assistant_at, deadlines, chips, closed_today, expired_week}` — “Waiting for you”, “Deadlines” and the status chips, [below](#the-feed) |
 | `POST /api/waiting/press {t, action: done\|dismissed\|later\|open}` | `{ok}`: “Done”, “Not a task”, “Tomorrow” or “Undo” on a row of “From the assistant”, by its token; the router applies it ([platform.md](platform.md#the-assistants-digest)) |
+| `POST /api/waiting/detail {ref, t?}` | `{detail}`: [a row's sheet](#her-rows-sheet) of “From the assistant” — a person's row by its id and token, a draft by its id — asked of the router and relayed, never kept; 410 when the row is not in the digest any more or the router no longer knows it, 504 when the router said nothing within 12 s, 502 when what it said was off the contract, 429 while 8 already wait |
 | `GET /api/stats` | `{schema, now, weeks: [tally…]}` — the platform's tally (`signals.tally`) of the last eight seven-day spans, the newest first, for “Week” ([below](#week)) |
 | `POST /api/sessions/{id}/base` | `{toast, card}`: “To the Base” — the session's card opened, or its open one brought up to date ([base.md](base.md#the-button)); `card` null and the reason when it has nothing to commit |
 | `GET /api/base/{id}` | `{card}` — one card, for the link a Telegram copy's “Open in the app” opens (`/b/<id>`) |
@@ -559,14 +560,15 @@ session, a card or a summary changes on the stream (once per burst) and once a m
 | “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted (“To the Base: N files”, since the first of them) | “Allow” / “Deny”; a courier's “Copy command”; “To the Base · N”, the card in a dialog. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first: nothing is decided unseen |
 | “Choose” | a ping of the last 7 days whose suggested replies are still open ([platform.md](platform.md#pings): none pressed, nothing written into the session after it, no newer ping); a session waiting with no card shown | its replies as under the summary (`{reply: {seq, n}}`): pressed here or in Telegram, one goes in once and the ping closes in both places; no replies — “Open and answer” |
 | “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
-| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and ↗ “Open in Telegram” (`https://t.me/<bot>`): sending and deciding stay there, under her cards' buttons ([mail.md](mail.md#closing-what-waits)); the private matter's row has only ↗ — its buttons come after “Show” in Telegram |
+| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and the way to the thing. A person's row or a draft — its words, or › “Details” — opens [its sheet](#her-rows-sheet); a base's date — its words, or ↗ “Open the Record” — opens the Record in Spaces; the private matter's row has only ↗ “Open in Telegram” (`https://t.me/<bot>`): its words and buttons come after “Show” there. Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |
 
 Each row: an icon of where it came from, its sphere (or track), the session's title (her rows: who), how long it has
 waited and its one line — the question, the command, the summary's first line, her title. A card is the same object
 as everywhere (`approval`), decided by the same rules; the app shows its newest copy, so a press in Telegram shows at
 once. A row is `{key, action, source, session, track, sphere, sphere_title, sphere_icon, title, since, essence, ref}`
 plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row, `replies` and `summary` on a choice's,
-`base` (the count) on a “To the Base” row (`source: base`), `t` (the row's token) on a person's row of hers.
+`base` (the count) on a “To the Base” row (`source: base`), `t` (the row's token) on a person's row of hers, `private:
+true` on the private matter's row of hers (a letter's row with no token, or a draft that names no one).
 A pressed row leaves the feed at once and stays hidden while the feed still has its `t`, ten minutes at most — a press
 that did not go through brings it back; the toast “Done · Undo” stays 10 seconds, and “Undo” sends `open`
 with the same `t`. Under her rows: “Closed today: M · Ran out unmarked this week: N” (`closed_today`,
@@ -575,6 +577,37 @@ with the same `t`. Under her rows: “Closed today: M · Ran out unmarked this w
 hours says so. `deadlines`: the digest's dates, `{id, when, title, sphere, sphere_title, sphere_icon, path}` by day —
 the next week's and the overdue, also those days ahead that wait for no one yet (“Deadlines” on “Today”). `chips`: the
 hub's status chips `{key, text, level}` as the router last pushed them (`[]` before). A sphere's title and icon come from `platform.yaml`'s spheres when they are there.
+
+
+### Her row's sheet
+
+A tap on a person's row of hers or on a draft opens a sheet — a bottom sheet on a phone, a panel in the middle on a
+wider screen. What the digest already says shows at once: who, where it came from, the sphere, how long it waits, her
+one line. The rest only the router has, so the sheet asks for it (`POST /api/waiting/detail`) and fills in a moment
+later, “Asking the assistant…” meanwhile:
+
+- **what they ask** — each item still open under the row, newest first, at most 10 (“And N older — in Telegram.”):
+  her ask (Reply, Decide, Pay, Attend, Do), her words about it, its deadline in her words, when it came — with every
+  address, link, phone number and run of four digits masked as in the digest. Never the letter's text, its verbatim
+  quote or the sender's address;
+- **a draft's text** with its subject, and until when its «Send» waits (or that it goes by its link), and what it
+  answers;
+- the mailbox it came to (“to you@example.com”), and a line on what to do by her most pressing ask.
+
+At the bottom, the way to where the thing is — the router builds it from the ids it holds, never from her words, and
+the platform and the app each draw only these shapes: **“Open in Gmail”**
+(`https://mail.google.com/mail/?authuser=<mailbox>#all/<threadId>`: the thread in the mailbox it came to), **“Open
+the chat”** (`https://t.me/<username>`; a person with no @username has no link that opens the chat — Telegram's
+`tg://user?id=` is for bots and its apps ignore it — so the sheet says so), and her chat with you: **“Ask the
+assistant”**, or **“Send in Telegram”** first on a draft, whose card is there. Then “Done”, “Not a task” and
+“Tomorrow”, as on the row. Inside the Mini App a t.me link goes to Telegram itself (`web_app_open_tg_link`) and
+Gmail to its browser (`web_app_open_link`), each from the tap itself.
+
+The sheet never asks for the private matter's row, and a draft of it is refused on both sides. When the router is
+silent the sheet says “The assistant's side did not answer in time.” with “Try again”; when the row is out of date
+it says so, drops the buttons and reads the feed again. Nothing of the sheet is kept: not by the platform (it relays
+the router's answer to the request that waits for it — [platform.md](platform.md#the-assistants-digest)), not by the
+app once the sheet closes.
 
 ## Pages
 

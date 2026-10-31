@@ -145,6 +145,23 @@ get «The press did not apply: the list is out of date.». Applying it is wrappe
 «The press did not apply: a server error. Try again.», and the note is confirmed, so a press never holds back
 the cards behind it.
 
+**A row's sheet** ([face.md](face.md#her-rows-sheet)) needs what only the router has — her judgement whole, the
+deadline, where the letter or the chat is, a draft's text — and the digest stays minimal, so the router is asked for
+it one row at a time, when the owner opens it, and the platform relays the answer without keeping it. The face takes
+`POST /api/waiting/detail {ref, t?}` — a row of the digest on record: a person's with its own token, or a draft that
+is not the private matter's — and queues `{r, ref, t?}` in memory, `r` a fresh number. The router keeps its own long
+call open beside the notes' pump (`bridge.detail_loop`): `POST /owner/waiting/asked` answers `{asked: [...]}` as soon
+as anything is asked, or empty after 25 s. So a sheet never waits behind a card Telegram is slow to take, and nothing
+of it enters the notes' journal. The router builds each sheet from its own tables (`waiting.detail`) — a token's
+items as `press` reads them, only those still open; a draft by its id — and answers `POST /owner/waiting/detail
+{r, detail}` (`detail: null`: it does not know the row any more; `failed: true`: building it failed, logged by `r`
+only). The platform checks it (`feed.clean_detail`: its fields, their types and caps, a link only of the router's own
+shapes) and hands it to the request still waiting; an answer nobody waits for is dropped. A request waits 12 s at
+most, 8 at once; whatever ends it, the face going away too, forgets it. The sheet carries her words and a draft's
+text masked as the digest's title is (`waiting.masked`), a link to the Gmail thread or the person's @username, and the
+owner's own mailbox — never the letter's text, its quote or the sender's address. It is held in the platform's memory
+only while the face's request waits: never written, never logged.
+
 The same push carries the hub's **status chips** (`waiting.chips`, the hub's own «now» chips): `[{key, text, level}]`,
 `key` one of `health`, `backup`, `limit`, `build` at most once each, `level` `ok`, `warn` or `bad`, the text folded and
 cut to 60 characters — the build's said without its age («hub built»), so the digest does not change every

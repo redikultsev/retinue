@@ -26,6 +26,11 @@ leave the router. The router keeps `t → numbers` in its kv for ROW_S since it 
 app (`press`) marks exactly the items the owner saw, whatever the router or the platform did since; a token it does
 not know is refused. Beside the rows go two numbers (`counts`): asks closed today and asks that ran out unmarked in
 the week — no list of them.
+
+What a row is about goes only when the owner opens it in the app (`detail`), one row at a time and to that request
+alone — the digest itself never widens: her words and a draft's text masked as the title is (`masked`), and where the
+thing is, built from the ids the router holds — the Gmail thread in the mailbox it came to, the chat by the person's
+@username. Never the letter's text, its verbatim quote or the sender's address; nothing of the private matter.
 """
 
 from __future__ import annotations
@@ -37,10 +42,11 @@ import re
 import secrets
 import unicodedata
 from datetime import timedelta
+from urllib.parse import quote
 
 from . import clock
-from .courier import line
-from .feed import CHIP_CHARS, DIGEST_BYTES, DIGEST_ITEMS, EMAIL, RECORD, SPHERE
+from .courier import INVISIBLE, line
+from .feed import CHIP_CHARS, DIGEST_BYTES, DIGEST_ITEMS, EMAIL, PRIVATE_WHO, RECORD, SPHERE
 from .lifehub import NEEDS, midnight, named, plural
 from .mail import ASKS, MARKS, PRIVATE, Private, ask_row, later_until
 from .outbox import LIVE
@@ -48,7 +54,6 @@ from .proactive import FIELDS, PUSH_DAYS
 
 DAY = 86400
 URGENCY = {need: n for n, need in enumerate(ASKS)}
-PRIVATE_WHO = "Private"      # the private matter's one row: no name, no sender
 BASE_WHO = "The Base"        # a deadline's row: a Record's date, no person
 TEXT_CHARS = 120             # a Record's title
 SOON_DAYS = 7                # «Deadlines» on the face's «Today»: a Record's date this many days ahead at most
@@ -62,6 +67,15 @@ BYTES_ROOM = 1024            # the digest is cut this far below the platform's l
 URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:/\S*)?")
 PHONE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
 DIGITS = re.compile(r"\d{4,}")
+DETAIL_ASKS = 10             # a row's sheet names its newest items, this many at most
+JUDGED_CHARS = 700           # her judgement, whole (`mail.EVENT_SCHEMA` caps it here)
+DEADLINE_CHARS = 40
+ADDRESS_CHARS = 120
+DRAFT_CHARS = 4000           # a draft's text in the sheet
+DRAFT_REF = re.compile(r"draft:([0-9a-f]{8})")
+THREAD = re.compile(r"[0-9a-f]{10,24}")             # Gmail's threadId
+MAILBOX = re.compile(r"[^\s@/?#&]{1,64}@[^\s@/?#&]{1,190}")
+USERNAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{3,31}")  # a Telegram @username, as t.me takes it
 LINK_DRAFT = "draft: send it yourself by the link"
 DRAFT = "a reply draft waits for «Send»"
 
@@ -130,6 +144,84 @@ def press(core, token: str, action: str, now: float) -> bool:
     core.mail.store.mark(seqs, action, now, later_until(now, core.tz) if action == "later" else None)
     return True
 
+
+def detail(core, ref: str, token: str, now: float) -> dict | None:
+    """What a row is about, for the app's sheet (`feed.Details`): asked for one row when the owner opens it, answered to
+    that request and to nothing else. A person's row by its token — those of the items the router showed under it that
+    still ask, newest first; a draft by its id. Her judgement and a draft's text with codes, numbers, links and
+    addresses masked as in the digest (`masked`), and where the thing is (`open`: the Gmail thread, the Telegram chat by
+    its @username) — never the letter's text, its verbatim quote or the sender's address. None when the token is not
+    known, nothing under it asks any more, the draft no longer waits, or the row is the owner's private matter."""
+    if match := DRAFT_REF.fullmatch(ref):
+        return _draft_detail(core, match[1], now)
+    seqs = set(_rows(core, now).get(token) or ()) if token and core.mail else set()
+    items = [item for item in core.mail.store.asks(now, _sent(core)) if item["seq"] in seqs] if seqs else []
+    if not items or any(ask_row(item) == PRIVATE for item in items):
+        return None
+    items.sort(key=lambda i: -float(i["ts"] or i["at"] or 0))
+    first = items[0]
+    chat = first["source"] == "telegram"
+    card, data = first["card"] or {}, first["data"] or {}
+    who = named(str(data.get("name") or ""), "") if chat else named(str(card.get("who") or ""), str(first["sender"] or ""))
+    return {"kind": "chat" if chat else "letter", "who": who, "account": "" if chat else line(first["account"], ADDRESS_CHARS),
+            "asks": [_ask(item, now) for item in items[:DETAIL_ASKS]], "more": max(0, len(items) - DETAIL_ASKS),
+            **({"open": link} if (link := _open(first)) else {})}
+
+def _ask(item: dict, now: float, link: bool = True) -> dict:
+    card = item["card"] or {}
+    return {"need": str(card.get("needs_now") or "reply"), "text": masked(_judged(item), JUDGED_CHARS),
+            "deadline": said(str(card.get("deadline_now") or ""))[:DEADLINE_CHARS], "at": float(item["ts"] or item["at"] or now),
+            **({"open": found} if link and (found := _open(item)) else {})}
+
+def _draft_detail(core, draft_id: str, now: float) -> dict | None:
+    """A draft waiting for «Send»: to whom, its text, until when it waits, and the letter or chat it answers."""
+    found = core.outbox.store.get(draft_id) if core.outbox else None
+    if not found or found["state"] not in LIVE or found["expires"] <= now or found["private"]:
+        return None
+    envelope, mail = found["envelope"] or {}, found["channel"] == "mail"
+    answered = core.mail.store.by_event(str(found["reply_to"] or "")) if core.mail else None
+    if answered and ask_row(answered) == PRIVATE:
+        return None
+    link = _open(answered) if answered else \
+        _mail_link(str(envelope.get("account") or ""), str(envelope.get("thread") or "")) if mail else None
+    return {"kind": "draft", "who": named(str(envelope.get("name") or ""), str(envelope.get("to") or "") if mail else ""),
+            "account": line(str(envelope.get("account") or ""), ADDRESS_CHARS) if mail else "",
+            "asks": [_ask(answered, now, link=False)] if answered and (answered["card"] or {}).get("needs_now") in ASKS
+            else [], "more": 0,
+            "draft": {"text": masked(str(envelope.get("text") or ""), DRAFT_CHARS), "channel": "mail" if mail else "telegram",
+                      "subject": said(str(envelope.get("subject") or "")), "expires": float(found["expires"]),
+                      "state": found["state"]}, **({"open": link} if link else {})}
+
+def _judged(item: dict) -> str:
+    """Her words for the owner about an item: her judgement, else triage's summary."""
+    card = item["card"] or {}
+    return str(card.get("text") or card.get("summary") or "")
+
+def masked(text: str, cap: int) -> str:
+    """Longer words for the sheet, masked as `said` masks the digest's — every address, link, phone number and run of
+    four digits — with their lines kept and invisible characters dropped."""
+    text = unicodedata.normalize("NFKC", text)
+    text = "".join(c for c in text if unicodedata.category(c) not in INVISIBLE or c == "\n")
+    lines = [" ".join(part.split()) for part in text.strip().splitlines()]
+    text = DIGITS.sub("••••", PHONE.sub("‹number›", URL.sub("‹link›", EMAIL.sub("‹address›", "\n".join(lines)))))
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text if len(text) <= cap else text[:cap - 1] + "…"
+
+def _open(item: dict) -> dict | None:
+    """Where an item is: its Gmail thread in the mailbox it came to, or the Telegram chat by the person's @username —
+    built from the ids the router holds, never from anything in her words. A chat with no @username has no link that
+    opens it (Telegram's `tg://user?id=` is ignored by its apps): none."""
+    data = item["data"] or {}
+    if item["source"] == "telegram":
+        username = str(data.get("username") or "")
+        return {"url": f"https://t.me/{username}", "label": "Open the chat"} if USERNAME.fullmatch(username) else None
+    return _mail_link(str(item["account"] or ""), str(data.get("thread") or "")) if item["source"] == "mail" else None
+
+def _mail_link(account: str, thread: str) -> dict | None:
+    if not THREAD.fullmatch(thread) or not MAILBOX.fullmatch(account):
+        return None
+    return {"url": f"https://mail.google.com/mail/?authuser={quote(account, safe='@')}#all/{thread}",
+            "label": "Open in Gmail"}
 
 def _token(core, seqs: list[int]) -> str:
     """A row's token: its items' numbers under the router's salt — the same items, the same token, after a restart

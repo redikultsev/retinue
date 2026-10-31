@@ -112,6 +112,25 @@ describe("BaseCardView", () => {
     expect(c.baseSubject.mock.invocationCallOrder[0]!).toBeLessThan(c.baseCommit.mock.invocationCallOrder[0]!);
   });
 
+  it("«Discard» asks once, then puts the chosen files back, and the card ends", async () => {
+    const c = {
+      ...calls(),
+      baseDiscard: vi.fn().mockResolvedValue({ toast: "Discarded: 2 files.", card: card({ state: "discarded", at: 11 }) }),
+    };
+    const store = fakeLive();
+    render(<BaseCardView card={card()} calls={c} live={store} />);
+    fireEvent.click(screen.getByRole("button", { name: "Discard…" }));
+    expect(c.baseDiscard).not.toHaveBeenCalled();
+    const ask = screen.getByRole("group", { name: "Discard" });
+    expect(ask.textContent).toContain("Discard 2 files?");
+    fireEvent.click(within(ask).getByRole("button", { name: "Back" }));
+    expect(screen.queryByRole("group", { name: "Discard" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Discard…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard · 2" }));
+    await waitFor(() => expect(c.baseDiscard).toHaveBeenCalledWith("c0ffee00"));
+    await waitFor(() => expect(store.getState().bases.c0ffee00?.state).toBe("discarded"));
+  });
+
   it("marks nobody's file and says what it is", () => {
     render(<BaseCardView card={card({ files: [{ path: "MAP.md", status: "M", add: 1, del: 0, on: false, shared: false, nobody: true }] })} calls={calls()} live={fakeLive()} />);
     expect(screen.getByTitle("No session changed it")).toBeTruthy();

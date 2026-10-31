@@ -155,6 +155,8 @@ export const api = {
     request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/subject`, { subject }),
   baseCommit: (id: string) => request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/commit`, {}),
   baseCancel: (id: string) => request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/cancel`, {}),
+  /** «Discard»: the files turned on put back as the Base has them; nothing is committed. */
+  baseDiscard: (id: string) => request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/discard`, {}),
   /** «Push»: a repository's push card, opened or brought up to date (the same one Telegram shows). */
   pushOpen: (session: string, repo?: string) =>
     request<PushResponse>(`/api/sessions/${encodeURIComponent(session)}/push`, repo ? { repo } : {}),

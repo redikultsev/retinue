@@ -161,7 +161,7 @@ export interface BaseFile {
   nobody?: boolean;
 }
 
-export type BaseCardState = "shown" | "committing" | "committed" | "failed" | "cancelled" | "stale" | "expired";
+export type BaseCardState = "shown" | "committing" | "committed" | "failed" | "cancelled" | "discarded" | "stale" | "expired";
 
 /** «To the Base»: a session's commit card (retinue/tobase.py), the same object as its Telegram copies. */
 export interface BaseCard {

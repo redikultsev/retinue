@@ -149,6 +149,30 @@ def test_a_commit_carries_the_chosen_files_only_and_leaves_the_rest_as_they_are(
     assert repo.diff(["notes/knowledge/other.md"], 10_000).startswith("--- /dev/null\n+++ b/notes/knowledge/other.md")
 
 
+
+def test_discard_puts_the_chosen_files_back_as_head_has_them_and_only_as_the_card_saw_them(kb):
+    repo, hub, _ = kb
+    head = git(hub, "rev-parse", "main")
+    before = (repo.tree / "notes/AGENTS.md").read_text()
+    (repo.tree / "notes/AGENTS.md").write_text(before + "- строка сессии\n")
+    (repo.tree / "notes/knowledge/new.md").write_text(RECORD.format(id="n", who="x", body="новое"))
+    (repo.tree / "notes/journal/2026-10-01-x.md").unlink()
+    (repo.tree / "notes/knowledge/other.md").write_text(RECORD.format(id="o", who="x", body="другая сессия"))
+    seen = repo.snapshot()
+    chosen = ["notes/AGENTS.md", "notes/knowledge/new.md", "notes/journal/2026-10-01-x.md"]
+    done = run(repo.discard({p: seen.get(p) for p in chosen}))
+    assert sorted(done.files) == sorted(chosen) and done.refused == []
+    assert (repo.tree / "notes/AGENTS.md").read_text() == before
+    assert not (repo.tree / "notes/knowledge/new.md").exists() and (repo.tree / "notes/journal/2026-10-01-x.md").exists()
+    assert repo.changed() == [Change("notes/knowledge/other.md", "A")], "what was not chosen stays as it is"
+    assert git(hub, "rev-parse", "main") == head, "nothing is committed"
+
+    (repo.tree / "notes/knowledge/other.md").write_text("изменён после карточки")
+    done = run(repo.discard({"notes/knowledge/other.md": seen["notes/knowledge/other.md"], "../x": None}))
+    assert done.files == [] and len(done.refused) == 2
+    assert (repo.tree / "notes/knowledge/other.md").read_text() == "изменён после карточки", "never clobbered"
+
+
 def test_a_hub_change_since_the_clone_is_merged_in_and_brought_to_the_tree(kb):
     repo, hub, mac = kb
     (repo.tree / "notes/AGENTS.md").write_text(showcase("- строка сессии"))

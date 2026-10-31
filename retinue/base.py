@@ -84,6 +84,14 @@ class Committed:
 
 
 @dataclass
+class Discarded:
+    """What became of the owner's «Discard»: `files`, the paths put back as the clone's HEAD has them (an added file
+    removed, an edited or deleted one brought back); `refused`, one line per path left as it is, «<path>: <why>»."""
+    files: list[str] = field(default_factory=list)
+    refused: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Refresh:
     head: str                 # the hub's commit the clone is now based on
     updated: list[str] = field(default_factory=list)   # files this refresh wrote, merged or deleted in the tree
@@ -271,6 +279,13 @@ class BaseRepo:
         expect = {path: digest or "" for path, digest in (expect or {}).items()}  # None or '' : no file there
         return await asyncio.to_thread(self._locked, self._commit, paths, subject, body, session, expect)
 
+    async def discard(self, expect: dict[str, str | None], wait: bool = False) -> Discarded | None:
+        """The owner's «Discard»: each path of `expect` put back as the clone's HEAD has it, only if it is still the
+        digest `snapshot()` gave when he saw the card (None or '': no file there). Nothing else of the tree is
+        touched, nothing is committed. None at once while a commit or a refresh holds the clone (`wait` False)."""
+        expect = {path: digest or "" for path, digest in expect.items()}
+        return await asyncio.to_thread(self._locked, self._discard, expect, wait=wait)
+
     # --- the repository -----------------------------------------------------------------------------------------
 
     def _locked(self, work, *args, wait: bool = True):
@@ -413,6 +428,40 @@ class BaseRepo:
         if any(detail.values()):
             said = json.dumps(detail, ensure_ascii=False).encode("utf-8", "replace").decode()
             log.info("base %s %s: %s", kind, head[:12], said[:2000])
+
+    # --- discard ------------------------------------------------------------------------------------------------
+
+    def _discard(self, expect: dict[str, str]) -> Discarded:
+        """Under the lock. A path the hub moved while it was dirty (held) takes the hub's version now: what is
+        discarded is the session's edit, not the hub's."""
+        done = Discarded()
+        if self._head is None:  # before the first refresh nothing is known to put back
+            return Discarded([], [f"{path}: the Base is not ready yet" for path in expect])
+        found = self._walk()
+        for path, digest in expect.items():
+            if clean_path(path) is None or not _utf8(path) or any(_git_dir_name(p) for p in path.split("/")):
+                done.refused.append(f"{path}: not a path in the Base")
+                continue
+            if found.get(path, "") != digest:
+                done.refused.append(f"{path}: changed after the card was opened")
+                continue
+            state = self._read(path)
+            if state.kind not in ("file", "absent"):
+                done.refused.append(f"{path}: {UNFIT.get(state.kind, state.kind).format(mb=self.cfg.max_file_mb)}")
+                continue
+            there = self._head_files.get(path)
+            try:
+                if there is None:
+                    self._remove(path, state)
+                else:
+                    self._put(path, self._blob(there[1]), there[0], state)
+            except (Blocked, OSError):
+                done.refused.append(f"{path}: changed while it was being put back")
+                continue
+            self._hold(path, None)
+            done.files.append(path)
+        self._journal("discard", self._head or "", {"discarded": done.files, "refused": done.refused})
+        return done
 
     # --- refresh ------------------------------------------------------------------------------------------------
 

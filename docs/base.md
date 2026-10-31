@@ -243,7 +243,11 @@ and the press is yours only: through the bridge (the router's token) or the app 
   again.»); while the Base cannot be read, the clock tries again each minute.
 - With no Base configured, rows left from before show nowhere: no count in the app, no feed row, no ping button.
 - A card goes **stale** when the session's next ping comes (the button is on that one), is **cancelled** by «Cancel»
-  (its files stay on the list), **expires** after 7 days like an approval. Its buttons are never spent: the card's
+  (its files stay on the list), **expires** after 7 days like an approval. In the app it can also be **discarded**:
+  «Discard…», asked once, puts each file turned on back as the clone's HEAD has it — an added file deleted, an edited
+  or deleted one restored, a file the hub moved meanwhile taking the hub's version — only if it is as the card showed it
+  and only while the session is not running (`BaseRepo.discard`, under the same lock as a commit; nothing is committed).
+  What did not go back stays, with why. Its buttons are never spent: the card's
   state answers each press.
 
 The feed has a «Decide» row per session with Base files uncommitted («To the Base: N files»), in the app with the button

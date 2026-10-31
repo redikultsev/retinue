@@ -1,6 +1,7 @@
 // «To the Base» (retinue/tobase.py): a session's commit card — the Base files its runs changed, each a toggle, the commit's
-// subject, «Commit», the diff, «Cancel». It is the same card as its Telegram copies: a change here rewrites them,
-// and one there comes here on the stream. Nothing commits without a press; a press is taken once in either place.
+// subject, «Commit», the diff, «Cancel», and — here only, asked once — «Discard», which puts the files turned on back
+// as the Base has them. It is the same card as its Telegram copies: a change here rewrites them, and one there comes
+// here on the stream. Nothing commits without a press; a press is taken once in either place.
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,13 +16,15 @@ import { cn } from "@/lib/utils";
 // The diff renderer (@pierre/diffs and Shiki) is loaded only when the diff is opened.
 const BaseDiff = lazy(() => import("@/components/base-diff").then((m) => ({ default: m.BaseDiff })));
 
-type Calls = Pick<typeof api, "baseToggle" | "baseSubject" | "baseCommit" | "baseCancel" | "baseOpen">;
+type Calls = Pick<typeof api, "baseToggle" | "baseSubject" | "baseCommit" | "baseCancel" | "baseOpen"> &
+  Partial<Pick<typeof api, "baseDiscard">>;
 
 const STATE_WORDS: Record<string, string> = {
   committing: "Committing…",
   committed: "Committed",
   failed: "Not committed",
   cancelled: "Cancelled",
+  discarded: "Discarded",
   stale: "Stale",
   expired: "Expired",
 };
@@ -46,6 +49,8 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
   const [busy, setBusy] = useState(false);
   const [subject, setSubject] = useState(card.subject);
   const [diff, setDiff] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const discard = calls.baseDiscard ?? api.baseDiscard;
   useEffect(() => setSubject(card.subject), [card.subject]);
   const shown = card.state === "shown";
   const chosen = card.files.filter((f) => f.on).length;
@@ -142,6 +147,29 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
         </p>
       )}
       {card.said && <p role="status" className="text-sm whitespace-pre-line">{card.said}</p>}
+      {shown && discarding ? (
+        <fieldset aria-label="Discard" className="flex flex-col gap-2 rounded-md border border-destructive/40 p-3">
+          <p className="text-sm">
+            Discard {filesWord(chosen)}? {chosen === 1 ? "It goes" : "They go"} back to what the Base has: an added file is
+            deleted, an edited one restored. This cannot be undone.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={async () => {
+                await act(() => discard(card.id), "Did not discard.");
+                setDiscarding(false);
+              }}
+            >
+              Discard · {chosen}
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setDiscarding(false)}>
+              Back
+            </Button>
+          </div>
+        </fieldset>
+      ) : (
       <div className="flex flex-wrap gap-2">
         {shown && (
           <Button disabled={busy || chosen === 0} onClick={() => void commit()}>
@@ -156,7 +184,18 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
             Cancel
           </Button>
         )}
+        {shown && (
+          <Button
+            variant="ghost"
+            className="ml-auto text-destructive hover:text-destructive"
+            disabled={busy || chosen === 0}
+            onClick={() => setDiscarding(true)}
+          >
+            Discard…
+          </Button>
+        )}
       </div>
+      )}
       {diff && (
         <Suspense fallback={<p className="text-sm text-muted-foreground">Loading the diff…</p>}>
           <BaseDiff id={card.id} on={card.files.filter((f) => f.on).map((f) => f.path).join("\n")} />

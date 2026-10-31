@@ -98,6 +98,26 @@ class FakeBase:
         return Committed(sha, files, [f"{p}: the hub already has another edit" for p in paths if p in self.conflicts],
                          [f"{p}: the file changed after the card" for p in moved], [])
 
+    async def discard(self, expect: dict, wait: bool = False):
+        now = {p: hashlib.sha256(t.encode()).hexdigest() for p, t in self.tree.items()}
+        done = Discarded([], [])
+        for p, digest in expect.items():
+            if now.get(p, "") != (digest or ""):
+                done.refused.append(f"{p}: changed after the card was opened")
+                continue
+            if p in self.head:
+                self.tree[p] = self.head[p]
+            else:
+                self.tree.pop(p, None)
+            done.files.append(p)
+        return done
+
+
+@dataclass
+class Discarded:
+    files: list
+    refused: list
+
 
 class BaseWorld(FaceWorld):
     """The platform with a `base` track (lane private, folder `base`), the travel sphere on it, and the fake clone."""
@@ -497,6 +517,24 @@ def test_the_app_opens_the_same_card_and_its_decisions_rewrite_the_telegram_copy
         status, data, _ = await world.call("POST", f"/api/base/{card['id']}/toggle", {"path": "x", "on": "yes"})
         assert status == 400
         assert (await world.call("GET", "/api/base/ffffffff"))[0] == 404
+    based(tmp_path, body)
+
+
+
+def test_discard_from_the_app_puts_the_chosen_files_back_and_ends_the_card(tmp_path):
+    async def body(world: BaseWorld):
+        world.fake.head["travel/route.md"] = "старый маршрут\n"
+        world.fake.tree["travel/route.md"] = "старый маршрут\n"
+        a, note, card = await opened(world, "travel/hotel.md", "travel/route.md")
+        assert "Discard" not in [label for label, _ in note["data"]["buttons"]], "the app's, not Telegram's"
+        await world.login()
+        await world.call("POST", f"/api/base/{card['id']}/toggle", {"path": "travel/route.md", "on": False})
+        status, data, _ = await world.call("POST", f"/api/base/{card['id']}/discard", {})
+        assert status == 200 and data["toast"] == "Discarded: 1 file." and data["card"]["state"] == "discarded"
+        assert "travel/hotel.md" not in world.fake.tree and world.fake.tree["travel/route.md"] == "travel/route.md\n"
+        assert world.files(a) == ["travel/route.md"] and world.fake.commits == []
+        status, data, _ = await world.call("POST", f"/api/base/{card['id']}/discard", {})
+        assert data["toast"] == tobase.GONE, "once"
     based(tmp_path, body)
 
 

@@ -204,7 +204,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `POST /api/sessions/{id}/base` | `{toast, card}`: “To the Base” — the session's card opened, or its open one brought up to date ([base.md](base.md#the-button)); `card` null and the reason when it has nothing to commit |
 | `GET /api/base/{id}` | `{card}` — one card, for the link a Telegram copy's “Open in the app” opens (`/b/<id>`) |
 | `GET /api/base/{id}/diff` | `{diff, truncated}`: the files turned on, as the clone has them now, at most 1 MB |
-| `POST /api/base/{id}/toggle {path, on}` · `/subject {subject}` · `/commit` · `/cancel` | `{toast, card}`: by the rules of a Telegram press; every Telegram copy is rewritten |
+| `POST /api/base/{id}/toggle {path, on}` · `/subject {subject}` · `/commit` · `/cancel` · `/discard` | `{toast, card}`: by the rules of a Telegram press; every Telegram copy is rewritten. “Discard” is the app's alone: “Discard…” at the card's foot asks once, then puts the files turned on back as the Base has them ([base.md](base.md)) |
 | `POST /api/sessions/{id}/push {repo?}` | `{toast, card}`: “Push” — a repository's push card opened, or its open one brought up to date ([code.md](code.md#the-button)); `card` null and the reason when there is nothing to push |
 | `GET /api/push/{id}` · `/diff` | `{card}` for the page `/p/<id>`; `{diff, truncated}`: merge-base → the card's tip, at most 1 MB |
 | `POST /api/push/{id}/target {target}` · `/title {title}` · `/send` · `/cancel` | `{toast, card}`: the remote branch, the PR's title, “Push”, “Cancel” — by the rules of a Telegram press |

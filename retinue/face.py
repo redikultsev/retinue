@@ -309,7 +309,7 @@ class Face:
             web.post("/api/sessions/{id}/seen", self.seen), web.post("/api/sessions/{id}/fork", self.fork),
             # «To the Base» (`tobase.py`): the session's commit card, the same one its Telegram copies show.
             web.post("/api/sessions/{id}/base", self.base_open), web.get("/api/base/{id}", self.base_card),
-            web.get("/api/base/{id}/diff", self.base_diff), web.post("/api/base/{id}/{action:toggle|subject|commit|cancel}",
+            web.get("/api/base/{id}/diff", self.base_diff), web.post("/api/base/{id}/{action:toggle|subject|commit|cancel|discard}",
                                                                      self.base_act),
             # «Push» (`topush.py`): a repository's push card, the same one its Telegram copies show.
             web.post("/api/sessions/{id}/push", self.push_open), web.get("/api/push/{id}", self.push_card),
@@ -821,7 +821,7 @@ class Face:
         return web.json_response({"diff": text, "truncated": len(text.encode()) >= tobase.DIFF_LIMIT})
 
     async def base_act(self, request: web.Request) -> web.Response:
-        """A file turned on or off (`{path, on}`), the subject (`{subject}`), «Commit», «Cancel»: by the rules of
+        """A file turned on or off (`{path, on}`), the subject (`{subject}`), «Commit», «Cancel», «Discard»: by the rules of
         a Telegram press, and every Telegram copy rewritten."""
         body, action, tobase_ = await _body(request), request.match_info["action"], self.platform.tobase
         if (card := tobase_.card(request.match_info["id"])) is None:
@@ -836,6 +836,8 @@ class Face:
             toast, _ = tobase_.set_subject(card, body["subject"])
         elif action == "commit":
             toast, _ = await tobase_.commit(card)
+        elif action == "discard":
+            toast, _ = await tobase_.discard(card)
         else:
             toast, _ = tobase_.cancel(card)
         now = tobase_.card(card["id"])

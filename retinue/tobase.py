@@ -27,7 +27,7 @@ changes; taken off when nothing is left. A press opens the card.
 **The card** (`base_cards`, its buttons bound to `base/<id>` in the platform's `buttons`): «To the Base · <sphere or
 track> · session <id>», the files with A/M/D and their +/− lines, each a toggle (on by default), the commit's subject
 (by default `<Space of the first file>: <session title>`, the Base's own style; a reply to the card sets it), how many
-files other sessions have uncommitted (not which), and «Commit» · «Open diff» · «Cancel». The app shows the
+files other sessions have uncommitted (not which), and «Commit» · «Open diff» · «Cancel»; the app adds «Discard». The app shows the
 same card (an event `base`), and a change in one place is the other's: a Telegram press journals an `update` note for
 every copy of the card and an event for the app, a press in the app the same. «Commit» commits the files turned
 on, only if each is as the card showed it (the digest it was opened with; otherwise the card is shown again with
@@ -41,8 +41,12 @@ press — never committed without one (tried again on the clock while the Base c
 approval (7 days), goes stale when the session's next ping comes, and «Cancel» closes it with its files kept on the
 list. A Telegram copy lists what fits in one message, and its «Commit» commits only the files it lists.
 
-Nothing commits without the owner's press: the button is reachable only through the router's token (the bridge) and
-the face's login, never from a lane.
+**Discard** (the app only, asked once there): the files turned on put back as the Base has them — an added file
+removed, an edited or deleted one brought back — each only if it is as the card showed it, and only while the session
+is not running (`base.discard`). Nothing is committed; the card ends `discarded` with what went and what was left.
+
+Nothing commits or is discarded without the owner's press: the button is reachable only through the router's token (the
+bridge) and the face's login, never from a lane.
 """
 
 from __future__ import annotations
@@ -67,7 +71,7 @@ log = logging.getLogger("retinue.tobase")
 
 KEY = "base/"                 # a card's buttons and notes: base/<card id>
 OPEN = "base/open"            # the ping's «To the Base · N»: its digest is the session
-TOGGLE, COMMIT, DIFF, CANCEL = "t:", "commit", "diff", "cancel"
+TOGGLE, COMMIT, DIFF, CANCEL, DISCARD = "t:", "commit", "diff", "cancel", "discard"
 LABELS = {COMMIT: "Commit", DIFF: "Open diff", CANCEL: "Cancel"}
 TTL_S = 7 * 86400             # a card and its buttons live as long as an approval's
 MAX_TOGGLES = 12              # a file toggle per Telegram button; past this the rest are toggled in the app
@@ -139,7 +143,7 @@ class ToBase:
             CREATE TABLE IF NOT EXISTS base_cards (
                 id TEXT PRIMARY KEY,              -- 8 hex; its buttons and notes are base/<id>
                 session TEXT NOT NULL,
-                state TEXT NOT NULL,              -- shown | committing | committed | failed | cancelled | stale | expired
+                state TEXT NOT NULL,              -- shown | committing | committed | failed | cancelled | discarded | stale | expired
                 files TEXT NOT NULL,              -- [{path, status, add, del, on, digest, nobody}], JSON
                 subject TEXT NOT NULL DEFAULT '', -- the owner's; '' = `fallback`
                 fallback TEXT NOT NULL,           -- `<Space>: <title>`
@@ -651,6 +655,33 @@ class ToBase:
                             self.platform.clock()):
             return GONE, None
         return "Cancelled.", self.card(card["id"])
+
+    async def discard(self, card: dict) -> tuple[str, dict | None]:
+        """«Discard»: the files turned on put back as the Base has them, each only if it is as the card showed it."""
+        if card["state"] != "shown":
+            return GONE, None
+        if self.base is None:
+            return NO_BASE, None
+        chosen = [f for f in card["files"] if f["on"]]
+        if not chosen:
+            return "No file is selected.", None
+        if any(r["session"] == card["session"] for r in self.store.open_runs()):
+            return RUNNING, None
+        try:
+            done = await self.base.discard({f["path"]: f["digest"] for f in chosen})
+        except Exception as exc:  # said without its words, as a commit's failure is
+            log.error("card %s: the discard failed: %s", card["id"], type(exc).__name__)
+            return UNAVAILABLE if isinstance(exc, OSError) else f"The discard failed ({type(exc).__name__}).", None
+        if done is None:
+            return "The Base is busy with a commit — try again in a moment.", None
+        said = f"Discarded: {files_word(len(done.files))}." if done.files else "Nothing discarded."
+        if done.refused:
+            said += " Left as they are:\n" + "\n".join(f"• {line(r, 200)}" for r in done.refused)
+        result = {"sha": None, "discarded": done.files, "refused": [line(r, 200) for r in done.refused], "said": said}
+        if not self._finish(card, "discarded" if done.files else "failed", result, self.platform.clock()):
+            return GONE, None
+        await self.settle_lists()
+        return said.split("\n")[0], self.card(card["id"])
 
     async def diff(self, card: dict) -> str:
         """The bounded diff of the files turned on (all of them when none is), as the clone has them now."""

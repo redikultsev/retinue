@@ -32,6 +32,11 @@ import { visits } from "@/lib/today";
 
 const tabOf = (v: unknown) => (v === "changes" || v === "chat" || v === "files" ? v : undefined);
 const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+/** `?turn=N` — a turn of the session, as a commit of the Base names it: a whole number, else none. */
+const turnOf = (v: unknown) => {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d{1,6}$/.test(v) ? Number(v) : NaN;
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+};
 
 /** `(2) Retinue` and the app badge: what waits for the owner — the feed's rows, the cards until it has loaded. */
 function useWaitingTitle() {
@@ -172,6 +177,7 @@ const sessionRoute = createRoute({
     tab: tabOf(s.tab),
     tab2: tabOf(s.tab2),
     pane: str(s.pane),
+    turn: turnOf(s.turn),
   }),
   component: function Session() {
     const { id } = sessionRoute.useParams();

@@ -15,6 +15,8 @@ export interface SessionSearch {
   tab2?: Tab;
   /** The desktop's right pane (lib/pane.ts): kept while the tabs and panels change. */
   pane?: string;
+  /** A turn to show: the transcript opens at its summary (a Base commit links here). */
+  turn?: number;
 }
 
 export function SessionPage({ id, search }: { id: string; search: SessionSearch }) {
@@ -29,7 +31,7 @@ export function SessionPage({ id, search }: { id: string; search: SessionSearch 
   if (!wide)
     return (
       <div className="h-full">
-        <SessionPanel id={id} tab={tab} onTab={(t) => go({ id, search: { ...search, tab: t } })} back />
+        <SessionPanel id={id} tab={tab} onTab={(t) => go({ id, search: { ...search, tab: t } })} back turn={search.turn} />
       </div>
     );
 
@@ -43,6 +45,7 @@ export function SessionPage({ id, search }: { id: string; search: SessionSearch 
                 id={id}
                 tab={tab}
                 onTab={(t) => go({ id, search: { ...search, tab: t } })}
+                turn={search.turn}
                 onClose={() => go({ id: second, search: { tab: search.tab2 } })}
               />
             </Panel>
@@ -57,7 +60,7 @@ export function SessionPage({ id, search }: { id: string; search: SessionSearch 
             </Panel>
           </Group>
         ) : (
-          <SessionPanel id={id} tab={tab} onTab={(t) => go({ id, search: { ...search, tab: t } })} extra={<DiffBeside id={id} />} panel />
+          <SessionPanel id={id} tab={tab} onTab={(t) => go({ id, search: { ...search, tab: t } })} extra={<DiffBeside id={id} />} panel turn={search.turn} />
         )}
       </main>
     </div>

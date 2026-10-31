@@ -415,7 +415,8 @@ def test_toggles_a_subject_by_reply_the_diff_and_one_commit_however_often_presse
         world.fake.hold.set()
         await world.platform.tobase.idle()
         assert world.fake.commits == [(["travel/hotel.md"], "travel: отель в Зурбагане",
-                                       f"Retinue: session {a}, card {card['id']}.")]
+                                       f"Готово.\n\nRetinue: session {a}, card {card['id']}, last turn 0.\n"
+                                       f"https://app.example.test/s/{a}?turn=0")]
         done = world.platform.tobase.card(card["id"])
         assert done["state"] == "committed" and done["result"]["files"] == ["A travel/hotel.md"]
         last = [n for n in world.notes("update") if n["approval"] == note["approval"]][-1]
@@ -908,8 +909,13 @@ def test_with_the_real_base_the_platform_commits_a_new_record_and_undo_reverts_i
         a = await world.new("запиши факт", "tg:1")
         (tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Claude Code (Opus 5.5)", body="Б."))
         await world.end(a)
-        assert "Pushed-by: retinue-platform (the platform's own commit after a turn" in \
-            git(hub, "log", "-1", "--format=%B", "main")
+        message = git(hub, "log", "-1", "--format=%B", "main")
+        assert "Pushed-by: retinue-platform (the platform's own commit after a turn" in message
+        # why the Record changed: the turn's summary, and the way back to that turn in the app
+        summary = world.notes("summary")[-1]["data"]
+        assert f"\n\n{tobase.why(summary)}\n\nRetinue: session " in message
+        assert f"Retinue: session {a}, after turn {summary['turn']}." in message
+        assert f"/s/{a}?turn={summary['turn']}" in message
         assert world.files(a) == []
         ping = world.notes("ping")[-1]["data"]
         assert ping["undo"][0] == "Undo · 1 in the Base"
@@ -947,3 +953,12 @@ def test_files_the_owner_cancelled_are_not_committed_by_the_platform_until_edite
         await world.end(a)
         assert world.fake.commits[-1][0] == ["travel/journal/hotel.md"]
     based(tmp_path, body)
+
+
+def test_a_commits_why_is_the_summary_clean_and_cut_at_a_line():
+    assert tobase.why(None) == "" and tobase.why({"text": 3}) == ""
+    assert tobase.why({"text": "Done.\x1b[31m  \nNot checked: the price.\x00"}) == "Done.[31m\nNot checked: the price."
+    text = "\n".join(f"line {k} " + "x" * 40 for k in range(100))
+    cut = tobase.why({"text": text}, limit=500)
+    assert len(cut) <= 502 and cut.endswith("\n…") and cut.split("\n")[-2].startswith("line ")
+    assert tobase.why({"text": "y" * 900}, limit=500) == "y" * 500 + "\n…"

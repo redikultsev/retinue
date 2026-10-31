@@ -122,6 +122,7 @@ MAX_TOGGLES = 12              # a file toggle per Telegram button; past this the
 LISTED_CHARS = 2800           # the file list of a Telegram card; past it «…and N more» (the card stays under 4000)
 STATUS_CHARS = 700            # its status lines; past them «…and N more lines»
 SUBJECT_CHARS = 120
+WHY_CHARS = 1500              # the turn's summary in a commit's body: why the files changed, not the transcript
 TITLE_CHARS = 70
 DIFF_LIMIT = 1024 * 1024      # «Open diff»
 COUNT_LIMIT = 256 * 1024      # one file's diff read to count its lines
@@ -167,6 +168,18 @@ def subject_of(text: str) -> str:
     """The owner's words as a commit subject: one line, the voice mark off, cut."""
     text = line(text, 10_000)
     return line(unmarked(text), SUBJECT_CHARS)
+
+
+def why(summary: dict | None, limit: int = WHY_CHARS) -> str:
+    """A summary's text for a commit's body: control characters out, cut at a line under `limit`."""
+    text = summary.get("text") if isinstance(summary, dict) else None
+    if not isinstance(text, str):
+        return ""
+    text = re.sub(r"[^\S\n]+\n", "\n", re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)).strip()
+    if len(text) <= limit:
+        return text
+    cut = text.rfind("\n", 0, limit)
+    return text[: cut if cut > limit // 2 else limit].rstrip() + "\n…"
 
 
 class ToBase:
@@ -818,7 +831,7 @@ class ToBase:
     async def _commit(self, card: dict, expect: dict[str, str | None]) -> None:
         try:
             try:
-                body = f"Retinue: session {card['session']}, card {card['id']}."
+                body = self._body(card["session"], f"card {card['id']}, last turn")
                 # The digests the owner saw: the Base checks them again under its own lock and refuses a path whose
                 # file moved; `session` goes into the commit's trailer. A Base without them only had the check above.
                 params = inspect.signature(self.base.commit).parameters
@@ -860,6 +873,18 @@ class ToBase:
             return
         self._commits[AUTO] = asyncio.create_task(self._autocommits())
 
+    def _body(self, session_id: str, where: str) -> str:
+        """A commit's body: the session's latest summary — what its turn did and why, so `git log` of a Record answers
+        why it changed — and the line naming the session and that turn, with a link to the turn in the app."""
+        summary = self.store.last_summary(session_id)
+        turn = summary.get("turn") if isinstance(summary, dict) else None
+        named = f"Retinue: session {session_id}" + (f", {where} {turn}." if isinstance(turn, int) else ".")
+        origin = getattr(self.platform.cfg, "face_origin", "")
+        if origin and isinstance(turn, int):
+            named += f"\n{origin}/s/{session_id}?turn={turn}"
+        text = why(summary)
+        return f"{text}\n\n{named}" if text else named
+
     async def _autocommits(self) -> None:
         try:
             while self._pending and not self._lane_open():
@@ -892,7 +917,7 @@ class ToBase:
                 card = self._new(session, await self._files(paths, dirty, snapshot), self.platform.clock(), auto=True)
                 self.store.db.commit()
                 self._commits[card["id"]] = self._commits[AUTO]  # `tick` sees it is running
-            done = await self.base.commit(paths, card["fallback"], f"Retinue: session {session_id}, after its turn.",
+            done = await self.base.commit(paths, card["fallback"], self._body(session_id, "after turn"),
                                           expect={f["path"]: f["digest"] for f in card["files"]}, session=session_id,
                                           role=ASSISTANT)
             self._committed(card, done)

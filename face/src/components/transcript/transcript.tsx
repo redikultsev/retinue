@@ -9,6 +9,7 @@ import { AutoButton, BaseButton } from "@/components/base-card";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
 import type { Approval, Input, Item, Proposal, Summary } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { InputBubble } from "./input";
 import { isStep, Markdown, StepRun, TranscriptItem } from "./item";
 
@@ -130,12 +131,12 @@ function turnText(items: Item[], index: number): string {
   return "";
 }
 
-function SummaryNote({ summary, repeats, base }: { summary: Summary; repeats: boolean; base?: ReactNode }) {
+function SummaryNote({ summary, repeats, base, focused }: { summary: Summary; repeats: boolean; base?: ReactNode; focused?: boolean }) {
   // «To the Base · N» on the last one while the session has Base files uncommitted.
   const buttons = base ? <div className="flex flex-wrap items-center gap-1.5">{base}</div> : null;
   if (repeats)
     return (
-      <div data-testid="summary" className="flex flex-col gap-2">
+      <div data-testid="summary" data-turn={summary.turn ?? undefined} className={cn("flex scroll-mt-3 flex-col gap-2", focused && "rounded-lg p-2 ring-2 ring-primary/50")}>
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground/80">
           <span className="h-px flex-1 bg-border" />
           <span className="truncate">{summary.head}</span>
@@ -145,7 +146,11 @@ function SummaryNote({ summary, repeats, base }: { summary: Summary; repeats: bo
       </div>
     );
   return (
-    <div data-testid="summary" className="flex flex-col gap-1.5 rounded-lg bg-muted/60 px-3 py-2.5">
+    <div
+      data-testid="summary"
+      data-turn={summary.turn ?? undefined}
+      className={cn("flex scroll-mt-3 flex-col gap-1.5 rounded-lg bg-muted/60 px-3 py-2.5", focused && "ring-2 ring-primary/50")}
+    >
       <div className="text-[11px] text-muted-foreground">{summary.head}</div>
       <Markdown text={summary.text} />
       {buttons}
@@ -168,9 +173,11 @@ interface Props {
   push?: { session: string; count: number; why?: string };
   /** The sub-sessions it proposed (retinue/subs.py): each card under its call. */
   proposals?: Proposal[];
+  /** A turn to mark: its summary gets a ring (`?turn=N`). */
+  focus?: number;
 }
 
-export function Transcript({ items, approvals, delta, running, summaries = [], inputs = [], base, push, proposals = [] }: Props) {
+export function Transcript({ items, approvals, delta, running, summaries = [], inputs = [], base, push, proposals = [], focus }: Props) {
   const cards = useMemo(() => placeCards(items, approvals), [items, approvals]);
   const notes = useMemo(() => placeSummaries(items, summaries), [items, summaries]);
   const mine = useMemo(() => placeInputs(items, inputs), [items, inputs]);
@@ -189,6 +196,7 @@ export function Transcript({ items, approvals, delta, running, summaries = [], i
     <SummaryNote
       key={s.seq ?? s.at}
       summary={s}
+      focused={focus !== undefined && s.turn === focus}
       repeats={s.text.trim() === turnText(items, index)}
       base={
         s === latest || s.auto ? (

@@ -43,6 +43,8 @@ interface Props {
   extra?: ReactNode;
   /** The right panel can show this session's «Summary» (a wide screen, one session in the middle). */
   panel?: boolean;
+  /** Open the chat at this turn's summary, marked, instead of at the bottom. */
+  turn?: number;
 }
 
 /** The latest plan, pinned above the input box as Claude Code pins its task list: one line, open on a tap. */
@@ -66,7 +68,7 @@ function PinnedPlan({ items }: { items: ReturnType<typeof orderedItems> }) {
   );
 }
 
-export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = false }: Props) {
+export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = false, turn }: Props) {
   const router = useRouter();
   const state = useLiveState();
   const keyboard = useKeyboardUp();
@@ -102,8 +104,19 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
   // Stay at the bottom while new text comes, unless the owner scrolled up to read.
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // A link to a turn opens there once its summary is in: the bottom no longer pulls.
+  const shown = useRef<string | null>(null);
   useLayoutEffect(() => {
     const el = scroller.current;
+    if (el && turn !== undefined && tab === "chat" && shown.current !== `${id}/${turn}`) {
+      const note = el.querySelector(`[data-turn="${turn}"]`);
+      if (note) {
+        shown.current = `${id}/${turn}`;
+        stick.current = false;
+        note.scrollIntoView({ block: "start" });
+        return;
+      }
+    }
     if (el && stick.current && tab === "chat") el.scrollTop = el.scrollHeight;
   });
 
@@ -237,6 +250,7 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
             base={session?.base ? { session: id, count: session.base } : undefined}
             push={session?.push || session?.push_why ? { session: id, count: session.push ?? 0, why: session.push_why } : undefined}
             proposals={proposals}
+            focus={turn}
           />
           </div>
         )}

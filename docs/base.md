@@ -237,8 +237,9 @@ press, and the press is yours only: through the bridge (the router's token) or t
 - **«Commit»** commits the files turned on, each only as the card showed it (its digest when the card opened:
   a file changed since brings the card back with what changed, and nothing goes), and only while the session is not
   running. The card moves to «Committing…» once — a second press anywhere gets «Committing — wait.», one after «Already
-  committed.» — and the Base's `commit()` runs in the background (subject yours; body `Retinue: session <id>,
-  card <id>.`; `expect`, each path's digest as the card showed it, which the Base checks again under its own lock
+  committed.» — and the Base's `commit()` runs in the background (subject yours; body: the session's
+  latest summary, then `Retinue: session <id>, card <id>, last turn <n>.` and the link to that turn — see «Why, in
+  the commit» below; `expect`, each path's digest as the card showed it, which the Base checks again under its own lock
   and refuses a file that moved). No run on the Base's lane starts while a commit is in flight: it stays queued
   («waiting for room on the lane») and goes when the commit ends — so the commit never stages a file a run is writing, and
   neither the drain nor `busy` waits on the other. The card is rewritten with «Committed: <sha7> · N files» or «Nothing committed», and what
@@ -258,6 +259,15 @@ press, and the press is yours only: through the bridge (the router's token) or t
 The feed has a «Decide» row per session with Base files uncommitted («To the Base: N files»), in the app with the button
 in place ([face.md](face.md#the-feed)); `/wait` words it as [platform.md](platform.md) says.
 
+## Why, in the commit
+
+Every commit the platform makes in your Base — your «Commit» and its own after a turn — carries why the files changed:
+its body is the session's latest summary (`tobase.why`: control characters out, cut at a line under 1 500
+characters), then the line naming the session and the turn, and `https://<app>/s/<id>?turn=<n>`. So `git log` of a
+Record answers "where did this come from" without opening anything, and the link opens the session at that turn's
+summary, marked. The summary is what the session told you, not its transcript: the steps stay in the session. A
+press can gather files of several turns; it names the last one.
+
 ## The platform's own commit
 
 Your rule for the Mac's agent is "commit and push yourself when it is safe"; on the server the platform does that
@@ -272,8 +282,9 @@ Your rule for the Mac's agent is "commit and push yourself when it is safe"; on 
   those refuse stays uncommitted; the hub's own lint runs as for any push.
 - **What you see.** A card (`auto`) kept only when something went: «Committed by itself after the turn: <sha7> · N
   files», the commit's own diff, and **«Undo · N in the Base»** on the turn's ping and «In the Base · N» under its
-  summary in the app. The trailer says `Pushed-by: retinue-platform (the platform's own commit after a turn, session
-  <id>)`. What it left keeps «To the Base · N».
+  summary in the app. The body is the turn's summary and `Retinue: session <id>, after turn <n>.` with the link to
+  it; the trailer says `Pushed-by: retinue-platform (the platform's own commit after a turn, session <id>)`. What it
+  left keeps «To the Base · N».
 - **«Undo»** (`BaseRepo.revert`): for 7 days, while the session is not running, a new commit on top of the hub's
   `main` — history is never rewritten — puts each file back as it was before that commit, only if neither the hub nor
   the clone changed it since («changed here since», «changed in the Base since»: left as it is, never merged). The card

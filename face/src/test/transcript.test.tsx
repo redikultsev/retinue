@@ -226,6 +226,23 @@ describe("summaries", () => {
     expect(second!.textContent).toContain("The turn broke off with an error: overloaded");
     expect(screen.getAllByText("Done, the tests are green.")).toHaveLength(1);
   });
+
+  it("carry their turn, and the one a Base commit links to (`?turn=N`) is marked", () => {
+    const items = [msg(0, 0, "Done, the tests are green."), msg(1, 0, "Next.")];
+    render(
+      <Transcript
+        items={items}
+        approvals={[]}
+        running={false}
+        summaries={[sum(1, 0, "Done, the tests are green."), sum(2, 1, "Written to the Base.")]}
+        focus={1}
+      />,
+    );
+    const [first, second] = screen.getAllByTestId("summary");
+    expect([first!.dataset.turn, second!.dataset.turn]).toEqual(["0", "1"]);
+    expect(first!.className).not.toContain("ring-2");
+    expect(second!.className).toContain("ring-2");
+  });
 });
 
 describe("the owner's messages in the transcript", () => {

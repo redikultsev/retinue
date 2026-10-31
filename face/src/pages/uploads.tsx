@@ -3,26 +3,24 @@
 // files, photos or camera; they go one after another, each with its progress, and a failed one stays with the reason
 // and «Retry». The list is the platform's, newest first, the same on every device. Nothing here opens a file: a row is
 // its download.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { size } from "@/components/files";
 import { AlertCircle, Check, Close, UploadIcon } from "@/components/icons";
 import { PageHeader, PAGE_X } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { when } from "@/lib/format";
-import { type Upload, UPLOAD_MAX, type Uploads, uploadsApi, uploadUrl, useUploads } from "@/lib/uploads";
+import {
+  type Sending,
+  type Upload,
+  UPLOAD_MAX,
+  type UploadQueue,
+  uploadQueue,
+  type Uploads,
+  uploadUrl,
+  useUploadQueue,
+  useUploads,
+} from "@/lib/uploads";
 import { cn, LIST } from "@/lib/utils";
-
-/** A file on its way: `sending` with its bytes so far, then `done` (`again`: those bytes were there already) or
- * `failed` with the reason — `refused` when it was never sent (empty, too large), so no «Retry». */
-export interface Sending {
-  key: string;
-  file: File;
-  sent: number;
-  state: "waiting" | "sending" | "done" | "failed";
-  again?: boolean;
-  error?: string;
-  refused?: boolean;
-}
 
 /** «12 Oct · 1.4 MB · 3f9a2c41d0e7». */
 function details(file: Upload, now: number): string {
@@ -157,7 +155,9 @@ export function UploadsView({
           e.preventDefault();
           setOver(true);
         }}
-        onDragLeave={() => setOver(false)}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false); // not when it only moved onto a row
+        }}
         onDrop={(e) => {
           e.preventDefault();
           setOver(false);
@@ -210,65 +210,26 @@ export function UploadsView({
   );
 }
 
-let counter = 0;
+/** Why a picked file is not sent at all, or null: the platform would refuse it the same way. */
+export function refusal(file: File, max: number): string | null {
+  if (file.size === 0) return "The file is empty.";
+  if (file.size > max) return `Too large: ${size(file.size)}, ${Math.round(max / 1024 / 1024)} MB at most.`;
+  return null;
+}
 
-export function UploadsPage() {
-  const { uploads, error, reload, put } = useUploads();
-  const [sending, setSending] = useState<Sending[]>([]);
-  const busy = useRef(false);
+/** The page over the app's one queue (`lib/uploads.ts`): what is on its way goes on when the page is left. */
+export function UploadsPage({ queue = uploadQueue }: { queue?: UploadQueue }) {
+  const { uploads, error, reload } = useUploads(queue);
+  const sending = useUploadQueue(queue);
   const max = uploads?.max ?? UPLOAD_MAX;
-
-  const change = useCallback((key: string, over: Partial<Sending>) => {
-    setSending((list) => list.map((s) => (s.key === key ? { ...s, ...over } : s)));
-  }, []);
-
-  // One file at a time, in the order picked: the phone's link and the platform's memory carry one 40 MB at most.
-  useEffect(() => {
-    if (busy.current) return;
-    const next = sending.find((s) => s.state === "waiting");
-    if (!next) return;
-    busy.current = true;
-    change(next.key, { state: "sending", sent: 0 });
-    uploadsApi
-      .upload(next.file, (sent) => change(next.key, { sent }))
-      .then(
-        (answer) => {
-          put(answer.file);
-          change(next.key, { state: "done", sent: next.file.size, again: !answer.new });
-        },
-        (e: unknown) => change(next.key, { state: "failed", error: e instanceof Error ? e.message : "Not uploaded." }),
-      )
-      .finally(() => {
-        busy.current = false;
-        setSending((list) => [...list]); // look for the next one
-      });
-  }, [sending, change, put]);
-
-  const onPick = (files: File[]) => {
-    const added = files.map((file): Sending => {
-      const key = `u${++counter}`;
-      if (file.size === 0) return { key, file, sent: 0, state: "failed", refused: true, error: "The file is empty." };
-      if (file.size > max) {
-        const error = `Too large: ${size(file.size)}, ${Math.round(max / 1024 / 1024)} MB at most.`;
-        return { key, file, sent: 0, state: "failed", refused: true, error };
-      }
-      return { key, file, sent: 0, state: "waiting" };
-    });
-    setSending((list) => [...list, ...added]);
-  };
-  const onRetry = (key: string) => {
-    if (sending.some((s) => s.key === key && !s.refused)) change(key, { state: "waiting", sent: 0, error: undefined });
-  };
-  const onDismiss = (key: string) => setSending((list) => list.filter((s) => s.key !== key));
-
   return (
     <UploadsView
       uploads={uploads}
       error={error}
       sending={sending}
-      onPick={onPick}
-      onRetry={onRetry}
-      onDismiss={onDismiss}
+      onPick={(files) => queue.add(files, (file) => refusal(file, max))}
+      onRetry={(key) => queue.retry(key)}
+      onDismiss={(key) => queue.dismiss(key)}
       onReload={() => void reload()}
     />
   );

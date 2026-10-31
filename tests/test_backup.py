@@ -154,7 +154,8 @@ def test_the_platforms_collections_and_uploaded_files_go_in_with_its_volume(tmp_
     assert str(platform) in call, "the volume, the uploaded files with it"
     excluded = (tmp_path / "restic.log.exclude").read_text().splitlines()
     assert f"{platform}/collections.sqlite" in excluded, "the raw file stays out: its copy is in staging"
-    assert not any("attachments" in line for line in excluded)
+    assert [line for line in excluded if "attachments" in line] == ["**/attachments/.*.part"], \
+        "only an upload still being written stays out"
 
 
 MAC = ROOT / "deploy" / "backup" / "mac.sh"
@@ -168,9 +169,10 @@ fi
 """
 
 
-def mac(tmp_path, archive_bytes=None, platform=None):
+def mac(tmp_path, archive_bytes=None, platform=None, env=""):
     """The owner's Mac: an env file with the deleting key, a fake restic whose `restore` lays out last night's copies.
-    `platform`: the platform's volume too — `{"collections": bool, "rows": [sha…], "blobs": [sha…]}`."""
+    `platform`: the platform's volume too — `{"collections": bool, "rows": [sha…], "blobs": {sha: bytes}}`, and
+    `"other"`: blobs in another volume's `attachments/`. `env`: more lines for backup.env."""
     snapshot = tmp_path / "snapshot"
     (snapshot / "retinue_router-data").mkdir(parents=True)
     (snapshot / "retinue_assistant-data").mkdir()
@@ -182,14 +184,18 @@ def mac(tmp_path, archive_bytes=None, platform=None):
         sqlite3.connect(snapshot / "retinue_platform-data" / "platform.sqlite").execute("CREATE TABLE t (x)").connection.close()
         if platform["collections"]:
             db = sqlite3.connect(snapshot / "retinue_platform-data" / "collections.sqlite")
-            db.execute("CREATE TABLE files (sha256 TEXT PRIMARY KEY)")
-            db.executemany("INSERT INTO files VALUES (?)", [(sha,) for sha in platform["rows"]])
+            db.execute("CREATE TABLE files (sha256 TEXT PRIMARY KEY, size INTEGER)")
+            db.executemany("INSERT INTO files VALUES (?, 1)", [(sha,) for sha in platform["rows"]])
             db.commit()
             db.close()
         blobs = tmp_path / "volumes" / "retinue_platform-data" / "_data" / "attachments"
         blobs.mkdir(parents=True)
-        for sha in platform["blobs"]:
-            (blobs / sha).write_bytes(b"x")
+        for sha, data in platform["blobs"].items():
+            (blobs / sha).write_bytes(data)
+        other = tmp_path / "volumes" / "retinue_travel-data" / "_data" / "attachments"
+        other.mkdir(parents=True)
+        for sha in platform.get("other", []):
+            (other / sha).write_bytes(b"x")
         volumes = {"FAKE_VOLUMES": str(tmp_path / "volumes")}
     archive = snapshot / "retinue_router-data" / "archive.sqlite"
     if archive_bytes is None:
@@ -203,7 +209,7 @@ def mac(tmp_path, archive_bytes=None, platform=None):
     env_file = tmp_path / "backup.env"
     env_file.write_text("RESTIC_REPOSITORY=s3:https://s3.example/bucket/retinue\nRESTIC_PASSWORD=p\n"
                         "AWS_ACCESS_KEY_ID=k\nAWS_SECRET_ACCESS_KEY=s\nAWS_DEFAULT_REGION=r\n"
-                        f"RETINUE_LOCAL_REPO={tmp_path / 'local-repo'}\n")
+                        f"RETINUE_LOCAL_REPO={tmp_path / 'local-repo'}\n{env}")
     restic = tmp_path / "restic"
     restic.write_text(FAKE_MAC_RESTIC)
     restic.chmod(0o755)
@@ -243,12 +249,17 @@ def test_a_broken_restore_stops_before_anything_is_deleted(tmp_path):
 
 def test_with_the_platform_a_snapshot_without_its_collections_or_their_files_fails_the_restore(tmp_path):
     sha = "ab" * 32
-    run, steps, _ = mac(tmp_path / "a", platform={"collections": False, "rows": [], "blobs": []})
+    run, steps, _ = mac(tmp_path / "a", platform={"collections": False, "rows": [], "blobs": {}})
     assert run.returncode != 0 and steps == ["check", "restore"] and "collections.sqlite" in run.stderr, \
         "the platform makes the file at its start: a snapshot without it lost it"
-    run, steps, _ = mac(tmp_path / "b", platform={"collections": True, "rows": [sha], "blobs": []})
+    run, steps, _ = mac(tmp_path / "b", platform={"collections": True, "rows": [sha], "blobs": {}, "other": [sha]})
     assert run.returncode != 0 and steps == ["check", "restore"] and "1 uploaded files" in run.stderr, \
-        "a row whose file is not there: the uploads were not all taken"
-    run, steps, _ = mac(tmp_path / "c", platform={"collections": True, "rows": [sha], "blobs": [sha]})
+        "a row whose file is not there, nor counted from another volume: the uploads were not all taken"
+    run, steps, _ = mac(tmp_path / "d", platform={"collections": True, "rows": [sha], "blobs": {sha: b"xy"}})
+    assert run.returncode != 0 and "1 uploaded files" in run.stderr, "a file cut short is not the file"
+    run, steps, _ = mac(tmp_path / "e", env="RETINUE_PLATFORM=1\n")
+    assert run.returncode != 0 and steps == ["check", "restore"] and "collections.sqlite, platform.sqlite" in run.stderr, \
+        "with the platform on, a snapshot without its whole volume fails too"
+    run, steps, _ = mac(tmp_path / "c", platform={"collections": True, "rows": [sha], "blobs": {sha: b"x"}})
     assert run.returncode == 0, run.stderr
     assert "integrity ok: agent.sqlite, archive.sqlite, collections.sqlite, platform.sqlite, router.sqlite" in run.stdout

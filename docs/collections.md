@@ -22,19 +22,23 @@ a statement, an export, a screenshot, a photo of a receipt. Nothing is refused f
 parsed or shown to an agent: a file is kept as it came.
 
 - **Where.** Its bytes go to `attachments/<sha256>` on the same volume, its row to the table `files`: `sha256` (the
-  key), `name` (as the device named it: its last path part, without control or bidi characters, at most 200
-  characters), `size`, `mime` (as the device said; never sniffed) and `created`.
+  key), `name` (as the device named it: its last path part, without control, bidi, private-use or lone surrogate
+  characters, at most 200 characters), `size`, `mime` (as the device said; never sniffed) and `created`.
 - **Once.** The same bytes uploaded again are the same file: the answer is the row as it was (`new: false`), the first
-  name and time kept, and nothing is written.
-- **In order.** The bytes are written to a temporary `.part`, synced and renamed before the row is committed, so no
-  row ever names a missing file; a `.part` a crash left behind is removed at the next start, and a blob a crash left
-  without its row gets its row with the next upload of it.
+  name and time kept, and nothing is written — unless its file was lost (a partial restore, a delete by hand), which
+  the same bytes put back.
+- **In order.** The bytes are written to a temporary `.part`, synced and renamed, and the folder synced, before the
+  row is committed, so no row ever names a missing file, a power cut included; a write that fails removes its `.part`
+  at once, one a crash left behind is removed at the next start, and a blob a crash left without its row gets its row
+  with the next upload of it. The backup leaves `.part` files out.
+- **Room.** An upload that would leave less than 1 GiB free on the volume is refused (507) and nothing is kept: the
+  same volume holds the platform's databases, which must still be able to write.
 - **Out.** A file comes back only as a download: `Content-Disposition: attachment`, `nosniff` and the sandbox policy,
   so opened by itself it is a document of no origin.
 
 | Call | Answer |
 |---|---|
-| `POST /api/c/_files` (body: the file's bytes; `Content-Type` its type, `X-Name` its name percent-encoded) | `{file: {sha256, name, size, mime, created}, new}`; 413 over 40 MB, 400 when empty, 503 when the store is busy |
+| `POST /api/c/_files` (body: the file's bytes; `Content-Type` its type, `X-Name` its name percent-encoded) | `{file: {sha256, name, size, mime, created}, new}`; 413 over 40 MB, 400 when empty, 503 when the store is busy or stopping, 507 when the disk is nearly full |
 | `GET /api/c/_files` | `{schema, files, max}`: the newest 1000 files, the newest first; `max` the largest file taken, in bytes |
 | `GET /api/c/_files/{sha256}` | the file's bytes, as a download; 404 for anything else |
 
@@ -46,7 +50,7 @@ For example, from a shell with the app's cookie:
 
 ```bash
 curl https://app.example.com/api/c/_files -H 'X-Retinue: 1' -H 'Cookie: __Host-retinue=<cookie>' \
-  -H 'Content-Type: application/pdf' -H 'X-Name: bank-a-2026-09.pdf' --data-binary @bank-a-2026-09.pdf
+  -H 'Content-Type: application/pdf' -H 'X-Name: acme-invoice-2026-09.pdf' --data-binary @acme-invoice-2026-09.pdf
 ```
 
 nginx takes up to 41 MB on `/api/c/_files` and streams it to the platform as it comes, and streams a download back,

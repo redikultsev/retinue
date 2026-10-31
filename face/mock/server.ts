@@ -108,9 +108,9 @@ const UPLOAD_MAX = 40 * 1024 * 1024;
 interface Uploaded { sha256: string; name: string; size: number; mime: string; created: number; bytes?: Buffer }
 const uploads = new Map<string, Uploaded>(
   [
-    { name: "bank-a-statement-2026-09.pdf", size: 184_320, mime: "application/pdf", created: now() - 3 * 86400 },
-    { name: "bank-b-statement-2026-08.pdf", size: 96_811, mime: "application/pdf", created: now() - 3 * 86400 + 40 },
-    { name: "acme-card-export.csv", size: 12_044, mime: "text/csv", created: now() - 86400 },
+    { name: "acme-invoice-2026-09.pdf", size: 184_320, mime: "application/pdf", created: now() - 3 * 86400 },
+    { name: "example-report.xlsx", size: 96_811, mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", created: now() - 3 * 86400 + 40 },
+    { name: "acme-orders-export.csv", size: 12_044, mime: "text/csv", created: now() - 86400 },
     { name: "IMG_0412.HEIC", size: 2_411_903, mime: "image/heic", created: now() - 3600 },
     { name: "Screenshot 2026-10-30 at 12.04.11 — a very long name that wraps on a phone.png", size: 731_220, mime: "image/png", created: now() - 120 },
   ].map((f) => {

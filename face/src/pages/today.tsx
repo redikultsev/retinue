@@ -211,6 +211,7 @@ export function TodayView({
           </Link>
           <Link to="/uploads" aria-label="Uploads" title="Uploads" className={PHONE_LINK}>
             <UploadIcon className="size-4" />
+            <span className="hidden sm:inline">Uploads</span>
           </Link>
         </div>
       }

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { live } from "@/lib/live";
-import { merged, type Upload, type Uploads, upload, uploadsApi, uploadUrl } from "@/lib/uploads";
+import { merged, type Upload, UploadQueue, type Uploads, upload, uploadsApi, uploadUrl } from "@/lib/uploads";
 import { UploadsPage, UploadsView } from "@/pages/uploads";
 
 const NOW = new Date(2026, 9, 28, 12, 0).getTime() / 1000;
@@ -73,7 +73,7 @@ describe("uploading", () => {
       progress.push(onProgress!);
       return new Promise((resolve) => finish.push(resolve));
     });
-    render(<UploadsPage />);
+    render(<UploadsPage queue={new UploadQueue()} />);
     await screen.findByText("acme-export.csv");
     pick([picked("statement.pdf", 2048), picked("receipt.jpg", 10, "image/jpeg")]);
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
@@ -97,7 +97,7 @@ describe("uploading", () => {
       .spyOn(uploadsApi, "upload")
       .mockRejectedValueOnce(new Error("The store is busy — try again in a moment."))
       .mockResolvedValueOnce({ file: file(5, { name: "ok.pdf", created: NOW + 1 }), new: true });
-    render(<UploadsPage />);
+    render(<UploadsPage queue={new UploadQueue()} />);
     await screen.findByText("acme-export.csv");
     pick([picked("big.zip", 101), picked("empty.txt", 0), picked("ok.pdf", 50)]);
     expect(await screen.findByText("Too large: 101 B, 0 MB at most.")).toBeTruthy();
@@ -119,10 +119,60 @@ describe("uploading", () => {
       told = listener;
       return () => undefined;
     });
-    render(<UploadsPage />);
+    render(<UploadsPage queue={new UploadQueue()} />);
     await screen.findByText("acme-export.csv");
     act(() => told!(file(7, { name: "from-the-laptop.xlsx", created: NOW + 5 })));
     expect(screen.getAllByTestId("upload")[0]!.textContent).toContain("from-the-laptop.xlsx");
+  });
+});
+
+describe("the queue", () => {
+  it("goes on sending when the page is left, and the page shows where it is when it comes back", async () => {
+    vi.spyOn(uploadsApi, "list").mockResolvedValue(LIST);
+    const finish: ((value: { file: Upload; new: boolean }) => void)[] = [];
+    const send = vi.spyOn(uploadsApi, "upload").mockImplementation(() => new Promise((resolve) => finish.push(resolve)));
+    const queue = new UploadQueue();
+    const { unmount } = render(<UploadsPage queue={queue} />);
+    await screen.findByText("acme-export.csv");
+    pick([picked("a.pdf"), picked("b.pdf")]);
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    unmount(); // off to «Today»
+    expect(queue.pending()).toBe(true);
+    await act(async () => finish[0]!({ file: file(8, { name: "a.pdf", created: NOW + 1 }), new: true }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2)); // the next one goes without the page
+    await act(async () => finish[1]!({ file: file(9, { name: "b.pdf", created: NOW + 2 }), new: true }));
+    expect(queue.pending()).toBe(false);
+    render(<UploadsPage queue={queue} />);
+    expect(screen.getAllByText("Uploaded.")).toHaveLength(2);
+  });
+
+  it("asks before the tab closes while anything is still to go", async () => {
+    let done: ((value: { file: Upload; new: boolean }) => void) | undefined;
+    const queue = new UploadQueue(() => new Promise((resolve) => (done = resolve)));
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(leave()).toBe(false);
+    queue.add([picked("a.pdf")]);
+    expect(leave()).toBe(true);
+    await act(async () => done!({ file: file(1), new: true }));
+    expect(leave()).toBe(false);
+  });
+
+  it("reads the list again after the stream resynced: what came in the gap is not lost", async () => {
+    const list = vi.spyOn(uploadsApi, "list").mockResolvedValue(LIST);
+    let resynced: (() => void) | undefined;
+    vi.spyOn(live, "onResync").mockImplementation((listener) => {
+      resynced = listener;
+      return () => undefined;
+    });
+    render(<UploadsPage queue={new UploadQueue()} />);
+    await screen.findByText("acme-export.csv");
+    list.mockResolvedValue({ ...LIST, files: [file(6, { name: "in-the-gap.pdf", created: NOW + 9 }), ...LIST.files] });
+    act(() => resynced!());
+    expect(await screen.findByText("in-the-gap.pdf")).toBeTruthy();
   });
 });
 

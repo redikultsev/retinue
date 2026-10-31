@@ -19,6 +19,7 @@ import hashlib
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -36,7 +37,9 @@ BUSY_S = 2.0                # how long the thread waits for a lock before it ref
 FILES_LISTED = 1000         # the newest files `files()` returns
 NAME_MAX = 200              # characters of a file's name kept
 BLOBS = "attachments"       # the files' folder, beside the database
+FREE_MIN = 2**30            # what an upload leaves free on the volume, which holds the platform's databases too
 BUSY = "The store is busy (an import or the night's backup copy) — try again in a moment."
+FULL = "The server's disk is nearly full — nothing was kept. Free some space, then upload again."
 SHA256 = re.compile(r"[0-9a-f]{64}")
 MIME = re.compile(r"[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}")
 SCHEMA = """
@@ -53,14 +56,19 @@ FILE_COLUMNS = "sha256, name, size, mime, created"
 
 
 class Refused(Exception):
-    """The file was locked past `BUSY_S`: nothing was written; the same call may simply be made again."""
+    """The file was locked past `BUSY_S`, or the store is closing: nothing was written; the same call may simply be
+    made again."""
+
+
+class Full(Exception):
+    """The file would leave less than `FREE_MIN` on the volume: nothing was written."""
 
 
 def clean_name(name: str) -> str:
-    """A file's name as kept and shown: its last path part, without control or bidi characters, at most NAME_MAX
-    characters; `file` when nothing is left."""
+    """A file's name as kept and shown: its last path part, without control, bidi, private-use or lone surrogate
+    characters (a header's raw bytes that were not UTF-8), at most NAME_MAX characters; `file` when nothing is left."""
     name = re.split(r"[/\\]", name)[-1]
-    name = "".join(c for c in name if unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp")).strip()
+    name = "".join(c for c in name if unicodedata.category(c) not in ("Cc", "Cf", "Cs", "Co", "Zl", "Zp")).strip()
     return name[:NAME_MAX] or "file"
 
 
@@ -94,6 +102,8 @@ class Collections:
     # --- the thread -------------------------------------------------------------------------------------------------
 
     async def _run(self, work: Callable[..., T], *args) -> T:
+        if self._closed:  # an upload still on its way while the platform stops: «try again», not a 500
+            raise Refused(BUSY)
         return await asyncio.get_running_loop().run_in_executor(self._pool, self._call, work, args)
 
     def _call(self, work: Callable[..., T], args: tuple) -> T:
@@ -152,28 +162,47 @@ class Collections:
     async def put_file(self, data: bytes, name: str, mime: str, now: float) -> tuple[dict, bool]:
         """A file the owner uploaded: kept by its SHA-256, the same bytes once however often they come — `(row,
         True)` the first time, `(the row as it was, False)` after. The blob is written and synced before its row, so
-        no row ever names a blob that is not there. Raises Refused."""
+        no row ever names a blob that is not there. Raises Refused, and Full when the volume would be nearly full."""
         if not 0 < len(data) <= FILE_MAX:
             raise ValueError(f"a file is 1 byte to {FILE_MAX // 2**20} MB")
         return await self._run(self._put_file, data, clean_name(name), clean_mime(mime), now)
 
     def _put_file(self, data: bytes, name: str, mime: str, now: float) -> tuple[dict, bool]:
         sha = hashlib.sha256(data).hexdigest()
-        if (found := self._file(sha)) is not None:
-            return found, False
         blob = self.blobs / sha
-        if not blob.exists() or blob.stat().st_size != len(data):
-            part = self.blobs / f".{sha}.{secrets.token_hex(4)}.part"
-            with open(part, "wb") as out:
-                out.write(data)
-                out.flush()
-                os.fsync(out.fileno())
-            os.replace(part, blob)
+        kept = blob.is_file() and blob.stat().st_size == len(data)
+        if (found := self._file(sha)) is not None:
+            if not kept:  # its blob lost (a partial restore, a hand's delete): the same bytes put it back
+                self._put_blob(blob, data)
+            return found, False
+        if not kept:
+            self._put_blob(blob, data)
         with self._write() as db:
             if (found := self._file(sha)) is not None:
                 return found, False
             db.execute(f"INSERT INTO files ({FILE_COLUMNS}) VALUES (?, ?, ?, ?, ?)", (sha, name, len(data), mime, now))
         return {"sha256": sha, "name": name, "size": len(data), "mime": mime, "created": now}, True
+
+    def _put_blob(self, blob: Path, data: bytes) -> None:
+        """The bytes at `blob`, whole or not at all, and durable before anything names them: written to a `.part`,
+        synced, renamed, and the folder synced so the rename survives a power cut too."""
+        if shutil.disk_usage(self.blobs).free - len(data) < FREE_MIN:
+            raise Full(FULL)
+        part = self.blobs / f".{blob.name}.{secrets.token_hex(4)}.part"
+        try:
+            with open(part, "wb") as out:
+                out.write(data)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(part, blob)
+        except BaseException:
+            part.unlink(missing_ok=True)  # a full disk stays full otherwise, and it holds the platform's databases
+            raise
+        folder = os.open(self.blobs, os.O_RDONLY)
+        try:
+            os.fsync(folder)
+        finally:
+            os.close(folder)
 
     def _file(self, sha: str) -> dict | None:
         row = self._db.execute(f"SELECT {FILE_COLUMNS} FROM files WHERE sha256 = ?", (sha,)).fetchone()

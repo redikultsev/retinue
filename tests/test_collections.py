@@ -12,7 +12,7 @@ import time
 import pytest
 
 from retinue import collections
-from retinue.collections import Collections, Refused, clean_mime, clean_name
+from retinue.collections import Collections, Full, Refused, clean_mime, clean_name
 
 
 def run(body):
@@ -124,11 +124,58 @@ def test_a_blob_without_its_row_is_written_again_and_a_cut_one_is_swept(tmp_path
     run(body)
 
 
+def test_a_lost_blob_is_put_back_by_the_same_bytes(tmp_path):
+    """A row whose blob is gone (a partial restore, a delete by hand): uploading the same bytes writes it again."""
+    store = Collections(str(tmp_path / "collections.sqlite"))
+    data = b"invoice"
+    blob = tmp_path / "attachments" / hashlib.sha256(data).hexdigest()
+
+    async def body():
+        first, _ = await store.put_file(data, "invoice.pdf", "application/pdf", 1)
+        blob.unlink()
+        again, new = await store.put_file(data, "invoice.pdf", "application/pdf", 2)
+        assert not new and again == first and blob.read_bytes() == data
+        blob.write_bytes(b"inv")  # the wrong size
+        await store.put_file(data, "invoice.pdf", "application/pdf", 3)
+        assert blob.read_bytes() == data
+        await store.close()
+
+    run(body)
+
+
+def test_a_failed_write_or_a_nearly_full_disk_keeps_nothing(tmp_path, monkeypatch):
+    store = Collections(str(tmp_path / "collections.sqlite"))
+    blobs = tmp_path / "attachments"
+
+    def fsync(fd):
+        raise OSError(28, "No space left on device")
+
+    async def body():
+        await store.open()
+        with monkeypatch.context() as patch:
+            patch.setattr(collections.os, "fsync", fsync)
+            with pytest.raises(OSError):
+                await store.put_file(b"a statement", "a.pdf", "application/pdf", 1)
+        assert not list(blobs.iterdir()), "the cut .part is removed at once, not at the next start"
+        with monkeypatch.context() as patch:
+            patch.setattr(collections, "FREE_MIN", 2**62)
+            with pytest.raises(Full, match="nearly full"):
+                await store.put_file(b"a statement", "a.pdf", "application/pdf", 2)
+        assert not list(blobs.iterdir()) and await store.files() == []
+        await store.close()
+        with pytest.raises(Refused, match="try again"):  # an upload still on its way while the platform stops
+            await store.put_file(b"late", "late.txt", "text/plain", 3)
+
+    run(body)
+
+
 def test_names_and_types_are_kept_clean():
     assert clean_name("C:\\Users\\x\\statement.pdf") == "statement.pdf"
     assert clean_name("../../etc/passwd") == "passwd"
     assert clean_name("bill\u202egpj.exe") == "billgpj.exe", "no bidi override to disguise a name"
     assert clean_name("a\x00b\nc.txt") == "abc.txt"
+    assert clean_name("caf\udcc3\udca9.txt") == "caf.txt", "a header's raw bytes that were not UTF-8: no lone surrogate"
+    assert clean_name("\ue000x.txt") == "x.txt"
     assert clean_name("  ") == "file" and clean_name("") == "file"
     assert len(clean_name("x" * 500)) == collections.NAME_MAX
     assert clean_name("Отчёт за март.pdf") == "Отчёт за март.pdf"

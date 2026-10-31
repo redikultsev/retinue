@@ -286,7 +286,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
 | `/spaces`, `/spaces/<space>`, `/spaces/<space>/r/<path inside the Space>` | the Spaces of the Base, a Space's Showcase, a Record ([base.md](base.md)) |
 | `/pages` | your HTML pages: to read, interactive ones, small sites ([pages.md](pages.md)); `/read`, its old name, leads here |
 | `/week` | “Week”: how the work went ([below](#week)); in the left column on a wide screen, a link on “Today” on a phone |
-| `/uploads` | “Uploads”: files you send up, kept as they came ([below](#uploads)); in the left column on a wide screen, the upload icon on “Today” on a phone |
+| `/uploads` | “Uploads”: files you send up, kept as they came ([below](#uploads)); in the left column on a wide screen, the upload icon on “Today” on a phone (with its name from 640 px) |
 | `/s/<id>`, `/a/<id>`, `/f/<id>`, `/b/<id>`, `/p/<id>`, `/login` | as before: a session, a card, a file, a commit card, a push card, the login |
 
 - **The tab bar** stands under the tabs' own screens, not under a session (it has its own input box and “Back”, which
@@ -700,11 +700,14 @@ same id keeps both. The app reads the list when the screen opens and again whene
 files allowed and no type filter, so a phone offers its files, its photos and its camera; on a wide screen files can
 also be dropped on the page. They go one after another, in the order picked, each with a progress bar; a file over the
 limit or empty is refused before it is sent, and a failed one stays with the platform's reason and “Retry”. One the
-platform already had says “Already uploaded — kept once.”
+platform already had says “Already uploaded — kept once.” The queue belongs to the app, not the page: leaving
+“Uploads” goes on sending, and coming back shows where each file is; while anything is still to go, closing the tab
+asks first.
 
 The list under it is the platform's, the newest first: each file's name (its download), the day or time it came, its
-size and the first 12 characters of its SHA-256 (the whole one on hover). It is read when the screen opens and when the
-app comes back to the front, and a file uploaded from another device comes in at once by the stream's `upload` event.
+size and the first 12 characters of its SHA-256 (the whole one on hover). It is read when the screen opens, when the
+app comes back to the front and after the stream resynced (a 410), and a file uploaded from another device comes in
+at once by the stream's `upload` event.
 Nothing here opens or previews a file.
 
 ## A session's changes

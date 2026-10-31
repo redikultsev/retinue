@@ -108,6 +108,7 @@ AWS_ACCESS_KEY_ID=<your computer's S3 key>
 AWS_SECRET_ACCESS_KEY=<its secret>
 AWS_DEFAULT_REGION=<the endpoint's region>
 RETINUE_LOCAL_REPO=/Users/<you>/Backups/retinue-restic
+RETINUE_PLATFORM=1          # with the platform on: a snapshot without its databases then fails the restore
 ```
 
 ```bash
@@ -118,8 +119,9 @@ It stops at the first failure, so nothing is deleted after a bad check or restor
 
 1. `restic check --read-data` — every byte read back;
 2. `restic restore latest` into a temporary folder; every database must pass `integrity_check` and the archive
-   must have events from the last two days; with the platform on (`platform.sqlite` is in it), `collections.sqlite`
-   must be there too and every file its rows name must be in the snapshot; the folder is removed;
+   must have events from the last two days; with the platform on (`RETINUE_PLATFORM=1`, or `platform.sqlite` is in
+   it), `platform.sqlite` and `collections.sqlite` must be there too and every file its rows name must be in the
+   platform's volume at its size; the folder is removed;
 3. `restic copy` into the local repository (created on first use with the same chunker parameters and your
    password);
 4. `restic forget --keep-within-daily 7d --keep-within-weekly 1m --keep-within-monthly 6m --prune` — time-based,

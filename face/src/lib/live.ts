@@ -43,6 +43,7 @@ export class Live {
   private listeners = new Set<() => void>();
   private cardListeners = new Set<(approval: Approval) => void>();
   private uploadListeners = new Set<(file: Upload) => void>();
+  private resyncListeners = new Set<() => void>();
   private source: EventSource | null = null;
   private watched = new Set<string>();
   private hiddenAt: number | null = null;
@@ -149,6 +150,13 @@ export class Live {
     this.dispatch({ type: "list", snapshot: list });
     for (const s of snapshots) if (s && this.schemaOk(s.schema)) this.dispatch({ type: "session", snapshot: s });
     this.open();
+    for (const l of this.resyncListeners) l();
+  }
+
+  /** Told after each resync: the events in the gap are gone, so a list kept beside the state reads itself again. */
+  onResync(listener: () => void): () => void {
+    this.resyncListeners.add(listener);
+    return () => this.resyncListeners.delete(listener);
   }
 
   private fail(e: unknown) {

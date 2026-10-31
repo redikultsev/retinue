@@ -46,7 +46,7 @@ from aiohttp import web
 
 from . import changes, feed, inbox, signals, spaces, tobase, topush
 from .cliengine import UUID4
-from .collections import FILE_MAX, Refused
+from .collections import FILE_MAX, Full, Refused
 from .sessions import PlatformStore
 from .speech import Scribe, SpeechError
 from .spoken import VERBATIM_MARK
@@ -871,6 +871,8 @@ class Face:
             row, new = await self.platform.collections.put_file(data, name, request.content_type, self.clock())
         except Refused as exc:
             return _error(503, str(exc))
+        except Full as exc:
+            return _error(507, str(exc))
         if new:
             self.store.upload_event(row)
         return web.json_response({"file": row, "new": new})
@@ -1013,15 +1015,15 @@ def _gone(request: web.Request) -> bool:
     return request.transport is None or request.transport.is_closing()
 
 
-async def _read_at_most(request: web.Request, limit: int) -> bytes | None:
-    """The body, or None when it is longer than `limit` — read by pieces, so a body without a length stops there."""
-    parts, size = [], 0
+async def _read_at_most(request: web.Request, limit: int) -> bytearray | None:
+    """The body, or None when it is longer than `limit` — read by pieces, so a body without a length stops there, and
+    into one buffer, so a 40 MB upload is held once, not as its pieces and their join."""
+    body = bytearray()
     while chunk := await request.content.read(SPEECH_CHUNK):
-        size += len(chunk)
-        if size > limit:
+        if len(body) + len(chunk) > limit:
             return None
-        parts.append(chunk)
-    return b"".join(parts)
+        body += chunk
+    return body
 
 
 def _attachment(name: str) -> str:

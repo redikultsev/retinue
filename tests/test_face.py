@@ -1077,3 +1077,19 @@ def test_an_upload_while_the_store_is_locked_is_refused_with_a_retry(tmp_path, m
         assert response.status == 200
 
     faced(tmp_path, body)
+
+
+def test_an_upload_that_would_fill_the_disk_is_refused_and_nothing_is_kept(tmp_path, monkeypatch):
+    from retinue import collections
+
+    monkeypatch.setattr(collections, "FREE_MIN", 2**62)  # more than any disk has free
+
+    async def body(world: FaceWorld):
+        await world.login()
+        headers = {**POST, "Cookie": f"{COOKIE}={world.cookie}", "Content-Type": "text/plain", "X-Name": "a.txt"}
+        response = await world.api.post("/api/c/_files", data=b"hello", headers=headers)
+        assert response.status == 507 and "nearly full" in (await response.json())["error"]
+        assert (await world.get("/api/c/_files"))["files"] == []
+        assert not [p for p in (tmp_path / "attachments").iterdir()], "no blob, no .part"
+
+    faced(tmp_path, body)

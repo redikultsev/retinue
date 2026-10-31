@@ -440,6 +440,13 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return json(res, 200, { proposal: next, say: `Sub-session ${id} "${p.title}" started.` });
   }
 
+  const pc = /^\/api\/push\/([0-9a-z]{8})(\/diff)?$/.exec(path);
+  if (pc && method === "GET") {
+    const card = fx.pushCards.find((p) => p.id === pc[1]);
+    if (!card) return json(res, 404, { error: "No such card." });
+    return json(res, 200, pc[2] ? { diff: fx.PUSH_DIFF, truncated: false } : { card });
+  }
+
   const b = /^\/api\/base\/([0-9a-f]{8})(\/[a-z]+)?$/.exec(path);
   if (b) {
     const card = baseCards.get(b[1]!);

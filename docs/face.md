@@ -537,15 +537,37 @@ is as of opening the session.
   menu and in its feed row opens its commit card in a dialog — the same card as in Telegram (the event `base`): the
   files with A/M/D, +/− and ⇄ for one another session's run changed too, “nobody's” for one no session changed (turned
   off), each a checkbox; the subject in a field (“Save”; “Commit” saves an edited one first); how many files other sessions have uncommitted; “Commit · N”, “Show diff” (the diff rendered
-  as a diff, by the same renderer as “Changes”), “Cancel”. A change here rewrites every Telegram copy and one there
+  as a diff, by the same renderer as “Changes”; its lines take comments (below)), “Cancel”. A change here rewrites every Telegram copy and one there
   shows here. The result — the short sha, or what was refused and why — stays on the card. `/b/<id>`, the Mini App of a
   Telegram copy, shows it alone and closes a second after it is decided.
 - **“Push”** ([code.md](code.md#the-button)): “Push · N” beside it, in the menu and in the feed opens a
   repository's push card (the event `push`): the branch it goes to and the PR's title in fields (saved first by
   “Push”), every commit that leaves with its whole message and its own files, what leaves in all (commits,
   bytes), the PR's files with +/−, what is not committed and the workflows the token cannot push; “Push · N
-  commits”, “Show diff” (plain text, commit by commit), “Cancel”; once pushed, “Open PR” (a link only to github.com or
+  commits”, “Show diff” (plain text, commit by commit; a file's lines take comments (below)), “Cancel”; once pushed, “Open PR” (a link only to github.com or
   gitlab.com). `/p/<id>` shows it alone, as `/b/<id>` does.
+- **Comments on a diff** (`components/remarks.tsx`, `lib/remarks.ts`): in every diff of the app — “Changes” of a code
+  session, a Base card's diff (the card “In the Base” of a commit made by itself too), a push's diff — a tap on a line
+  opens a box under it; “Add comment” leaves the comment under its line (a tap again edits it, “Remove” drops it) and in
+  the session's tray: “N comments · Send”, sticky under the diff, the comments listed with their lines when opened.
+  “Send” puts them all to the session as one message through its input — as a message typed there: queued behind a
+  running turn, refused or taken by an archived session as the input does — under one key, so a retry after a lost
+  answer is not sent twice:
+
+  ```
+  Comments on the diff (2):
+
+  Comment on acme/gate.py:84: use the lane's path here
+  >     path = tool_input.get("file_path")
+
+  Comment on acme/gate.py:86: (the removed line) why is this gone?
+  >     return digest
+  ```
+
+  Each line's number is the new side's, the old side's for a removed line; the quote is the line as the diff showed it,
+  one line, cut at 300 characters — text in the message, never rendered or run. The comments wait per session in this
+  browser's localStorage (`retinue.remarks.<session>`; without it, in memory for the load), so a closed diff or a reload
+  keeps them; a send clears only those it sent.
 - **“Spaces”** (`/spaces`, `pages/spaces.tsx`): the Base, read only ([base.md](base.md#reading-the-base-in-the-app)).
   The grid has a tile per Space — the sphere's icon and title when a sphere has its name, else the Showcase's title —
   with “N waiting”, “N working” (from the live sessions, as the list counts them) and “N questions” (its Open questions).

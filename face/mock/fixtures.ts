@@ -358,6 +358,28 @@ export const BASE_DIFF = `diff --git a/travel/AGENTS.md b/travel/AGENTS.md
 +- [Lisbon in May](journal/2026-05-07-lisbon.md)
 `;
 
+// A push's commits as `Code.diff` prints them: each commit's header and message, then its own diff.
+export const PUSH_DIFF = `commit 4f2a9c1e0b7d4f2a9c1e0b7d4f2a9c1e0b7d4f2a
+Parents: 9e8d7c6b5a419e8d7c6b5a419e8d7c6b5a419e8d
+Author: Anna Petrova <anna@example.com>
+Committer: Anna Petrova <anna@example.com>
+
+    Release 0.4.0: the changelog
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,4 +1,6 @@
+ # Changelog
+ 
++## 0.4.0
++- Comments on a diff's lines go to the session together.
+ ## 0.3.0
+-- The first release.
++- The first public release.
+
+`;
+
 export const pushCards: PushCard[] = [
   {
     id: "p0a1b2c3", session: "c9d0e1f2", repo: "retinue", state: "pushed", place: "retinue", branch: "room/c9d0e1f2",

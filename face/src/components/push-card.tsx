@@ -3,6 +3,7 @@
 // as its Telegram copies: a change here rewrites them, and one there comes here on the stream. Nothing is pushed
 // without a press; a press is taken once in either place, and never into the default branch.
 import { useEffect, useState } from "react";
+import { PlainDiff, RemarkTray } from "@/components/remarks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -179,7 +180,7 @@ export function PushCardView({ card, calls = api, live = defaultLive, className 
           </Button>
         )}
       </div>
-      {diff && <CommitsDiff id={card.id} tip={card.commits[0]?.sha ?? ""} load={calls.pushDiff} />}
+      {diff && <CommitsDiff id={card.id} session={card.session} tip={card.commits[0]?.sha ?? ""} load={calls.pushDiff} />}
     </section>
   );
 }
@@ -191,8 +192,9 @@ function sizeWord(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** What a push carries, commit by commit with each one's message and diff, as text: never rendered as anything. */
-function CommitsDiff({ id, tip, load }: { id: string; tip: string; load: Calls["pushDiff"] }) {
+/** What a push carries, commit by commit with each one's message and diff, as text: never rendered as anything. A tap
+ * on a line of a file comments on it; the comments go to the card's session together. */
+function CommitsDiff({ id, session, tip, load }: { id: string; session: string; tip: string; load: Calls["pushDiff"] }) {
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new tip is a new diff
@@ -208,9 +210,10 @@ function CommitsDiff({ id, tip, load }: { id: string; tip: string; load: Calls["
   if (error) return <p className="text-sm text-destructive">{error}</p>;
   if (text === null) return <p className="text-sm text-muted-foreground">Loading the diff…</p>;
   return (
-    <pre data-testid="push-diff" className="max-h-[60vh] overflow-auto rounded-lg border p-2 font-mono text-xs whitespace-pre-wrap">
-      {text}
-    </pre>
+    <div className="flex flex-col gap-2">
+      <PlainDiff session={session} text={text} />
+      <RemarkTray session={session} />
+    </div>
   );
 }
 

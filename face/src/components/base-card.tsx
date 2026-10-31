@@ -216,7 +216,7 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
       )}
       {diff && (
         <Suspense fallback={<p className="text-sm text-muted-foreground">Loading the diff…</p>}>
-          <BaseDiff id={card.id} on={card.files.filter((f) => f.on).map((f) => f.path).join("\n")} />
+          <BaseDiff id={card.id} session={card.session} on={card.files.filter((f) => f.on).map((f) => f.path).join("\n")} />
         </Suspense>
       )}
     </section>

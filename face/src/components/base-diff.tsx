@@ -1,11 +1,13 @@
 // A «To the Base» card's diff: the files turned on, as the Base's clone has them now (`GET /api/base/{id}/diff`), rendered by
-// @pierre/diffs as a diff — never as the Markdown the files are. Read again when the files turned on change.
+// @pierre/diffs as a diff — never as the Markdown the files are. Read again when the files turned on change. A tap on
+// a line comments on it; the comments go to the card's session together (components/remarks.tsx).
 import { parsePatchFiles } from "@pierre/diffs";
-import { FileDiff } from "@pierre/diffs/react";
 import { useEffect, useMemo, useState } from "react";
+import { RemarkableFileDiff } from "@/components/remark-diff";
+import { RemarkTray } from "@/components/remarks";
 import { ApiError, api } from "@/lib/api";
 
-export function BaseDiff({ id, on, load = api.baseDiff }: { id: string; on: string; load?: typeof api.baseDiff }) {
+export function BaseDiff({ id, on, session, load = api.baseDiff }: { id: string; on: string; session: string; load?: typeof api.baseDiff }) {
   const [data, setData] = useState<{ diff: string; truncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,14 +40,12 @@ export function BaseDiff({ id, on, load = api.baseDiff }: { id: string; on: stri
       {files.length === 0 ? (
         <p className="text-sm text-muted-foreground">No changes.</p>
       ) : (
-        files.map((f) => (
-          <FileDiff
-            key={f.name}
-            fileDiff={f}
-            className="overflow-hidden rounded-lg border"
-            options={{ theme: { dark: "pierre-dark", light: "pierre-light" }, themeType: "system", diffStyle: "unified", overflow: "wrap" }}
-          />
-        ))
+        <>
+          {files.map((f) => (
+            <RemarkableFileDiff key={f.name} session={session} file={f} />
+          ))}
+          <RemarkTray session={session} />
+        </>
       )}
     </div>
   );

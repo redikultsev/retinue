@@ -74,6 +74,12 @@ def never_in(command: str) -> str:
     return next((label for pattern, label in NEVER_TEXT if pattern.search(text)), "")
 
 
+def never_named(command: str, label: str) -> bool:
+    """The command's text names this never-list action itself, read as `never_in` reads it."""
+    text = re.sub(r"[\"'\\]", "", command)
+    return any(pattern.search(text) for pattern, named in NEVER_TEXT if named == label)
+
+
 def never_why(label: str) -> str:
     """The card's line for a command whose text names a never-list action no never rule caught."""
     return f"Looks like an action only you take: {label} — check the whole command"

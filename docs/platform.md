@@ -966,6 +966,11 @@ the session's result», and the session is told the platform pushes by your butt
 default branch ([code.md](code.md)). Each entry is also a
 deny rule of every run, so not even a mistaken grant could run it.
 
+A never mark counts only when the command's text names that action itself. On a command it cannot read through (`$VAR`,
+`$(…)`) the CLI runs every marker hook whose pattern names more than the program, whatever the command does — a
+delete in the Base that wrote to `$TMPDIR` once came as «publish an npm package (yarn publish)». Such a mark is
+dropped and the call goes the usual way; the text is still read for the whole list.
+
 ## How the work went
 
 The platform counts its own week, in code and in words that are its own rather than the CLI's (`retinue/signals.py`).

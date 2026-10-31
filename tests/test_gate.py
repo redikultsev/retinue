@@ -111,6 +111,20 @@ def test_a_never_mark_is_denied_and_handed_to_the_owner_once_as_a_courier_card(s
     assert note["data"]["view"]["head"][1] == "Wants: push commits (git push)"
 
 
+@pytest.mark.parametrize("late", [False, True])
+def test_a_never_mark_on_a_command_that_does_not_name_it_is_the_clis_guess_and_no_courier_card(setup, late):
+    """The CLI runs every marker hook whose pattern names more than the program on a command it cannot read through:
+    a delete in the Base with `$TMPDIR` came as «yarn publish». The call goes the usual way, here the classifier's."""
+    store, the_gate, session, _ = setup
+    edit = auto(call("cd /work/repo; rm notes.md; grep -v x a.md > $TMPDIR/a.md && cp $TMPDIR/a.md a.md"))
+    if not late:
+        hook(the_gate, "mark/0", edit)
+    assert decision(hook(the_gate, "PreToolUse", edit)) is None
+    if late:
+        hook(the_gate, "mark/0", edit)
+    assert store.approvals(session=session) == [], "no courier card, nothing for the owner to do by hand"
+
+
 def test_a_late_never_mark_turns_the_pending_approval_into_a_courier_card(setup):
     store, the_gate, session, _ = setup
     push = call("git push origin main")

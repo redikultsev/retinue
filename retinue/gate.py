@@ -112,6 +112,17 @@ class _Call:
     retried: bool = False  # the classifier blocked it and the model was told it may retry: once per call
 
 
+def _borne_out(mark: Mark, body: dict) -> bool:
+    """A never mark the call bears out. A command the CLI cannot read through (`$VAR`, `$(…)`) fires every marker hook
+    whose pattern names more than the program, whatever it runs (code.claude.com/docs/en/hooks, «How `if` patterns
+    match Bash commands»): `cd x; grep … > $TMPDIR/a` came as «yarn publish». So a command's never mark counts only
+    when its text names that action itself; otherwise the call goes the usual way, its text still read for the whole
+    never list (`approvals.never_in`)."""
+    tool, tool_input, _ = _call_of(body)
+    command = tool_input.get("command") if tool in approvals.COMMAND_TOOLS else None
+    return not isinstance(command, str) or approvals.never_named(command, mark.label)
+
+
 def _decision(decision: str, reason: str) -> dict:
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                    "permissionDecisionReason": reason}}
@@ -241,7 +252,7 @@ class Gate:
         call = self._call(call_id)
         call.marks.add(mark)
         call.marked.set()
-        if mark.kind == "never" and call.decided:
+        if mark.kind == "never" and call.decided and _borne_out(mark, body):
             self._courier(run, call_id, mark, body)
         return {}
 
@@ -264,7 +275,7 @@ class Gate:
         if self.closing:
             return _decision("deny" if _subagent(body) else "defer", CLOSING)
         call.decided = True
-        if never := next((m for m in call.marks if m.kind == "never"), None):
+        if never := next((m for m in call.marks if m.kind == "never" and _borne_out(m, body)), None):
             self._courier(run, call_id, never, body)
             return _decision("deny", NEVER_PUSH if approvals.pushed_by_button(never.label, run.lane in self.push_lanes)
                              else NEVER)

@@ -331,7 +331,7 @@ class Subs:
     async def _spawn(self, parent: dict, key: str, title: str, brief: str, digest: str,
                      said: str | None = None) -> tuple[str, bool]:
         """The sub-session itself, under `key` (the tool call's id, or a proposal's): the limits first, then the child
-        with its framed brief, queued, and every open proposal of the same work started with it, in one commit.
+        with its framed brief, queued — no ping: the owner hears of it by its report — and every open proposal of the same work started with it, in one commit.
         `said`: the owner's words the brief carries — a proposal's own, from when it was made; else his last ones."""
         db, now = self.store.db, self.platform.clock()
         if self.limit_on(now):
@@ -356,11 +356,7 @@ class Subs:
             self.store.add_input(f"sub:{key}", child, framed, now, by="parent")
             self.store.enqueue(child, framed, now, by="parent", commit=False)
             self._started(parent["id"], digest, child, now)
-        row = self.store.session(child) or {}
-        pings.add(self.store, {**row, "turn": None}, f"Sub-session · {track.name} · session {child}",
-                  f'Started by session {parent["id"]} "{names["title"]}": {title}', pings.DONE, now, quiet=True,
-                  spheres=self.platform.sphere_titles())
-        await self.platform.drain()
+        await self.platform.drain()  # no ping of its own: its report is the news, and the list shows it at once
         return (f'Sub-session {child} "{title}" started; its report comes to you as a message. If the room has no '
                 "place, it waits in the queue."), False
 

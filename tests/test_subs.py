@@ -142,9 +142,8 @@ def test_a_session_starts_a_sub_session_whose_brief_comes_from_the_session_not_t
         assert given["by"] == "parent"
         assert world.store.db.execute("SELECT seen_at FROM sessions WHERE id = ?", (child,)).fetchone()[0] is None, \
             "a brief is not the owner looking"
-        [started] = [n for n in world.notes("summary") if n["session"] == child]
-        assert started["data"]["quiet"] is True and not pings.loud(started["data"]), "a quiet ping on the start"
-        assert started["data"]["text"] == f'Started by session {parent} "спланируй поездку": жильё в Зурбагане'
+        assert [n for n in world.notes("summary") if n["session"] == child] == [], \
+            "no ping of its start: a «done in 0 s» says nothing; its report is the news"
         again = await world.tool(parent, subs.START, {"title": "жильё в Зурбагане", "brief": "найди жильё на 3–8 июня"},
                                  "toolu_b")
         assert again == (f'Sub-session {child} "жильё в Зурбагане" is already started.', False), \

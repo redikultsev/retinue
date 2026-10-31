@@ -14,3 +14,10 @@ This repository is public. It is one person's platform, and it must say nothing 
 - **When in doubt, it is personal.** Replace it with something invented, or ask.
 - Code, comments, docs, commit messages and the strings the owner reads in the product are in English (see the
   README). Behaviour changes come with their doc and tests in the same change ([CONTRIBUTING.md](CONTRIBUTING.md)).
+- **Use the skills a task has.** Before any task, look for skills that fit it — the ones installed, the plugin
+  catalogue, and the web (Anthropic's `claude-plugins-official` and `knowledge-work-plugins`, `anthropics/skills`,
+  skill directories) — read them and work by them; say which you used. For anything the owner sees in the app, that
+  is every design skill and guideline you can find (`frontend-design`, design critique, accessibility, UX copy,
+  interaction design, the Web Interface Guidelines), applied to every screen the change touches, not to one.
+- **See it before you call it done.** A change to the app is looked at in a browser at the sizes it is used at — a
+  laptop window, a large screen, a phone — with short and long content, and on the deployed app after deploying.

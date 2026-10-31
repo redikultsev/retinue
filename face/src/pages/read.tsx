@@ -1,8 +1,9 @@
 // `/read`, «Read»: the life hub's pages by section with search, «Continue» (opened, not finished) on top. A page
 // opens on the hub's own origin, never inside the app (lib/library.ts); what was opened and «Finished» are kept by the
 // platform, so the phone and the desktop agree.
+import { PageHeader, PAGE_X } from "@/components/page-header";
 import { useMemo, useState } from "react";
-import { Check } from "@/components/icons";
+import { Check, Circle } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { when } from "@/lib/format";
@@ -19,7 +20,7 @@ import {
 } from "@/lib/library";
 import { openInTelegram } from "@/lib/telegram";
 import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
+import { cn, LIST } from "@/lib/utils";
 
 /** «42 min · updated 27 Oct · opened 14:05». */
 function details(page: LibraryPage, now: number): string {
@@ -49,7 +50,7 @@ function PageRow({
   const done = page.done !== null;
   const title = <span className={cn("font-medium break-words", done && "text-muted-foreground")}>{page.title}</span>;
   return (
-    <li data-testid="library-page" className="flex items-start gap-2 rounded-lg border bg-background p-3">
+    <li data-testid="library-page" className="group/row flex items-start gap-2 px-3 py-2.5">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         {href ? (
           <a
@@ -71,16 +72,20 @@ function PageRow({
         )}
         <span className="text-xs text-muted-foreground">{details(page, now)}</span>
       </div>
-      <Button
-        size="sm"
-        variant={done ? "secondary" : "outline"}
+      {/* a toggle, not a button per row: a ring when unread, a filled check once finished */}
+      <button
+        type="button"
         aria-pressed={done}
-        title={done ? "Mark as unread" : "Mark as finished"}
+        aria-label={done ? `Finished: ${page.title}. Mark as unread` : `Mark as finished: ${page.title}`}
+        title={done ? "Finished — mark as unread" : "Mark as finished"}
         onClick={() => onDone(page, !done)}
+        className={cn(
+          "hit inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none [&_svg]:size-4",
+          done ? "bg-success/15 text-success hover:bg-success/25" : "text-muted-foreground hover:bg-accent hover:text-foreground group-hover/row:text-foreground",
+        )}
       >
-        {done && <Check />}
-        Finished
-      </Button>
+        {done ? <Check /> : <Circle />}
+      </button>
     </li>
   );
 }
@@ -109,8 +114,7 @@ export function ReadView({
   );
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      <header className="sticky top-0 z-10 flex shrink-0 flex-col gap-2 border-b bg-background px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
-        <h1 className="text-xl font-semibold">Read</h1>
+      <PageHeader title="Read">
         {pages.length > 0 && (
           <Input
             type="search"
@@ -120,8 +124,8 @@ export function ReadView({
             aria-label="Find a page"
           />
         )}
-      </header>
-      <main className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 pt-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+      </PageHeader>
+      <main className={cn("mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col gap-5 overflow-y-auto pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]", PAGE_X)}>
         {!library ? (
           error ? (
             <div className="flex flex-col items-start gap-2">
@@ -148,7 +152,7 @@ export function ReadView({
                 <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                   Continue <span className="tabular-nums">({going.length})</span>
                 </h2>
-                <ul className="flex flex-col gap-2">{going.map(row)}</ul>
+                <ul className={LIST}>{going.map(row)}</ul>
               </section>
             )}
             {grouped.length === 0 ? (
@@ -161,7 +165,7 @@ export function ReadView({
                     <span>{section.title}</span>
                     <span className="tabular-nums">({section.pages.length})</span>
                   </h2>
-                  <ul className="flex flex-col gap-2">{section.pages.map(row)}</ul>
+                  <ul className={LIST}>{section.pages.map(row)}</ul>
                 </section>
               ))
             )}

@@ -2,6 +2,7 @@
 // signals.tally). A row of tiles, each this week's number, the change from the week before and an eight-week line;
 // under them how the gate answered, how the cards ended and which tools failed. The screen compares and draws; it
 // never counts. Gate and tool-error counts start with the platform's journal, so weeks before it read zero.
+import { PageHeader, PAGE_X } from "@/components/page-header";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
@@ -124,12 +125,11 @@ export function WeekView({ weeks, error, onRetry }: { weeks: Tally[] | null; err
   const t = weeks?.[0];
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      <header className="flex shrink-0 flex-col gap-0.5 border-b bg-background px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
-        <h1 className="text-xl font-semibold">Week</h1>
-        {t && <p className="text-sm text-muted-foreground">{spanLabel(t)}</p>}
-      </header>
+      <PageHeader title="Week" width="max-w-4xl">
+        {t && <p className="-mt-1 text-sm text-muted-foreground">{spanLabel(t)}</p>}
+      </PageHeader>
       <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+        <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-6 pt-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]", PAGE_X)}>
           {!weeks || !t ? (
             error ? (
               <div className="flex flex-col items-start gap-2">

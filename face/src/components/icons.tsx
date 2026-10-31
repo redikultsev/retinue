@@ -245,3 +245,5 @@ export const GitPullRequest = icon(
   </>,
 );
 export const Chart = icon("Chart", <path d="M3 3v16a2 2 0 0 0 2 2h16M7 16l4-4 3 3 5-6" />);
+export const Ban = icon("Ban", <><circle cx="12" cy="12" r="9" /><path d="m5.7 5.7 12.6 12.6" /></>);
+export const ArrowUpRight = icon("ArrowUpRight", <path d="M7 17 17 7M7 7h10v10" />);

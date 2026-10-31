@@ -12,6 +12,9 @@ import { BaseButton } from "@/components/base-card";
 import { PushButton } from "@/components/push-card";
 import { ReplyButtons } from "@/components/reply-buttons";
 import {
+  ArrowUpRight,
+  Ban,
+  Check,
   Clock,
   Database,
   GitBranch,
@@ -30,7 +33,7 @@ import { inputText, when } from "@/lib/format";
 import { useLiveState } from "@/lib/live";
 import { toast } from "@/lib/toast";
 import type { Approval, Summary } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, LIST } from "@/lib/utils";
 
 const ICONS: Record<string, (props: React.SVGProps<SVGSVGElement>) => React.ReactNode> = {
   question: MessageQuestion,
@@ -49,6 +52,10 @@ const PRESSES: [Press, string][] = [
   ["dismissed", "Not a task"],
   ["later", "Tomorrow"],
 ];
+/** A row's small actions: muted at rest, full contrast on the row's hover or focus; never hover-only (NN/g), and a
+ * 44 px target on a touch screen (`hit`). */
+const ROW_ICON =
+  "hit inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none group-hover/row:text-foreground [&_svg]:size-4";
 const UNDO_MS = 10_000;
 const PRESS_FAILED = "It did not go through — try again.";
 const SMALL_CHARS = 240;
@@ -82,9 +89,9 @@ function CardAction({ approval, essence }: { approval: Approval; essence: string
   const [open, setOpen] = useState(small);
   if (open) return <ApprovalCard approval={current} onDecided={() => void feedSource.refresh()} />;
   return (
-    <div className="flex flex-col gap-1.5">
-      <p className="line-clamp-2 font-mono text-[13px] break-all text-muted-foreground">{essence}</p>
-      <Button variant="outline" className="w-fit" aria-expanded={false} onClick={() => setOpen(true)}>
+    <div className="flex items-start gap-3 pl-10">
+      <p className="line-clamp-2 min-w-0 flex-1 font-mono text-[13px] break-all text-muted-foreground">{essence}</p>
+      <Button variant="outline" size="sm" className="shrink-0" aria-expanded={false} onClick={() => setOpen(true)}>
         {current.kind === "courier" ? "Show the command" : "Show and decide"}
       </Button>
     </div>
@@ -122,14 +129,27 @@ export function PressButtons({ t, press = api.waitingPress }: { t: string; press
     }
     toast(label, "info", UNDO_MS, undefined, { label: "Undo", run: () => void back() });
   };
+  // One labelled action — the frequent one — and the other two as icons with their names in the tooltip (HIG: one or
+  // two prominent buttons in a view; 26 rows of three outlined buttons were noise).
+  const [done, doneLabel] = PRESSES[0] ?? ["done", "Done"];
+  const rest = PRESSES.slice(1);
   return (
-    <div className="flex flex-wrap gap-2">
-      {PRESSES.map(([action, label]) => (
-        <Button key={action} variant="outline" size="sm" onClick={() => void pressed(action, label)}>
-          {label}
-        </Button>
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="hit h-8 gap-1.5 px-2.5 text-[13px] md:h-8"
+        onClick={() => void pressed(done, doneLabel)}
+      >
+        <Check />
+        {doneLabel}
+      </Button>
+      {rest.map(([action, label]) => (
+        <button key={action} type="button" aria-label={label} title={label} className={ROW_ICON} onClick={() => void pressed(action, label)}>
+          {action === "later" ? <Clock /> : <Ban />}
+        </button>
       ))}
-    </div>
+    </>
   );
 }
 
@@ -153,30 +173,52 @@ function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
   ) : (
     <span className="min-w-0 truncate font-medium">{row.title}</span>
   );
+  // Her rows' actions sit on the row itself, to the right: «Done», two icons, and the bot's chat as ↗.
+  const actions =
+    row.action === "assistant" ? (
+      <div className="flex shrink-0 items-center gap-0.5 self-end sm:self-center">
+        {row.t && <PressButtons t={row.t} />}
+        {bot ? (
+          <a
+            href={`https://t.me/${bot}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open in Telegram"
+            title="Open in Telegram"
+            className={ROW_ICON}
+          >
+            <ArrowUpRight />
+          </a>
+        ) : null}
+      </div>
+    ) : null;
   return (
-    <li data-testid="feed-row" className="flex flex-col gap-2 rounded-lg border bg-background p-3">
-      <div className="flex items-start gap-2.5">
-        <span
-          className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
-          title={SOURCE_WORDS[row.source] ?? row.source}
-        >
-          <Icon aria-label={SOURCE_WORDS[row.source] ?? row.source} />
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <div className="flex min-w-0 items-baseline gap-2 text-[15px] md:text-sm">
-            {title}
-            <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-              {row.source === "deadline" ? "" : waited(row.since, now)}
-            </span>
+    <li data-testid="feed-row" className="group/row flex flex-col gap-2 px-3 py-2.5 hover:bg-accent/30 focus-within:bg-accent/30">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <span
+            className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+            title={SOURCE_WORDS[row.source] ?? row.source}
+          >
+            <Icon aria-label={SOURCE_WORDS[row.source] ?? row.source} />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <div className="flex min-w-0 items-baseline gap-2 text-[15px] md:text-sm">
+              {title}
+              {where && (
+                <span className="hidden min-w-0 shrink truncate text-xs text-muted-foreground sm:inline">
+                  {row.sphere_icon ? `${row.sphere_icon} ` : ""}
+                  {where}
+                </span>
+              )}
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+                {row.source === "deadline" ? "" : waited(row.since, now)}
+              </span>
+            </div>
+            {row.essence && !row.approval && <p className="line-clamp-2 text-sm break-words text-muted-foreground">{row.essence}</p>}
           </div>
-          {where && (
-            <span className="truncate text-xs text-muted-foreground">
-              {row.sphere_icon ? `${row.sphere_icon} ` : ""}
-              {where}
-            </span>
-          )}
-          {row.essence && !row.approval && <p className="line-clamp-2 text-sm break-words text-muted-foreground">{row.essence}</p>}
         </div>
+        {actions}
       </div>
       {row.approval && <CardAction approval={row.approval} essence={row.essence} />}
       {row.source === "base" && row.session && <BaseButton session={row.session} count={row.base ?? 0} />}
@@ -185,24 +227,11 @@ function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
       )}
       {row.action === "choose" && <Replies row={row} />}
       {row.action === "choose" && !row.replies?.length && row.session && (
-        <Link to="/s/$id" params={{ id: row.session }} className="text-sm text-primary underline-offset-4 hover:underline">
+        <Link to="/s/$id" params={{ id: row.session }} className="w-fit text-sm text-primary underline-offset-4 hover:underline">
           Open and answer
         </Link>
       )}
-      {row.action === "assistant" && row.t && <PressButtons t={row.t} />}
-      {row.action === "assistant" &&
-        (bot ? (
-          <a
-            href={`https://t.me/${bot}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-fit text-sm text-primary underline-offset-4 hover:underline"
-          >
-            Open in Telegram
-          </a>
-        ) : (
-          <span className="text-sm text-muted-foreground">in Telegram</span>
-        ))}
+      {row.action === "assistant" && !bot && <span className="text-xs text-muted-foreground">in Telegram</span>}
     </li>
   );
 }
@@ -247,7 +276,7 @@ export function FeedView({
             {group.action === "assistant" && feed.assistant_at !== null && now - feed.assistant_at > STALE_DIGEST_S && (
               <p className="px-1 text-xs text-warning-foreground">The assistant's list is from {when(feed.assistant_at, now)}: no newer one has come.</p>
             )}
-            <ul className="flex flex-col gap-2">
+            <ul className={LIST}>
               {group.rows.map((row) => (
                 <Row key={row.key} row={row} bot={feed.bot} now={now} />
               ))}

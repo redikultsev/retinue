@@ -2,6 +2,7 @@
 // in each; `/spaces/<space>` — its Showcase as a screen: its sessions, Open questions, Tasks, Records by nature with a
 // search; `/spaces/<space>/r/<path>` — one Record to read, its head in plain words. «Discuss» starts a session in
 // the Space's sphere with the Record or the question in its first message: the Base changes only through a session.
+import { PageHeader, PAGE_X } from "@/components/page-header";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { BaseMarkdown } from "@/components/base-markdown";
@@ -35,7 +36,7 @@ import {
 } from "@/lib/spaces";
 import { toast } from "@/lib/toast";
 import type { Session, Sphere } from "@/lib/types";
-import { cn, inputId } from "@/lib/utils";
+import { cn, inputId, LIST } from "@/lib/utils";
 
 const NO_SPHERES: Sphere[] = [];
 
@@ -80,22 +81,30 @@ function useSpheres(): Sphere[] {
 
 // --- pieces ----------------------------------------------------------------------------------------------------------
 
-function Header({ up, title, children }: { up?: { space?: string; label: string }; title: string; children?: React.ReactNode }) {
-  const back = "inline-flex size-11 shrink-0 items-center justify-center rounded-md hover:bg-accent";
+function Header({
+  up,
+  title,
+  width,
+  children,
+}: { up?: { space?: string; label: string }; title: string; width?: string; children?: React.ReactNode }) {
+  const back = "hit -ml-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-accent";
   return (
-    <header className="sticky top-0 z-10 flex min-h-14 items-center gap-1 border-b bg-background/95 px-2 pt-[env(safe-area-inset-top)] backdrop-blur">
-      {up?.space ? (
-        <Link to="/spaces/$space" params={{ space: up.space }} aria-label={up.label} title={up.label} className={back}>
-          <ArrowLeft className="size-5" />
-        </Link>
-      ) : up ? (
-        <Link to="/spaces" aria-label={up.label} title={up.label} className={back}>
-          <ArrowLeft className="size-5" />
-        </Link>
-      ) : null}
-      <h1 className={cn("min-w-0 flex-1 truncate font-semibold", !up && "px-2 text-lg")}>{title}</h1>
-      {children}
-    </header>
+    <PageHeader
+      title={title}
+      width={width}
+      actions={children}
+      back={
+        up?.space ? (
+          <Link to="/spaces/$space" params={{ space: up.space }} aria-label={up.label} title={up.label} className={back}>
+            <ArrowLeft className="size-5" />
+          </Link>
+        ) : up ? (
+          <Link to="/spaces" aria-label={up.label} title={up.label} className={back}>
+            <ArrowLeft className="size-5" />
+          </Link>
+        ) : null
+      }
+    />
   );
 }
 
@@ -225,7 +234,7 @@ export function SpacesPage({ read = spacesApi.list }: { read?: typeof spacesApi.
   return (
     <div className="flex flex-col">
       <Header title="Spaces" />
-      <main className="mx-auto w-full max-w-3xl p-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <main className={cn("mx-auto w-full max-w-3xl pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]", PAGE_X)}>
         {error && !data && <Empty>{error}</Empty>}
         {!error && !data && <Empty>Loading…</Empty>}
         {data && rows.length === 0 && <Empty>The Base has no Spaces.</Empty>}
@@ -281,12 +290,19 @@ function SessionRow({ s }: { s: Session }) {
 
 function Lines({ items, onDiscuss }: { items: ShowcaseItem[]; onDiscuss?: (item: ShowcaseItem) => void }) {
   return (
-    <ul className="flex flex-col gap-1">
+    // one surface with dividers, as every list of the app (`LIST`); a line of prose between items stays plain text
+    <ul className={items.some((item) => item.list) ? LIST : "flex flex-col gap-1"}>
       {items.map((item, i) => (
-        <li key={i} className={cn("flex items-start gap-2 rounded-lg px-2 py-1.5", item.list ? "border bg-card" : "text-muted-foreground")}>
+        <li key={i} className={cn("group/row flex items-start gap-2 px-3 py-2", !item.list && "text-muted-foreground")}>
           <BaseMarkdown text={item.text} className="min-w-0 flex-1" />
           {item.list && onDiscuss && (
-            <Button size="sm" variant="ghost" className="shrink-0" onClick={() => onDiscuss(item)} aria-label="Discuss the question">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="hit -my-1 h-8 shrink-0 text-muted-foreground group-hover/row:text-foreground md:h-8"
+              onClick={() => onDiscuss(item)}
+              aria-label="Discuss the question"
+            >
               <MessageCircle />
               <span className="hidden sm:inline">Discuss</span>
             </Button>
@@ -384,7 +400,7 @@ export function SpacePage({ space, read = spacesApi.space }: { space: string; re
   return (
     <div className="flex flex-col">
       <Header up={{ label: "To the Spaces" }} title={`${sphere?.icon ? `${sphere.icon} ` : ""}${spaceTitle(space, sphere, view?.title)}`} />
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <main className={cn("mx-auto flex w-full max-w-3xl flex-col gap-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]", PAGE_X)}>
         {summary.length > 0 && <p className="px-1 text-sm text-muted-foreground">{summary.join(" · ")}</p>}
         <Section
           title="Sessions"
@@ -532,11 +548,11 @@ export function RecordPage({ space, path, pane = false, read = spacesApi.record 
       {pane ? (
         <div className="flex justify-end p-2">{discuss}</div>
       ) : (
-        <Header up={{ space, label: `To the Space “${spaceTitle(space, sphere)}”` }} title={spaceTitle(space, sphere)}>
+        <Header up={{ space, label: `To the Space “${spaceTitle(space, sphere)}”` }} title={spaceTitle(space, sphere)} width="max-w-[68ch]">
           {discuss}
         </Header>
       )}
-      <main className="mx-auto w-full max-w-[68ch] p-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <main className={cn("mx-auto w-full max-w-[68ch] pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]", PAGE_X)}>
         {record ? <RecordBody record={record} /> : <Empty>{error ?? "Loading the Record…"}</Empty>}
       </main>
       <Discuss key={JSON.stringify(topic)} space={space} topic={topic} onClose={() => setTopic(null)} />

@@ -413,6 +413,19 @@ no Radix, no icon package, no new dependency; no code copied):
   WebUI](https://github.com/open-webui/open-webui) and [LibreChat](https://github.com/danny-avila/LibreChat) (their
   collapsed tool and status rows confirmed the pattern; whole apps, nothing to lift).
 
+### How the screens are drawn
+
+One header and one list on every tab, after the design guidance the change was checked against — Apple's HIG
+(buttons), the Web Interface Guidelines, Anthropic's design critique, accessibility and UX-copy skills, and
+`cuellarfr/design-skills` (interaction design, elevation):
+
+- **The header** (`components/page-header.tsx`): a sticky band whose title stands on the content's left edge — its
+  inner box has the page's width (`max-w-3xl`, Week's `max-w-4xl`, a Record's `68ch`) and padding (`PAGE_X`).
+- **A list** is one surface with dividers (`LIST`), not a card per row; a row that is a link has `LIST_ROW`.
+- **A row's actions**: at most one labelled button (the frequent action), the rest as icons with an `aria-label` and a
+  tooltip; muted at rest, full contrast on the row's hover or focus — never hover-only — and a 44 px target on a touch
+  screen (`.hit`). A Read page's “Finished” is a ring that fills with a check.
+
 ### Week
 
 “Week” (`/week`, `pages/week.tsx`) is how the work went, from the platform's own tally
@@ -546,7 +559,7 @@ session, a card or a summary changes on the stream (once per burst) and once a m
 | “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted (“To the Base: N files”, since the first of them) | “Allow” / “Deny”; a courier's “Copy command”; “To the Base · N”, the card in a dialog. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first: nothing is decided unseen |
 | “Choose” | a ping of the last 7 days whose suggested replies are still open ([platform.md](platform.md#pings): none pressed, nothing written into the session after it, no newer ping); a session waiting with no card shown | its replies as under the summary (`{reply: {seq, n}}`): pressed here or in Telegram, one goes in once and the ping closes in both places; no replies — “Open and answer” |
 | “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
-| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | “Open in Telegram” (`https://t.me/<bot>`): sending and deciding stay there, under her cards' buttons. A person's row also has “Done”, “Not a task”, “Tomorrow” ([mail.md](mail.md#closing-what-waits)); the private matter's has none — its buttons come after “Show” in Telegram |
+| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and ↗ “Open in Telegram” (`https://t.me/<bot>`): sending and deciding stay there, under her cards' buttons ([mail.md](mail.md#closing-what-waits)); the private matter's row has only ↗ — its buttons come after “Show” in Telegram |
 
 Each row: an icon of where it came from, its sphere (or track), the session's title (her rows: who), how long it has
 waited and its one line — the question, the command, the summary's first line, her title. A card is the same object

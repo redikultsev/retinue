@@ -2,6 +2,7 @@
 // session with its sphere, title, last line and how long it runs), «Done» (finished since the owner last had the
 // app open, not read yet), «Deadlines» (the base's dates of the week, from the router's digest) and the hub's status
 // chips. Everything comes from what the app already reads: the session rows, the stream, the feed.
+import { PageHeader, PAGE_X } from "@/components/page-header";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-header";
@@ -17,7 +18,7 @@ import { sphereLabel } from "@/lib/spheres";
 import { orderedItems } from "@/lib/store";
 import { dayWords, elapsed, finished, lastLine, running, tickMs, todayWord, turnStart, useSince } from "@/lib/today";
 import type { Session, Sphere } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, LIST, LIST_ROW } from "@/lib/utils";
 
 /** Running sessions whose transcript the app has not loaded: their snapshot is read once, then the stream keeps it. */
 const WATCH_AT_MOST = 5;
@@ -64,7 +65,7 @@ function Running({ sessions, spheres, now: given }: { sessions: Session[]; spher
       if (!(s.id in live.getState().floors) && !live.isWatched(s.id)) live.watch(s.id).catch(() => undefined);
   }, [ids]);
   return (
-    <ul className="flex flex-col gap-1.5">
+    <ul className={LIST}>
       {sessions.map((s) => {
         const line = lastLine(orderedItems(state.items[s.id]), state.deltas[s.id]);
         return (
@@ -73,15 +74,15 @@ function Running({ sessions, spheres, now: given }: { sessions: Session[]; spher
               to="/s/$id"
               params={{ id: s.id }}
               data-testid="running-row"
-              className="flex flex-col gap-0.5 rounded-lg border bg-background p-3 hover:bg-accent"
+              className={cn(LIST_ROW, "flex-col gap-0.5")}
             >
               <span className="flex min-w-0 items-baseline gap-2 text-[15px] md:text-sm">
                 <span className="size-2 shrink-0 animate-pulse self-center rounded-full bg-primary" />
                 <span className="min-w-0 truncate font-medium">{s.title || s.track}</span>
+                <span className="hidden min-w-0 shrink truncate text-xs text-muted-foreground sm:inline">{where(s, spheres)}</span>
                 <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">{elapsed(turnStart(s), now)}</span>
               </span>
-              <span className="truncate text-xs text-muted-foreground">{where(s, spheres)}</span>
-              <span className="truncate text-sm text-muted-foreground">{line || "thinking…"}</span>
+              <span className="truncate pl-4 text-sm text-muted-foreground">{line || "thinking…"}</span>
             </Link>
           </li>
         );
@@ -92,14 +93,14 @@ function Running({ sessions, spheres, now: given }: { sessions: Session[]; spher
 
 function Done({ sessions, spheres, now }: { sessions: Session[]; spheres: Sphere[]; now: number }) {
   return (
-    <ul className="flex flex-col gap-1.5">
+    <ul className={LIST}>
       {sessions.map((s) => (
         <li key={s.id}>
           <Link
             to="/s/$id"
             params={{ id: s.id }}
             data-testid="done-row"
-            className="flex min-h-12 items-center gap-2 rounded-lg border bg-background px-3 py-2 hover:bg-accent"
+            className={cn(LIST_ROW, "min-h-12 items-center gap-2")}
           >
             <span role="img" aria-label="unread" className="size-2.5 shrink-0 rounded-full bg-primary" />
             <span className="min-w-0 flex-1">
@@ -117,7 +118,7 @@ function Done({ sessions, spheres, now }: { sessions: Session[]; spheres: Sphere
 function Deadlines({ items, today }: { items: Deadline[]; today: Date }) {
   const openRecord = useOpenRecord();
   return (
-    <ul className="flex flex-col gap-1.5">
+    <ul className={LIST}>
       {items.map((d) => {
         const { date, overdue } = dayWords(d.when, today);
         const record = d.path ? splitRecord(d.path) : null;
@@ -141,12 +142,12 @@ function Deadlines({ items, today }: { items: Deadline[]; today: Date }) {
               <button
                 type="button"
                 onClick={() => openRecord(record.space, record.path)}
-                className="flex w-full items-start gap-2 rounded-lg border bg-background px-3 py-2 text-left hover:bg-accent"
+                className={cn(LIST_ROW, "items-start gap-2")}
               >
                 {body}
               </button>
             ) : (
-              <div className="flex items-start gap-2 rounded-lg border bg-background px-3 py-2">{body}</div>
+              <div className="flex items-start gap-2 px-3 py-2.5">{body}</div>
             )}
           </li>
         );
@@ -194,18 +195,20 @@ export function TodayView({
   const deadlines = feed?.deadlines ?? [];
   const deadlineIds = useMemo(() => new Set(deadlines.map((d) => d.id)), [deadlines]);
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-3 pt-3 pb-6 md:px-6">
-      <div className="flex flex-col gap-2 px-1">
-        <div className="flex items-center gap-2">
-          <h1 className="min-w-0 flex-1 text-xl font-semibold">Today · {todayWord(today)}</h1>
-          {/* the phone's way to «Week»: the tab bar has no room for it; the sidebar has it on a wide screen */}
-          <Link to="/week" className="inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground lg:hidden">
-            <Chart className="size-4" />
-            Week
-          </Link>
-        </div>
-        <Chips chips={feed?.chips ?? []} />
-      </div>
+    <>
+    <PageHeader
+      title={`Today · ${todayWord(today)}`}
+      actions={
+        // the phone's way to «Week»: the tab bar has no room for it; the sidebar has it on a wide screen
+        <Link to="/week" className="inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground lg:hidden">
+          <Chart className="size-4" />
+          Week
+        </Link>
+      }
+    >
+      <Chips chips={feed?.chips ?? []} />
+    </PageHeader>
+    <div className={cn("mx-auto flex w-full max-w-3xl flex-col gap-5 pt-4 pb-6", PAGE_X)}>
       <FeedView
         feed={feed}
         now={now}
@@ -233,6 +236,7 @@ export function TodayView({
         </Section>
       )}
     </div>
+    </>
   );
 }
 

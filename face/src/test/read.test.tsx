@@ -138,12 +138,12 @@ describe("«Read»", () => {
     const regex = screen.getAllByTestId("library-page").find((li) => li.textContent?.includes("Regex"))!;
     fireEvent.click(within(regex).getByRole("link"));
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: "regex" }));
-    const button = within(regex).getByRole("button", { name: /Finished/ });
+    const button = within(regex).getByRole("button", { name: /finished/i });
     expect(button.getAttribute("aria-pressed")).toBe("false");
     fireEvent.click(button);
     expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ id: "regex" }), true);
     const notes = screen.getAllByTestId("library-page").find((li) => li.textContent?.includes("trip"))!;
-    fireEvent.click(within(notes).getByRole("button", { name: /Finished/ }));
+    fireEvent.click(within(notes).getByRole("button", { name: /finished/i }));
     expect(onDone).toHaveBeenLastCalledWith(expect.objectContaining({ id: "travel-notes" }), false);
   });
 
@@ -185,7 +185,7 @@ describe("«Read»", () => {
     const regex = within(screen.getByRole("region", { name: "Continue" }))
       .getAllByTestId("library-page")
       .find((li) => li.textContent?.includes("Regex"))!;
-    fireEvent.click(within(regex).getByRole("button", { name: /Finished/ }));
+    fireEvent.click(within(regex).getByRole("button", { name: /finished/i }));
     expect(done).toHaveBeenCalledWith("regex", true);
     await waitFor(() => expect(within(screen.getByRole("region", { name: "Continue" })).queryByText("Regex course")).toBeNull());
   });

@@ -9,8 +9,12 @@ watched through windows: a `snapshot()` of the tree (path → digest) when it st
 What differs between the two snapshots of a window is the run's, and is recorded for its session in SQLite
 (`base_files`), with the paths its own file tools named in that window (`changes.Scan` over its raw lines) as a
 cross-check: a path both name is `both`, one only the tools name (a stat the snapshot missed) is still recorded, as
-is one only the snapshot names (a Bash `sed`, or another session's run in the same window). Two runs that overlap
-both get a file changed in the overlap: the owner decides on the card, which marks such a file. Only a path the
+is one only the snapshot names — `bash` when one of the window's Bash commands names it and writes (`bash_writes`: a
+`sed -i`, a heredoc's `write_text`), else `snapshot`: the edit of a script that names no file, or another session's run
+in the same window. A `snapshot` claim gives way to any other: a run whose own tools or command wrote the file takes it
+from every session that only saw it change, whichever mark comes first — so a session that only read the Base while
+another wrote it gets nothing. Two runs that overlap and neither names the file both get it: the owner decides on the
+card, which marks such a file. Only a path the
 clone says is uncommitted (`changed()`) is ever recorded or kept: a file committed — by any session's button — or
 refreshed to the hub's content leaves every session's list (`_prune`), at every mark, every start, after a commit and
 once a minute. The marks are taken after the poll that ingested their lines (`settle`) and before any new run on the
@@ -64,6 +68,7 @@ import inspect
 import json
 import logging
 import posixpath
+import re
 import secrets
 from typing import TYPE_CHECKING
 
@@ -77,6 +82,35 @@ if TYPE_CHECKING:
     from .platformd import Platform
 
 log = logging.getLogger("retinue.tobase")
+
+# A Bash command that writes (`bash_writes`): a redirection (not of a descriptor, not to /dev/null), an in-place edit,
+# a file command, a git command that rewrites the tree, a script's write call.
+_WRITES = re.compile(r"(?<![0-9&<>=-])>{1,2}(?!\s*(?:/dev/null|&))|\b(?:sed|perl)\b[^|;&\n]*\s-[a-zA-Z]*i|"
+                     r"\b(?:tee|mv|cp|rm|touch|truncate|patch|install|ln|unlink)\b|"
+                     r"\bgit\s+(?:checkout|restore|apply|mv|rm|reset|stash)\b|"
+                     r"\bwrite_(?:text|bytes)\b|\.write\(|\bopen\([^)]*['\"][wax]")
+
+
+def bash_writes(command: str, path: str, root: str) -> bool:
+    """The Bash command writes and names the Base file `path` (relative to the clone at `root`): whole — as it is, or
+    under the clone — or, for a command that `cd`s first, its name as a word of its own and each of its folders. A heuristic, on the
+    safe side: it only decides between sessions that each saw the file change."""
+    if not _WRITES.search(command):
+        return False
+    if f"{root}/{path}" in command or re.search(rf"(?<![\w./-]){re.escape(path)}(?![\w-])", command):
+        return True
+    *folders, name = path.split("/")
+    return bool(folders) and re.search(rf"(?<![\w./-]){re.escape(name)}(?![\w-])", command) is not None and \
+        all(re.search(rf"(?<![\w.-]){re.escape(folder)}(?![\w-])", command) for folder in folders)
+
+
+def _bash_commands(row: dict) -> list[str]:
+    """The Bash commands an assistant line of the transcript calls."""
+    content = (row.get("message") or {}).get("content") if isinstance(row.get("message"), dict) else None
+    if row.get("type") != "assistant" or not isinstance(content, list):
+        return []
+    return [b["input"]["command"] for b in content if isinstance(b, dict) and b.get("type") == "tool_use" and
+            b.get("name") == "Bash" and isinstance(b.get("input"), dict) and isinstance(b["input"].get("command"), str)]
 
 KEY = "base/"                 # a card's buttons and notes: base/<card id>
 OPEN = "base/open"            # the ping's «To the Base · N»: its digest is the session
@@ -200,9 +234,13 @@ class ToBase:
         return self.base is not None and session is not None and not session.get("parent") and \
             session.get("lane") == self.lane()
 
+    def _root(self) -> str:
+        """The clone's root as a run sees it."""
+        return posixpath.join("/work", str(self.base.tree_rel).strip("/"))
+
     def _rel(self, path: str) -> str | None:
         """A path a file tool named, relative to the clone's root; None for one outside it."""
-        root = posixpath.join("/work", str(self.base.tree_rel).strip("/"))
+        root = self._root()
         path = posixpath.normpath(path) if posixpath.isabs(path) else ""
         return path[len(root) + 1:] if path.startswith(root + "/") else None
 
@@ -281,7 +319,7 @@ class ToBase:
                     db.execute("DELETE FROM base_runs WHERE run = ?", (run,))  # never started: nothing of its own
                     continue
                 touched.add(session)
-                self._mark(run, session, after, dirty, ended, now)
+                touched |= self._mark(run, session, after, dirty, ended, now)
                 if ended:
                     ended_now.add(session)
             db.commit()
@@ -296,29 +334,46 @@ class ToBase:
             self.ping(session)
         return ended_now
 
-    def _mark(self, run: str, session: str, after: dict, dirty: dict[str, str], ended: bool, now: float) -> None:
+    def _mark(self, run: str, session: str, after: dict, dirty: dict[str, str], ended: bool, now: float) -> set[str]:
+        """The window's difference recorded for its session; the other sessions that lost a `snapshot` claim to it."""
         db = self.store.db
         before_text, last_raw = db.execute("SELECT before, last_raw FROM base_runs WHERE run = ?", (run,)).fetchone()
         before = json.loads(before_text) if before_text is not None else None
         by_snapshot = set() if before is None else {p for p in before.keys() | after.keys() if before.get(p) != after.get(p)}
-        scan, upto = changes.Scan(), last_raw
+        scan, upto, commands = changes.Scan(), last_raw, []
         for raw_id, text in db.execute("SELECT id, line FROM raw WHERE id > ? AND run = ? ORDER BY id",
                                        (last_raw, run)):
-            scan.line(parsed(text))
+            scan.line(row := parsed(text))
+            commands += _bash_commands(row)
             upto = raw_id
         by_tools = {rel for c in scan.changes if (rel := self._rel(c.path)) is not None}
+        root, lost = self._root(), set()
         for path in (by_snapshot | by_tools) & dirty.keys():
-            via = "both" if path in by_snapshot and path in by_tools else "snapshot" if path in by_snapshot else "tool"
+            if path in by_tools:
+                via = "both" if path in by_snapshot else "tool"
+            else:
+                via = "bash" if any(bash_writes(c, path, root) for c in commands) else "snapshot"
+            if via == "snapshot" and db.execute("SELECT 1 FROM base_files WHERE path = ? AND session != ? AND "
+                                                "via != 'snapshot'", (path, session)).fetchone():
+                continue  # another session wrote it: this one only saw it change
             row = db.execute("SELECT via FROM base_files WHERE session = ? AND path = ?", (session, path)).fetchone()
             if row is None:
                 db.execute("INSERT INTO base_files (session, path, via, at) VALUES (?, ?, ?, ?)", (session, path, via, now))
-            elif row[0] != via and row[0] != "both":
-                db.execute("UPDATE base_files SET via = 'both' WHERE session = ? AND path = ?", (session, path))
+            elif row[0] not in (via, "both") and via != "snapshot":
+                db.execute("UPDATE base_files SET via = ? WHERE session = ? AND path = ?",
+                           (via if row[0] == "snapshot" else "both", session, path))
+            if via != "snapshot":
+                for (other,) in db.execute("SELECT session FROM base_files WHERE path = ? AND session != ? AND "
+                                           "via = 'snapshot'", (path, session)).fetchall():
+                    db.execute("DELETE FROM base_files WHERE session = ? AND path = ?", (other, path))
+                    lost.add(other)
         if ended:
             db.execute("DELETE FROM base_runs WHERE run = ?", (run,))
         else:
             db.execute("UPDATE base_runs SET before = ?, last_raw = ? WHERE run = ?", (json.dumps(after), upto, run))
-        self.store._session_event(session)
+        for each in {session} | lost:
+            self.store._session_event(each)
+        return lost
 
     async def _dirty(self) -> dict[str, str]:
         """The clone's uncommitted paths and their A/M/D, as it says now — kept (`base_dirty`), so the feed can name

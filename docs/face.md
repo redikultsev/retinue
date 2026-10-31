@@ -155,7 +155,7 @@ in the snapshot, never wrapped in an envelope. The kinds and their keys:
 | `item` | `<session>/<turn>/<n>` | `{session, turn, n, kind, data}` |
 | `items_reset` | `<session>/<turn>` | `{session, turn, count}`: that turn's items from `count` on are gone |
 | `approval` | the approval's id | a card, as in the snapshot |
-| `summary` | `<session>/<seq>` | `{session, seq, head, text, at, turn, kind, took_s, line}`: every summary its own object; `turn` is the turn it ends; a ping's `kind` (`done` · `decision` — a card of the session waits on you — · `failed`), `took_s`, and `line`, the sphere line exactly as the model wrote it ([platform.md](platform.md#pings)) |
+| `summary` | `<session>/<seq>` | `{session, seq, head, text, at, turn, kind, took_s, auto}`: every summary its own object; `turn` is the turn it ends; a ping's `kind` (`done` · `decision` — a card of the session waits on you — · `failed`) and `took_s` ([platform.md](platform.md#pings)); `auto`, the card of the platform's own commit after that turn |
 | `input` | `<session>/<input_id>` | `{session, input_id, text, at, turn, n, attachments}`: your message; it goes before the item (`turn`, `n`) the session had not yet written (`null` on old ones: not shown); `attachments`: `[{kind: image\|pdf\|file, name, size, what, thumb}]` |
 | `file` | the file's id | `{id, session, path, name, size, mime, at}`: a file the session handed over ([below](#a-sessions-files)) |
 | `proposal` | the proposal's id | `{id, session, tool_use_id, title, brief, created, at, state, child}`: a sub-session the session proposed ([platform.md](platform.md#proposals)); `state` `open` · `started` (`child` the sub-session) · `declined` · `expired` (open past its week) |
@@ -531,8 +531,7 @@ is as of opening the session.
   buttons are “In the Base”, “To the Base” and “Push” (below): a session that needs your choice asks with a question
   card. “In the Base · N” is under every summary whose turn the platform committed by itself
   ([base.md](base.md#the-platforms-own-commit)): it opens that commit's card — the files, “Show diff” (the commit's own
-  diff), “Undo” while it can be undone, the badge “Committed by itself” or “Undone”. The turn's
-  last message hides its sphere line — the exact `line` the platform parsed, never one the app parses itself.
+  diff), “Undo” while it can be undone, the badge “Committed by itself” or “Undone”.
 - **“To the Base”** ([base.md](base.md#the-button)): “To the Base · N” under the session's last summary, in its
   menu and in its feed row opens its commit card in a dialog — the same card as in Telegram (the event `base`): the
   files with A/M/D, +/− and ⇄ for one another session's run changed too, “nobody's” for one no session changed (turned

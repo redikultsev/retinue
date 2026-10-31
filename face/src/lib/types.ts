@@ -146,8 +146,6 @@ export interface Summary {
   took_s?: number | null;
   /** The card of the platform's own commit after this turn (retinue/tobase.py), while it can be undone from here. */
   auto?: string | null;
-  /** The sphere line exactly as the model wrote it at the end of the turn's last message: the face hides it there. */
-  line?: string | null;
 }
 
 export type PingKind = "done" | "decision" | "failed";

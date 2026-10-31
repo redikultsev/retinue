@@ -74,7 +74,8 @@ class PlatformStore:
                 news_at REAL,                       -- when it last said something new: a summary, a card
                 turn_started REAL,                  -- when its running turn began: idle or closed -> active
                 sub_of TEXT,                        -- a sub-session: the session that started it (`subs`)
-                title TEXT,                         -- a title given at its start (a sub-session's); NULL: its first input
+                title TEXT,                         -- a sub-session's given title, or the one it named itself;
+                                                    -- NULL: its first input
                 turn_by TEXT,                       -- who started its current turn: owner | parent | report (`subs`)
                 sphere_by TEXT,                     -- who set its sphere last: owner | session; NULL: its start
                 hops INTEGER NOT NULL DEFAULT 0,    -- a parent: child<->parent exchanges since the owner last wrote
@@ -306,9 +307,17 @@ class PlatformStore:
             self._session_event(session)
         return True
 
+    def set_title(self, session: str, title: str) -> bool:
+        """The session names itself (`subs` `name_session`): once — a title it has, given or its own, stays."""
+        cursor = self.db.execute("UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL", (title, session))
+        self.db.commit()
+        if cursor.rowcount == 1:
+            self._session_event(session)
+        return cursor.rowcount == 1
+
     def set_sphere(self, session: str, sphere: str | None, by: str = "owner") -> bool:
         """The owner moves the session to another sphere, or out of any: it is no sphere's main session there. `by`
-        session: its own `Sphere:` line (`subs.sphere_line`), taken only while nobody placed it. Its sub-sessions
+        session: its own `name_session`, taken only while nobody placed it. Its sub-sessions
         follow it, but one the owner placed himself."""
         cursor = self.db.execute("UPDATE sessions SET sphere = ?, main = 0, sphere_by = ? WHERE id = ?",
                                  (sphere, by, session))
@@ -516,7 +525,7 @@ class PlatformStore:
         return {"approval": row[0], "action": row[1], "digest": row[2]} if row else None
 
     def first_input(self, session: str) -> str:
-        """Its title: the one it was given (a sub-session's), else the first thing written into it."""
+        """Its title: the one it was given (a sub-session's) or named itself, else the first thing written into it."""
         row = self.db.execute("SELECT COALESCE((SELECT title FROM sessions WHERE id = ?), (SELECT text FROM inputs "
                               "WHERE session = ? AND text != '' ORDER BY at, rowid LIMIT 1))", (session, session)).fetchone()
         return row[0] or "" if row else ""
@@ -1033,12 +1042,11 @@ def _face_input(row: tuple) -> dict:
 
 def _face_summary(session: str, seq: int, data: dict) -> dict:
     """A summary as the face shows it; its event's key is `<session>/<seq>`. `turn`: the turn it ends (it is said
-    when that turn's last line comes). A ping's fields (`pings`): `kind`, `took_s`, and `line`, the sphere line exactly
-    as the model wrote it at the end of its message (the face hides it there); `auto`, the card of the platform's own
-    commit after that turn (`tobase`)."""
+    when that turn's last line comes). A ping's fields (`pings`): `kind`, `took_s`; `auto`, the card of the platform's
+    own commit after that turn (`tobase`)."""
     return {"session": session, "seq": seq, "head": data.get("head", ""), "text": data.get("text", ""),
             "at": data.get("at"), "turn": data.get("turn"), "kind": data.get("kind"), "took_s": data.get("took_s"),
-            "line": data.get("line"), "auto": data.get("auto")}
+            "auto": data.get("auto")}
 
 
 def parsed(line: str) -> dict:

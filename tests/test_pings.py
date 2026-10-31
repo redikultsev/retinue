@@ -68,8 +68,8 @@ def test_a_turn_is_a_decision_only_while_a_question_card_of_its_session_is_shown
         session = await turn(world, 'Нашёл три варианта.\nReplies: "Бери первый" · "Покажи ещё"', took=600)
         [ping] = world.notes("summary")
         data = ping["data"]
-        assert (data["text"], data["kind"], data["took_s"], data["line"]) == \
-            ('Нашёл три варианта.\nReplies: "Бери первый" · "Покажи ещё"', "done", 600, None), \
+        assert (data["text"], data["kind"], data["took_s"]) == \
+            ('Нашёл три варианта.\nReplies: "Бери первый" · "Покажи ещё"', "done", 600), \
             "a replies line is the model's text like any other"
         assert data["head"].startswith("Result · notes · session") and data["place"] == "notes"
         assert data["title"] == "найди жильё"

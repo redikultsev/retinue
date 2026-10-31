@@ -8,7 +8,6 @@ import { ApprovalCard } from "@/components/approval-card";
 import { AutoButton, BaseButton } from "@/components/base-card";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
-import { hideSphereLines } from "@/lib/sphere-line";
 import type { Approval, Input, Item, Proposal, Summary } from "@/lib/types";
 import { InputBubble } from "./input";
 import { isStep, Markdown, StepRun, TranscriptItem } from "./item";
@@ -171,9 +170,7 @@ interface Props {
   proposals?: Proposal[];
 }
 
-export function Transcript({ items: given, approvals, delta, running, summaries = [], inputs = [], base, push, proposals = [] }: Props) {
-  // A ping's sphere line is the platform's, not words: off the message it ends.
-  const items = useMemo(() => hideSphereLines(given, summaries), [given, summaries]);
+export function Transcript({ items, approvals, delta, running, summaries = [], inputs = [], base, push, proposals = [] }: Props) {
   const cards = useMemo(() => placeCards(items, approvals), [items, approvals]);
   const notes = useMemo(() => placeSummaries(items, summaries), [items, summaries]);
   const mine = useMemo(() => placeInputs(items, inputs), [items, inputs]);

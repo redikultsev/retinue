@@ -194,6 +194,14 @@ def write_call(call_id: str, path: str, content: str) -> list[str]:
                 "tool_use_result": {"type": "create", "filePath": path, "content": content}})]
 
 
+def bash_call(call_id: str, command: str) -> list[str]:
+    """A Bash call and its result as the CLI journals them."""
+    return [json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": call_id, "name": "Bash", "input": {"command": command}}]}}),
+            json.dumps({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": call_id, "content": ""}]}})]
+
+
 def based(tmp_path, body):
     async def go():
         world = BaseWorld(tmp_path)
@@ -257,6 +265,39 @@ def test_the_file_tools_cross_check_what_the_snapshot_missed_and_a_session_outsi
         await world.poll()
         assert world.files(code) == []
     based(tmp_path, body)
+
+
+def test_a_file_a_run_wrote_by_bash_is_its_alone_and_runs_that_only_saw_it_change_get_nothing(tmp_path):
+    async def body(world: BaseWorld):
+        early = await world.new("сравни тарифы", "tg:1")
+        writer = await world.new("обнови даты поездки", "tg:2")
+        late = await world.new("ревью кода", "tg:3")
+        world.fake.tree["MAP.md"] = "новые даты"
+        world.fake.tree["home/AGENTS.md"] = "новые даты"
+        await world.end(early, "Готово.", *bash_call("b0", "cat MAP.md home/AGENTS.md"))
+        assert world.files(early) == ["MAP.md", "home/AGENTS.md"], "no run named them yet: its window saw them change"
+        await world.end(writer, "Готово.", *bash_call("b1", "python3 - <<'EOF'\nfor name in ('MAP.md', 'home/AGENTS.md'):"
+                                                            "\n    p = pathlib.Path(name)\n    p.write_text('x')\nEOF"))
+        assert world.files(writer) == ["MAP.md", "home/AGENTS.md"]
+        assert dict(world.store.db.execute("SELECT path, via FROM base_files WHERE session = ?", (writer,))) == \
+            {"MAP.md": "bash", "home/AGENTS.md": "bash"}
+        assert world.files(early) == [] and world.store.face_session(early)["base"] == 0, \
+            "the writer takes them from a run that only saw them change"
+        await world.end(late, "Готово.", *bash_call("b2", "grep -n дата MAP.md > /dev/null; cat home/AGENTS.md"))
+        assert world.files(late) == [], "nor does a run that ends after the writer's mark get them"
+    based(tmp_path, body)
+
+
+def test_bash_writes_needs_a_write_and_the_file_named_whole():
+    root = "/work/base"
+    for command in ("sed -i 's/a/b/' MAP.md", "echo x >> /work/base/MAP.md", "cd home && perl -pi -e 's/a/b/' x.md",
+                    "python3 - <<'EOF'\npathlib.Path('home/x.md').write_text('y')\nEOF", "mv /tmp/new.md home/x.md"):
+        path = "MAP.md" if "MAP" in command else "home/x.md"
+        assert tobase.bash_writes(command, path, root), command
+    for command, path in (("cat MAP.md 2>/dev/null", "MAP.md"), ("sed -n 1,9p home/x.md", "home/x.md"),
+                          ("cat travel/AGENTS.md > /tmp/out", "AGENTS.md"), ("grep -c a MAP.md > /dev/null", "MAP.md"),
+                          ("echo y > /tmp/x.md; cat home/y.md", "home/x.md")):
+        assert not tobase.bash_writes(command, path, root), command
 
 
 def test_a_turn_inside_one_run_is_marked_at_its_result_and_a_restart_keeps_the_window(tmp_path):

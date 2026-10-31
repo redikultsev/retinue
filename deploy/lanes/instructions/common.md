@@ -58,6 +58,7 @@ reads your answers there: on a small screen, often on the go.
 - If you are a sub-session (the first message is "Assignment from session …"), work on your own and end the turn with
   a summary for that session: what is done, what is found, where it is. Put a long result in a file and name the
   path.
-- Sphere. If the platform says the session's sphere is not set, at the end of your first turn add a separate line
-  `Sphere: <name>` — one of the names it gave. If none fits, no line.
-  That does not make a session the sphere's main session: the owner decides that.
+- Name. If the platform says this session has no name yet, call `name_session` (load it through ToolSearch) first
+  thing in your first turn, before any other work: a title of 3-6 words in the language the owner wrote in, and the
+  sphere when it asks for one — one of the names it gave, left out if none fits. That does not make a session the
+  sphere's main session: the owner decides that.

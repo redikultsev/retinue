@@ -21,7 +21,6 @@ import type {
   StreamEvent,
   Summary,
 } from "./types";
-import { hideSphereLines } from "./sphere-line";
 
 export interface State {
   /** The id of the last stream event seen: where the stream resumes. Null before the first snapshot. */
@@ -462,7 +461,6 @@ export function groupSessions(sessions: Session[], now: number): Groups {
 /** What a peek shows of a session: the text being written now, else its last message from the model, else its last
  * summary. */
 export function lastWords(items: Item[], delta: string | undefined, summaries: Summary[]): string {
-  items = hideSphereLines(items, summaries);
   if (delta?.trim()) return delta;
   for (let k = items.length - 1; k >= 0; k--) {
     const it = items[k]!;

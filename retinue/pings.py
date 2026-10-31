@@ -100,7 +100,7 @@ def in_app(store: PlatformStore, session: str) -> bool:
 
 
 def add(store: PlatformStore, session: dict, head: str, text: str, kind: str, now: float, *, run: str | None = None,
-        spheres: dict[str, str] | None = None, quiet: bool = False, line_before: str = "", **extra) -> int:
+        spheres: dict[str, str] | None = None, quiet: bool = False, **extra) -> int:
     """The summary note of a ping: `decision` when a card of the session waits on the owner. Its number."""
     sid = session["id"]
     waiting = store.db.execute("SELECT 1 FROM approvals WHERE session = ? AND state = 'shown' AND kind IN "
@@ -111,7 +111,7 @@ def add(store: PlatformStore, session: dict, head: str, text: str, kind: str, no
     sphere = face.get("sphere")
     place = (spheres or {}).get(sphere) or sphere or session.get("track") or ""
     data = {"head": head, "text": text, "at": now, "turn": session.get("turn"), "kind": kind,
-            "took_s": took(store, sid, run, now), "attended": attended(store, run), "line": line_before or None,
+            "took_s": took(store, sid, run, now), "attended": attended(store, run),
             "place": place, "title": line(face.get("title") or "", TITLE_CHARS),
             **({"quiet": True} if quiet else {}), **({"in_app": True} if in_app(store, sid) else {}), **extra}
     seq = store._note("summary", sid, data)

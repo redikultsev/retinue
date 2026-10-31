@@ -98,19 +98,6 @@ def subs_scenario(tmp_path, body, world_class=None):
 
 # --- the pieces -----------------------------------------------------------------------------------------------------
 
-def test_the_sphere_line_is_taken_only_as_the_very_last_line_and_only_for_a_configured_sphere():
-    names = frozenset({"travel", "home"})
-    assert subs.sphere_line("Done.\nSphere: travel", names) == ("Done.", "travel", "Sphere: travel")
-    assert subs.sphere_line("Done.\n\n**Sphere:** `home`  \n\n", names) == ("Done.", "home", "**Sphere:** `home`")
-    assert subs.sphere_line("~~~\ncode\n~~~\nSphere: home", names) == ("~~~\ncode\n~~~", "home", "Sphere: home")
-    for text in ("Done.\nSphere: finance", "Done.\nsphere: travel", "```\nSphere: travel", "Done. Sphere: travel",
-                 "Sphere: travel\nDone.", "Sphere: Travel", "Sphere: travel home", "```\n~~~\nSphere: travel",
-                 # The older Russian label is no longer read, and a line before another last line is not the last.
-                 "Готово.\nСфера: travel", "Готово.\n**Сфера:** `home`",
-                 'Done.\nSphere: travel\nReplies: "Yes"', "Готово.\nSphere: home\nОтветы: «Да»"):
-        assert subs.sphere_line(text, names) == (text, None, ""), text
-
-
 def test_the_server_speaks_mcp_over_plain_json():
     async def go():
         async def call(name, arguments, params):
@@ -123,7 +110,8 @@ def test_the_server_speaks_mcp_over_plain_json():
                                "", call))[1]["result"]["protocolVersion"] in subs.PROTOCOLS
         assert await subs.rpc({"jsonrpc": "2.0", "method": "notifications/initialized"}, "", call) == (202, None)
         listed = (await subs.rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, "", call))[1]
-        assert [t["name"] for t in listed["result"]["tools"]] == [subs.START, subs.PROPOSE, subs.MESSAGE, subs.READ]
+        assert [t["name"] for t in listed["result"]["tools"]] == [subs.START, subs.PROPOSE, subs.MESSAGE, subs.READ,
+                                                                  subs.NAME]
         found = (await subs.rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "t", "arguments": {"x": 1}, "_meta": {"claudecode/toolUseId": "toolu_1"}}}, "", call))[1]
         assert found["result"] == {"content": [{"type": "text", "text": "t:1:toolu_1"}], "isError": False}
@@ -474,34 +462,51 @@ def test_the_token_of_a_run_that_ended_opens_neither_a_hook_nor_the_server(tmp_p
     subs_scenario(tmp_path, body)
 
 
-# --- the sphere a session names -----------------------------------------------------------------------------------
+# --- the name a session gives itself -----------------------------------------------------------------------------
 
-@pytest.mark.parametrize("before, line, after", [
-    (None, "Sphere: travel", "travel"),
-    (None, "Sphere: finance", None),
-    ("home", "Sphere: travel", "home"),
-    (None, "Сфера: travel", None),
+@pytest.mark.parametrize("before, sphere, after", [
+    (None, "travel", "travel"),
+    (None, None, None),
+    ("home", "travel", "home"),
 ])
-def test_a_session_nobody_placed_names_its_own_sphere_and_its_children_follow(tmp_path, before, line, after):
+def test_a_session_names_itself_once_and_its_sphere_only_while_nobody_placed_it(tmp_path, before, sphere, after):
     async def body(world: SubsWorld):
-        parent = await world.parent("найди жильё", sphere=before)
+        parent = await world.parent("найди жильё в Лиссабоне на неделю", sphere=before)
+        told = world.platform.subs.instructions(world.store.session(parent))
+        assert f"call {subs.NAME}" in told and ("travel, home" in told) == (before is None)
         child = await world.start_child(parent, "жильё", "toolu_a")
-        await world.turn(parent, f"Нашёл.\n{line}")
+        said, error = await world.tool(parent, subs.NAME, {"title": "Жильё в Лиссабоне",
+                                                           **({"sphere": sphere} if sphere else {})}, "toolu_n")
+        assert not error and said.startswith('The session is titled "Жильё в Лиссабоне"')
         row = world.store.session(parent)
         assert row["sphere"] == after and not row["main"]
-        assert world.store.session(child)["sphere"] == after
-        ping = [n for n in world.notes("summary") if n["session"] == parent][-1]["data"]
-        if after == "travel":
-            assert ping["text"] == "Нашёл." and ping["line"] == line
-            assert row["sphere_by"] == "session"
-        if after is None and before is None:
-            world.store.set_sphere(child, "home")  # the owner places the child himself
-            world.store.set_sphere(parent, "travel", by="session")
-            assert world.store.session(child)["sphere"] == "home", "the cascade leaves his placing alone"
-        world.store.set_sphere(parent, None)
-        await world.platform.write("tg:again", parent, "ещё")
-        await world.turn(parent, "Ещё.\nSphere: home")
-        assert world.store.session(parent)["sphere"] is None, "the owner placed it: the line is ignored"
+        assert world.store.face_session(parent)["title"] == "Жильё в Лиссабоне"
+        assert world.store.session(child)["sphere"] == after, "its sub-sessions follow"
+        assert row["sphere_by"] == ("session" if sphere and before is None else None)
+        assert f"call {subs.NAME}" not in world.platform.subs.instructions(row), "named: not asked again"
+
+        said, error = await world.tool(parent, subs.NAME, {"title": "Другое", "sphere": "home"}, "toolu_m")
+        assert world.store.face_session(parent)["title"] == "Жильё в Лиссабоне", "a title stays"
+        if after is None:  # still nobody's: a sphere can come later
+            assert not error and said == "The session is in the sphere home. Go on with your work."
+        else:
+            assert not error and said.startswith("The session is named already")
+            assert world.store.session(parent)["sphere"] == after, "a sphere set stays the setter's"
+    subs_scenario(tmp_path, body)
+
+
+def test_name_session_refuses_a_sphere_that_is_not_configured_and_a_missing_title(tmp_path):
+    async def body(world: SubsWorld):
+        parent = await world.parent("спланируй поездку", sphere=None)
+        said, error = await world.tool(parent, subs.NAME, {"title": "Поездка", "sphere": "finance"}, "toolu_1")
+        assert error and said.startswith("No sphere finance: one of travel, home")
+        said, error = await world.tool(parent, subs.NAME, {"sphere": "travel"}, "toolu_2")
+        assert error and said.startswith("Needed: title")
+        row = world.store.session(parent)
+        assert row["title"] is None and row["sphere"] is None
+        assert world.store.face_session(parent)["title"] == "спланируй поездку", "his first words until it names itself"
+        await world.turn(parent, "Готово.\nSphere: travel")
+        assert world.store.session(parent)["sphere"] is None, "a last line names nothing any more"
     subs_scenario(tmp_path, body)
 
 

@@ -203,7 +203,7 @@ bot's own commands (`new`, `app`, `wait`… — `config.BOT_COMMANDS`); the plat
   («/travel — ✈️ Travel»); the logic is the platform's (`/owner/sphere`, `retinue/spheres.py`).
 - **A session's sphere** is set when it starts — `/new <sphere>`, `/<sphere>`, the app's form, or its parent's for a
   side question, a fork and a sub-session — and you change it in the app's session menu. A session started with
-  none names its own by a last line `Sphere: <name>` ([Sub-sessions](#the-sphere-line)). A session moved to another sphere is no
+  none names its own first thing in its first turn ([Sub-sessions](#a-sessions-own-name)). A session moved to another sphere is no
   sphere's main session there. **The main mark** is set and taken off in the same menu; marking one takes it off the
   sphere's previous main session. SQLite holds «at most one per sphere» itself (a unique index on the sphere where
   `main = 1`), so two `/travel` racing make one main session, and the other message goes into it or stays an ordinary
@@ -340,13 +340,15 @@ subagent you can address, not a session: it lives in the parent's `-p` process, 
 cannot open or answer it, and it cannot wait on a card. The docs agree: teammates are not spawned under `-p`, the team
 dies with its session, `claude --bg` is interactive only.
 
-### The sphere line
+### A session's own name
 
-A session started with no sphere and not placed by you names its own: the server's instructions list the sphere names,
-and the model ends its turn with one line `Sphere: <name>` — the very last line, outside a code fence; bold or code marks
-tolerated; only a configured name. The platform takes it off the ping (the app hides it), sets the sphere, never the main mark, and the session's sub-sessions follow — but one you
-placed yourself. Once you place a
-session in the menu (`sphere_by: owner`), its line is ignored; a sub-session and a side question never read theirs.
+A session you started names itself, as the desktop app titles a session within seconds: while it has no title, the
+server's instructions tell it to call `name_session` first thing in its first turn, before any other work — a title of
+3–6 words in the language you wrote in, which the list shows in place of your first words, and, when it has no sphere
+and you did not place it, the sphere: the instructions list the names, only a configured one is taken. The platform
+sets the sphere, never the main mark, and the session's sub-sessions follow — but one you placed yourself. Each once:
+a title it has stays; a sphere set by you (`sphere_by: owner`) or by the session stays. A sub-session has its title
+from its start and its parent's sphere; a side question its question's — neither is asked.
 
 ## What a session gets from you
 

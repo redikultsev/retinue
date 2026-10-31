@@ -209,8 +209,11 @@ press, and the press is yours only: through the bridge (the router's token) or t
   notes session at `/work` can Edit `/work/base/…` as well); never a side question, which only reads — in windows: the tree's snapshot (path → digest) when the run starts, and again
   at each of its marks — a `result` (a turn ended; a run can hold several) and its end. What changed between them is
   recorded for the session in SQLite (`base_files`), cross-checked with the paths its own file tools named in that
-  window: one only the tools name (a snapshot that missed a stat) is recorded too; one only the snapshot names (a Bash
-  edit, or another run in the same window) as well. **Two runs that overlap both get a file changed in the overlap**,
+  window: one only the tools name (a snapshot that missed a stat) is recorded too; one only the snapshot names as well
+  — as the run's own when one of its Bash commands in the window writes and names the file (a `sed -i`, a heredoc's
+  `write_text`), else only as seen (a script that names no file, or another run in the same window). **A run that
+  wrote a file takes it from every run that only saw it change**, whichever window closes first: a session that read
+  the Base while another rewrote it gets nothing. **Two runs that overlap and neither names the file both get it**,
   and the card marks it ⇄: you decide whose it is. Only a path the clone says is uncommitted is kept: a file committed
   by any button, or refreshed to the hub's content, leaves every session's list — checked at every mark, every run's
   start, after a commit and once a minute. The marks are taken on the poll after their lines, and before a new run on

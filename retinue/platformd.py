@@ -105,7 +105,7 @@ class Platform:
         self._looking = asyncio.Lock()
         pings.prepare(store)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
-        self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, the sphere line (`subs.py`)
+        self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
         self.feed.subs = self.subs  # the feed's proposals of sub-sessions, under «Decide»
         # The owner's Base cloned into a lane (`base.py`): kept fresh here, committed by his button.
         self.base = base if base is not None or cfg.base is None else BaseRepo(cfg.base, _lane_view(cfg))
@@ -1101,23 +1101,11 @@ class Platform:
             self._owe_look(session)
             self._turn_over(session, f"Turn ended with an error: {why}", failed=True, run=run)
         else:
-            text, written = self._sphere_line(session, str(line.get("result") or "") or "Turn finished without text.")
-            self._summary(session, text, run=run, line_before=written)
+            text = str(line.get("result") or "") or "Turn finished without text."
+            self._summary(session, text, run=run)
             self._set_state(session["id"], "closed" if session["kind"] == "code" else "idle", now)
             self._owe_look(session)
             self._turn_over(session, text, run=run)
-
-    def _sphere_line(self, session: dict, text: str) -> tuple[str, str]:
-        """A session nobody placed names its own sphere by its last line (`subs.sphere_line`): set, never as main,
-        and its sub-sessions follow. A sub-session follows its parent, a side question its question: neither is read.
-        The text without the line, and the line as written (the face hides it)."""
-        row = self.store.session(session["id"]) or session
-        if not subs.may_start(row):
-            return text, ""
-        text, name, written = subs.sphere_line(text, frozenset(self.spheres.by_name))
-        if name is not None and row.get("sphere") is None and row.get("sphere_by") is None:
-            self.store.set_sphere(row["id"], name, by="session")
-        return text, written
 
     def _owe_look(self, session: dict) -> None:
         """The turn is over: what it left in `out/` is the owner's, looked at after this poll (`hand_over`). A side

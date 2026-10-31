@@ -2,8 +2,8 @@
 
 Records the owner keeps in tables rather than in the Base — what came in, what was paid, who answered — live in one
 SQLite file of the platform's, `collections.sqlite`, beside `platform.sqlite` on the `platform-data` volume
-(`retinue/collections.py`). It holds the files you upload and the records' core below; nothing writes records
-yet — the app, the agents and the server's commands come next, each through the one `apply`.
+(`retinue/collections.py`). It holds the files you upload and the records below; nothing writes records yet — the
+app, the agents and the server's commands come next, each through the one `apply`.
 
 ## One thread, one connection
 
@@ -64,13 +64,16 @@ letters, digits and `_`, starting with a letter (at most 40), so it never meets 
 
 | Table | What |
 |---|---|
-| `schemas` | one row per collection: its Space, its `form`, its `rights` and `views` (empty for now), `rev` (the form's revision) |
+| `schemas` | one row per collection: its Space, its `form`, its `rights`, its `views` (empty for now), `rev` (the form's revision) |
 | `records` | each record's current state: `id`, `data` (its fields, one JSON document), `version`, `created`, `updated`, `deleted` |
 | `changes` | every change of a record or a form, append-only: triggers abort any `UPDATE` or `DELETE` |
 | `batches` | changes that go together (an import, a form's application): `kind`, `state` (`applying`, then `applied`) |
+| `idems` | the calls already made under an idem, by the writer's class and the collection, with what they made |
 
-**A form** is `{"fields": {name: {"type": …, "required": true|false}}}`, checked strictly: an unknown key stops it,
-and a form is at most 64 KB. The types:
+**A form** is `{"fields": {name: {"type": …, "required": true|false, "index": true|false}}, "key": [...],
+"unique": [[...], ...]}`, checked strictly: an unknown key stops it, and a form is at most 64 KB. A form is the
+owner's to apply (from the server's terminal; an agent's way to propose one comes later), and a `define` that
+changes it is kept in `changes` as `{"form": …}` before and after. The types:
 
 | Type | Value |
 |---|---|
@@ -83,6 +86,19 @@ and a form is at most 64 KB. The types:
 
 `null` means unknown: a field set to `null` is left out of the record, and zero or an empty string are values. A
 `required` field cannot be left out.
+
+**Keys.** A record's id is its identity; the fields that name it in the world are ordinary fields, and can be
+changed.
+
+| In the form | Does |
+|---|---|
+| `"unique": [["n"], ["account", "ext_id"]]` | one record only holds each combination, among those not deleted: another write of it is refused, `taken: <id> has n 7`, with that record. A partial unique index keeps it, so nothing past the store's own check can break it; a form whose records already break it is refused, and a record that is unknown in one of the fields holds nothing |
+| `"key": ["company", "role"]` | a soft key: an `add` (or a `set` of a key field, or a `restore`) matching another record on all of them — text by its letters, case and the spaces around it aside — is refused as `possible duplicate of <id>`, with that record. The writer changes that record instead, or says `"distinct": true` on the operation and it is kept at once |
+| `"index": true` on a field | an index on it, for the queries that filter by it |
+
+Indexes are made only for what a form asks, each partial (`… WHERE collection = 'leads' AND deleted IS NULL`), on the
+same expression every query uses, so the planner takes it ([partialindex](https://www.sqlite.org/partialindex.html),
+[expridx](https://www.sqlite.org/expridx.html)). A form that no longer asks for one drops it.
 
 **Ids.** A record's id, a change's `change_id` and a batch's id are ULIDs the store gives: 26 characters, the time
 first, so they sort as they were made. They only grow — in the same millisecond, or under a clock that stepped back,
@@ -121,3 +137,73 @@ change it made and the record after it.
 
 Each change keeps what it changed, as it was (`before`) and as it became (`after`); a record's deleted state appears
 there as `_deleted`, which no field's name can be.
+
+### Rights
+
+Who may write what is the collection's `rights`, beside its form and apart from it: a form is what an agent may one
+day propose, and rights it could widen with one press would be no rights. They are the owner's alone — set by
+`rights(owner, collection, rights)`, which the server's terminal calls, never an agent's path — and kept as a
+`define` change, `{"rights": …}` before and after.
+
+```json
+{
+  "writers": {
+    "assistant": {"set": ["state"]},
+    "code:mail-sent": {"set": ["state"]},
+    "session": {"add": true, "set": "*", "delete": "propose"},
+    "mac": {"add": true, "set": "*", "delete": false}
+  },
+  "set_by": {"state": {"sent": ["owner", "code:mail-sent"]}}
+}
+```
+
+- **`writers`**, for each class of writer — `assistant`, `session`, `mac`, `code:<rule>` — whether it adds records,
+  which fields it gives a value (`"*"` all of them; an `add`'s fields too) and whether it deletes and restores:
+  `true`, `false`, or `"propose"`, a proposal the owner applies. What a class is not given it does not do: the
+  refusal names the field and the class (`'text' is not open to assistant in touches: propose the change to the owner
+  instead`). A revert needs the rights of what it does: setting the fields back, or deleting the record an add made.
+- **`set_by`**, for a value of an enum: the only classes that give the field it. An agent never marks a message
+  `sent` by itself; the owner's button, or the rule that saw it in the sent mail, does.
+- **The owner may do anything**, and so may what he runs from the server's terminal (`import:<batch>`,
+  `define:<rev>`): they are not listed.
+- **A new collection's rights** are narrow: a session adds and sets every field and deletes by a proposal; the Mac
+  adds and sets every field and does not delete; the assistant and every `code:` rule do nothing until the owner
+  gives them something.
+
+The store checks the writer it is given: whoever calls `apply` names the writer truthfully, from the path the call
+came by.
+
+### Once
+
+- **`idem`** names a call: `apply(…, idem="…")` made again by the same class of writer on the same collection —
+  a retry after a timeout, a tool call repeated — changes nothing and answers the first call's `change_ids`, with the
+  records as they are now. A refused call leaves no idem behind, so it can be made again, corrected. Each change keeps
+  the idem of the call that made it.
+- **A mail** (`src` `mail:…`) needs none: the store derives one for each field an operation sets, from the class of
+  writer, the mail, the record and the field. A mail read again changes nothing it changed before, even when the
+  owner has changed it since; a field it had not set is set, and another mail is another change. The n-th `add` from
+  one mail is made once.
+
+## Reading
+
+`get(collection, id)` is one record; `query` and `count` read many, through a filter that is data, not a language:
+each condition `{"field": …, "op": …, "value": …}`, up to 16 that all hold.
+
+| `op` | `value` | Matches |
+|---|---|---|
+| `eq` | one value of the field's type | the field is it |
+| `in` | 1 to 200 of them | the field is one of them |
+| `between` | `["2026-09-01", "2026-09-30"]` | a `date` within them, both included |
+| `empty`, `not_empty` | none | the field is unknown, or known |
+| `ref_is` | a record's id | a `ref` names it |
+
+A `field` of `lead.stage` follows a `ref` one level, with `eq` or `in` only: the touches whose lead is `applied`. A
+field's name is checked against the form before it goes into the statement, and every value is a parameter: a name
+the form does not have is refused before any SQL is run on the records.
+
+- **`query(collection, filter, fields, limit, after)`** answers `{rows, next}`: records not deleted (all of them
+  with `deleted=True`), the oldest first, each `{id, fields, version, created, updated, deleted}` with only `fields`
+  when they are named. At most 200 rows and 60 KB of them — what an agent's tool call can take back — and `next`, when
+  there are more, is the id to pass as `after`.
+- **`count(collection, filter, group)`** answers how many; with `group` an enum or a bool, how many of each value,
+  `[{value, count}]`, the most first, `value` `null` for the records it is unknown in.

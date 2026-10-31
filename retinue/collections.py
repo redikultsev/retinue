@@ -9,8 +9,10 @@ the caller to say «try again», never waited out for 30 s.
 
 The file uses a rollback journal, like every database the backup copies (deploy/backup/retinue-backup.py). It holds
 `files`, and the records: `schemas` (a collection's form), `records` (each one's current state, a JSON document),
-`changes` (every change of one, append-only: the history and the provenance) and `batches` (changes that go
-together). Every write of a record is one `apply`, checked whole against the form before anything is kept.
+`changes` (every change of one, append-only: the history and the provenance), `batches` (changes that go
+together) and `idems` (the calls already made, so a repeat makes none). Every write of a record is one `apply`,
+checked whole against the form and the collection's rights before anything is kept; every read is `get`, `query` or
+`count`, whose SQL only code assembles, from names the form declares.
 """
 
 from __future__ import annotations
@@ -98,8 +100,16 @@ SCHEMA = """
         via TEXT NOT NULL,
         src TEXT,
         "foreign" TEXT,                     -- what foreign text the writer had read, comma-separated
-        idem TEXT,
+        idem TEXT,                          -- the idem of the call that made it, when it gave one
         reverts TEXT                        -- the change_id a revert takes back
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS idems (
+        scope TEXT NOT NULL,                -- the writer's class: owner, assistant, session, mac, code:<rule>, …
+        collection TEXT NOT NULL,
+        idem TEXT NOT NULL,                 -- call:<the writer's idem>, or mail:… one the store derived
+        answer TEXT NOT NULL CHECK (json_valid(answer)),  -- what the first time made: its change_ids, its records
+        ts REAL NOT NULL,
+        PRIMARY KEY (scope, collection, idem)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS changes_record ON changes (collection, id, seq);
     CREATE INDEX IF NOT EXISTS changes_collection ON changes (collection, seq);
@@ -121,16 +131,34 @@ ACTOR = re.compile(r"owner|assistant|session:[A-Za-z0-9_-]{1,64}|mac:[a-z0-9][a-
 VIA = ("screen", "session", "mac", "assistant", "mail", "import", "define")
 SRC = re.compile(r"(?:mail|tg|owner_words|cal|file|record|web):\S{1,1000}")
 LABEL = re.compile(r"[a-z][a-z0-9_]{0,31}")      # a mark of foreign text the writer read (core.FOREIGN's keys)
-TYPES = {  # each type, and the keys its field takes beside `type` and `required`
+TYPES = {  # each type, and the keys its field takes beside `type`, `required` and `index`
     "text": (), "int": (), "enum": ("values",), "date": (), "bool": (), "ref": ("to",),
 }
 OP_KEYS = {  # each operation of `apply`, and the keys it takes
-    "add": {"op", "fields", "as_of", "src"},
-    "set": {"op", "id", "version", "fields", "as_of", "src"},
+    "add": {"op", "fields", "as_of", "src", "distinct"},
+    "set": {"op", "id", "version", "fields", "as_of", "src", "distinct"},
     "delete": {"op", "id", "version", "as_of", "src"},
-    "restore": {"op", "id", "version", "as_of", "src"},
+    "restore": {"op", "id", "version", "as_of", "src", "distinct"},
     "revert": {"op", "change_id", "version", "src"},
 }
+OWNERS = ("owner", "import", "define")  # classes that may do anything: the owner, and what he runs from the terminal
+WRITER_CLASS = re.compile(r"assistant|session|mac|code:[a-z][a-z0-9_-]{0,39}")  # the classes rights name
+SET_BY_CLASS = re.compile(r"owner|assistant|session|mac|code:[a-z][a-z0-9_-]{0,39}")
+DEFAULT_RIGHTS = {  # a new collection's: sessions add and set, deleting by a proposal; the Mac without deleting;
+    "writers": {    # the assistant and every code: rule nothing, until the owner gives them some
+        "session": {"add": True, "set": "*", "delete": "propose"},
+        "mac": {"add": True, "set": "*", "delete": False},
+    },
+    "set_by": {},
+}
+FILTER_OPS = ("eq", "in", "between", "empty", "not_empty", "ref_is")
+KEY_MAX = 8                 # fields in a key, or in one unique
+UNIQUE_MAX = 8              # uniques in one form
+FILTER_MAX = 16             # conditions in one filter
+IN_MAX = 200                # values of one `in`
+IDEM_MAX = 200              # characters of a call's idem
+QUERY_ROWS = 200            # rows of one `query`…
+QUERY_BYTES = 60 * 2**10    # …and bytes of them as JSON: what an agent's tool call can take back (25 000 tokens)
 DELETED = "_deleted"        # in a change's before/after, the record's deleted state: no field's name starts with _
 TEXT_MAX = 2000             # characters of a text field
 RECORD_MAX = 16 * 2**10     # bytes of a record's fields, as JSON
@@ -141,7 +169,7 @@ INT_MAX = 2**53 - 1         # what a JSON number keeps exactly
 HISTORY = 50                # the newest changes `history` returns
 RECORD_COLUMNS = "id, data, version, created, updated, deleted"
 CHANGE_COLUMNS = ('change_id, ts, as_of, batch, collection, id, op, before, after, actor, model, via, src, "foreign", '
-                  "reverts")
+                  "reverts, idem")
 
 
 class Refused(Exception):
@@ -244,8 +272,9 @@ def parse_form(form: Any) -> dict:
         raise Rejected("a form is a JSON object: {\"fields\": {...}}")
     if len(_json(form).encode()) > FORM_MAX:
         raise Rejected(f"a form is at most {FORM_MAX // 1024} KB")
-    if unknown := set(form) - {"fields"}:
-        raise Rejected(f"a form takes only \"fields\", not {', '.join(sorted(map(repr, unknown)))}")
+    if unknown := set(form) - {"fields", "key", "unique"}:
+        raise Rejected(f"a form takes only \"fields\", \"key\" and \"unique\", not "
+                       f"{', '.join(sorted(map(repr, unknown)))}")
     fields = form.get("fields")
     if not isinstance(fields, dict) or not fields:
         raise Rejected("a form's \"fields\" is an object of at least one field: {\"name\": {\"type\": \"text\"}}")
@@ -256,10 +285,11 @@ def parse_form(form: Any) -> dict:
         if not isinstance(spec, dict) or spec.get("type") not in TYPES:
             raise Rejected(f"field {name!r}: \"type\" is one of {', '.join(TYPES)}")
         extra = TYPES[spec["type"]]
-        if unknown := set(spec) - {"type", "required", *extra}:
+        if unknown := set(spec) - {"type", "required", "index", *extra}:
             raise Rejected(f"field {name!r}: a {spec['type']} takes no {', '.join(sorted(map(repr, unknown)))}")
-        if not isinstance(spec.get("required", False), bool):
-            raise Rejected(f"field {name!r}: \"required\" is true or false")
+        for flag in ("required", "index"):
+            if not isinstance(spec.get(flag, False), bool):
+                raise Rejected(f"field {name!r}: \"{flag}\" is true or false")
         if spec["type"] == "enum":
             values = spec.get("values")
             if (not isinstance(values, list) or not 0 < len(values) <= ENUM_MAX or len(set(values)) != len(values)
@@ -269,7 +299,107 @@ def parse_form(form: Any) -> dict:
         if spec["type"] == "ref" and not (isinstance(spec.get("to"), str) and NAME.fullmatch(spec["to"])):
             raise Rejected(f"field {name!r}: \"to\" names the collection its records are in")
         kept[name] = dict(spec)
-    return {"fields": kept}
+    form_kept: dict = {"fields": kept}
+    if "key" in form:
+        form_kept["key"] = _names(form["key"], kept, "\"key\"")
+    if "unique" in form:
+        unique = form["unique"]
+        if not isinstance(unique, list) or not 0 < len(unique) <= UNIQUE_MAX:
+            raise Rejected(f"\"unique\" is a list of 1 to {UNIQUE_MAX} lists of fields: [[\"n\"], [\"a\", \"b\"]]")
+        form_kept["unique"] = [_names(names, kept, f"unique[{n}]") for n, names in enumerate(unique)]
+        if len({tuple(names) for names in form_kept["unique"]}) != len(unique):
+            raise Rejected("\"unique\" names each list of fields once")
+    return form_kept
+
+
+def _names(names: Any, fields: dict, what: str) -> list[str]:
+    if (not isinstance(names, list) or not 0 < len(names) <= KEY_MAX or not all(isinstance(n, str) for n in names)
+            or len(set(names)) != len(names)):
+        raise Rejected(f"{what} is a list of 1 to {KEY_MAX} distinct fields of the form")
+    if unknown := [n for n in names if n not in fields]:
+        raise Rejected(f"{what}: the form has no field {', '.join(map(repr, unknown))}")
+    return list(names)
+
+
+def parse_rights(rights: Any, form: dict) -> dict:
+    """A collection's rights, checked strictly against its form: `writers` — for each class, whether it adds, which
+    fields it sets (\"*\" for all), whether it deletes (true, false, or \"propose\": by a proposal the owner
+    applies) — and `set_by` — for an enum's value, the only classes that give a field it. Returns them as kept, every
+    key filled in. Raises Rejected with the reason."""
+    if not isinstance(rights, dict):
+        raise Rejected("rights are a JSON object: {\"writers\": {...}, \"set_by\": {...}}")
+    if len(_json(rights).encode()) > FORM_MAX:
+        raise Rejected(f"rights are at most {FORM_MAX // 1024} KB")
+    if unknown := set(rights) - {"writers", "set_by"}:
+        raise Rejected(f"rights take only \"writers\" and \"set_by\", not {', '.join(sorted(map(repr, unknown)))}")
+    fields, writers, set_by = form["fields"], rights.get("writers", {}), rights.get("set_by", {})
+    if not isinstance(writers, dict) or not isinstance(set_by, dict):
+        raise Rejected("\"writers\" and \"set_by\" are objects")
+    kept: dict = {"writers": {}, "set_by": {}}
+    for cls, grant in writers.items():
+        if not WRITER_CLASS.fullmatch(cls):
+            raise Rejected(f"writers: {cls!r} is not a writer's class: assistant, session, mac or code:<rule> "
+                           "(the owner may do anything, and is not listed)")
+        if not isinstance(grant, dict) or (unknown := set(grant) - {"add", "set", "delete"}):
+            raise Rejected(f"writers.{cls} takes \"add\", \"set\" and \"delete\"")
+        add, open_, delete = grant.get("add", False), grant.get("set", []), grant.get("delete", False)
+        if not isinstance(add, bool):
+            raise Rejected(f"writers.{cls}.add is true or false")
+        if open_ != "*":
+            open_ = _names(open_, fields, f"writers.{cls}.set") if open_ != [] else []
+        if delete not in (True, False, "propose") or type(delete) is int:
+            raise Rejected(f"writers.{cls}.delete is true, false or \"propose\"")
+        kept["writers"][cls] = {"add": add, "set": open_, "delete": delete}
+    for name, values in set_by.items():
+        spec = fields.get(name)
+        if spec is None or spec["type"] != "enum":
+            raise Rejected(f"set_by: {name!r} is not an enum of the form")
+        if not isinstance(values, dict) or not values:
+            raise Rejected(f"set_by.{name} is an object: {{\"<value>\": [\"<class>\", ...]}}")
+        for value, who in values.items():
+            if value not in spec["values"]:
+                raise Rejected(f"set_by.{name}: {value!r} is not one of its values")
+            if (not isinstance(who, list) or not who or len(set(map(str, who))) != len(who)
+                    or not all(isinstance(c, str) and SET_BY_CLASS.fullmatch(c) for c in who)):
+                raise Rejected(f"set_by.{name}.{value} is a list of classes: owner, assistant, session, mac, "
+                               "code:<rule>")
+        kept["set_by"][name] = {value: list(who) for value, who in values.items()}
+    return kept
+
+
+def _path(field: str) -> str:
+    """A field's value in a record, as SQL: the one place a name goes into a statement, so an index and the query
+    meant to use it say it the same — and only a name the form declared, which is letters, digits and _."""
+    assert NAME.fullmatch(field), field
+    return f"json_extract(data, '$.{field}')"
+
+
+def _within(collection: str) -> str:
+    """The records of a collection that are not deleted, as SQL: a partial index's WHERE, and every query's, so the
+    planner sees that one implies the other."""
+    assert NAME.fullmatch(collection), collection
+    return f"collection = '{collection}' AND deleted IS NULL"
+
+
+def _indexes(collection: str, form: dict) -> dict[str, str]:
+    """The indexes a form asks for, by their name: a unique one for each `unique`, a plain one for each field marked
+    `index`, all on the collection's records that are not deleted."""
+    made = {}
+    for names in form.get("unique", ()):
+        name = f"records:{collection}:unique:{','.join(names)}"
+        made[name] = (f'CREATE UNIQUE INDEX "{name}" ON records ({", ".join(map(_path, names))}) '
+                      f"WHERE {_within(collection)}")
+    for field, spec in form["fields"].items():
+        if spec.get("index"):
+            name = f"records:{collection}:index:{field}"
+            made[name] = f'CREATE INDEX "{name}" ON records ({_path(field)}) WHERE {_within(collection)}'
+    return made
+
+
+def writer_class(actor: str) -> str:
+    """The class a writer's rights and its idems go by: a `code:` rule its own, every other actor its kind
+    (`session:<id>` is a session)."""
+    return actor if actor.startswith("code:") else actor.split(":")[0]
 
 
 class Collections:
@@ -421,12 +551,15 @@ class Collections:
     # --- records ----------------------------------------------------------------------------------------------------
 
     async def define(self, writer: Writer, collection: str, space: str, form: Any, now: float) -> dict:
-        """A collection's form, new or in place of the one it had, as a `define` change: `{name, rev}`. Raises
-        Rejected, Refused."""
+        """A collection's form, new or in place of the one it had, as a `define` change: `{name, rev}`. A new
+        collection gets the default rights (DEFAULT_RIGHTS); a form is the owner's to apply. Raises Rejected,
+        Refused."""
         return await self._run(self._define, writer, collection, space, form, now)
 
     def _define(self, writer: Writer, collection: str, space: str, form: Any, now: float) -> dict:
         _check_writer(writer)
+        if writer_class(writer.actor) not in ("owner", "define"):
+            raise Rejected("a form is the owner's to apply, from the server's terminal")
         if not NAME.fullmatch(collection):
             raise Rejected(f"a collection's name is lowercase letters, digits and _, starting with a letter: not "
                            f"{collection!r}")
@@ -437,12 +570,58 @@ class Collections:
             for name, spec in form["fields"].items():
                 if spec["type"] == "ref" and spec["to"] != collection and self._form(spec["to"]) is None:
                     raise Rejected(f"field {name!r}: there is no collection {spec['to']!r}")
-            old = db.execute("SELECT form, rev FROM schemas WHERE collection = ?", (collection,)).fetchone()
+            old = db.execute("SELECT form, rev, rights FROM schemas WHERE collection = ?", (collection,)).fetchone()
+            if old is not None:
+                try:
+                    parse_rights(json.loads(old[2]), form)
+                except Rejected as exc:
+                    raise Rejected(f"the collection's rights do not fit this form: {exc.reason}") from None
             rev = old[1] + 1 if old else 1
-            db.execute("INSERT INTO schemas (collection, space, form, rev, updated) VALUES (?, ?, ?, ?, ?) "
+            db.execute("INSERT INTO schemas (collection, space, form, rights, rev, updated) VALUES (?, ?, ?, ?, ?, ?) "
                        "ON CONFLICT (collection) DO UPDATE SET space = excluded.space, form = excluded.form, "
-                       "rev = excluded.rev, updated = excluded.updated", (collection, space, _json(form), rev, now))
-            self._change(writer, now, collection, None, "define", json.loads(old[0]) if old else None, form)
+                       "rev = excluded.rev, updated = excluded.updated",
+                       (collection, space, _json(form), _json(DEFAULT_RIGHTS), rev, now))
+            self._index(collection, form)
+            self._change(writer, now, collection, None, "define", {"form": json.loads(old[0])} if old else None,
+                         {"form": form})
+            return {"name": collection, "rev": self._rev(collection)}
+
+    def _index(self, collection: str, form: dict) -> None:
+        """The collection's indexes made what its form asks: those it no longer asks for dropped, the new ones made
+        over the records already there — a unique one the records break Rejected."""
+        prefix = f"records:{collection}:"
+        have = {name for (name,) in self._db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'records' AND substr(name, 1, ?) = ?",
+            (len(prefix), prefix))}
+        wanted = _indexes(collection, form)
+        for name in have - set(wanted):
+            self._db.execute(f'DROP INDEX "{name}"')
+        for name in set(wanted) - have:
+            try:
+                self._db.execute(wanted[name])
+            except sqlite3.IntegrityError:
+                names = name.rsplit(":", 1)[1].replace(",", ", ")
+                raise Rejected(f"records of {collection} share a {names}: make them distinct before it is "
+                               "unique") from None
+
+    async def rights(self, writer: Writer, collection: str, rights: Any, now: float) -> dict:
+        """A collection's rights (`parse_rights`) in place of the ones it had, as a `define` change: `{name, rev}`.
+        The owner's alone — no agent's path reaches here (docs/collections.md#rights). Raises Rejected, Refused."""
+        return await self._run(self._rights, writer, collection, rights, now)
+
+    def _rights(self, writer: Writer, collection: str, rights: Any, now: float) -> dict:
+        _check_writer(writer)
+        if writer.actor != "owner":
+            raise Rejected("rights are the owner's alone, set from the server's terminal")
+        with self._write() as db:
+            row = db.execute("SELECT form, rights FROM schemas WHERE collection = ?", (collection,)).fetchone()
+            if row is None:
+                raise Rejected(f"there is no collection {collection!r}")
+            old, new = json.loads(row[1]), parse_rights(rights, json.loads(row[0]))
+            if new != old:
+                db.execute("UPDATE schemas SET rights = ?, updated = ? WHERE collection = ?",
+                           (_json(new), now, collection))
+                self._change(writer, now, collection, None, "define", {"rights": old}, {"rights": new})
             return {"name": collection, "rev": self._rev(collection)}
 
     async def start_batch(self, kind: str, writer: Writer, now: float) -> str:
@@ -471,58 +650,87 @@ class Collections:
                               (now, batch)).rowcount:
                 raise Rejected(f"no batch {batch!r} is applying")
 
-    async def apply(self, writer: Writer, collection: str, ops: Any, now: float, batch: str | None = None) -> dict:
+    async def apply(self, writer: Writer, collection: str, ops: Any, now: float, batch: str | None = None,
+                    idem: str | None = None) -> dict:
         """The one way a record is written: up to OPS_MAX operations on one collection, checked against its form and
-        kept whole in one transaction, or none of them (docs/collections.md#records). Each is `add`, `set`, `delete`,
-        `restore` or `revert`. Returns `{name, rev, change_ids, records}`: the collection, its newest change_id
-        (what a screen compares to know it is behind), and for each operation the change it made (None when it
-        changed nothing: the record was already so) and the record after it. Raises Rejected, Refused."""
-        return await self._run(self._apply, writer, collection, ops, now, batch)
+        its rights and kept whole in one transaction, or none of them (docs/collections.md#records). Each is `add`,
+        `set`, `delete`, `restore` or `revert`. Returns `{name, rev, change_ids, records}`: the collection, its newest
+        change_id (what a screen compares to know it is behind), and for each operation the change it made (None when
+        it changed nothing: the record was already so) and the record after it. `idem` names the call: made again by
+        the same class of writer, it changes nothing and answers the first time's change_ids, with the records as
+        they are now. Raises Rejected, Refused."""
+        return await self._run(self._apply, writer, collection, ops, now, batch, idem)
 
-    def _apply(self, writer: Writer, collection: str, ops: Any, now: float, batch: str | None) -> dict:
+    def _apply(self, writer: Writer, collection: str, ops: Any, now: float, batch: str | None,
+               idem: str | None) -> dict:
         _check_writer(writer)
+        if idem is not None and not _plain(idem, IDEM_MAX):
+            raise Rejected(f"idem is the call's own name, 1 to {IDEM_MAX} plain characters")
         if not isinstance(ops, list) or not 0 < len(ops) <= OPS_MAX:
             raise Rejected(f"ops is a list of 1 to {OPS_MAX} operations")
+        cls = writer_class(writer.actor)
         with self._write() as db:
-            form = self._form(collection)
-            if form is None:
+            schema = self._schema(collection)
+            if schema is None:
                 raise Rejected(f"there is no collection {collection!r}")
+            if idem is not None and (first := self._idem(cls, collection, f"call:{idem}")) is not None:
+                return {"name": collection, "rev": self._rev(collection), "change_ids": first["change_ids"],
+                        "records": [self._record(collection, rid) for rid in first["ids"]]}
             if batch is not None and db.execute("SELECT 1 FROM batches WHERE id = ? AND state = 'applying'",
                                                 (batch,)).fetchone() is None:
                 raise Rejected(f"no batch {batch!r} is applying")
-            change_ids, records = [], []
+            change_ids, records, adds = [], [], {}
             for n, op in enumerate(ops):
                 try:
-                    record, change = self._op(writer, collection, form, op, now, batch)
+                    record, change = self._op(writer, collection, schema, op, now, batch, idem, adds)
                 except Rejected as exc:
                     raise Rejected(f"ops[{n}]: {exc.reason}", exc.record, exc.change) from None
                 change_ids.append(change)
                 records.append(record)
+            if idem is not None:
+                self._remember(cls, collection, f"call:{idem}",
+                               {"change_ids": change_ids, "ids": [r["id"] for r in records]}, now)
             return {"name": collection, "rev": self._rev(collection), "change_ids": change_ids, "records": records}
 
-    def _op(self, writer: Writer, collection: str, form: dict, op: Any, now: float,
-            batch: str | None) -> tuple[dict, str | None]:
+    def _op(self, writer: Writer, collection: str, schema: tuple[dict, dict], op: Any, now: float,
+            batch: str | None, idem: str | None, adds: dict) -> tuple[dict, str | None]:
+        form, rights = schema
         kind = op.get("op") if isinstance(op, dict) else None
         if kind not in OP_KEYS:
             raise Rejected(f"an operation is an object whose \"op\" is one of {', '.join(OP_KEYS)}")
         if unknown := set(op) - OP_KEYS[kind]:
             raise Rejected(f"{kind} takes {', '.join(sorted(OP_KEYS[kind]))}; not {', '.join(sorted(unknown))}")
-        as_of, src = op.get("as_of"), op.get("src")
+        as_of, src, distinct = op.get("as_of"), op.get("src"), op.get("distinct", False)
         if as_of is not None and not _date(as_of):
             raise Rejected(f"as_of is the date the world became so, YYYY-MM-DD: not {as_of!r}")
         if src is not None and not (SRC.fullmatch(src) if _plain(src, 1100) else False):
             raise Rejected("src is mail:<account>/<msgid>, tg:<chat>/<msg>, owner_words:<event>, "
                            "cal:<account>/<event>, file:<sha256>#row=<n>, record:<id> or web:<url>")
-        stamp = {"writer": writer, "now": now, "collection": collection, "as_of": as_of, "src": src, "batch": batch}
+        if not isinstance(distinct, bool):
+            raise Rejected("distinct is true or false: true when the record is another than the one it matches")
+        cls = writer_class(writer.actor)
+        mail = src if src is not None and src.startswith("mail:") else None  # its idems the store derives
+        stamp = {"writer": writer, "now": now, "collection": collection, "as_of": as_of, "src": src, "batch": batch,
+                 "idem": idem}
         if kind == "add":
+            self._may(collection, rights, cls, "add", op.get("fields"))
             fields = self._fields(collection, form, op.get("fields"), {})
+            if mail is not None:
+                adds[mail] = adds.get(mail, 0) + 1
+                derived = f"{mail}#add/{adds[mail]}"
+                if (first := self._idem(cls, collection, derived)) is not None:
+                    return self._record(collection, first["id"]), None
             rid = self._ulids.next(now)
+            self._keys(collection, form, fields, rid, None, not distinct)
             self._db.execute(f"INSERT INTO records (collection, {RECORD_COLUMNS}) VALUES (?, ?, ?, 1, ?, ?, NULL)",
                              (collection, rid, _json(fields), now, now))
             change = self._change(**stamp, rid=rid, op="add", before=None, after=fields)
+            if mail is not None:
+                self._remember(cls, collection, derived, {"change_id": change, "id": rid}, now)
             return self._record(collection, rid), change
         if kind == "revert":
-            return self._revert(stamp, form, op)
+            return self._revert(stamp, schema, op)
+        self._may(collection, rights, cls, kind, op.get("fields"))
         record = self._at(collection, op)
         if kind == "set":
             if record["deleted"] is not None:
@@ -535,13 +743,73 @@ class Collections:
             gone = record["deleted"] is not None
             before = {DELETED: record["deleted"]} if gone != (kind == "delete") else {}
             after = {DELETED: now if kind == "delete" else None} if before else {}
+        if mail is not None:  # what this mail made this class of writer change already is not changed again
+            for done in [k for k in before if self._idem(cls, collection, f"{mail}#{record['id']}/{k}") is not None]:
+                del before[done], after[done]
         if not before:  # already so: nothing is written, the version stays
             return record, None
-        return self._put(stamp, record, before, after, kind)
+        record, change = self._put(stamp, form, record, before, after, kind, check_key=not distinct)
+        if mail is not None:
+            for k in before:
+                self._remember(cls, collection, f"{mail}#{record['id']}/{k}", {"change_id": change}, now)
+        return record, change
 
-    def _revert(self, stamp: dict, form: dict, op: dict) -> tuple[dict, str | None]:
+    def _may(self, collection: str, rights: dict, cls: str, kind: str, fields: Any = None) -> None:
+        """Rejected unless the class may `kind` (add, set, delete, restore) in the collection, with these `fields`
+        and the values they are given, by the collection's rights; the owner, and what he runs from the server's
+        terminal, may do anything."""
+        if cls in OWNERS:
+            return
+        grant = rights["writers"].get(cls, {})
+        if kind == "add" and not grant.get("add"):
+            raise Rejected(f"{cls} does not add records to {collection}: propose it to the owner instead")
+        if kind in ("delete", "restore"):
+            if grant.get("delete") == "propose":
+                raise Rejected(f"a {kind} by {cls} in {collection} is the owner's to make: propose it to him")
+            if grant.get("delete") is not True:
+                raise Rejected(f"{cls} does not {kind} records in {collection}")
+            return
+        if not isinstance(fields, dict):
+            return  # `_fields` says what is wrong with it
+        open_ = grant.get("set", [])
+        if blocked := [name for name in fields if open_ != "*" and name not in open_]:
+            raise Rejected(f"{', '.join(map(repr, blocked))} {'is' if len(blocked) == 1 else 'are'} not open to "
+                           f"{cls} in {collection}: propose the change to the owner instead")
+        for name, value in fields.items():
+            who = rights["set_by"].get(name, {}).get(value) if isinstance(value, str) else None
+            if who is not None and cls not in who:
+                by = ", ".join(dict.fromkeys(["the owner", *(c for c in who if c != "owner")]))
+                raise Rejected(f"{name!r} becomes {value!r} only by {by}: not by {cls}")
+
+    def _keys(self, collection: str, form: dict, data: dict, rid: str, changed: set | None, check_key: bool) -> None:
+        """Rejected when the record, as it will be, holds what one of the form's `unique` gives one record only and
+        another record holds it (`taken`) — or, unless the writer said the record is `distinct`, matches another on
+        the form's `key` (`possible duplicate`). `changed` is the fields the write changes; None when the record
+        comes into being, or back."""
+        for names in form.get("unique", ()):
+            if (changed is None or changed & set(names)) and all(name in data for name in names):
+                row = self._db.execute(
+                    f"SELECT id FROM records WHERE {_within(collection)} AND "
+                    + " AND ".join(f"{_path(name)} = ?" for name in names) + " AND id != ? LIMIT 1",
+                    (*(data[name] for name in names), rid)).fetchone()
+                if row is not None:
+                    what = ", ".join(f"{name} {data[name]!r}" for name in names)
+                    raise Rejected(f"taken: {row[0]} has {what}", self._record(collection, row[0]))
+        key = form.get("key")
+        if not check_key or not key or not (changed is None or changed & set(key)) or not all(k in data for k in key):
+            return
+        same = [f"lower(trim({_path(k)})) = lower(trim(?))" if form["fields"][k]["type"] == "text"
+                else f"{_path(k)} = ?" for k in key]
+        row = self._db.execute(f"SELECT id FROM records WHERE {_within(collection)} AND {' AND '.join(same)} "
+                               "AND id != ? LIMIT 1", (*(data[k] for k in key), rid)).fetchone()
+        if row is not None:
+            raise Rejected(f"possible duplicate of {row[0]}: the same {', '.join(key)}. Change that record instead, "
+                           "or give \"distinct\": true if this one is another", self._record(collection, row[0]))
+
+    def _revert(self, stamp: dict, schema: tuple[dict, dict], op: dict) -> tuple[dict, str | None]:
         """A change taken back, as a change of its own: what it changed set back to what it was — unless something
         has changed it since, which is Rejected with who did. Taking back an add deletes the record."""
+        form, rights = schema
         cid = op.get("change_id")
         row = self._db.execute(f"SELECT seq, {CHANGE_COLUMNS} FROM changes WHERE change_id = ?",
                                (cid,)).fetchone() if isinstance(cid, str) else None
@@ -550,21 +818,26 @@ class Collections:
         seq, target = row[0], _change(row[1:])
         if target["op"] not in OP_KEYS:
             raise Rejected(f"a {target['op']} is not taken back by a revert")
-        record = self._at(stamp["collection"], {**op, "id": target["id"]})
-        later = [_change(r) for r in self._db.execute(
-            f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection = ? AND id = ? AND seq > ? ORDER BY seq",
-            (stamp["collection"], target["id"], seq))]
         if target["op"] == "add":
             touched, goal = None, {DELETED: stamp["now"]}
         else:
             touched, goal = set(target["after"]), target["before"]
+        fields = {k: v for k, v in goal.items() if k != DELETED}
+        cls = writer_class(stamp["writer"].actor)
+        if DELETED in goal:
+            self._may(stamp["collection"], rights, cls, "delete" if goal[DELETED] is not None else "restore")
+        if fields:
+            self._may(stamp["collection"], rights, cls, "set", fields)
+        record = self._at(stamp["collection"], {**op, "id": target["id"]})
+        later = [_change(r) for r in self._db.execute(
+            f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection = ? AND id = ? AND seq > ? ORDER BY seq",
+            (stamp["collection"], target["id"], seq))]
         for change in later:
             if touched is None or touched & set(change["after"] or {}):
                 what = ", ".join(sorted("deleted" if k == DELETED else k
                                         for k in change["after"] if touched is None or k in touched))
                 raise Rejected(f"changed after it: {what} by {change['actor']} ({change['op']}, "
                                f"{change['change_id']}) — revert that first, or set the value", record, change)
-        fields = {k: v for k, v in goal.items() if k != DELETED}
         if fields and record["deleted"] is not None and goal.get(DELETED, record["deleted"]) is not None:
             raise Rejected(f"{record['id']} is deleted: restore it first", record)
         data = {k: v for k, v in {**record["fields"], **fields}.items() if v is not None}
@@ -572,17 +845,21 @@ class Collections:
         before = {k: record["deleted"] if k == DELETED else record["fields"].get(k) for k in goal}
         if before == goal:
             return record, None
-        return self._put({**stamp, "as_of": None}, record, before, goal, "revert", reverts=target["change_id"])
+        return self._put({**stamp, "as_of": None}, form, record, before, goal, "revert", reverts=target["change_id"],
+                         check_key=False)
 
-    def _put(self, stamp: dict, record: dict, before: dict, after: dict, op: str,
-             reverts: str | None = None) -> tuple[dict, str]:
+    def _put(self, stamp: dict, form: dict, record: dict, before: dict, after: dict, op: str,
+             reverts: str | None = None, check_key: bool = True) -> tuple[dict, str]:
         """The record changed by `after` (its fields, and DELETED for its deleted state), its version one more, and
-        the change kept."""
+        the change kept — unless it would take another's unique value, or (`check_key`) match another on the key."""
         data = {**record["fields"], **{k: v for k, v in after.items() if k != DELETED}}
         data = {k: v for k, v in data.items() if v is not None}
         if len(_json(data).encode()) > RECORD_MAX:
             raise Rejected(f"a record is at most {RECORD_MAX // 1024} KB of fields")
         deleted = after.get(DELETED, record["deleted"])
+        if deleted is None:
+            changed = None if record["deleted"] is not None else set(after)
+            self._keys(stamp["collection"], form, data, record["id"], changed, check_key)
         self._db.execute("UPDATE records SET data = ?, version = version + 1, updated = ?, deleted = ? "
                          "WHERE collection = ? AND id = ?",
                          (_json(data), stamp["now"], deleted, stamp["collection"], record["id"]))
@@ -607,7 +884,9 @@ class Collections:
             raise Rejected(f"a record is at most {RECORD_MAX // 1024} KB of fields")
         return data
 
-    def _value(self, name: str, spec: dict, value: Any) -> Any:
+    def _value(self, name: str, spec: dict, value: Any, probe: bool = False) -> Any:
+        """A field's value checked against its type, as it is kept. `probe` for a value a filter compares with: a
+        ref is only an id then, not one that has to exist."""
         kind = spec["type"]
         if kind == "text":
             if not isinstance(value, str):
@@ -619,7 +898,7 @@ class Collections:
             if type(value) is not int or abs(value) > INT_MAX:
                 raise Rejected(f"{name!r} is a whole number: not {value!r}")
         elif kind == "enum":
-            if value not in spec["values"]:
+            if not isinstance(value, str) or value not in spec["values"]:
                 raise Rejected(f"{name!r} is one of {', '.join(spec['values'])}: not {value!r}")
         elif kind == "date":
             if not _date(value):
@@ -627,6 +906,9 @@ class Collections:
         elif kind == "bool":
             if type(value) is not bool:
                 raise Rejected(f"{name!r} is true or false: not {value!r}")
+        elif kind == "ref" and probe:
+            if not isinstance(value, str) or not ULID.fullmatch(value):
+                raise Rejected(f"{name!r} is the id of a record in {spec['to']}: not {value!r}")
         elif kind == "ref":
             found = self._db.execute("SELECT deleted FROM records WHERE collection = ? AND id = ?",
                                      (spec["to"], value)).fetchone() if isinstance(value, str) else None
@@ -654,16 +936,31 @@ class Collections:
 
     def _change(self, writer: Writer, now: float, collection: str, rid: str | None, op: str, before: Any, after: Any,
                 as_of: str | None = None, src: str | None = None, batch: str | None = None,
-                reverts: str | None = None) -> str:
+                reverts: str | None = None, idem: str | None = None) -> str:
         cid = self._ulids.next(now)
-        self._db.execute(f"INSERT INTO changes ({CHANGE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        self._db.execute(f"INSERT INTO changes ({CHANGE_COLUMNS}) VALUES "
+                         "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                          (cid, now, as_of, batch, collection, rid, op, _json(before), _json(after), writer.actor,
-                          writer.model, writer.via, src, ",".join(sorted(writer.foreign)) or None, reverts))
+                          writer.model, writer.via, src, ",".join(sorted(writer.foreign)) or None, reverts, idem))
         return cid
+
+    def _idem(self, scope: str, collection: str, idem: str) -> dict | None:
+        row = self._db.execute("SELECT answer FROM idems WHERE scope = ? AND collection = ? AND idem = ?",
+                               (scope, collection, idem)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def _remember(self, scope: str, collection: str, idem: str, answer: dict, now: float) -> None:
+        self._db.execute("INSERT INTO idems (scope, collection, idem, answer, ts) VALUES (?, ?, ?, ?, ?)",
+                         (scope, collection, idem, _json(answer), now))
 
     def _form(self, collection: str) -> dict | None:
         row = self._db.execute("SELECT form FROM schemas WHERE collection = ?", (collection,)).fetchone()
         return json.loads(row[0]) if row else None
+
+    def _schema(self, collection: str) -> tuple[dict, dict] | None:
+        """A collection's form and rights, or None."""
+        row = self._db.execute("SELECT form, rights FROM schemas WHERE collection = ?", (collection,)).fetchone()
+        return (json.loads(row[0]), json.loads(row[1])) if row else None
 
     def _rev(self, collection: str) -> str | None:
         row = self._db.execute("SELECT change_id FROM changes WHERE collection = ? ORDER BY seq DESC LIMIT 1",
@@ -673,10 +970,7 @@ class Collections:
     def _record(self, collection: str, rid: str) -> dict | None:
         row = self._db.execute(f"SELECT {RECORD_COLUMNS} FROM records WHERE collection = ? AND id = ?",
                                (collection, rid)).fetchone()
-        if row is None:
-            return None
-        return {"id": row[0], "fields": json.loads(row[1]), "version": row[2], "created": row[3], "updated": row[4],
-                "deleted": row[5]}
+        return _record(row) if row else None
 
     def _history(self, collection: str, rid: str, limit: int) -> list[dict]:
         rows = self._db.execute(f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection = ? AND id = ? "
@@ -691,10 +985,140 @@ class Collections:
         """A record's changes, the newest first. Raises Refused."""
         return await self._run(self._history, collection, rid, limit)
 
+    # --- reading ----------------------------------------------------------------------------------------------------
+
+    async def query(self, collection: str, filter: Any = None, fields: Any = None, limit: int = QUERY_ROWS,
+                    after: str | None = None, deleted: bool = False) -> dict:
+        """The records that match `filter` (docs/collections.md#reading), oldest first: `{rows, next}` — at most
+        `limit` (≤ QUERY_ROWS) rows and QUERY_BYTES of them, each with only `fields` when they are named, and `next`
+        the id to pass as `after` for the rest, None when there is none. Deleted records only when `deleted`.
+        Raises Rejected, Refused."""
+        return await self._run(self._query, collection, filter, fields, limit, after, deleted)
+
+    def _query(self, collection: str, filter: Any, fields: Any, limit: Any, after: Any, deleted: bool) -> dict:
+        form = self._reading(collection)
+        where, params = self._where(collection, form, filter, deleted)
+        if fields is not None:
+            fields = _names(fields, form["fields"], "fields")
+        if type(limit) is not int or not 0 < limit <= QUERY_ROWS:
+            raise Rejected(f"limit is 1 to {QUERY_ROWS}")
+        if after is not None:
+            if not isinstance(after, str) or not ULID.fullmatch(after):
+                raise Rejected(f"after is the id `next` gave: not {after!r}")
+            where, params = f"{where} AND id > ?", [*params, after]
+        rows, size, more = [], 0, False
+        for row in self._db.execute(f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} ORDER BY id LIMIT ?",
+                                    (*params, limit + 1)):
+            record = _record(row)
+            if fields is not None:
+                record["fields"] = {k: v for k, v in record["fields"].items() if k in fields}
+            size += len(_json(record).encode()) + 1
+            if len(rows) == limit or size > QUERY_BYTES:
+                more = True
+                break
+            rows.append(record)
+        return {"rows": rows, "next": rows[-1]["id"] if more and rows else None}
+
+    async def count(self, collection: str, filter: Any = None, group: str | None = None) -> int | list[dict]:
+        """How many records match `filter`, deleted ones aside; with `group` (an enum's or a bool's name), how many
+        have each of its values: `[{value, count}]`, the most first, `value` None for those it is unknown in. Raises
+        Rejected, Refused."""
+        return await self._run(self._count, collection, filter, group)
+
+    def _count(self, collection: str, filter: Any, group: Any) -> int | list[dict]:
+        form = self._reading(collection)
+        where, params = self._where(collection, form, filter, False)
+        if group is None:
+            return self._db.execute(f"SELECT count(*) FROM records WHERE {where}", params).fetchone()[0]
+        spec = form["fields"].get(group) if isinstance(group, str) else None
+        if spec is None or spec["type"] not in ("enum", "bool"):
+            raise Rejected(f"group is an enum or a bool of {collection}: not {group!r}")
+        rows = self._db.execute(f"SELECT {_path(group)}, count(*) FROM records WHERE {where} GROUP BY 1 "
+                                "ORDER BY 2 DESC, 1", params)
+        return [{"value": bool(value) if spec["type"] == "bool" and value is not None else value, "count": n}
+                for value, n in rows]
+
+    def _reading(self, collection: str) -> dict:
+        form = self._form(collection) if isinstance(collection, str) and NAME.fullmatch(collection) else None
+        if form is None:
+            raise Rejected(f"there is no collection {collection!r}")
+        return form
+
+    def _where(self, collection: str, form: dict, filter: Any, deleted: bool) -> tuple[str, list]:
+        """A filter as SQL and its parameters: conditions that all hold, each `{field, op, value}`, every name checked
+        against the form before it goes into the statement, every value a parameter."""
+        where = _within(collection) if not deleted else f"collection = '{collection}'"
+        if filter is None:
+            return where, []
+        conditions = [filter] if isinstance(filter, dict) else filter
+        if not isinstance(conditions, list) or len(conditions) > FILTER_MAX:
+            raise Rejected(f"filter is a condition, or a list of up to {FILTER_MAX} that all hold: "
+                           "{\"field\": \"stage\", \"op\": \"in\", \"value\": [\"applied\", \"interview\"]}")
+        terms, params = [where], []
+        for n, condition in enumerate(conditions):
+            try:
+                term, values = self._condition(collection, form, condition)
+            except Rejected as exc:
+                raise Rejected(f"filter[{n}]: {exc.reason}") from None
+            terms.append(term)
+            params += values
+        return " AND ".join(terms), params
+
+    def _condition(self, collection: str, form: dict, condition: Any) -> tuple[str, list]:
+        if not isinstance(condition, dict) or set(condition) - {"field", "op", "value"}:
+            raise Rejected("a condition is {\"field\": …, \"op\": …, \"value\": …}")
+        field, op = condition.get("field"), condition.get("op")
+        if op not in FILTER_OPS:
+            raise Rejected(f"\"op\" is one of {', '.join(FILTER_OPS)}: not {op!r}")
+        if not isinstance(field, str):
+            raise Rejected("\"field\" names a field of the form, or a ref's field: \"lead.stage\"")
+        name, _, inner = field.partition(".")
+        spec = form["fields"].get(name)
+        if spec is None:
+            raise Rejected(f"{collection} has no field {name!r}; its fields: {', '.join(form['fields'])}")
+        if not inner:
+            return self._match(name, spec, op, condition)
+        if spec["type"] != "ref":
+            raise Rejected(f"{name!r} is not a ref: it has no fields of its own")
+        if op not in ("eq", "in"):
+            raise Rejected(f"a ref's field is matched by eq or in: not {op}")
+        target = self._form(spec["to"])
+        inner_spec = target["fields"].get(inner) if target else None
+        if inner_spec is None:
+            raise Rejected(f"{spec['to']} has no field {inner!r}")
+        term, values = self._match(inner, inner_spec, op, condition)
+        return f"{_path(name)} IN (SELECT id FROM records WHERE {_within(spec['to'])} AND {term})", values
+
+    def _match(self, name: str, spec: dict, op: str, condition: dict) -> tuple[str, list]:
+        value = condition.get("value")
+        if op in ("empty", "not_empty"):
+            if "value" in condition:
+                raise Rejected(f"{op} takes no value")
+            return f"{_path(name)} IS {'NOT ' if op == 'not_empty' else ''}NULL", []
+        if op == "eq" or op == "ref_is":
+            if op == "ref_is" and spec["type"] != "ref":
+                raise Rejected(f"{name!r} is not a ref: match it by eq")
+            return f"{_path(name)} = ?", [self._value(name, spec, value, probe=True)]
+        if op == "in":
+            if not isinstance(value, list) or not 0 < len(value) <= IN_MAX:
+                raise Rejected(f"in takes a list of 1 to {IN_MAX} values")
+            return (f"{_path(name)} IN ({', '.join('?' * len(value))})",
+                    [self._value(name, spec, v, probe=True) for v in value])
+        if spec["type"] != "date":
+            raise Rejected(f"between is for dates: {name!r} is a {spec['type']}")
+        if not isinstance(value, list) or len(value) != 2 or not all(map(_date, value)) or value[0] > value[1]:
+            raise Rejected("between takes [first, last], two dates YYYY-MM-DD, the first not after the last")
+        return f"{_path(name)} BETWEEN ? AND ?", list(value)
+
+
+def _record(row: tuple) -> dict:
+    return {"id": row[0], "fields": json.loads(row[1]), "version": row[2], "created": row[3], "updated": row[4],
+            "deleted": row[5]}
+
 
 def _change(row: tuple) -> dict:
     change = dict(zip(("change_id", "ts", "as_of", "batch", "collection", "id", "op", "before", "after", "actor",
-                       "model", "via", "src", "foreign", "reverts"), row))
+                       "model", "via", "src", "foreign", "reverts", "idem"), row))
     change["before"] = json.loads(change["before"]) if change["before"] is not None else None
     change["after"] = json.loads(change["after"]) if change["after"] is not None else None
     change["foreign"] = change["foreign"].split(",") if change["foreign"] else []

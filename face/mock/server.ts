@@ -9,7 +9,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as fx from "./fixtures.ts";
 import { mockSpaces } from "./spaces.ts";
-import type { Approval, Input, Item, Session, Summary } from "../src/lib/types.ts";
+import type { Approval, Input, Item, Proposal, Session, Summary } from "../src/lib/types.ts";
 
 const PORT = Number(process.env.MOCK_PORT ?? 9601);
 const CODE = process.env.MOCK_CODE ?? "RTNE7K2QXP";
@@ -62,10 +62,14 @@ function mockFeed() {
   const answer = cards.filter((a) => a.kind === "question" && sessions.get(a.session));
   const decide = cards.filter((a) => a.kind === "approval" && sessions.get(a.session));
   const read = [...sessions.values()].filter((s) => s.state === "idle");
+  const offered = [...proposals.values()].filter((p) => p.state === "open" && sessions.get(p.session));
   const last = (id: string) => [...summaries.values()].filter((x) => x.session === id).at(-1);
   const groups = [
     { action: "answer", title: "Answer a question", rows: answer.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "answer", source: "question", since: a.created, essence: "", approval: a })) },
-    { action: "decide", title: "Decide", rows: decide.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "decide", source: "approval", since: a.created, essence: "", approval: a })) },
+    { action: "decide", title: "Decide", rows: [
+      ...decide.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "decide", source: "approval", since: a.created, essence: "", approval: a })),
+      ...offered.map((p) => row(sessions.get(p.session)!, { key: `proposal:${p.id}`, action: "decide", source: "proposal", since: p.created, essence: `Sub-session: ${p.title}`, proposal: p, hint: "Start it or set it aside in the app." })),
+    ] },
     { action: "read", title: "Read", rows: read.map((s) => row(s, { key: `read:${s.id}`, action: "read", source: "session", since: s.at, essence: last(s.id)?.text.split("\n")[0] ?? "" })) },
     { action: "assistant", title: "From the assistant", rows: [
       ...ASKS.filter((a) => !pressed.has(a.t)).map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, ...a })),
@@ -94,6 +98,7 @@ const items = new Map<string, Item>(fx.items().map((it) => [`${it.session}/${it.
 const approvals = new Map<string, Approval>(fx.approvals.map((a) => [a.id, { ...a }]));
 // keyed `<session>/<note seq>`, as the platform keys summary events
 const baseCards = new Map(fx.baseCards.map((c) => [c.id, c]));
+const proposals = new Map<string, Proposal>(fx.proposals.map((p) => [p.id, { ...p }]));
 const summaries = new Map<string, Summary>(fx.summaries.map((s) => [`${s.session}/${s.seq}`, s]));
 let noteSeq = 100;
 const MOCK_PAGES = "https://pages.in.example.test";
@@ -270,6 +275,7 @@ function sessionSnapshot(id: string) {
     files: fx.files.filter((f) => f.file.session === id).map((f) => f.file),
     push_cards: fx.pushCards.filter((p) => p.session === id),
     base_cards: [...baseCards.values()].filter((b) => b.session === id),
+    proposals: [...proposals.values()].filter((p) => p.session === id).sort((a, b) => a.created - b.created),
     about: fx.about(session),
   };
 }
@@ -369,11 +375,23 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const key = String(b.input_id ?? "");
     if (seenInputs.has(key)) return json(res, 200, seenInputs.get(key));
     const sphere = fx.spheres.find((x) => x.name === b.sphere);
+    // `main: true`: into the sphere's main session, as `/<sphere> text` (retinue/spheres.py `command`)
+    const main = b.main === true && sphere ? [...sessions.values()].find((s) => s.sphere === sphere.name && s.main && !s.archived) : undefined;
+    if (b.main === true && !sphere) return json(res, 400, { error: "input_id (face:<uuid4>), sphere, text: invalid" });
+    if (main && String(b.text ?? "").trim()) {
+      const input = { session: main.id, input_id: key, text: String(b.text), at: now(), turn: null, n: null, attachments: [] };
+      inputs.set(`${main.id}/${key}`, input);
+      emit("input", `${main.id}/${key}`, input);
+      const out = { session: main.id, say: "Accepted." };
+      seenInputs.set(key, out);
+      void simulateTurn(main.id, String(b.text));
+      return json(res, 200, out);
+    }
     const track = fx.tracks.find((t) => t.name === (b.track ?? sphere?.track));
     if (!track || !String(b.text ?? "").trim()) return json(res, 400, { error: "A track and a text are needed." });
     const id = randomBytes(4).toString("hex");
     const text = String(b.text);
-    sessions.set(id, { id, track: track.name, lane: track.lane, kind: track.kind, state: "active", created: now(), at: now(), title: text.slice(0, 80), waiting: 0, sphere: sphere?.name ?? null });
+    sessions.set(id, { id, track: track.name, lane: track.lane, kind: track.kind, state: "active", created: now(), at: now(), title: text.slice(0, 80), waiting: 0, sphere: sphere?.name ?? null, main: b.main === true });
     emit("session", id, sessions.get(id));
     const out = { session: id };
     seenInputs.set(key, out);
@@ -395,6 +413,29 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       streams.delete(res);
     });
     return;
+  }
+
+  const offer = /^\/api\/proposals\/([0-9a-f]{8})\/(start|dismiss)$/.exec(path);
+  if (offer && method === "POST") {
+    const p = proposals.get(offer[1]!);
+    if (!p) return json(res, 404, { error: "No such proposal." });
+    if (offer[2] === "dismiss") {
+      const next = p.state === "open" ? { ...p, state: "declined" as const, at: now() } : p;
+      proposals.set(p.id, next);
+      emit("proposal", p.id, next);
+      return json(res, 200, { proposal: next });
+    }
+    if (p.state === "started") return json(res, 200, { proposal: p, say: `Started already: sub-session ${p.child}.` });
+    if (p.state !== "open") return json(res, 409, { error: "You set this proposal aside." });
+    const parent = sessions.get(p.session)!;
+    const id = randomBytes(4).toString("hex");
+    sessions.set(id, { id, track: parent.track, lane: parent.lane, kind: parent.kind, state: "active", created: now(), at: now(), title: p.title, waiting: 0, sphere: parent.sphere ?? null, sub_of: parent.id });
+    emit("session", id, sessions.get(id));
+    const next = { ...p, state: "started" as const, child: id, at: now() };
+    proposals.set(p.id, next);
+    emit("proposal", p.id, next);
+    void simulateTurn(id, p.brief);
+    return json(res, 200, { proposal: next, say: `Sub-session ${id} "${p.title}" started.` });
   }
 
   const b = /^\/api\/base\/([0-9a-f]{8})(\/[a-z]+)?$/.exec(path);

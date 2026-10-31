@@ -24,7 +24,7 @@ import { usePane } from "@/lib/pane";
 import { latestPlan, planLine, setSummaryOpen, useSummaryOpen } from "@/lib/summary";
 import { useMarkSeen } from "@/lib/seen";
 import { cn } from "@/lib/utils";
-import { approvalsOf, orderedFiles, orderedInputs, orderedItems, orderedSummaries } from "@/lib/store";
+import { approvalsOf, orderedFiles, orderedInputs, orderedItems, orderedSummaries, proposalsOf } from "@/lib/store";
 import { QUEUED } from "@/lib/types";
 
 // The diff renderer (@pierre/diffs and Shiki) is loaded only when «Changes» is opened.
@@ -77,6 +77,8 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
   const items = useMemo(() => orderedItems(itemsOf), [itemsOf]);
   const allApprovals = state.approvals;
   const approvals = useMemo(() => approvalsOf(allApprovals, id), [allApprovals, id]);
+  const allProposals = state.proposals;
+  const proposals = useMemo(() => proposalsOf(allProposals, id), [allProposals, id]);
   const delta = state.deltas[id];
   const summariesOf = state.summaries[id];
   const summaries = useMemo(() => orderedSummaries(summariesOf), [summariesOf]);
@@ -234,6 +236,7 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
             inputs={inputs}
             base={session?.base ? { session: id, count: session.base } : undefined}
             push={session?.push || session?.push_why ? { session: id, count: session.push ?? 0, why: session.push_why } : undefined}
+            proposals={proposals}
           />
           </div>
         )}

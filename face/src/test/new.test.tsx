@@ -98,11 +98,54 @@ describe("/new, the empty new task", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/s/n2"));
     expect(newSession.mock.calls[0]?.[3]).toBe("travel");
-    expect([sessionStorage.getItem("retinue-new-draft"), sessionStorage.getItem("retinue-new-sphere")]).toEqual([null, null]);
+    expect(
+      ["retinue-new-draft", "retinue-new-sphere", "retinue-new-apart"].map((k) => sessionStorage.getItem(k)),
+    ).toEqual([null, null, null]);
     cleanup();
     startNew("x", "no-such-sphere");
     await mountNew();
     expect(screen.getByRole("button", { name: "Auto" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("sends a sphere's task into its main session, and into a separate one only when «New session» is chosen", async () => {
+    live.dispatch({ type: "event", id: null, event: { kind: "session", data: session("m1", { sphere: "travel", main: true, title: "Trip plans" }) } });
+    const toMain = vi.fn().mockResolvedValue({ session: "m1" });
+    const newSession = vi.fn().mockResolvedValue({ session: "n3" });
+    const { router } = await mountNew({ toMain, newSession });
+    fireEvent.click(screen.getByRole("button", { name: "✈️ Travel" }));
+    expect(screen.getByRole("button", { name: "Main session" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("where-to").textContent).toBe("Into «Trip plans»");
+    const field = screen.getByRole("textbox", { name: "What should I do?" });
+    fireEvent.change(field, { target: { value: "and a hotel for 3 nights" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/s/m1"));
+    expect(toMain.mock.calls[0]?.slice(0, 2)).toEqual(["travel", "and a hotel for 3 nights"]);
+    expect(newSession).not.toHaveBeenCalled();
+    cleanup();
+
+    await mountNew({ toMain, newSession });
+    fireEvent.click(screen.getByRole("button", { name: "✈️ Travel" }));
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    expect(screen.getByTestId("where-to").textContent).toBe("A separate session in ✈️ Travel");
+    fireEvent.change(screen.getByRole("textbox", { name: "What should I do?" }), { target: { value: "apart" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(newSession).toHaveBeenCalled());
+    expect(newSession.mock.calls[0]?.slice(0, 2)).toEqual(["base", "apart"]);
+    expect(newSession.mock.calls[0]?.[3]).toBe("travel");
+    expect(toMain).toHaveBeenCalledTimes(1);
+  });
+
+  it("names a sphere with no main session: the task starts it", async () => {
+    await mountNew();
+    fireEvent.click(screen.getByRole("button", { name: "✈️ Travel" }));
+    expect(screen.getByTestId("where-to").textContent).toBe("Starts the main session of ✈️ Travel");
+  });
+
+  it("opens a task begun elsewhere in a separate session, never the main one", async () => {
+    live.dispatch({ type: "event", id: null, event: { kind: "session", data: session("m1", { sphere: "travel", main: true }) } });
+    startNew("About a letter", "travel");
+    await mountNew();
+    expect(screen.getByRole("button", { name: "New session" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("keeps what was typed and not sent for the next visit", async () => {

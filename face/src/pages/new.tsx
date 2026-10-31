@@ -2,9 +2,11 @@
 // N working», a tap opens Today), the nearest deadline and the composer stand together in the middle of the page; on a
 // phone the composer stays at the bottom, under the thumb and above the keyboard. Under the composer, the sphere
 // picker: «Auto» — a general session in the root of the Base (`meta.general`), which finds its context and its sphere
-// itself — or one sphere, whose track and sphere the session starts with. Sent, the session opens. What was typed and
-// not sent waits here for the next visit (this tab's sessionStorage), with the sphere chosen; another screen may leave
-// both for it (`startNew`: «Ask the assistant» on a row of «Waiting for you»).
+// itself — or one sphere. A sphere's task goes into its main session, as `/<sphere> text` does in Telegram (a new one,
+// made main, when it has none); «New session» beside it starts a separate session of the sphere instead. Sent, the
+// session opens. What was typed and not sent waits here for the next visit (this tab's sessionStorage), with the
+// sphere and the choice; another screen may leave them for it (`startNew`: «Ask the assistant» on a row of «Waiting
+// for you», always a separate session).
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-header";
@@ -17,11 +19,12 @@ import { useCoarsePointer, useWide } from "@/lib/media";
 import { listed, waitingCount } from "@/lib/store";
 import { sphereLabel } from "@/lib/spheres";
 import { running } from "@/lib/today";
-import type { Meta, Sphere } from "@/lib/types";
+import type { Meta, Session, Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const DRAFT_KEY = "retinue-new-draft";
 const SPHERE_KEY = "retinue-new-sphere";
+const APART_KEY = "retinue-new-apart"; // "1": a separate session of the sphere, not its main one
 
 function read(key: string): string {
   try {
@@ -42,10 +45,12 @@ function write(key: string, value: string) {
 
 const writeDraft = (text: string) => write(DRAFT_KEY, text);
 
-/** A new task begun elsewhere: its text and its sphere (null: «Auto») wait for `/new`, which opens with them. */
+/** A new task begun elsewhere: its text and its sphere (null: «Auto») wait for `/new`, which opens with them — in a
+ * separate session, never the sphere's main one. */
 export function startNew(text: string, sphere: string | null): void {
   write(DRAFT_KEY, text);
   write(SPHERE_KEY, sphere ?? "");
+  write(APART_KEY, "1");
 }
 
 /** «Good morning» from 5, «Good afternoon» from 12, «Good evening» from 18, «Good night» from 23 — the device's clock. */
@@ -112,6 +117,52 @@ export function SpherePicker({
   );
 }
 
+/** The sphere's main session as the list knows it; none when it has none. */
+export function mainOf(sessions: Session[], sphere: string): Session | null {
+  return sessions.find((s) => s.sphere === sphere && s.main && !s.archived) ?? null;
+}
+
+/** Where a sphere's task goes: «Main session» (the default) or «New session», and a line saying what that means. */
+export function WhereTo({
+  sphere,
+  main,
+  apart,
+  onChange,
+  wrap,
+}: {
+  sphere: Sphere;
+  main: Session | null;
+  apart: boolean;
+  onChange: (apart: boolean) => void;
+  wrap?: boolean;
+}) {
+  const option = (on: boolean) =>
+    cn(
+      "inline-flex h-7 items-center rounded-full px-3 text-[13px] whitespace-nowrap pointer-coarse:h-9",
+      on ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+    );
+  const said = apart
+    ? `A separate session in ${sphereLabel(sphere)}`
+    : main
+      ? `Into «${main.title}»`
+      : `Starts the main session of ${sphereLabel(sphere)}`;
+  return (
+    <div className={cn("flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1 pb-1", wrap && "justify-center")}>
+      <fieldset aria-label="Where it goes" className="inline-flex shrink-0 rounded-full bg-muted p-0.5">
+        <button type="button" aria-pressed={!apart} onClick={() => onChange(false)} className={option(!apart)}>
+          Main session
+        </button>
+        <button type="button" aria-pressed={apart} onClick={() => onChange(true)} className={option(apart)}>
+          New session
+        </button>
+      </fieldset>
+      <span data-testid="where-to" className="min-w-0 truncate text-xs text-muted-foreground">
+        {said}
+      </span>
+    </div>
+  );
+}
+
 /** The deadline nearest in time, the overdue first. */
 function nearest(deadlines: Deadline[] | undefined): Deadline | null {
   return [...(deadlines ?? [])].sort((a, b) => a.when.localeCompare(b.when))[0] ?? null;
@@ -119,12 +170,13 @@ function nearest(deadlines: Deadline[] | undefined): Deadline | null {
 
 interface Props {
   newSession?: typeof api.newSession;
+  toMain?: typeof api.toMain;
   transcribe?: typeof api.speech;
   /** The clock, for the greeting (a test's). */
   now?: Date;
 }
 
-export function NewPage({ newSession = api.newSession, transcribe = api.speech, now = new Date() }: Props) {
+export function NewPage({ newSession = api.newSession, toMain = api.toMain, transcribe = api.speech, now = new Date() }: Props) {
   const wide = useWide();
   const coarse = useCoarsePointer();
   const navigate = useNavigate();
@@ -138,14 +190,23 @@ export function NewPage({ newSession = api.newSession, transcribe = api.speech, 
   const spheres = meta?.spheres ?? [];
   const [sphereName, setSphere] = useState<string | null>(() => read(SPHERE_KEY) || null);
   const sphere = spheres.find((s) => s.name === sphereName) ?? null;
+  const [apart, setApart] = useState(() => read(APART_KEY) === "1");
+  const main = sphere ? mainOf(list, sphere.name) : null;
   const track = sphere ? sphere.track : generalTrack(meta);
   const blocked = track ? null : meta ? NO_TRACK : "Connecting…";
 
+  function chooseApart(value: boolean) {
+    setApart(value);
+    write(APART_KEY, value ? "1" : "");
+  }
+
   async function send(text: string, id: string, files: Parameters<typeof api.newSession>[4]) {
     if (!track) throw new Error(NO_TRACK);
-    const { session } = await newSession(track, text, id, sphere?.name ?? null, files);
+    const { session } =
+      sphere && !apart ? await toMain(sphere.name, text, id, files) : await newSession(track, text, id, sphere?.name ?? null, files);
     writeDraft("");
     write(SPHERE_KEY, "");
+    write(APART_KEY, "");
     await navigate({ to: "/s/$id", params: { id: session } });
     return undefined;
   }
@@ -169,6 +230,7 @@ export function NewPage({ newSession = api.newSession, transcribe = api.speech, 
         blocked={blocked}
       />
       {spheres.length > 0 && <SpherePicker spheres={spheres} value={sphere?.name ?? null} onChange={setSphere} wrap={wide} />}
+      {sphere && <WhereTo sphere={sphere} main={main} apart={apart} onChange={chooseApart} wrap={wide} />}
     </div>
   );
 

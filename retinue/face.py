@@ -316,6 +316,8 @@ class Face:
             web.post("/api/sessions/{id}/push", self.push_open), web.get("/api/push/{id}", self.push_card),
             web.get("/api/push/{id}/diff", self.push_diff),
             web.post("/api/push/{id}/{action:target|title|send|cancel}", self.push_act),
+            # A sub-session a session proposed (`subs.py`): «Start» or «Not now».
+            web.post("/api/proposals/{id}/{action:start|dismiss}", self.proposal_act),
             *self.spaces.routes(),
             # «Read» (`library.py`): the hub's pages, what was opened and finished.
             web.get("/api/library", self.library), web.post("/api/library/{id}/{action:open|done}", self.library_act),
@@ -412,6 +414,7 @@ class Face:
                                   "files": self.platform.out.face_files(session_id),
                                   "base_cards": self.platform.tobase.face_cards(session_id),
                                   "push_cards": self.platform.topush.face_cards(session_id),
+                                  "proposals": self.platform.subs.face_proposals(session_id),
                                   "about": self.store.face_about(session_id)})
 
     async def feed(self, request: web.Request) -> web.Response:
@@ -592,9 +595,20 @@ class Face:
     # --- what the owner does -----------------------------------------------------------------------------------------
 
     async def new(self, request: web.Request) -> web.Response:
-        """A new session: on `track`, in `sphere` (optional) — a sphere alone runs on its own track."""
+        """A new session: on `track`, in `sphere` (optional) — a sphere alone runs on its own track. With `main: true`
+        and a sphere, the message goes into the sphere's main session instead, as `/<sphere> text` does — a new one,
+        made main, when it has none."""
         body = await _body(request)
         input_id, sphere, text = body.get("input_id"), body.get("sphere"), body.get("text") or ""
+        if body.get("main") is True:
+            if not isinstance(input_id, str) or not INPUT_ID.fullmatch(input_id) or not isinstance(text, str) or \
+                    not isinstance(sphere, str) or sphere not in self.platform.spheres.by_name or \
+                    not (text.strip() or body.get("attachments")):
+                return _error(400, "input_id (face:<uuid4>), sphere, text: invalid")
+            answer = await self.platform.spheres.command(input_id, sphere, text, body.get("attachments"))
+            if not answer["ok"]:
+                return _error(400, answer["say"])
+            return web.json_response({"session": answer["session"], "say": answer["say"]})
         known = self.platform.spheres.by_name.get(sphere) if isinstance(sphere, str) else None
         track = body.get("track") or (known.track if known else None)
         if not isinstance(input_id, str) or not INPUT_ID.fullmatch(input_id) or not isinstance(track, str) or \
@@ -605,6 +619,19 @@ class Face:
         if not answer["ok"]:
             return _error(400, answer["say"])
         return web.json_response({"session": answer["session"], "say": answer["say"]})
+
+    async def proposal_act(self, request: web.Request) -> web.Response:
+        """The owner's «Start» or «Not now» on a sub-session a session proposed: the proposal as it stands then."""
+        proposal, subs = request.match_info["id"], self.platform.subs
+        if subs.face_proposal(proposal) is None:
+            return _error(404, "No such proposal.")
+        if request.match_info["action"] == "dismiss":
+            subs.decline(proposal)
+            return web.json_response({"proposal": subs.face_proposal(proposal)})
+        started, said = await subs.start_proposal(proposal)
+        if not started:
+            return _error(409, said)
+        return web.json_response({"proposal": subs.face_proposal(proposal), "say": said})
 
     async def input(self, request: web.Request) -> web.Response:
         body, session_id = await _body(request), request.match_info["id"]

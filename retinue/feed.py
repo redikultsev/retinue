@@ -6,7 +6,8 @@ Built by code on every read from the platform's own rows — never a copy kept b
 
 - «Answer the question»: a question card (AskUserQuestion) shown and not answered;
 - «Decide»: an approval card shown, a courier card of the last day he has not closed («Done») nor written to its session
-  since, and a session with Base files not committed yet («To the Base», `tobase`);
+  since, a session with Base files not committed yet («To the Base», `tobase`), and a sub-session a session proposed
+  («Start» / «Not now», `subs`);
 - «Reply»: a session waiting for his message with no card shown;
 - «Read»: a session whose finished turn he has not read (the session's `unread`; nothing without it);
 - «From the assistant»: the assistant's digest.
@@ -51,6 +52,7 @@ TELEGRAM_ROWS = 10           # `/wait` names this many rows; the rest are counte
 BASE_HINT = "Press «To the Base» under its result or open it in the app."
 NOBODY_HINT = "They are on the «To the Base» card of any Base session, turned off: turn on the ones you want and commit."
 PUSH_HINT = "Press «Push» under its result or open it in the app."
+PROPOSAL_HINT = "Start it or set it aside in the app."
 
 # The digest: what the router may push, and nothing more.
 DIGEST_KINDS = ("letter", "chat", "draft", "deadline")
@@ -443,6 +445,12 @@ class Feed:
                                                   since or session["at"], f"Push: {named}"),
                                       "push": sum(n for _, n in repos), "repos": [r for r, _ in repos],
                                       "hint": PUSH_HINT})
+        subs = getattr(self, "subs", None)  # set by the platform: a sub-session a session proposed, not started
+        for proposal in subs.waiting_proposals() if subs is not None else ():
+            if (session := sessions.get(proposal["session"])) is not None:
+                out["decide"].append({**self._row(f"proposal:{proposal['id']}", "decide", "proposal", session,
+                                                  proposal["created"], f"Sub-session: {proposal['title']}"),
+                                      "proposal": proposal, "hint": PROPOSAL_HINT})
         tobase = getattr(self, "tobase", None)  # set by the platform; nobody's files are never left unseen
         if tobase is not None and (nobodys := tobase.nobodys()) and \
                 (carrier := sessions.get(tobase.carrier() or "")) is not None:

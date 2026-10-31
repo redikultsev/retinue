@@ -6,9 +6,10 @@
 import { type ReactNode, useMemo } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { AutoButton, BaseButton } from "@/components/base-card";
+import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
 import { hideSphereLines } from "@/lib/sphere-line";
-import type { Approval, Input, Item, Summary } from "@/lib/types";
+import type { Approval, Input, Item, Proposal, Summary } from "@/lib/types";
 import { InputBubble } from "./input";
 import { isStep, Markdown, StepRun, TranscriptItem } from "./item";
 
@@ -48,6 +49,17 @@ export function placeCards(items: Item[], approvals: Approval[]): Map<number, Ap
       }
     }
     at.set(index, [...(at.get(index) ?? []), a]);
+  }
+  return at;
+}
+
+/** Where each proposed sub-session goes: after the index of the call that proposed it, or -1 (the end). Pure, exported
+ * for tests. */
+export function placeProposals(items: Item[], proposals: Proposal[]): Map<number, Proposal[]> {
+  const at = new Map<number, Proposal[]>();
+  for (const p of proposals) {
+    const index = items.findIndex((it) => callIds(it).includes(p.tool_use_id));
+    at.set(index, [...(at.get(index) ?? []), p]);
   }
   return at;
 }
@@ -155,15 +167,20 @@ interface Props {
   base?: { session: string; count: number };
   /** Its commits no branch of the remote has (retinue/topush.py): «Push · N» there too. */
   push?: { session: string; count: number; why?: string };
+  /** The sub-sessions it proposed (retinue/subs.py): each card under its call. */
+  proposals?: Proposal[];
 }
 
-export function Transcript({ items: given, approvals, delta, running, summaries = [], inputs = [], base, push }: Props) {
+export function Transcript({ items: given, approvals, delta, running, summaries = [], inputs = [], base, push, proposals = [] }: Props) {
   // A ping's sphere line is the platform's, not words: off the message it ends.
   const items = useMemo(() => hideSphereLines(given, summaries), [given, summaries]);
   const cards = useMemo(() => placeCards(items, approvals), [items, approvals]);
   const notes = useMemo(() => placeSummaries(items, summaries), [items, summaries]);
   const mine = useMemo(() => placeInputs(items, inputs), [items, inputs]);
-  const runs = useMemo(() => foldSteps(items, cards, notes, mine), [items, cards, notes, mine]);
+  const offers = useMemo(() => placeProposals(items, proposals), [items, proposals]);
+  // A call with a card of either kind stands alone, never folded.
+  const carded = useMemo(() => new Map<number, unknown>([...cards, ...offers]), [cards, offers]);
+  const runs = useMemo(() => foldSteps(items, carded, notes, mine), [items, carded, notes, mine]);
   // At the end, a summary said before the owner's newest message stays above it; the rest stay below the live text.
   const lastNotes = notes.get(-1) ?? [];
   const firstEnd = mine.get(-1)?.[0]?.at ?? Number.POSITIVE_INFINITY;
@@ -212,11 +229,13 @@ export function Transcript({ items: given, approvals, delta, running, summaries 
             {/* A question with its card: the card shows the questions, and answers them. */}
             {!(item.kind === "question" && cards.get(k)?.some((a) => a.kind === "question")) && <TranscriptItem item={item} />}
             {cards.get(k)?.map((a) => <ApprovalCard key={a.id} approval={a} />)}
+            {offers.get(k)?.map((p) => <ProposalCard key={p.id} proposal={p} />)}
             {notes.get(k)?.map((s) => note(s, k))}
           </div>
         );
       })}
       {cards.get(-1)?.map((a) => <ApprovalCard key={a.id} approval={a} />)}
+      {offers.get(-1)?.map((p) => <ProposalCard key={p.id} proposal={p} />)}
       {mine.has(-1) && notesBefore.map((s) => note(s, -1))}
       {mine.get(-1)?.map((x) => <InputBubble key={x.input_id} input={x} />)}
       {delta ? (

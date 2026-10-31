@@ -62,7 +62,8 @@ flowchart LR
 - **platform** (`retinue/platformd.py`, `retinue/gate.py`, `retinue/approvals.py`) starts and drives Claude Code
   sessions, keeps every line of every run in its own SQLite, and answers the gate hook that the CLI calls before
   each tool call. A session can hand separable work to sub-sessions of its own through the platform's MCP server
-  (`retinue/subs.py`) and is told when each one's turn ends. The platform holds no bot token and has no route out
+  (`retinue/subs.py`) and is told when each one's turn ends; work it noticed itself it proposes to you instead, as a
+  card with «Start» / «Not now». The platform holds no bot token and has no route out
   except its own proxy.
 - **the room** (`lane-private`, `retinue/lane_host.py`, `deploy/lanes/`) is the one lane container sessions run in:
   your knowledge base (the Base), clones of your repositories and the web through the CLI's `WebFetch` and

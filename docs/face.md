@@ -158,6 +158,7 @@ in the snapshot, never wrapped in an envelope. The kinds and their keys:
 | `summary` | `<session>/<seq>` | `{session, seq, head, text, at, turn, kind, took_s, line}`: every summary its own object; `turn` is the turn it ends; a ping's `kind` (`done` · `decision` — a card of the session waits on you — · `failed`), `took_s`, and `line`, the sphere line exactly as the model wrote it ([platform.md](platform.md#pings)) |
 | `input` | `<session>/<input_id>` | `{session, input_id, text, at, turn, n, attachments}`: your message; it goes before the item (`turn`, `n`) the session had not yet written (`null` on old ones: not shown); `attachments`: `[{kind: image\|pdf\|file, name, size, what, thumb}]` |
 | `file` | the file's id | `{id, session, path, name, size, mime, at}`: a file the session handed over ([below](#a-sessions-files)) |
+| `proposal` | the proposal's id | `{id, session, tool_use_id, title, brief, created, at, state, child}`: a sub-session the session proposed ([platform.md](platform.md#proposals)); `state` `open` · `started` (`child` the sub-session) · `declined` · `expired` (open past its week) |
 | `delta` | none, no `id` | `{session, text}`: text being written, never replayed |
 
 An approval is `{id, session, tool_use_id, kind, state, tool, input, cwd, digest, view, created, at}`; `kind` is
@@ -177,9 +178,11 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `POST /api/auth/code {code}` · `POST /api/auth/telegram {init_data}` · `POST /api/auth/logout` | `{ok}` and the cookie |
 | `GET /api/meta` | `{schema, owner_ok, tracks: [{name, lane, kind}], general, spheres: [{name, title, icon, track}], face_origin, speech}` — `general`: the track «＋» starts a session on (the root of the Base, below) |
 | `GET /api/sessions` | `{schema, cursor, sessions}` — every open session, those closed in the last 30 days and every sphere's main session, latest first; a session row carries `sphere`, `main`, `fork_of`, `unread`, `base` (its Base files not committed yet) `turn_started` (when its running turn began: idle, closed or new → active; a resume after a card keeps it), `side` (a side question: its `parent`), `sub_of` (a sub-session: the session that started it), `children` (its open sub-sessions) and `queued` (waiting for room in the lane: the row and the session's header say “waiting for room on the lane”) — [platform.md](platform.md#sub-sessions); an input carries `by` (`parent`, `report`) when the owner did not write it |
-| `GET /api/sessions/{id}` | `{schema, cursor, session, items, approvals, summaries, inputs, files, base_cards, push_cards, about}` — `about`: `{cwd, context_tokens, model, cli_version, permission_mode, mcp: [{name, status}]}` for “Summary” ([below](#summary)), from the session's row and its newest top-level `init` line; null (or `[]`) where nothing said it |
+| `GET /api/sessions/{id}` | `{schema, cursor, session, items, approvals, summaries, inputs, files, base_cards, push_cards, proposals, about}` — `proposals`: every sub-session it proposed, oldest first, whatever became of it; `about`: `{cwd, context_tokens, model, cli_version, permission_mode, mcp: [{name, status}]}` for “Summary” ([below](#summary)), from the session's row and its newest top-level `init` line; null (or `[]`) where nothing said it |
 | `GET /api/events?since=<cursor>` | the stream; `Last-Event-ID` wins over `since` |
 | `POST /api/sessions {input_id, track, sphere?, text}` | `{session, say}`; `input_id` is `face:<uuid4>`, so a retried POST starts one session; with `sphere` and no `track`, the sphere's track |
+| `POST /api/sessions {input_id, sphere, main: true, text}` | `{session, say}`: into the sphere's main session, as `/<sphere> text` ([platform.md](platform.md#spheres)) — a new one, made main, when the sphere has none; 400 with the reason when it did not go in (its lane retired, its files refused) |
+| `POST /api/proposals/{id}/start` · `/dismiss` | `{proposal, say?}`: “Start” — the sub-session started with the proposal's brief, once however often pressed; 409 with the reason when it cannot start now (a limit, 10 open, its session archived, set aside, past its week) and the proposal stays as it was. “Not now” — set aside; the session is not told |
 | `POST /api/sessions/{id}/input {input_id, text, attachments?}` | `{say}`; `attachments`: `[{name, media_type, data (base64), sha256}]`, at most 10 files and 30 MB, 20 MB a file — text, files or both ([platform.md](platform.md#what-a-session-gets-from-you)); `POST /api/sessions` takes them too |
 | `GET /api/sessions/{id}/inputs/{input_id}/{n}` | a picture you sent, as the platform's 320 px JPEG of its own re-encoding (never your bytes); 404 for anything else |
 | `POST /api/sessions/{id}/stop` | `{ok}`: the lane interrupts the running turn |
@@ -318,16 +321,23 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
   feed's count, the running sessions; “Quiet: nothing waiting” when both are nought) — a tap opening “Today”, and the
   nearest deadline of the feed, when there is one.
 - **The [composer](#the-composer)**: on a desktop it has the focus at once, on a phone it waits for a tap (the
-  keyboard does not jump up). Under it, **the sphere picker**: “Auto” (the default) and one chip per sphere.
-- **Sending** with a sphere chosen starts the session on that sphere's track, in that sphere. With “Auto” it starts a
+  keyboard does not jump up). Under it, **the sphere picker**: “Auto” (the default) and one chip per sphere. With a
+  sphere chosen, under the chips: **“Main session” | “New session”** and a line saying where it goes — “Into «<the
+  main session's title>»”, “Starts the main session of ✈️ Travel” when the sphere has none, “A separate session in ✈️
+  Travel”.
+- **Sending** with a sphere chosen goes, as in Claude's desktop app, into **that sphere's main session** (`main:
+  true`, the path of `/<sphere> text`; one is started and made main when the sphere has none) and opens it; with “New
+  session” it starts a separate session on that sphere's track, in that sphere. A task begun elsewhere (“Ask the
+  assistant”) opens with “New session” chosen: it always gets a session of its own. With “Auto” it starts a
   new **general** session: on `meta.general`, the track whose directory is the root of
   the Base on the Base's lane (`base`, `./base` and `base/` are one; with no Base, the first private track; never a
   repository's track — `retinue/face.py` `general_track`), with no sphere. With no such track `general` is null and
   the page says “There is nowhere to start a new session…” with the arrow off; before `/api/meta` has answered the arrow is off
   too, so nothing goes to no track. It reads `CLAUDE.md` → `AGENTS.md` there and finds its own context and sphere; the session opens at once
-  (`/s/<id>`). A Record is not attached by hand any more: the session finds the Base's Records itself. To write into a
-  sphere's main session, open it (or `/<sphere>` in Telegram).
-- What you typed and did not send waits for your next visit (this tab's `sessionStorage`); sent, it is gone.
+  (`/s/<id>`). A Record is not attached by hand any more: the session finds the Base's Records itself.
+- What you typed and did not send waits for your next visit (this tab's `sessionStorage`), with the sphere and the
+  choice; sent, it is gone. A message the main session did not take (its lane retired, its files refused) stays typed,
+  with the reason.
 
 ### The composer
 
@@ -502,6 +512,15 @@ is as of opening the session.
 - **Your messages** are inline where they came, with what you attached: a picture as its thumbnail, a PDF or a file
   by its name and size. The composer's «+» attaches photos, PDFs and files (or paste one); the app checks the
   platform's limits before it uploads, and a message may be files alone.
+- **Sub-sessions' reports** (`by: report`) are not your bubble: a dashed block in the session's flow, each report
+  under “⑂ Sub-session: <title>”, a link that opens it, its summary whole (“Its turn was cut short.” when it was);
+  the platform's closing line for the model is left out. The head is cut only where the platform writes it —
+  `Sub-session "<title>" (<8 hex>): ` at a line's start.
+- **A proposed sub-session** ([platform.md](platform.md#proposals)) is a card under the call that proposed it, as in
+  Claude's desktop app: “Sub-session: <title>”, the brief as plain text (the model's words, never rendered), “Start”
+  and “Not now” — a long brief opens by “Show the brief” before the buttons appear. The session goes on meanwhile.
+  Decided, the card says “started” with “Open the sub-session”, “set aside”, or “expired”. The same card is the row's
+  action under “Decide”.
 - **Summaries** are inline, each at the end of the turn it was said for. One that only repeats the turn's last message
   is a divider with its header; one that says more (an error, a restart, a limit) is shown whole. A ping's only
   buttons are “In the Base”, “To the Base” and “Push” (below): a session that needs your choice asks with a question
@@ -554,12 +573,12 @@ is as of opening the session.
 
 “Waiting for you” is one queue grouped by what you do, not by where it came from (`retinue/feed.py`). The platform builds
 it from its own rows at each read — nothing is kept beside them that could drift — and the app reads it again when a
-session, a card or a summary changes on the stream (once per burst) and once a minute.
+session, a card, a summary or a proposal changes on the stream (once per burst) and once a minute.
 
 | Group | What is in it | Its action, in place |
 |---|---|---|
 | “Answer the question” | a question card that asks | the question's buttons, “Own answer…” |
-| “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted (“To the Base: N files”, since the first of them) | “Allow” / “Deny”; a courier's “Copy command”; “To the Base · N”, the card in a dialog. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first: nothing is decided unseen |
+| “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted (“To the Base: N files”, since the first of them); a sub-session a session proposed, of the last 7 days (“Sub-session: <title>”, [platform.md](platform.md#proposals)) | “Allow” / “Deny”; a courier's “Copy command”; “To the Base · N”, the card in a dialog; “Start” / “Not now” under the proposal's brief. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first, a brief longer than 6 lines or 400 characters “Show the brief”: nothing is decided unseen |
 | “Reply” | a session waiting for your message with no card shown | “Open and answer” |
 | “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
 | “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and the way to the thing. A person's row or a draft — its words, or › “Details” — opens [its sheet](#her-rows-sheet); a base's date — its words, or ↗ “Open the Record” — opens the Record in Spaces. Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |
@@ -569,7 +588,8 @@ waited and its one line — the question, the command, the summary's first line,
 as everywhere (`approval`), decided by the same rules; the app shows its newest copy, so a press in Telegram shows at
 once. A row is `{key, action, source, session, track, sphere, sphere_title, sphere_icon, title, since, essence, ref}`
 plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row,
-`base` (the count) on a “To the Base” row (`source: base`), `t` (the row's token) on a person's row of hers.
+`base` (the count) on a “To the Base” row (`source: base`), `proposal` (the object of the `proposal` event) on a
+proposal's row (`source: proposal`), `t` (the row's token) on a person's row of hers.
 A pressed row leaves the feed at once and stays hidden while the feed still has its `t`, ten minutes at most — a press
 that did not go through brings it back; the toast “Done · Undo” stays 10 seconds, and “Undo” sends `open`
 with the same `t`. Under her rows: “Closed today: M · Ran out unmarked this week: N” (`closed_today`,

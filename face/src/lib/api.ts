@@ -8,6 +8,7 @@ import type {
   DiffResponse,
   Meta,
   OutFile,
+  Proposal,
   PushCard,
   PushResponse,
   Session,
@@ -105,6 +106,15 @@ export const api = {
       input_id: id,
       ...(attachments.length ? { attachments } : {}),
     }),
+  /** Into the sphere's main session, as `/<sphere> text` in Telegram: a new one, made main, when it has none. */
+  toMain: (sphere: string, text: string, id = inputId(), attachments: Encoded[] = []) =>
+    request<{ session: string }>("/api/sessions", {
+      sphere,
+      main: true,
+      text,
+      input_id: id,
+      ...(attachments.length ? { attachments } : {}),
+    }),
   input: (session: string, text: string, id = inputId(), attachments: Encoded[] = []) =>
     request<{ say: string }>(
       `/api/sessions/${encodeURIComponent(session)}/input`,
@@ -170,6 +180,9 @@ export const api = {
   pushTitle: (id: string, title: string) => request<PushResponse>(`/api/push/${encodeURIComponent(id)}/title`, { title }),
   pushSend: (id: string) => request<PushResponse>(`/api/push/${encodeURIComponent(id)}/send`, {}),
   pushCancel: (id: string) => request<PushResponse>(`/api/push/${encodeURIComponent(id)}/cancel`, {}),
+  /** A sub-session a session proposed: «Start» starts it with its brief, «Not now» sets it aside. */
+  proposal: (id: string, action: "start" | "dismiss") =>
+    request<{ proposal: Proposal; say?: string }>(`/api/proposals/${encodeURIComponent(id)}/${action}`, {}),
   /** A press on her row of «Waiting for you» (`t`, the row's token): the router applies it, and the next digest has it. */
   waitingPress: (t: string, action: Press) => request<{ ok: boolean }>("/api/waiting/press", { t, action }),
   /** A row of hers opened: what it is about and where it is, asked of the router — a few seconds at most. */

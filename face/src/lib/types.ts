@@ -224,6 +224,8 @@ export interface Input {
   turn: number | null;
   n: number | null;
   attachments: Attachment[];
+  /** Not the owner's: `parent`, a parent session's message into its sub-session; `report`, its sub-sessions' reports. */
+  by?: "parent" | "report";
 }
 
 /** A file a session handed over from `out/` (retinue/outfiles.py): kept by value, served by `/api/files/{id}`. */
@@ -334,6 +336,8 @@ export interface SessionSnapshot {
   base_cards?: BaseCard[];
   /** Its «Push» cards, the same way; absent from a platform before the code. */
   push_cards?: PushCard[];
+  /** The sub-sessions it proposed, oldest first, whatever became of them. */
+  proposals?: Proposal[];
   /** What «Summary» says of it beyond its row; absent from a platform before it. */
   about?: About;
 }
@@ -419,6 +423,27 @@ export interface DecideResponse {
   approval: Approval;
 }
 
+/** A proposal past its week reads `expired`: it can no longer be started. */
+export type ProposalState = "open" | "started" | "declined" | "expired";
+
+/** A sub-session a session proposed instead of starting it (retinue/subs.py): «Start» or «Not now». The brief is the
+ * model's text, shown whole before «Start». */
+export interface Proposal {
+  id: string;
+  /** The session that proposed it. */
+  session: string;
+  /** The call it was proposed by: its card sits under it in the transcript. */
+  tool_use_id: string;
+  title: string;
+  brief: string;
+  created: number;
+  /** Its last change: a copy older than the store's never replaces it. */
+  at: number;
+  state: ProposalState;
+  /** The sub-session «Start» started. */
+  child: string | null;
+}
+
 /** What the face sends for one question: the options picked, or the owner's own text. */
 export type QuestionReply = { labels: string[] } | { text: string };
 
@@ -433,7 +458,8 @@ export type StreamEvent =
   | { kind: "input"; data: Input }
   | { kind: "file"; data: OutFile }
   | { kind: "base"; data: BaseCard }
-  | { kind: "push"; data: PushCard };
+  | { kind: "push"; data: PushCard }
+  | { kind: "proposal"; data: Proposal };
 
 export type EventKind = StreamEvent["kind"];
 export const EVENT_KINDS: readonly EventKind[] = [
@@ -446,6 +472,7 @@ export const EVENT_KINDS: readonly EventKind[] = [
   "file",
   "base",
   "push",
+  "proposal",
 ];
 
 /** One seven-day span of the platform's tally (`GET /api/stats`, signals.tally). */

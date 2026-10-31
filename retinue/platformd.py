@@ -106,6 +106,7 @@ class Platform:
         pings.prepare(store)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, the sphere line (`subs.py`)
+        self.feed.subs = self.subs  # the feed's proposals of sub-sessions, under «Decide»
         # The owner's Base cloned into a lane (`base.py`): kept fresh here, committed by his button.
         self.base = base if base is not None or cfg.base is None else BaseRepo(cfg.base, _lane_view(cfg))
         if self.base is not None:

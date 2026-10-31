@@ -364,7 +364,8 @@ class PlatformStore:
                                (session,)).fetchall()
         ids = sorted((row[0] for row in rows), key=lambda id_: id_ != session)
         for id_ in ids:
-            self.db.execute("UPDATE sessions SET archived = COALESCE(archived, ?) WHERE id = ?", (now, id_))
+            # Out of the list, and no sphere's main session: the next `/<sphere>` or «＋» starts a new one.
+            self.db.execute("UPDATE sessions SET archived = COALESCE(archived, ?), main = 0 WHERE id = ?", (now, id_))
             self._session_event(id_)
         self.db.commit()
         return ids

@@ -48,12 +48,15 @@ class Spheres:
     def __init__(self, platform: Platform) -> None:
         self.platform = platform
         self.by_name = {sphere.name: sphere for sphere in platform.cfg.spheres}
+        # An archived session is no sphere's main one (`PlatformStore.archive`): the rows from before that rule.
+        platform.store.db.execute("UPDATE sessions SET main = 0 WHERE main = 1 AND archived IS NOT NULL")
+        platform.store.db.commit()
 
     def listed(self) -> list[dict]:
         """The spheres as the face and the router read them, in the config's order."""
         return [{"name": s.name, "title": s.title, "icon": s.icon, "track": s.track} for s in self.platform.cfg.spheres]
 
-    async def command(self, input_id: str, name: str, text: str) -> dict:
+    async def command(self, input_id: str, name: str, text: str, attachments: object = None) -> dict:
         """`/<sphere> [text]`: with text, into the sphere's main session — a new one, made main, when the sphere has
         none; alone, the main session's state and the first line of its last summary. `session` names the session a
         reply to the answer goes to."""
@@ -62,15 +65,18 @@ class Spheres:
             return {"ok": False, "say": f"No such sphere: {name}."}
         store = self.platform.store
         main = store.main_of(name)
-        if not text.strip():
+        if not text.strip() and not attachments:
             return self.status(sphere, main)
         if (known := store.input_session(input_id)) is not None:  # the router sent it again
             return {"ok": True, "session": known, "say": "The session already has this message."}
         if main is not None:
-            said = await self.platform.write(input_id, main, text)
-            return {"ok": True, "session": main, "say": f"{label(sphere)} · session {main}: {said}"}
+            said = await self.platform.write(input_id, main, text, attachments)
+            # Not taken (its lane retired, its files refused): said so, so the app keeps what was typed.
+            return {"ok": store.input_session(input_id) == main, "session": main,
+                    "say": f"{label(sphere)} · session {main}: {said}"}
         # Main from its INSERT, before its run is started: a message meanwhile already writes into it.
-        answer = await self.platform.new_session(input_id, sphere.track, text, sphere=name, main=True)
+        answer = await self.platform.new_session(input_id, sphere.track, text, attachments=attachments, sphere=name,
+                                                 main=True)
         if not answer["ok"]:
             return answer
         session = answer["session"]

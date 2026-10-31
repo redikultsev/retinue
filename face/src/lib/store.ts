@@ -13,6 +13,7 @@ import type {
   Input,
   Item,
   OutFile,
+  Proposal,
   PushCard,
   Session,
   SessionSnapshot,
@@ -56,6 +57,9 @@ export interface State {
   /** «Push» cards by id, the same way. */
   pushes: Record<string, PushCard>;
   pushAt: Record<string, number>;
+  /** Sub-sessions the sessions proposed, by id, the same way. */
+  proposals: Record<string, Proposal>;
+  proposalAt: Record<string, number>;
   /** Per session: «Summary»'s environment, as of its last snapshot (not on the stream). */
   about: Record<string, About>;
 }
@@ -81,6 +85,8 @@ export const initialState: State = {
   baseAt: {},
   pushes: {},
   pushAt: {},
+  proposals: {},
+  proposalAt: {},
   about: {},
 };
 
@@ -198,6 +204,16 @@ function applyEvent(state: State, event: StreamEvent, id: number | null): State 
         pushAt: id === null ? state.pushAt : { ...state.pushAt, [card.id]: id },
       };
     }
+    case "proposal": {
+      const p = event.data;
+      const prior = state.proposals[p.id];
+      if (id === null && prior && prior.at > p.at) return state;
+      return {
+        ...state,
+        proposals: { ...state.proposals, [p.id]: p },
+        proposalAt: id === null ? state.proposalAt : { ...state.proposalAt, [p.id]: id },
+      };
+    }
   }
 }
 
@@ -277,12 +293,24 @@ function applySnapshot(state: State, snapshot: SessionSnapshot): State {
     if ((pushAt[p.id] ?? 0) <= c) pushes[p.id] = p;
   }
 
+  const proposalAt = { ...state.proposalAt };
+  const proposals: Record<string, Proposal> = {};
+  for (const [key, p] of Object.entries(state.proposals)) {
+    if (p.session !== id || (proposalAt[key] ?? 0) > c) proposals[key] = p;
+    else delete proposalAt[key];
+  }
+  for (const p of snapshot.proposals ?? []) {
+    if ((proposalAt[p.id] ?? 0) <= c) proposals[p.id] = p;
+  }
+
   return {
     ...state,
     bases,
     baseAt,
     pushes,
     pushAt,
+    proposals,
+    proposalAt,
     about: snapshot.about ? { ...state.about, [id]: snapshot.about } : state.about,
     floors: { ...state.floors, [id]: c },
     sessions: (state.rowAt[id] ?? 0) > c ? state.sessions : { ...state.sessions, [id]: snapshot.session },
@@ -350,6 +378,13 @@ export function orderedItems(items: Record<string, Item> | undefined): Item[] {
 export function approvalsOf(approvals: Record<string, Approval>, session: string): Approval[] {
   return Object.values(approvals)
     .filter((a) => a.session === session)
+    .sort((a, b) => a.created - b.created);
+}
+
+/** A session's proposals of sub-sessions, oldest first; pass `state.proposals`. */
+export function proposalsOf(proposals: Record<string, Proposal>, session: string): Proposal[] {
+  return Object.values(proposals)
+    .filter((p) => p.session === session)
     .sort((a, b) => a.created - b.created);
 }
 

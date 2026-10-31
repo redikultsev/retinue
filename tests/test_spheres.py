@@ -12,7 +12,7 @@ import pytest
 
 from retinue import sessions
 from retinue.config import Sphere
-from test_face import FaceWorld
+from test_face import FaceWorld, input_id
 from test_platformd import (CALL, DAY, DEFERRED, World, decision, deferred_session, fixture, pre_tool_use,  # noqa: F401
                             short_wait)  # the fixture is autouse
 
@@ -128,6 +128,42 @@ def test_a_sphere_command_writes_into_its_main_session_making_one_when_there_is_
         assert (await world.owner("sphere", {"input_id": "tg:5", "sphere": "mars", "text": "x"}))["ok"] is False
         status, _ = await world.post("/owner/sphere", {"input_id": "tg:6", "sphere": 1, "text": "x"})
         assert status == 400
+
+    spheres_scenario(tmp_path, body)
+
+
+def test_the_apps_task_in_a_sphere_goes_into_its_main_session_and_a_new_one_only_when_asked(tmp_path):
+    async def body(world: SphereWorld):
+        await world.login()
+        status, made, _ = await world.call("POST", "/api/sessions", {"input_id": input_id(), "sphere": "travel",
+                                                                     "main": True, "text": "найди жильё"})
+        assert status == 200, made
+        main = made["session"]
+        assert world.store.session(main)["main"] == 1, "the sphere had none: this one is made main"
+        await finished(world, main)
+        status, again, _ = await world.call("POST", "/api/sessions", {"input_id": input_id(), "sphere": "travel",
+                                                                      "main": True, "text": "а подешевле?"})
+        assert status == 200 and again["session"] == main
+        assert world.lanes["private"].runs()[-1]["prompt"] == "а подешевле?"
+        status, apart, _ = await world.call("POST", "/api/sessions", {"input_id": input_id(), "sphere": "travel",
+                                                                      "text": "отдельно"})
+        assert status == 200 and apart["session"] != main and world.store.session(apart["session"])["main"] == 0
+        for bad in ({"sphere": "mars"}, {"sphere": None}, {"text": " "}):
+            body = {"input_id": input_id(), "sphere": "travel", "main": True, "text": "x", **bad}
+            assert (await world.call("POST", "/api/sessions", body))[0] == 400, bad
+
+        world.platform.live.discard("private")  # its lane retired: the message is not taken, and he is told
+        status, data, _ = await world.call("POST", "/api/sessions", {"input_id": input_id(), "sphere": "travel",
+                                                                     "main": True, "text": "ещё"})
+        assert status == 400, data
+        world.platform.live.add("private")
+
+        assert (await world.call("POST", f"/api/sessions/{main}/archive", {}))[0] == 200
+        assert world.store.session(main)["main"] == 0, "an archived session is no sphere's main one"
+        status, fresh, _ = await world.call("POST", "/api/sessions", {"input_id": input_id(), "sphere": "travel",
+                                                                      "main": True, "text": "новая поездка"})
+        assert status == 200 and fresh["session"] not in (main, apart["session"])
+        assert world.store.session(fresh["session"])["main"] == 1
 
     spheres_scenario(tmp_path, body)
 

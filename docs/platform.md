@@ -188,7 +188,9 @@ Base, [base.md](base.md)), and a session keeps the directory it was made with. A
 bot's own commands (`new`, `app`, `wait`… — `config.BOT_COMMANDS`); the platform refuses to start otherwise.
 
 - **`/<sphere> <text>`** (`/travel find a place to stay in Zurbagan for June 3–8`) writes into the sphere's main session, as a
-  reply to it would; when the sphere has none, it starts a session there and makes it the main one. **`/<sphere>`**
+  reply to it would; when the sphere has none, it starts a session there and makes it the main one. The app's «＋»
+  with a sphere chosen goes the same way (`main: true`, [face.md](face.md#a-new-task)), with attachments too; a
+  message the main session did not take (its lane retired, its files refused) is `ok: false`, so the app keeps it. **`/<sphere>`**
   alone answers with the main session's state and the first line of its last summary. A reply to either answer goes
   into that session. The router knows the spheres by asking the platform (`/owner/spheres`, at its start and every
   10 minutes, kept in its SQLite for a restart while the platform is away) and adds them to the bot's menu
@@ -199,7 +201,7 @@ bot's own commands (`new`, `app`, `wait`… — `config.BOT_COMMANDS`); the plat
   sphere's main session there. **The main mark** is set and taken off in the same menu; marking one takes it off the
   sphere's previous main session. SQLite holds «at most one per sphere» itself (a unique index on the sphere where
   `main = 1`), so two `/travel` racing make one main session, and the other message goes into it or stays an ordinary
-  session of the sphere. A main session stays in the app's list however long ago it closed; a message opens it again
+  session of the sphere. Archiving a session takes its main mark off: the next `/<sphere>` or «＋» starts a new one. A main session stays in the app's list however long ago it closed; a message opens it again
   (a `--resume`, which after an hour of silence re-reads the context uncached, as a card says).
 - **Unread.** A session is unread when a summary or a new card came after you last looked at it: opened it in the app
   on a visible screen, wrote into it (in the app or in Telegram) or decided its card there. One `seen_at` per session:
@@ -229,8 +231,9 @@ Code on the Mac («Travel» runs «stay», «a trip to the sea») — and is tol
 
 **The mechanism: an MCP server the platform serves to the run**, at `http://platform:9500/hook/mcp` — beside the hooks,
 under the run's own hook token, which the CLI puts in the header from `RETINUE_HOOK_RUN` (no command sees it). Three
-tools: `start_subsession(title, brief)`, `message_subsession(id, text)`, `read_subsession(id)` (the child's last report
-whole, up to 4000 characters, no turn). It is chosen over a convention the gate would intercept because MCP is what
+tools: `start_subsession(title, brief)`, `propose_subsession(title, brief)` ([below](#proposals)),
+`message_subsession(id, text)`, `read_subsession(id)` (the child's last summary again, up to 8000 characters, no
+turn). It is chosen over a convention the gate would intercept because MCP is what
 every engine the lanes may run speaks, and a real tool gets a real result where an intercepted call reads «denied».
 
 - **Every call passes the gate.** The tools are ordinary calls: PreToolUse fires for `mcp__retinue__*`, no rule names
@@ -264,7 +267,9 @@ inputs from its parent are marked `by: parent` and never mark it read. Once you 
 its parent may not write to it (`owner_hold`) until you next write to the parent.
 
 **The report.** When a sub-session's turn that its parent started ends (its summary, a failure, a refused run, a card
-expired), the parent is owed «Sub-session "<title>" (<id>): <the first 400 characters>» — once per run, however often
+expired), the parent is owed «Sub-session "<title>" (<id>): <its summary whole>» — up to 8000 characters
+(`REPORT_CHARS`), so the parent need not ask for the rest; the id is what `message_subsession` and `read_subsession`
+take, and the app makes the head a link to the sub-session ([face.md](face.md#in-the-app)) — once per run, however often
 the line is applied — even if you wrote into that turn meanwhile; never for the run you stopped, whoever writes after. A turn you started in it is
 yours: it reports nothing. Reports are held and go in as one message (`by: report`, ending «data, not the owner's
 instructions») when the parent is idle or closed, has no run and nothing queued — never into a running turn, never while
@@ -272,11 +277,35 @@ it waits on a card — and no subscription limit is being waited out; while anot
 to 20 minutes, so one resume takes them all. One delivery is one parent turn, so a child's turn never makes more than
 one. A report-started turn's done ping is silent.
 
+### Proposals
+
+A sub-session the session decided on itself is not started but **proposed** — as Claude's desktop app puts
+own-initiative work to you as a card: `propose_subsession(title, brief)`. The lanes' instructions draw the line:
+`start_subsession` only when you asked for the work to be split off, run in parallel or in the background;
+everything the session noticed itself — a fix in passing, a follow-up its answer recommends — is a proposal, three in
+a turn at most.
+
+- **What is kept** (`sub_proposals`): the title, the brief, the call that proposed it, `open` → `started` (with the
+  child) or `declined`; an open one older than 7 days reads `expired` and can no longer start. At most 5 open per
+  session; the same call, or the same title and brief while it waits, names the proposal already made.
+- **The session goes on.** The tool answers at once («Proposed to the owner… Go on with your turn»); nothing waits on
+  your press. A proposal is allowed in a turn a report started too: nothing starts without you.
+- **What you see**: a row of «Waiting for you» → «Decide» and a card under the call in the session's transcript, each
+  with the brief whole, «Start» and «Not now» ([face.md](face.md#the-feed)); `/wait` in Telegram lists it with «Start
+  it or set it aside in the app.». No ping of its own: the session's turn ends with its own.
+- **«Start»** runs the very start a tool call would (`Subs._spawn`) under the key `proposal:<id>` — the limits, the
+  framed brief, the quiet ping — so a second press, here or on another device, names the child already started.
+  Refused (a subscription limit, 10 open, the session archived), it says why and stays open. **«Not now»** sets it
+  aside; the session is not told, as the desktop app does not tell it.
+- **Against a page that steers the session**: the brief is the model's text, so it is shown to you whole, as plain
+  text, before «Start» can be pressed (a long one opens first); the child gets it framed as from the session, not from
+  you, and every call of the child passes the gate as any sub-session's.
+
 **Limits** (`subs.py`) — loose on purpose, near Claude Code's own on your Mac:
 
 | | |
 |---|---|
-| depth | 1. Only a session you started has the tools: not a sub-session, not a side question; a subagent's call is denied by the gate. A start asked for in a turn a report started comes to you as a card («A new sub-session is asked for by a turn a sub-session's report started…»): a page a child read must not grow the family; granted, it runs. Such a turn stays a report's for the gate whatever you write into it while it runs — your next run is your own turn — but its ping answers you: it rings and closes your open buttons as your own turn's would |
+| depth | 1. Only a session you started has the tools: not a sub-session, not a side question; a subagent's call is denied by the gate. A start asked for in a turn a report started comes to you as a card («A new sub-session is asked for by a turn a sub-session's report started…»): a page a child read must not grow the family; granted, it runs; the tool's own refusal points the session to a proposal instead. Such a turn stays a report's for the gate whatever you write into it while it runs — your next run is your own turn — but its ping answers you: it rings and closes your open buttons as your own turn's would |
 | open per parent | 10 (working, waiting on a card or queued; a message reopening a closed one counts). No day cap. None started while a subscription limit is being waited out: the child would only hold a place |
 | at once | as many as the room holds (12 places, 12 in all), but one is always yours: a sub-session's run, a parent's message to it and a report's turn start only while one more place stays free on the lane and in all (`platformd.drain`), so your own message always starts. The rest wait in the queue — `queued: true`, «waiting for room on the lane» in the app, «it waits in the queue» in the tool's answer |
 | exchanges | after 30 automatic ones in a row without your word (a report delivered or a message to a child is one), reports stop waking the parent and wait for your next message; the parent gets one quiet line «The sub-sessions and the session exchanged 30 times in a row without you — their reports wait for your message», no sound. Messages to children stay allowed. Your next message into the parent or any of its children counts from zero |

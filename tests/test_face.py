@@ -320,7 +320,7 @@ def test_the_snapshot_has_the_shapes_the_face_reads(tmp_path):
 
         snapshot = await world.get(f"/api/sessions/{session}")
         assert set(snapshot) == {"schema", "cursor", "session", "items", "approvals", "summaries", "inputs", "files",
-                                 "base_cards", "push_cards", "about"}
+                                 "base_cards", "push_cards", "proposals", "about"}
         assert snapshot["about"] == world.store.face_about(session)
         assert set(snapshot["about"]) == {"cwd", "context_tokens", "model", "cli_version", "permission_mode", "mcp"}
         assert snapshot["inputs"] == [{"session": session, "input_id": "tg:1", "text": "почини", "at": row["created"],

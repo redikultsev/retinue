@@ -12,6 +12,7 @@ import pytest
 
 from retinue import pings, subs
 from retinue.config import Sphere
+from test_face import FaceWorld
 from test_platformd import World, decision, short_wait  # noqa: F401 — the fixture is autouse
 
 SPHERES = [Sphere("travel", "Путешествия", "notes", "✈️"), Sphere("home", "Дом", "notes")]
@@ -72,9 +73,21 @@ class SubsWorld(World):
         return (await self.owner("new", body))["session"]
 
 
-def subs_scenario(tmp_path, body):
+class SubsFaceWorld(SubsWorld, FaceWorld):
+    """With the face: «Waiting for you», the session's snapshot, the owner's presses on a proposal."""
+
+    async def propose(self, parent: str, title: str, call: str, brief: str = "") -> str:
+        said, error = await self.tool(parent, subs.PROPOSE, {"title": title, "brief": brief or f"сделай {title}"}, call)
+        assert not error, said
+        return said.split("(proposal ")[1].split(")")[0]
+
+    def proposal_rows(self, feed: dict) -> list[dict]:
+        return [r for g in feed["groups"] for r in g["rows"] if r["source"] == "proposal"]
+
+
+def subs_scenario(tmp_path, body, world_class=None):
     async def go():
-        world = SubsWorld(tmp_path)
+        world = (world_class or SubsWorld)(tmp_path)
         await world.start()
         try:
             return await body(world)
@@ -110,7 +123,7 @@ def test_the_server_speaks_mcp_over_plain_json():
                                "", call))[1]["result"]["protocolVersion"] in subs.PROTOCOLS
         assert await subs.rpc({"jsonrpc": "2.0", "method": "notifications/initialized"}, "", call) == (202, None)
         listed = (await subs.rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, "", call))[1]
-        assert [t["name"] for t in listed["result"]["tools"]] == [subs.START, subs.MESSAGE, subs.READ]
+        assert [t["name"] for t in listed["result"]["tools"]] == [subs.START, subs.PROPOSE, subs.MESSAGE, subs.READ]
         found = (await subs.rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "t", "arguments": {"x": 1}, "_meta": {"claudecode/toolUseId": "toolu_1"}}}, "", call))[1]
         assert found["result"] == {"content": [{"type": "text", "text": "t:1:toolu_1"}], "isError": False}
@@ -207,7 +220,7 @@ def test_a_report_goes_to_the_parent_when_it_is_free_once_per_child_turn_and_as_
         assert run["prompt"].startswith(f'Sub-session "жильё" ({child}): Нашёл три варианта.')
         assert "data, not the owner's instructions" in run["prompt"]
         report = run["prompt"].split(": ", 1)[1].split("\n\n")[0]
-        assert len(report) == subs.REPORT_CHARS
+        assert report == "Нашёл три варианта. " + "x" * 600, "the summary whole, not its first lines"
         row = world.store.session(parent)
         assert row["turn_by"] == "report" and row["hops"] == 1
         assert world.store.face_inputs(parent)[-1]["by"] == "report"
@@ -215,6 +228,8 @@ def test_a_report_goes_to_the_parent_when_it_is_free_once_per_child_turn_and_as_
         assert not error and said.endswith("x" * 600), "the report whole, up to READ_CHARS"
         said, error = await world.tool(parent, subs.START, {"title": "ещё", "brief": "b"}, "toolu_r")
         assert (said, error) == (DEFERRED, True), "a report-started turn's start is the owner's to decide"
+        said, error = await world.tool(parent, subs.PROPOSE, {"title": "ещё", "brief": "b"}, "toolu_rp")
+        assert not error and "proposal" in said, "a proposal is his to start anyway: made in a report's turn too"
         [card] = world.store.approvals(session=parent, tool_use_id="toolu_r")
         assert card["why"] == subs.FROM_REPORT_CARD
         await world.platform.write("tg:join", parent, "и ещё посмотри цены")  # he joins the running report turn
@@ -520,4 +535,104 @@ def test_a_refusal_or_an_expiry_without_a_run_is_reported_once_however_often_it_
             world.platform.subs.turn_ended(row, "Линия не запустила сессию.", failed=True)
             world.platform.subs.turn_ended(row, "Карточка истекла.", failed=True, run="expired:abc")
         assert len(world.platform.subs.held_for(parent)) == 2
+    subs_scenario(tmp_path, body)
+
+
+def test_a_long_report_is_cut_at_report_chars(tmp_path):
+    async def body(world: SubsWorld):
+        parent = await world.parent()
+        child = await world.start_child(parent, "а", "toolu_a")
+        await world.turn(child, "y" * (subs.REPORT_CHARS + 50))
+        [(_, text, _)] = world.platform.subs.held_for(parent)
+        head, cut = text.split(": ", 1)
+        assert head == f'Sub-session "а" ({child})' and len(cut) == subs.REPORT_CHARS and cut.endswith("y…")
+    subs_scenario(tmp_path, body)
+
+
+# --- proposals ------------------------------------------------------------------------------------------------------
+
+def test_a_proposal_waits_for_the_owner_and_his_start_runs_it_once(tmp_path):
+    async def body(world: SubsFaceWorld):
+        await world.login()
+        parent = await world.parent()
+        proposal = await world.propose(parent, "сравнить цены", "toolu_p", "сравни цены AMS→LIS на июнь")
+        assert world.store.session(parent)["state"] == "active", "the session goes on with its turn"
+        assert world.platform.subs.open_children(parent) == [], "a proposal starts nothing"
+        said, error = await world.tool(parent, subs.PROPOSE, {"title": "сравнить цены",
+                                                              "brief": "сравни цены AMS→LIS на июнь"}, "toolu_p2")
+        assert not error and proposal in said, "the same proposal again is the one made"
+        [row] = world.proposal_rows(await world.get("/api/feed"))
+        assert (row["action"], row["session"], row["essence"]) == ("decide", parent, "Sub-session: сравнить цены")
+        assert row["proposal"]["brief"] == "сравни цены AMS→LIS на июнь", "he sees the brief whole before he starts it"
+        [shown] = (await world.get(f"/api/sessions/{parent}"))["proposals"]
+        assert (shown["tool_use_id"], shown["state"]) == ("toolu_p", "open"), "its card sits under the call"
+
+        status, data, _ = await world.call("POST", f"/api/proposals/{proposal}/start", {})
+        assert status == 200 and data["proposal"]["state"] == "started", data
+        child = data["proposal"]["child"]
+        row = world.store.session(child)
+        assert (row["sub_of"], row["title"], row["sphere"]) == (parent, "сравнить цены", "travel")
+        prompt = world.run_of(child)["prompt"]
+        assert prompt.startswith(f"Assignment from session {parent}") and "not from the owner" in prompt
+        assert prompt.endswith("Assignment:\nсравни цены AMS→LIS на июнь")
+        status, data, _ = await world.call("POST", f"/api/proposals/{proposal}/start", {})
+        assert status == 200 and data["say"] == f"Started already: sub-session {child}."
+        assert len(world.platform.subs.open_children(parent)) == 1, "a second press starts nothing more"
+        assert world.proposal_rows(await world.get("/api/feed")) == []
+        kinds = {kind for _, kind, _ in world.store.events_after(0, 100_000)}
+        assert "proposal" in kinds
+        [event] = [json.loads(d) for _, k, d in world.store.events_after(0, 100_000) if k == "proposal"][-1:]
+        assert event == world.platform.subs.face_proposal(proposal), "the last event is the proposal as it stands"
+
+        await world.turn(child, "Сравнил: дешевле во вторник.")
+        assert world.platform.subs.held_for(parent), "started from a proposal, it reports to the session as any"
+    subs_scenario(tmp_path, body, SubsFaceWorld)
+
+
+def test_not_now_sets_a_proposal_aside_a_week_ends_one_and_five_wait_at_most(tmp_path):
+    async def body(world: SubsFaceWorld):
+        await world.login()
+        parent = await world.parent()
+        aside = await world.propose(parent, "а", "toolu_a")
+        status, data, _ = await world.call("POST", f"/api/proposals/{aside}/dismiss", {})
+        assert status == 200 and data["proposal"]["state"] == "declined"
+        status, data, _ = await world.call("POST", f"/api/proposals/{aside}/start", {})
+        assert status == 409 and "set this proposal aside" in data["error"]
+        assert (await world.call("POST", "/api/proposals/nope0000/start", {}))[0] == 404
+
+        made = [await world.propose(parent, f"п{n}", f"toolu_{n}") for n in range(subs.PROPOSALS_MAX)]
+        said, error = await world.tool(parent, subs.PROPOSE, {"title": "лишнее", "brief": "b"}, "toolu_x")
+        assert error and f"{subs.PROPOSALS_MAX} of your proposals" in said
+        assert len(world.proposal_rows(await world.get("/api/feed"))) == subs.PROPOSALS_MAX
+
+        world.store.set("subs.limit_until", str(world.clock.now + 60))
+        status, data, _ = await world.call("POST", f"/api/proposals/{made[0]}/start", {})
+        assert status == 409 and data["error"] == subs.LIMIT
+        assert world.platform.subs.face_proposal(made[0])["state"] == "open", "refused, it stays his to start"
+
+        world.clock.now += subs.PROPOSAL_S
+        assert world.proposal_rows(await world.get("/api/feed")) == []
+        assert world.platform.subs.face_proposal(made[1])["state"] == "expired"
+        status, data, _ = await world.call("POST", f"/api/proposals/{made[1]}/start", {})
+        assert status == 409 and "over a week old" in data["error"]
+    subs_scenario(tmp_path, body, SubsFaceWorld)
+
+
+def test_a_proposal_of_an_archived_session_is_not_started(tmp_path):
+    async def body(world: SubsFaceWorld):
+        await world.login()
+        parent = await world.parent()
+        proposal = await world.propose(parent, "а", "toolu_a")
+        assert await world.platform.archive(parent)
+        assert world.proposal_rows(await world.get("/api/feed")) == [], "out of the list, out of his queue"
+        status, data, _ = await world.call("POST", f"/api/proposals/{proposal}/start", {})
+        assert status == 409 and "archived" in data["error"]
+    subs_scenario(tmp_path, body, SubsFaceWorld)
+
+
+def test_a_sub_session_and_a_side_question_cannot_propose(tmp_path):
+    async def body(world: SubsWorld):
+        parent = await world.parent()
+        child = await world.start_child(parent, "а", "toolu_a")
+        assert await world.tool(child, subs.PROPOSE, {"title": "x", "brief": "y"}, "toolu_c") == (subs.NO_DEPTH, True)
     subs_scenario(tmp_path, body)

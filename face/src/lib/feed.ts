@@ -6,7 +6,7 @@
 import { useSyncExternalStore } from "react";
 import { request } from "./api";
 import type { State } from "./store";
-import type { Approval } from "./types";
+import type { Approval, Proposal } from "./types";
 
 export type FeedAction = "answer" | "decide" | "reply" | "read" | "assistant";
 /** Where a row came from: a card's kind, a session, or the kind of the assistant's item. */
@@ -21,6 +21,7 @@ export type FeedSourceKind =
   | "deadline"
   | "base"
   | "push"
+  | "proposal"
   | string;
 
 export interface FeedRow {
@@ -47,6 +48,8 @@ export interface FeedRow {
   /** «Decide» · «Push»: commits no branch of the remote has, and in which repositories (retinue/topush.py). */
   push?: number;
   repos?: string[];
+  /** «Decide»: a sub-session a session proposed, started or set aside in place (retinue/subs.py). */
+  proposal?: Proposal;
   /** «From the assistant»: a person's row's token — what «Done», «Not a task», «Tomorrow» name it by. Absent on a draft
    * and a date. */
   t?: string;
@@ -185,7 +188,7 @@ export class FeedSource {
   private unsubscribe: (() => void) | null = null;
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private poll: ReturnType<typeof setTimeout> | null = null;
-  private seen: Pick<State, "sessions" | "approvals" | "summaries"> | null = null;
+  private seen: Pick<State, "sessions" | "approvals" | "summaries" | "proposals"> | null = null;
   private loading = false;
   private again = false;
 
@@ -202,10 +205,17 @@ export class FeedSource {
   start(live: LiveLike): void {
     if (this.unsubscribe) return;
     this.unsubscribe = live.subscribe(() => {
-      const { sessions, approvals, summaries } = live.getState();
+      const { sessions, approvals, summaries, proposals } = live.getState();
       const seen = this.seen;
-      this.seen = { sessions, approvals, summaries };
-      if (seen && seen.sessions === sessions && seen.approvals === approvals && seen.summaries === summaries) return;
+      this.seen = { sessions, approvals, summaries, proposals };
+      if (
+        seen &&
+        seen.sessions === sessions &&
+        seen.approvals === approvals &&
+        seen.summaries === summaries &&
+        seen.proposals === proposals
+      )
+        return;
       this.soon();
     });
     void this.refresh();

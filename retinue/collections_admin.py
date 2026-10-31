@@ -30,7 +30,7 @@ def add_parser(commands: argparse._SubParsersAction) -> None:
     show = actions.add_parser("show", help="one collection's form, rights and latest batches")
     show.add_argument("collection")
     define = actions.add_parser("define", help="make a collection, or grow its form, from a JSON file "
-                                               '{"space": …, "form": {…}}')
+                                               '{"space": …, "form": {…}, "views": […]}')
     define.add_argument("collection")
     define.add_argument("file", type=Path)
     rights = actions.add_parser("rights", help="set a collection's rights from a JSON file "
@@ -85,6 +85,7 @@ async def _show(store: Collections, args, ask, say, clock) -> int:
         + (f" ({shown['deleted']} deleted)" if shown["deleted"] else ""))
     say("form: " + _pretty(shown["form"]))
     say("rights: " + _pretty(shown["rights"]))
+    say("views: " + _pretty(shown["views"]))
     for b in shown["batches"]:
         say(f"batch {b['id']}  {b['kind']}  {b['state']}  by {b['actor']}  {b['changes']} changes  "
             f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(b['created']))} UTC")
@@ -97,17 +98,21 @@ async def _define(store: Collections, args, ask, say, clock) -> int:
         raise Rejected('a define file is a JSON object: {"space": "<space>", "form": {"fields": {…}}}')
     if set(given) & RIGHTS_KEYS:
         raise Rejected(RIGHTS_ELSEWHERE)
-    if unknown := set(given) - {"space", "form"}:
-        raise Rejected(f'a define file takes "space" and "form", not {", ".join(sorted(map(repr, unknown)))}')
+    if unknown := set(given) - {"space", "form", "views"}:
+        raise Rejected(f'a define file takes "space", "form" and "views", not {", ".join(sorted(map(repr, unknown)))}')
     if "form" not in given or "space" not in given:
         raise Rejected('a define file names the collection\'s "space" and its "form"')
-    trial = await store.define(OWNER, args.collection, given["space"], given["form"], clock(), dry=True)
+    views = given.get("views")  # none: the views it has stay
+    trial = await store.define(OWNER, args.collection, given["space"], given["form"], clock(), dry=True, views=views)
     if trial["unchanged"]:
         say(f"{args.collection} already has this form, in {trial['space']}: nothing to apply.")
         return 0
     say(f"{args.collection}: {'new collection, ' if trial['before'] is None else ''}space {trial['space']}, "
         f"form revision {trial['form_rev']}")
-    say(_diff(trial["before"], trial["after"], "form"))
+    if trial["before"] != trial["after"]:
+        say(_diff(trial["before"], trial["after"], "form"))
+    if trial["views_before"] != trial["views_after"]:
+        say(_diff(trial["views_before"], trial["views_after"], "views"))
     if trial["failed"]:
         say(f"{trial['failed']} of {trial['records']} records do not fit it:")
         for failure in trial["failures"]:
@@ -117,7 +122,7 @@ async def _define(store: Collections, args, ask, say, clock) -> int:
     if not _yes(ask, say):
         return 1
     writer = Writer(f"define:{trial['form_rev']}", "define")
-    done = await store.define(writer, args.collection, given["space"], given["form"], clock())
+    done = await store.define(writer, args.collection, given["space"], given["form"], clock(), views=views)
     say(f"Applied: {args.collection} is at form revision {done['form_rev']}.")
     return 0
 

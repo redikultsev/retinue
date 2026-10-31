@@ -3,8 +3,8 @@
 Records the owner keeps in tables rather than in the Base — what came in, what was paid, who answered — live in one
 SQLite file of the platform's, `collections.sqlite`, beside `platform.sqlite` on the `platform-data` volume
 (`retinue/collections.py`). It holds the files you upload and the records below. For now records are written only by
-the commands on the server's terminal ([below](#from-the-servers-terminal)); the app and the agents come next, each
-through the one `apply`.
+the commands on the server's terminal ([below](#from-the-servers-terminal)), and the app reads them in a Space's
+[views](#views); writing from the app and from the agents comes next, each through the one `apply`.
 
 ## One thread, one connection
 
@@ -70,14 +70,16 @@ letters, digits and `_`, starting with a letter (at most 40), so it never meets 
 
 | Table | What |
 |---|---|
-| `schemas` | one row per collection: its Space, its `form`, its `rights`, its `views` (empty for now), `rev` (the form's revision) |
+| `schemas` | one row per collection: its Space, its `form`, its `rights`, its [`views`](#views), `rev` (the form's revision) |
 | `records` | each record's current state: `id`, `data` (its fields, one JSON document), `version`, `created`, `updated`, `deleted` |
 | `changes` | every change of a record or a form, append-only: triggers abort any `UPDATE` or `DELETE` |
 | `batches` | changes that go together (an import, a batch's taking back): `kind`, `state` (`applying`, `applied`, `reverted`) |
 | `idems` | the calls already made under an idem, by the writer's class and the collection, with what they made |
 
 **A form** is `{"fields": {name: {"type": …, "required": true|false, "index": true|false}}, "key": [...],
-"unique": [[...], ...]}`, checked strictly: an unknown key stops it, and a form is at most 64 KB. Rights' own words
+"unique": [[...], ...], "goals": {…}, "rot": {…}}`, checked strictly: an unknown key stops it, and a form is at most
+64 KB. `goals` names the numbers a [`stat`](#views) aims at (`{"weekly": 5}`, each a whole number of at least 1),
+`rot` the days after which a row of a board or a queue is overdue (`{"reply": 2}`, each a whole number of days). Rights' own words
 (`rights`, `writers`, `set_by`, `sensitive`, `ats_senders`), in a form or in one of its fields, are refused with
 “rights are the owner's alone, set from the server's terminal …”. A form is the owner's to apply, from the server's
 terminal (an agent's way to propose one comes later), and a `define` that changes it is kept in `changes` as
@@ -216,6 +218,65 @@ the form does not have is refused before any SQL is run on the records.
 - **`count(collection, filter, group)`** answers how many; with `group` an enum or a bool, how many of each value,
   `[{value, count}]`, the most first, `value` `null` for the records it is unknown in.
 
+## Views
+
+A Space's screen shows its collections through their `views`: a list in the collection's row, set with its form
+(`define`), each a closed kind with closed keys — an unknown one stops the define. The fields a view names are not
+held to the form there: a view whose field the form lacks shows “field not found: 'phase'” (or “goal not found”,
+“threshold not found”) in its place, and the others still show.
+
+```json
+[
+  {"name": "sent", "kind": "stat", "title": "Sent myself", "date": "date", "window": "week", "goal": "weekly",
+   "filter": [{"field": "direction", "op": "eq", "value": "out"}, {"field": "lead.origin", "op": "eq", "value": "outbound"}]},
+  {"name": "moved", "kind": "stat", "count": "changed", "field": "stage", "window": "week",
+   "filter": {"field": "origin", "op": "eq", "value": "inbound"}},
+  {"name": "funnel", "kind": "board", "group": "stage", "folded": ["closed"], "fields": ["company", "role"], "rot": "stuck"},
+  {"name": "my_move", "kind": "queue", "filter": {"field": "state", "op": "eq", "value": "drafted"}, "since": "date", "rot": "reply"}
+]
+```
+
+Every view has a `name` (unique in its collection), a `kind` and an optional `title`, plain text of at most 80
+characters. A `filter` is the one [Reading](#reading) takes.
+
+| Kind | Takes | Shows |
+|---|---|---|
+| `stat` | `count`: `records` (the default) — those the filter matches, by their `date` field when there is a window — or `changed` — those the filter matches now whose `field` a change gave a value (one of `to`, when it names some); `window`: `week` (Monday to Sunday) or `month`, none for all the time; `goal`: a name of the form's `goals` | `{value, goal, previous, window, first, last}`: the number in this week or month, the same for the one before, the window's first and last day |
+| `board` | `group`: an enum; `folded`: its values shown folded; `fields`; `rot`: a name of the form's `rot` | `{group, rot, columns: [{value, count, folded, rows}], dropped}`: a column per value, in the enum's order, then one for the records it is unknown in; in each, the longest in it first |
+| `queue` | `since`: a date field, else the record's last change; `fields`; `rot` | `{rot, count, rows, dropped}`: the longest silent first |
+
+A row is `{id, version, fields, src, days, rotten}`: only the view's `fields` when it names some; `src` that of the
+record's last change that had one; `days` since the day the group's field last changed (a board), since its `since`
+date or its last change (a queue) — `null` when there is none, below zero for a date ahead — and `rotten` when
+`days` is past the `rot` threshold. A change is dated by its `as_of`, else by the day it was made: so an import of
+what happened in March counts in March, and a stage set today for last Monday counts last week.
+
+**The zone.** Weeks, days and “today” are counted in the zone the Router last told the platform (`POST /owner/zone`,
+at its start and with every change of the owner's), the config's `owner_tz` until it has. Every answer names it
+(`tz`, `today`), for the screen to say “week in Europe/Berlin, as of 16 Sep”.
+
+**Size.** One answer — a view, or a Space's views — is at most 256 KB: the numbers are made first and whole, then
+rows while they fit; `dropped` counts the rows left out, and `count` is always every one.
+
+| Call | Answer |
+|---|---|
+| `GET /api/c/_space?space=<space>` | `{space, tz, today, at, collections: [{name, rev, views}]}`: every collection of the Space, by name, with its views in their order |
+| `GET /api/c/<collection>?view=<name>` | `{name, rev, tz, today, at, view}`: one view again; 404 for no such view |
+| `GET /api/c/<collection>/<id>` | `{name, rev, record, changes}`: one record, a deleted one too, with its 50 newest changes; 404 for none |
+| `POST /owner/zone {tz}` | `{tz}`: the Router's zone, an IANA name; 400 for anything else |
+| `POST /owner/collections/stat {space, tz}` | `{space, tz, today, at, stats: [{collection, name, title, value, goal, previous, window, first, last}]}`: the Space's `stat` views, every collection's, in the zone the Router names |
+
+The `/api/c/…` calls are the owner's, behind the app's login ([face.md](face.md#api)); the `/owner/…` calls the
+Router's, behind its token. A view and the `rev` it is of are read in one transaction. The Router's numbers go
+through the same code as the screen's: one zone, one number, in the app and in Telegram.
+
+**Live.** Every write that changes a collection — its records, its form, its views, its rights — is told to every
+open app as the stream's `collection` event, `{name, rev}`, written by the platform's loop once the collections'
+thread has kept the change (that thread never touches the platform's own file). A Space's screen reads its views
+again when `rev` is newer than the one it has; after the stream's 410 it reads them anew. What the server's terminal
+writes, from its own process, the platform finds within 5 s — SQLite's `data_version` moves only with another
+connection's commit — and tells the same way: an import shows without a reload.
+
 ## From the server's terminal
 
 `retinue-platform collections …` is how a collection is made, its form grown, its rights set, a file of records
@@ -253,8 +314,9 @@ confirmed.
 | `revert-batch <batch>` | takes a batch back |
 | `export <folder>` | writes everything to an empty folder |
 
-**`define`** reads `{"space": "career", "form": {"fields": {…}, "key": […], "unique": […]}}` and nothing else — a
-`rights` beside the form is refused the same way as one in it. It shows the diff of the form, then tries the new one on
+**`define`** reads `{"space": "career", "form": {"fields": {…}, "key": […], "unique": […]}, "views": […]}` and
+nothing else — a `rights` beside the form is refused the same way as one in it. `views` ([Views](#views)) is optional:
+a file without it keeps the views the collection has, and its diff is shown apart from the form's. It shows the diff of the form, then tries the new one on
 every record (those not deleted) and says “All 47 records fit it.”, or names the first twenty that do not and stops
 without asking. Applied, it is a `define` change by `define:<rev>`, the revision the form becomes — so a form someone
 changed between the trial and the `y` is not applied over (“try it again”). A new collection gets the default rights.

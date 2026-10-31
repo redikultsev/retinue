@@ -114,6 +114,19 @@ def test_a_grown_form_is_tried_on_every_record_and_kept_only_when_they_all_fit(t
     assert code == 1 and "records of leads share a stage" in said
 
 
+def test_views_come_with_the_form_and_stay_when_a_file_has_none(tmp_path):
+    board = [{"name": "funnel", "kind": "board", "group": "stage"}]
+    cli(tmp_path, "define", "leads", write(tmp_path, "leads.json", LEADS))
+    code, said = cli(tmp_path, "define", "leads", write(tmp_path, "views.json", {**LEADS, "views": board}))
+    assert code == 0 and "+++ views applied" in said and '"kind": "board"' in said and "form now" not in said
+    assert rows(tmp_path, "SELECT views, rev FROM schemas") == [(json.dumps(board, separators=(",", ":")), 2)]
+    code, said = cli(tmp_path, "define", "leads", write(tmp_path, "leads.json", LEADS))
+    assert code == 0 and "already has this form" in said, "a file without views keeps the ones there"
+    code, said = cli(tmp_path, "define", "leads", write(tmp_path, "bad.json", {**LEADS, "views": [{"kind": "map"}]}))
+    assert code == 1 and '"kind" is one of stat, board, queue' in said and "[asked]" not in said
+    assert '"group": "stage"' in cli(tmp_path, "show", "leads")[1]
+
+
 def test_a_form_changed_since_its_trial_is_not_applied_over(tmp_path):
     async def body():
         store = Collections(str(tmp_path / "collections.sqlite"))
@@ -136,8 +149,8 @@ def test_rights_never_come_with_a_form(tmp_path):
         assert code == 1 and "rights are the owner's alone, set from the server's terminal" in said
         assert "collections rights <collection> <file>" in said
     assert rows(tmp_path, "SELECT count(*) FROM schemas") == [(0,)]
-    code, said = cli(tmp_path, "define", "leads", write(tmp_path, "leads.json", {**LEADS, "views": []}))
-    assert code == 1 and 'a define file takes "space" and "form", not \'views\'' in said
+    code, said = cli(tmp_path, "define", "leads", write(tmp_path, "leads.json", {**LEADS, "pages": []}))
+    assert code == 1 and 'a define file takes "space", "form" and "views", not \'pages\'' in said
 
 
 def test_rights_are_set_from_a_file_after_their_diff(tmp_path):

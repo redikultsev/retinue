@@ -30,11 +30,12 @@ from zoneinfo import ZoneInfo
 from aiohttp import web
 
 from . import (approvals, attachments, cliengine, collections_admin, courier, face, feed, inbox, outfiles, pings, questions,
-               signals, subs, tobase, topush, transcript)
+               signals, subs, tobase, topush, transcript, views)
 from .base import BaseRepo, under
 from . import library as library_mod
 from . import code as code_mod
 from .code import CodeRepos
+from . import collections as collections_mod
 from .collections import Collections
 from .spheres import Spheres
 from .config import PlatformConfig
@@ -49,6 +50,7 @@ POLL_S = 1.0                 # a lane's journal is pulled this often
 POLL_LIMIT = 200             # lines per pull: lane_host's own ceiling
 BACKOFF_MAX_S = 30.0
 TICK_S = 60.0                # the clock: idle sessions closed, old raw lines pruned, unpressed cards expired
+WATCH_S = 5.0                # how often the collections are looked at for what the server's terminal wrote
 BUTTON_TTL_S = 7 * 86400
 IDLE_CLOSE_S = 7 * 86400
 CLEANUP_DAYS = 30            # the CLI's own transcripts in the lane
@@ -105,6 +107,8 @@ class Platform:
         self.library = library_mod.Library(store, cfg)  # «Read»: the hub's pages, as the router pushes them
         # The owner's collections beside the platform's own file (`collections.py`); opened by `start`.
         self.collections = Collections(_beside(cfg.state_db, "collections.sqlite"))
+        self.collections.changed = store.collection_event  # on the loop, after its thread kept the change
+        self.views = views.Views(self)  # their views: the Space's screen, and the Router's numbers
         self._looking = asyncio.Lock()
         pings.prepare(store)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
@@ -140,6 +144,7 @@ class Platform:
                         web.post("/owner/waiting/asked", self.owner_waiting_asked),
                         web.post("/owner/waiting/detail", self.owner_waiting_detail),
                         web.post("/owner/library", self.owner_library), web.post("/owner/stats", self.owner_stats),
+                        *self.views.owner_routes(),
                         web.post("/items", self.items),
                         web.post("/items/confirm", self.confirm)])
         return app
@@ -1269,6 +1274,7 @@ class Platform:
         self.retire_cards()
         self.tasks = [asyncio.create_task(self._poller(lane)) for lane in self.lanes]
         self.tasks.append(asyncio.create_task(self.collections.open()))  # there for the night's backup from now on
+        self.tasks.append(asyncio.create_task(self._watch_collections()))
         self.tasks.append(asyncio.create_task(self._clock()))
         self.tasks.append(asyncio.create_task(self.tobase.recover()))  # a «To the Base» card a restart cut
         if self.base is not None:
@@ -1312,6 +1318,19 @@ class Platform:
             except Exception:
                 log.exception("the clock failed")
             await asyncio.sleep(TICK_S)
+
+    async def _watch_collections(self) -> None:
+        """What the server's terminal wrote to the collections, from its own process, told to the open apps as if
+        the platform had written it: an import shows on the screen without a reload."""
+        while True:
+            try:
+                for name, rev in await self.collections.moved():
+                    self.store.collection_event(name, rev)
+            except collections_mod.Refused:
+                pass  # busy, or closing: the next look sees it
+            except Exception:
+                log.exception("the collections' watch failed")
+            await asyncio.sleep(WATCH_S)
 
     async def shutdown(self) -> None:
         """Every PreToolUse waiting now, and every one after, defers; then every running session is stopped. A call

@@ -8,7 +8,7 @@ with it. Here a lock that does not come within 2 s (the night's backup copy, an 
 the caller to say «try again», never waited out for 30 s.
 
 The file uses a rollback journal, like every database the backup copies (deploy/backup/retinue-backup.py). It holds
-`files`, and the records: `schemas` (a collection's form), `records` (each one's current state, a JSON document),
+`files`, and the records: `schemas` (a collection's form, rights and views), `records` (each one's current state, a JSON document),
 `changes` (every change of one, append-only: the history and the provenance), `batches` (changes that go
 together) and `idems` (the calls already made, so a repeat makes none). Every write of a record is one `apply`,
 checked whole against the form and the collection's rights before anything is kept; every read is `get`, `query` or
@@ -152,6 +152,17 @@ DEFAULT_RIGHTS = {  # a new collection's: sessions add and set, deleting by a pr
     "set_by": {},
 }
 FILTER_OPS = ("eq", "in", "between", "empty", "not_empty", "ref_is")
+VIEW_KEYS = {  # each kind of view (`views.py`), and the keys it takes
+    "stat": {"name", "kind", "title", "count", "filter", "date", "field", "to", "window", "goal"},
+    "board": {"name", "kind", "title", "group", "filter", "fields", "folded", "rot"},
+    "queue": {"name", "kind", "title", "filter", "fields", "since", "rot"},
+}
+WINDOWS = ("week", "month")
+VIEWS_MAX = 20              # views of one collection
+FIELDS_SHOWN = 32           # names in a view's `fields`, `folded` or `to`
+TITLE_MAX = 80              # characters of a view's title
+MARKS_MAX = 16              # names in a form's `goals`, or its `rot`
+MARK_MAX = 1_000_000
 KEY_MAX = 8                 # fields in a key, or in one unique
 UNIQUE_MAX = 8              # uniques in one form
 FILTER_MAX = 16             # conditions in one filter
@@ -296,8 +307,8 @@ def parse_form(form: Any) -> dict:
         raise Rejected(f"a form is at most {FORM_MAX // 1024} KB")
     if set(form) & RIGHTS_KEYS:
         raise Rejected(RIGHTS_ELSEWHERE)
-    if unknown := set(form) - {"fields", "key", "unique"}:
-        raise Rejected(f"a form takes only \"fields\", \"key\" and \"unique\", not "
+    if unknown := set(form) - {"fields", "key", "unique", "goals", "rot"}:
+        raise Rejected(f"a form takes only \"fields\", \"key\", \"unique\", \"goals\" and \"rot\", not "
                        f"{', '.join(sorted(map(repr, unknown)))}")
     fields = form.get("fields")
     if not isinstance(fields, dict) or not fields:
@@ -335,7 +346,69 @@ def parse_form(form: Any) -> dict:
         form_kept["unique"] = [_names(names, kept, f"unique[{n}]") for n, names in enumerate(unique)]
         if len({tuple(names) for names in form_kept["unique"]}) != len(unique):
             raise Rejected("\"unique\" names each list of fields once")
+    for part, least, what in (("goals", 1, "a goal, a whole number of at least 1"),
+                              ("rot", 0, "a threshold, a whole number of days")):
+        if part in form:
+            given = form[part]
+            if (not isinstance(given, dict) or not 0 < len(given) <= MARKS_MAX
+                    or not all(isinstance(k, str) and NAME.fullmatch(k) for k in given)
+                    or not all(type(v) is int and least <= v <= MARK_MAX for v in given.values())):
+                raise Rejected(f"\"{part}\" is an object of 1 to {MARKS_MAX} names, each with {what} "
+                               f"(at most {MARK_MAX}): {{\"weekly\": 5}}")
+            form_kept[part] = dict(given)
     return form_kept
+
+
+def parse_views(views: Any) -> list[dict]:
+    """A collection's views (docs/collections.md#views), checked strictly in their shape: a closed set of kinds and
+    keys, any other stops it. The fields they name are not held to the form here — a view whose field the form lacks
+    shows «field not found» instead of its rows (`views.py`). Returns them as kept. Raises Rejected with the reason."""
+    if not isinstance(views, list) or len(views) > VIEWS_MAX:
+        raise Rejected(f"views are a list of up to {VIEWS_MAX}: [{{\"name\": \"board\", \"kind\": \"board\", "
+                       "\"group\": \"stage\"}]")
+    if len(_json(views).encode()) > FORM_MAX:
+        raise Rejected(f"views are at most {FORM_MAX // 1024} KB")
+    kept, names = [], set()
+    for n, view in enumerate(views):
+        kind = view.get("kind") if isinstance(view, dict) else None
+        if kind not in VIEW_KEYS:
+            raise Rejected(f"views[{n}]: \"kind\" is one of {', '.join(VIEW_KEYS)}")
+        where = f"views[{n}] ({kind})"
+        if unknown := set(view) - VIEW_KEYS[kind]:
+            raise Rejected(f"{where} takes {', '.join(sorted(VIEW_KEYS[kind]))}; not {', '.join(sorted(unknown))}")
+        name = view.get("name")
+        if not isinstance(name, str) or not NAME.fullmatch(name) or name in names:
+            raise Rejected(f"{where}: \"name\" is lowercase letters, digits and _, starting with a letter, and "
+                           "another view's in the collection")
+        names.add(name)
+        if "title" in view and not _plain(view["title"], TITLE_MAX):
+            raise Rejected(f"{where}: \"title\" is plain text of at most {TITLE_MAX} characters")
+        for key in ("group", "date", "field", "since", "goal", "rot"):
+            if key in view and not (isinstance(view[key], str) and NAME.fullmatch(view[key])):
+                raise Rejected(f"{where}: \"{key}\" names a field of the form")
+        for key in ("fields", "folded", "to"):
+            given = view.get(key, [])
+            if (not isinstance(given, list) or len(given) > FIELDS_SHOWN or len(set(map(str, given))) != len(given)
+                    or not all(isinstance(v, str) and NAME.fullmatch(v) for v in given)):
+                raise Rejected(f"{where}: \"{key}\" is a list of up to {FIELDS_SHOWN} distinct names")
+        if "filter" in view and not isinstance(view["filter"], (dict, list)):
+            raise Rejected(f"{where}: \"filter\" is a condition or a list of them, as a query takes")
+        if kind == "board" and "group" not in view:
+            raise Rejected(f"{where}: \"group\" names the enum its columns are")
+        if kind == "stat":
+            count, window = view.get("count", "records"), view.get("window")
+            if count not in ("records", "changed"):
+                raise Rejected(f"{where}: \"count\" is records or changed")
+            if window not in (None, *WINDOWS):
+                raise Rejected(f"{where}: \"window\" is one of {', '.join(WINDOWS)}, or none for all the time")
+            if count == "changed" and "field" not in view:
+                raise Rejected(f"{where}: a count of changed records names the \"field\" they changed")
+            if count == "records" and window is not None and "date" not in view:
+                raise Rejected(f"{where}: a count of records in a {window} names the \"date\" field it goes by")
+            if count == "records" and ("field" in view or "to" in view):
+                raise Rejected(f"{where}: \"field\" and \"to\" are a count of changed records'")
+        kept.append(dict(view))
+    return kept
 
 
 def _names(names: Any, fields: dict, what: str) -> list[str]:
@@ -460,6 +533,10 @@ class Collections:
         self._ulids = Ulids()
         self._seen = 0  # the file's data_version this connection last looked at (`_fresh`)
         self._closed = False
+        # Told, on the loop, of every write of this store that changed a collection: its name and newest change_id
+        # (`PlatformStore.collection_event`, for the open apps). `moved` finds those another process wrote.
+        self.changed: Callable[[str, str | None], None] | None = None
+        self._watched: tuple[int, dict[str, str | None]] | None = None  # `moved`: the data_version, the revs
 
     # --- the thread -------------------------------------------------------------------------------------------------
 
@@ -524,6 +601,36 @@ class Collections:
     async def open(self) -> None:
         """The file and the folder made, if they are not there yet."""
         await self._run(lambda: None)
+
+    def _tell(self, collection: str, rev: str | None) -> None:
+        if self.changed is not None:
+            self.changed(collection, rev)
+
+    async def moved(self) -> list[tuple[str, str | None]]:
+        """The collections another process (the server's terminal) changed since the last call, with their newest
+        change_id: `[(name, rev)]`. The first call only takes note. Cheap when nothing happened: SQLite's
+        `data_version` moves only with another connection's commit. Raises Refused."""
+        return await self._run(self._moved)
+
+    def _moved(self) -> list[tuple[str, str | None]]:
+        version = self._db.execute("PRAGMA data_version").fetchone()[0]
+        if self._watched is not None and self._watched[0] == version:
+            return []
+        revs = {name: self._rev(name) for (name,) in self._db.execute("SELECT collection FROM schemas").fetchall()}
+        last, self._watched = self._watched, (version, revs)
+        return [] if last is None else [(name, rev) for name, rev in sorted(revs.items()) if last[1].get(name) != rev]
+
+    async def read(self, work: Callable[[], T]) -> T:
+        """`work()` on the thread, in one read transaction, so all it reads is of one moment — a view and the rev it
+        is of (`views.py`). Raises Refused."""
+        return await self._run(self._read, work)
+
+    def _read(self, work: Callable[[], T]) -> T:
+        self._db.execute("BEGIN")
+        try:
+            return work()
+        finally:
+            self._db.execute("COMMIT")
 
     async def close(self) -> None:
         if self._closed:
@@ -602,18 +709,23 @@ class Collections:
     # --- records ----------------------------------------------------------------------------------------------------
 
     async def define(self, writer: Writer, collection: str, space: str, form: Any, now: float,
-                     dry: bool = False) -> dict:
-        """A collection's form, new or grown from the one it had (`_grows`), as a `define` change, after a trial run
-        over its records: `{name, rev, form_rev, before, after, space, unchanged, records, failures, failed}` — `rev`
+                     dry: bool = False, views: Any = None) -> dict:
+        """A collection's form, new or grown from the one it had (`_grows`), and its views (`parse_views`; None keeps
+        the ones it has), as a `define` change, after a trial run over its records: `{name, rev, form_rev, before,
+        after, views_before, views_after, space, unchanged, records, failures, failed}` — `rev`
         its newest change_id, `form_rev` the form's revision it becomes, `before` the form it had (None for a new
         collection), `records` how many it checked and `failures` the first FAILURES_SHOWN that do not fit (`{id,
         reason}`), of `failed`. `dry` keeps nothing: what the server's terminal shows before it asks. A new
         collection gets the default rights (DEFAULT_RIGHTS). The writer is the owner, or `define:<rev>` naming the
         revision the form becomes — so a form changed since its trial run is not applied over. Raises Rejected
         (records that do not fit included), Refused."""
-        return await self._run(self._define, writer, collection, space, form, now, dry)
+        answer = await self._run(self._define, writer, collection, space, form, now, dry, views)
+        if not dry and not answer["unchanged"]:
+            self._tell(collection, answer["rev"])
+        return answer
 
-    def _define(self, writer: Writer, collection: str, space: str, form: Any, now: float, dry: bool) -> dict:
+    def _define(self, writer: Writer, collection: str, space: str, form: Any, now: float, dry: bool,
+                views: Any = None) -> dict:
         _check_writer(writer)
         if writer_class(writer.actor) not in ("owner", "define"):
             raise Rejected("a form is the owner's to apply, from the server's terminal")
@@ -623,14 +735,17 @@ class Collections:
         if not isinstance(space, str) or not SPACE.fullmatch(space):
             raise Rejected(f"not a Space's name: {space!r}")
         form = parse_form(form)
+        views = parse_views(views) if views is not None else None
         try:
             with self._write() as db:
                 for name, spec in form["fields"].items():
                     if spec["type"] == "ref" and spec["to"] != collection and self._form(spec["to"]) is None:
                         raise Rejected(f"field {name!r}: there is no collection {spec['to']!r}")
-                old = db.execute("SELECT form, rev, space FROM schemas WHERE collection = ?",
+                old = db.execute("SELECT form, rev, space, views FROM schemas WHERE collection = ?",
                                  (collection,)).fetchone()
                 before = json.loads(old[0]) if old else None
+                views_before = json.loads(old[3]) if old else []
+                views = views_before if views is None else views
                 if before is not None:
                     _grows(before, form)
                 rev = old[1] + 1 if old else 1
@@ -638,15 +753,17 @@ class Collections:
                     raise Rejected(f"the form of {collection} is at revision {rev - 1}, not the one this was tried "
                                    "on: try it again")
                 answer = {"name": collection, "rev": self._rev(collection), "form_rev": rev, "before": before,
-                          "after": form, "space": space, "unchanged": before == form and old[2] == space}
+                          "after": form, "views_before": views_before, "views_after": views, "space": space,
+                          "unchanged": before == form and old[2] == space and views_before == views}
                 if answer["unchanged"]:  # already so: nothing is written, the revision stays
                     answer.update(form_rev=old[1], records=self._count(collection, None, None), failures=[],
                                   failed=0)
                     return answer
-                db.execute("INSERT INTO schemas (collection, space, form, rights, rev, updated) "
-                           "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (collection) DO UPDATE SET space = excluded.space, "
-                           "form = excluded.form, rev = excluded.rev, updated = excluded.updated",
-                           (collection, space, _json(form), _json(DEFAULT_RIGHTS), rev, now))
+                db.execute("INSERT INTO schemas (collection, space, form, rights, views, rev, updated) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (collection) DO UPDATE SET space = excluded.space, "
+                           "form = excluded.form, views = excluded.views, rev = excluded.rev, "
+                           "updated = excluded.updated",
+                           (collection, space, _json(form), _json(DEFAULT_RIGHTS), _json(views), rev, now))
                 records, failures = self._trial(collection, form)
                 try:
                     self._index(collection, form)
@@ -658,9 +775,12 @@ class Collections:
                 if failures:
                     shown = "; ".join(f"{f['id']}: {f['reason']}" if f["id"] else f["reason"] for f in failures[:3])
                     raise Rejected(f"{len(failures)} of {records} records do not fit the form: {shown}")
+                moved, shown = old is not None and old[2] != space, views != views_before
                 self._change(writer, now, collection, None, "define",
-                             {"form": before, **({"space": old[2]} if old[2] != space else {})} if old else None,
-                             {"form": form, **({"space": space} if old and old[2] != space else {})})
+                             {"form": before, **({"space": old[2]} if moved else {}),
+                              **({"views": views_before} if shown else {})} if old else None,
+                             {"form": form, **({"space": space} if moved else {}),
+                              **({"views": views} if shown else {})})
                 answer["rev"] = self._rev(collection)
                 return answer
         except _Undo as undo:
@@ -702,7 +822,10 @@ class Collections:
         """A collection's rights (`parse_rights`) in place of the ones it had, as a `define` change: `{name, rev,
         before, after, unchanged}`; `dry` keeps nothing. The owner's alone — no agent's path reaches here
         (docs/collections.md#rights). Raises Rejected, Refused."""
-        return await self._run(self._rights, writer, collection, rights, now, dry)
+        answer = await self._run(self._rights, writer, collection, rights, now, dry)
+        if not dry and not answer["unchanged"]:
+            self._tell(collection, answer["rev"])
+        return answer
 
     def _rights(self, writer: Writer, collection: str, rights: Any, now: float, dry: bool) -> dict:
         _check_writer(writer)
@@ -755,7 +878,10 @@ class Collections:
         it changed nothing: the record was already so) and the record after it. `idem` names the call: made again by
         the same class of writer, it changes nothing and answers the first time's change_ids, with the records as
         they are now. Raises Rejected, Refused."""
-        return await self._run(self._apply, writer, collection, ops, now, batch, idem)
+        answer = await self._run(self._apply, writer, collection, ops, now, batch, idem)
+        if any(answer["change_ids"]):
+            self._tell(collection, answer["rev"])
+        return answer
 
     def _apply(self, writer: Writer, collection: str, ops: Any, now: float, batch: str | None,
                idem: str | None) -> dict:
@@ -1112,7 +1238,10 @@ class Collections:
                                f"with revert-batch {batch} ({undo})") from exc
             raise Rejected(f"{reason} — nothing of the file is kept") from exc
         await self.finish_batch(batch, now)
-        return {"batch": batch, "name": collection, "rev": await self._run(self._rev, collection), **counts}
+        rev = await self._run(self._rev, collection)
+        if counts["added"] or counts["changed"]:
+            self._tell(collection, rev)
+        return {"batch": batch, "name": collection, "rev": rev, **counts}
 
     def _import_dry(self, collection: str, ops: list, now: float) -> dict:
         counts = {"lines": len(ops), "added": 0, "changed": 0, "same": 0}
@@ -1149,11 +1278,16 @@ class Collections:
         """A batch taken back, the owner's from the server's terminal: each record it changed set back to what it
         was before it, as a `revert` batch of its own — unless something outside it has changed the record since,
         which is left as it is and named in `touched` (`{collection, id, by, op, change_id}`). Answers `{batch,
-        undo, reverted, records, touched, state}`: the revert batch (None when it changed nothing), the changes taken
-        back, the records they were of, and the batch's state — `reverted` once nothing of it is left to take back.
+        undo, reverted, records, touched, state, revs}`: the revert batch (None when it changed nothing), the changes
+        taken back, the records they were of, the batch's state — `reverted` once nothing of it is left to take back —
+        and the newest change_id of each collection it was in.
         Made again after the touched records are dealt with, it takes back what it left. `dry` keeps nothing. Raises
         Rejected, Refused."""
-        return await self._run(self._revert_batch, writer, batch, now, dry)
+        answer = await self._run(self._revert_batch, writer, batch, now, dry)
+        if not dry and answer["reverted"]:
+            for collection, rev in answer["revs"].items():
+                self._tell(collection, rev)
+        return answer
 
     def _revert_batch(self, writer: Writer, batch: str, now: float, dry: bool) -> dict:
         _check_writer(writer)
@@ -1209,7 +1343,8 @@ class Collections:
                 state = "reverted" if not touched else row[0]
                 db.execute("UPDATE batches SET state = ?, updated = ? WHERE id = ?", (state, now, batch))
                 answer = {"batch": batch, "undo": undo if reverted else None, "reverted": reverted,
-                          "records": records, "touched": touched, "state": state}
+                          "records": records, "touched": touched, "state": state,
+                          "revs": {collection: self._rev(collection) for collection, _ in groups}}
                 if dry:
                     raise _Undo(answer)
                 return answer

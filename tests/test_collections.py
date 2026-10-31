@@ -505,7 +505,11 @@ def test_a_form_is_checked_strictly(tmp_path):
     async def body():
         for form, reason in [
             ([], "a form is a JSON object"),
-            ({"fields": {"a": {"type": "text"}}, "goals": {}}, 'takes only "fields"'),
+            ({"fields": {"a": {"type": "text"}}, "limits": {}}, 'takes only "fields"'),
+            ({"fields": {"a": {"type": "text"}}, "goals": {}}, '"goals" is an object of 1 to 16 names'),
+            ({"fields": {"a": {"type": "text"}}, "goals": {"weekly": 0}}, "a goal, a whole number of at least 1"),
+            ({"fields": {"a": {"type": "text"}}, "rot": {"quiet": -1}}, "a threshold, a whole number of days"),
+            ({"fields": {"a": {"type": "text"}}, "rot": {"quiet": True}}, "a threshold"),
             ({"fields": {"a": {"type": "text"}}, "rights": {}}, "rights are the owner's alone"),
             ({"fields": {"a": {"type": "text"}}, "writers": {}}, "rights are the owner's alone"),
             ({"fields": {"a": {"type": "enum", "values": ["x"], "set_by": {}}}}, "rights are the owner's alone"),

@@ -331,7 +331,8 @@ class Face:
             web.post("/api/speech", self.speech),
             # «Uploads» (`collections.py`): any file the owner sends up, kept as it came.
             web.post("/api/c/_files", self.upload), web.get("/api/c/_files", self.uploads),
-            web.get("/api/c/_files/{sha}", self.uploaded)])
+            web.get("/api/c/_files/{sha}", self.uploaded),
+            *self.platform.views.routes()])  # a Space's collections, their views and records (`views.py`)
         app.on_startup.append(self._sweep)
         return app
 

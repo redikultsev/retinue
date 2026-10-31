@@ -159,6 +159,8 @@ in the snapshot, never wrapped in an envelope. The kinds and their keys:
 | `input` | `<session>/<input_id>` | `{session, input_id, text, at, turn, n, attachments}`: your message; it goes before the item (`turn`, `n`) the session had not yet written (`null` on old ones: not shown); `attachments`: `[{kind: image\|pdf\|file, name, size, what, thumb}]` |
 | `file` | the file's id | `{id, session, path, name, size, mime, at}`: a file the session handed over ([below](#a-sessions-files)) |
 | `proposal` | the proposal's id | `{id, session, tool_use_id, title, brief, created, at, state, child, from_report}`: a sub-session the session proposed ([platform.md](platform.md#proposals)); `state` `open` · `started` (`child` the sub-session) · `declined` · `expired` (past its week: the platform's clock sends the event); `from_report`: proposed in a turn a report started, which its card says |
+| `upload` | the file's SHA-256 | `{sha256, name, size, mime, created}`: a file uploaded from any device ([below](#uploads)) |
+| `collection` | the collection's name | `{name, rev}`: a collection changed — its records, form, views or rights; `rev` its newest change ([collections.md](collections.md#views)) |
 | `delta` | none, no `id` | `{session, text}`: text being written, never replayed |
 
 An approval is `{id, session, tool_use_id, kind, state, tool, input, cwd, digest, view, created, at}`; `kind` is
@@ -221,6 +223,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/library` | `{schema, hub, at, pages: [{id, title, url, updated, section, section_title, section_icon, minutes, opened, done}]}` — “Pages”, [below](#pages) |
 | `POST /api/library/{id}/open` · `/done {done}` | `{page}`: you opened the page; “Finished” (`done: true`) or taken back (`false`); 404 for a page not in the list |
 | `POST /api/c/_files` · `GET /api/c/_files` · `GET /api/c/_files/{sha256}` | “Uploads”: a file in, any type up to 40 MB, `{file, new}`; the list `{schema, files, max}`; a file back as a download — [collections.md](collections.md#uploads) |
+| `GET /api/c/_space?space=` · `GET /api/c/{collection}?view=` · `GET /api/c/{collection}/{id}` | a Space's collections and their views `{space, tz, today, at, collections}`; one view again `{name, rev, …, view}`; one record with its newest changes `{name, rev, record, changes}` — [collections.md](collections.md#views) |
 
 ## Voice
 

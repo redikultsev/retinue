@@ -229,6 +229,14 @@ def week_lines(stats: dict, runs: dict[str, int]) -> list[str]:
                  + (" (" + ", ".join(f"{tool} — {n}" for tool, n in errors.items()) + ")" if errors else "")
                  + f"; context compactions: {engine.get('compactions', 0)}; turns ended with an error: "
                  f"{engine.get('run_errors', 0)}.")
+    turns = stats.get("turns") or {}
+    loops, web = turns.get("loops") or {}, turns.get("web_failures") or {}
+    if turns.get("sent_on_to_check") or loops or web:
+        lines.append(f"- Turns sent on to run their check: {turns.get('sent_on_to_check', 0)}; loops: warned "
+                     f"{loops.get('warn', 0)}, denied {loops.get('deny', 0)}, cut {loops.get('cut', 0)}"
+                     + ("; fetches that failed: " + ", ".join(f"{how} — {n}" for how, n in
+                                                             sorted(web.items(), key=lambda i: -i[1])[:4])
+                        if web else "") + ".")
     if runs:
         failed = sum(n for status, n in runs.items() if status not in ("done", "limit"))
         lines.append(f"- The assistant: runs {sum(runs.values())}, failed {failed}"

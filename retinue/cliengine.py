@@ -23,7 +23,10 @@ HOOK_TIMEOUT_S = 15
 # PermissionRequest fires when the CLI asks: in a run that fell back from auto, and in auto for a tool that needs a
 # person (AskUserQuestion allowed without its answers); the gate denies every ask. PermissionDenied fires only in
 # auto, when its classifier blocks a call (`gate.Gate.permission_denied`).
-EVENTS = ("PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse", "Stop")
+# PostToolUseFailure fires instead of PostToolUse for a call that ran and failed (a command's non-zero exit, a fetch's
+# error), and Stop when the model ends its turn, with its last message: what the gate's loop guard and its check of
+# a turn's end read (`gate.Gate.failure`, `finish`).
+EVENTS = ("PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse", "PostToolUseFailure", "Stop")
 
 # A permission rule in the CLI's own syntax: a tool name, optionally `(specifier)`; the specifier holds no
 # parenthesis and no control character, so it can neither nest nor break a line.

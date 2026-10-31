@@ -29,8 +29,8 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, cliengine, courier, face, feed, inbox, lanetravel, outfiles, pings, questions,
-               signals, subs, tobase, topush, transcript)
+from . import (approvals, attachments, cliengine, courier, face, feed, finish, inbox, lanetravel, outfiles, pings,
+               questions, signals, subs, tobase, topush, transcript)
 from .base import BaseRepo, under
 from . import library as library_mod
 from . import code as code_mod
@@ -124,6 +124,10 @@ class Platform:
         self.topush = topush.ToPush(self)
         self.feed.topush = self.topush  # the feed's «Push» rows
         self.gate.push_lanes = frozenset({cfg.code.lane}) if cfg.code is not None else frozenset()
+        # The trees a turn's end is checked under (`finish.Checks`): the Base, and the owner's repositories.
+        self.gate.checks.trees = [
+            *([finish.Tree(cfg.base.lane, f"{approvals.WORK}/{cfg.base.tree}", "base")] if cfg.base else []),
+            *([finish.Tree(cfg.code.lane, f"{approvals.WORK}/{cfg.code.root}", "code")] if cfg.code else [])]
         self._fetching: set[str] = set()  # repositories whose first mirror is being fetched
 
     # --- the HTTP surface ---------------------------------------------------------------------------------------
@@ -1048,10 +1052,13 @@ class Platform:
         elif kind == "result":
             self._result(session, run, line, now)
             self.gate.run_ended(run)  # a block the model went past is the owner's notice; the run's asks forgotten
+            if transcript.deferred_of(line) is None:  # a deferral's turn goes on at the resume
+                self.gate.turn_over(session["id"])
         elif kind == "lane":
             event = line.get("event")
             if event in ("exited", "restarted", "refused"):
                 self.gate.run_ended(run)
+                self.gate.turn_over(session["id"])
             if event == "stopped" and line.get("by") == "shutdown":  # the lane's own stop: an update, a restart
                 self.store.interrupt(run, now)
             if event in ("exited", "restarted", "refused"):

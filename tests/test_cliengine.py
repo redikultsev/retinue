@@ -29,13 +29,20 @@ def pinned_path(monkeypatch):
 def test_the_argv_is_the_fixed_prefix_the_rules_and_the_resume_and_never_a_prompt():
     prefix = ["/opt/claude/claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json",
               "--verbose", "--include-hook-events", "--include-partial-messages", "--forward-subagent-text",
-              "--setting-sources", "", "--permission-mode", "auto",
-              "--permission-prompt-tool", "stdio", "--settings", SETTINGS]
-    assert cliengine.argv(SETTINGS, [], [], None) == prefix, "auto on every run and every resume alike"
+              "--setting-sources", "", "--model", "claude-opus-5-5[1m]", "--effort", "xhigh",
+              "--permission-mode", "auto", "--permission-prompt-tool", "stdio", "--settings", SETTINGS]
+    assert cliengine.argv(SETTINGS, [], [], None) == prefix, "Opus 5.5 with 1M at xhigh, auto, every run alike"
     full = cliengine.argv(SETTINGS, ["Read", "Bash(npm test:*)"], ["WebFetch"], SESSION)
     assert full == [*prefix, "--allowedTools", "Read", "Bash(npm test:*)", "--disallowedTools", "WebFetch",
                     "--resume", SESSION]
     assert cliengine.check_argv(full) == full and cliengine.check_argv(prefix) == prefix
+
+
+@pytest.mark.parametrize("flag, value", [("--model", "claude-sonnet-5-5"), ("--model", "opus"), ("--effort", "low")])
+def test_another_model_or_effort_is_off_the_fixed_prefix(flag, value):
+    argv = cliengine.argv(SETTINGS, [], [], None)
+    at = argv.index(flag) + 1
+    assert refused(cliengine.check_argv, [*argv[:at], value, *argv[at + 1:]]) == "argv: not the fixed prefix"
 
 
 @pytest.mark.parametrize("mode", ["manual", "default", "acceptEdits", "dontAsk", "plan"])

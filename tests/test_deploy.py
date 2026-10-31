@@ -50,7 +50,7 @@ def test_one_assistant_and_nothing_else():
     assert engine.bus_tools == ["search_archive", "set_reminder", "list_reminders", "cancel_reminder",
                                 "move_reminder", "set_timezone", "get_attachment", "publish_trip", "draft_reply"], \
         "the archive, reminders and the zone, attachments, trip pages, draft replies; no ask_agent"
-    assert engine.model == "claude-opus-5-5", "Opus, pinned by id"
+    assert (engine.model, engine.effort) == ("claude-opus-5-5[1m]", "xhigh"), "Opus 5.5 by id, its 1M context, xhigh"
     instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
     assert all(f"`{name}`" in instructions for name in engine.bus_tools), "she is told about every tool she has"
     assert "[attachment #N:" in instructions and "forwarded from" in instructions, "what a mark and a forward mean"

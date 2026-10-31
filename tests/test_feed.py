@@ -396,3 +396,16 @@ def test_a_ping_with_replies_waits_under_choose_until_typed_over_or_a_newer_ping
         assert (await world.get("/api/feed"))["count"] == 0, "he typed instead: the replies closed"
 
     faced(tmp_path, body)
+
+
+def test_what_a_gone_router_took_is_asked_again_and_what_nobody_waits_for_is_not():
+    async def go():
+        details = feed.Details()
+        first, second = details.ask("draft:0000000c", None), details.ask("chat:000000000001", TOKEN)
+        taken = await details.asked(1)
+        assert [a["r"] for a in taken] == [first, second] and details.queued == {}
+        details.waiting.pop(second)  # the app gave up on this one meanwhile
+        details.again(taken)
+        assert [a["r"] for a in await details.asked(1)] == [first], "only what is still waited for"
+        assert await details.asked(0.05) == [], "nothing asked: empty after the hold"
+    asyncio.run(go())

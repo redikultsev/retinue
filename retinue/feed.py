@@ -276,6 +276,15 @@ class Details:
         self.queued.clear()
         return taken
 
+    def again(self, taken: list[dict]) -> None:
+        """What was taken by a call whose router is gone (a restart while it was held): queued again for the next one,
+        those still waited for."""
+        for ask in taken:
+            if ask.get("r") in self.waiting:
+                self.queued[ask["r"]] = ask
+        if self.queued:
+            self._asked.set()
+
     async def wait(self, number: str, timeout: float = DETAIL_WAIT_S) -> tuple[str, dict | None]:
         """How it went and the sheet: `ok` with it; `gone` — the router does not know the row any more; `refused` —
         what it said was off the contract; `late` — it said nothing in time. However it ends — the app gone too — the

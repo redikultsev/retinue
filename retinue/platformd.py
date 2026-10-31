@@ -300,7 +300,11 @@ class Platform:
     async def owner_waiting_asked(self, request: web.Request) -> web.Response:
         """The router's long call for the rows the app opened (`feed.Details.asked`): `{asked: [{r, ref, t?}]}` as soon
         as there are any, or empty after `feed.DETAIL_HOLD_S`."""
-        return web.json_response({"asked": await self.details.asked(feed.DETAIL_HOLD_S)})
+        asked = await self.details.asked(feed.DETAIL_HOLD_S)
+        if request.transport is None or request.transport.is_closing():  # the router went away while it was held
+            self.details.again(asked)
+            asked = []
+        return web.json_response({"asked": asked})
 
     async def owner_waiting_detail(self, request: web.Request) -> web.Response:
         """The router's answer to a row's sheet the app asked for (`feed.Details`): `{r, detail}`, `detail` null when

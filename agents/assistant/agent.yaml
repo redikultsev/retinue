@@ -21,5 +21,6 @@ engine:
   # Steps of one run. A trip is a search, a page or two, photos, a refinement, the answer — and a fix after a
   # refused argument: 8 cut it short. A cap against a loop, not a target; every step spends the subscription.
   max_turns: 20
-  model: claude-opus-5-5            # pinned by id: an alias names a different model depending on the CLI release
+  model: claude-opus-5-5[1m]        # pinned by id: an alias names a different model depending on the CLI release
+  effort: xhigh                     # the owner's own setup on his Mac, as every platform session has it
 public_url: http://assistant:9000

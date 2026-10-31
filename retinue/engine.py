@@ -513,7 +513,7 @@ class ClaudeEngine:
                 cwd=self.workspace, system_prompt=self.instructions, setting_sources=[], tools=[],
                 allowed_tools=[STRUCTURED] if schema else [], disallowed_tools=list(self.cfg.disallowed_tools),
                 mcp_servers={}, strict_mcp_config=True, permission_mode="dontAsk", verbatim_prompts=True,
-                env=dict(self.env), max_turns=BARE_TURNS, max_budget_usd=self.cfg.max_budget_usd, model=self.cfg.model,
+                env=dict(self.env), max_turns=BARE_TURNS, max_budget_usd=self.cfg.max_budget_usd, model=self.cfg.model, effort=self.cfg.effort,
                 output_format={"type": "json_schema", "schema": schema} if schema else None)
         allowed, servers = list(self.cfg.allowed_tools), {}
         denied, hooks = list(self.cfg.disallowed_tools), {}
@@ -558,7 +558,7 @@ class ClaudeEngine:
             resume=session_id,
             max_turns=self.cfg.max_turns,
             max_budget_usd=self.cfg.max_budget_usd,
-            model=self.cfg.model,
+            model=self.cfg.model, effort=self.cfg.effort,
             include_partial_messages=streaming,
             output_format={"type": "json_schema", "schema": schema} if schema else None,
         )

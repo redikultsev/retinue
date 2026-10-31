@@ -39,8 +39,13 @@ UUID4 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9
 # `--include-partial-messages`: the text of a message while it is written, as `stream_event` lines the platform passes
 # to the face and never stores. `--forward-subagent-text` (2.1.211+): a foreground subagent's own text and thinking as
 # lines with its `parent_tool_use_id`, which the projection folds into the subagent's item.
+# `--model` and `--effort`: every run is the owner's own setup on his Mac — the latest Opus by its full id (an alias
+# names another model with another CLI release) with its million-token context, at extra-high effort. Without them a
+# headless CLI takes its own default, a smaller model.
+MODEL, EFFORT = "claude-opus-5-5[1m]", "xhigh"
 PREFIX = ("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
           "--include-hook-events", "--include-partial-messages", "--forward-subagent-text", "--setting-sources", "",
+          "--model", MODEL, "--effort", EFFORT,
           "--permission-mode", "auto", "--permission-prompt-tool", "stdio", "--settings")
 # `--permission-prompt-tool stdio`, not `--permission-prompts none`: a headless CLI offers AskUserQuestion (and the plan
 # tools, which the platform denies) only when a host can answer it (probed with 2.1.304). Its question is deferred by

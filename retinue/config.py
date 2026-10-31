@@ -706,6 +706,7 @@ class EngineConfig:
     max_turns: int = 30
     max_budget_usd: float | None = None
     model: str | None = None
+    effort: str | None = None           # low | medium | high | xhigh | max; None = the CLI's default
 
 
 @dataclass

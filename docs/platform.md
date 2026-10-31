@@ -822,8 +822,10 @@ card.
 
 ## Approvals
 
-Every run is `claude -p --permission-mode auto` (a resume too: the CLI does not carry the mode over), as 99% of
-your turns on the Mac. For each call the order is the CLI's (probed with 2.1.304): the platform's gate (PreToolUse)
+Every run is `claude -p --model claude-opus-5-5[1m] --effort xhigh --permission-mode auto` (a resume too: the CLI
+does not carry the mode over), as 99% of your turns on the Mac: the latest Opus by its full id, its million-token
+context, extra-high effort (`cliengine.MODEL`, `EFFORT` — without them a headless CLI takes a smaller default model;
+the assistant has the same in `agent.yaml`). For each call the order is the CLI's (probed with 2.1.304): the platform's gate (PreToolUse)
 first, then the rules, then auto's **classifier**:
 
 - **The gate's refusals** (a token-shaped input, a file path out of `/work`) — denied, before anything else.

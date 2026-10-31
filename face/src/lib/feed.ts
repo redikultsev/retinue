@@ -47,12 +47,9 @@ export interface FeedRow {
   /** «Decide» · «Push»: commits no branch of the remote has, and in which repositories (retinue/topush.py). */
   push?: number;
   repos?: string[];
-  /** «From the assistant»: a person's row's token — what «Done», «Not a task», «Tomorrow» name it by. Absent on the
-   * private matter's row, a draft and a date. */
+  /** «From the assistant»: a person's row's token — what «Done», «Not a task», «Tomorrow» name it by. Absent on a draft
+   * and a date. */
   t?: string;
-  /** «From the assistant»: the owner's private matter — its words and buttons wait behind «Show» in Telegram, and the
-   * app never asks for its sheet. */
-  private?: boolean;
 }
 
 export interface FeedGroup {
@@ -92,9 +89,6 @@ export interface DetailAsk {
   deadline: string;
   at: number;
   open?: DetailLink;
-  /** The private matter's letters: each its sender's name and its own token, closed one at a time. */
-  who?: string;
-  t?: string;
 }
 
 /** A row's sheet (`POST /api/waiting/detail`): asked of the router when the row is opened, never kept by the platform. */
@@ -107,7 +101,7 @@ export interface WaitingDetail {
   asks: DetailAsk[];
   more: number;
   open?: DetailLink;
-  draft?: { text: string; channel: "mail" | "telegram"; subject: string; expires: number; state: "shown" | "hidden" | "link" };
+  draft?: { text: string; channel: "mail" | "telegram"; subject: string; expires: number; state: "shown" | "link" };
 }
 
 /** The only links a sheet may draw — the platform's own check, made a second time. */

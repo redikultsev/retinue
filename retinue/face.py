@@ -442,8 +442,8 @@ class Face:
         sender, the deadline, the letter's thread or the chat — which only the router has. Asked of it through
         `feed.Details` (the row's id and token, nothing else) and answered when the router has taken it, within
         `feed.DETAIL_WAIT_S`; relayed, never kept. Only a row of the digest on record — a person's with its own token, or
-        a draft that is not the private matter's: 410 when it is not there any more or the router no longer knows it,
-        504 when the router is silent, 502 when its answer is off the contract."""
+        a draft: 410 when it is not there any more or the router no longer knows it, 504 when the router is silent,
+        502 when its answer is off the contract."""
         body = await _body(request)
         ref, token = body.get("ref"), body.get("t")
         items, _, _ = self.platform.feed.digest()
@@ -452,7 +452,7 @@ class Face:
                 (token is not None and (not isinstance(token, str) or not feed.TOKEN.fullmatch(token))):
             return _error(400, "Need ref — the row's id — and t, its token, on a person's row.")
         if row is None or (row["kind"] in ("letter", "chat") and (token is None or row.get("t") != token)) or \
-                (row["kind"] == "draft" and (not feed.DRAFT_REF.fullmatch(ref) or row["who"] == feed.PRIVATE_WHO)) or \
+                (row["kind"] == "draft" and not feed.DRAFT_REF.fullmatch(ref)) or \
                 row["kind"] == "deadline":
             return _error(410, "This row is no longer in the list.")
         details = self.platform.details

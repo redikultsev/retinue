@@ -1246,8 +1246,8 @@ def test_a_run_a_chat_started_never_writes_to_the_base(tmp_path):
 
 
 def memory_world(tmp_path):
-    """An archive with a chat, another chat, the owner's mail — one letter about his private matter — and his
-    conversation, all naming Zurbagan; the router's mail table knows which letter is private."""
+    """An archive with a chat, another chat, the owner's mail — a letter with a scan among it — and his conversation,
+    all naming Zurbagan; the router's mail table knows each letter."""
     from retinue.archive import CALENDAR, CHAT, MAIL, OWNER, SYSTEM
     from retinue.mail import MailStore
     from retinue.mailroom import Mailroom
@@ -1280,12 +1280,12 @@ def memory_world(tmp_path):
         "photo": chat("777", 2, "", 5, photo=True),
         "there": chat("888", 1, "Тоже был в Зурбагане", 6),
         "bus": letter("b1", "Бронь автобуса Энск — Зурбаган, 14 мая 14:20", 8, "travel"),
-        "private": letter("j1x", "Юрист: встреча по иску; офис в Зурбагане", 9, "private"),
+        "lawyer": letter("j1x", "Юрист: встреча по иску; офис в Зурбагане", 9, "person"),
         "other_photo": chat("888", 2, "", 6, photo=True),
     }
-    scan = archive.attach(world["private"].id, "photo", "photo", "from the letter lawyer@acme.example", "",
+    scan = archive.attach(world["lawyer"].id, "photo", "photo", "from the letter lawyer@acme.example", "",
                           [("image/jpeg", b"j")])
-    archive.note(scan, world["private"], "скан договора: Зурбаган, аренда", run="mail-1", ts=local(9, 10))
+    archive.note(scan, world["lawyer"], "скан договора: Зурбаган, аренда", run="mail-1", ts=local(9, 10))
     archive.append(OWNER, "Я лечу в Зурбаган", conversation_id=store.conversation("assistant"), channel="telegram",
                    ts=local(10, 9))
     archive.append(SYSTEM, "Почта: Зурбаган, иск в четверг", conversation_id=store.conversation("assistant"),
@@ -1295,11 +1295,10 @@ def memory_world(tmp_path):
     return core, agent, world
 
 
-def test_a_search_in_a_run_someone_else_started_keeps_to_this_chat_and_never_shows_the_private_matter(tmp_path):
+def test_a_search_in_a_run_someone_else_started_keeps_to_this_chat_unless_she_widens_it(tmp_path):
     """In a run started by somebody's message the search is this exchange unless she widens it (`scope`), and dates
-    narrow it (`since`, `until`, the owner's days). Whatever the scope, code leaves out the private matter — the letter and
-    every caption of its files — and the system's own notices to the owner. In his own conversation nothing is
-    hidden from him."""
+    narrow it (`since`, `until`, the owner's days). Whatever the scope, code leaves out the system's own notices to the
+    owner. In his own conversation nothing is hidden from him."""
     core, agent, world = memory_world(tmp_path)
     turn = core.turns.open_root("assistant")
     turn.tree.foreign.add("telegram")
@@ -1312,10 +1311,11 @@ def test_a_search_in_a_run_someone_else_started_keeps_to_this_chat_and_never_sho
     assert ok and here.startswith("Found: 1 (searched: this thread), closest first.")
     assert "tgb:777/1" in here and "Тоже был" not in here
     _, mail = search("Зурбаган", scope="mail")
-    assert "Бронь автобуса" in mail and "Созвон: Зурбаган" in mail and "иску" not in mail and "договора" not in mail
+    assert "Бронь автобуса" in mail and "Созвон: Зурбаган" in mail and "иску" in mail and "договора" in mail, \
+        "every letter and every caption of its files, as any"
     _, everything = search("Зурбаган", scope="all")
     assert "Тоже был в Зурбагане" in everything and "Я лечу в Зурбаган" in everything and "Бронь" in everything
-    assert "иску" not in everything and "договора" not in everything, "the private matter: never, in any scope"
+    assert "иску" in everything and "Почта: Зурбаган" not in everything, "the system's notices: never, in any scope"
     _, owner = search("Зурбаган", scope="owner")
     assert "Я лечу в Зурбаган" in owner and "Бронь" not in owner and "Почта: Зурбаган" not in owner
     _, recent = search("Зурбаган", scope="all", since="2026-10-08", until="2026-10-08")

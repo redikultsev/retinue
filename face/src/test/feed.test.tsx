@@ -165,16 +165,13 @@ describe("Her row in the feed", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("has no buttons on the private matter's row, and counts what closed and what ran out", async () => {
-    const feed = hers([row({ key: "p", action: "assistant", source: "letter", session: null, title: "Private", essence: "2 private letters wait for a reply", private: true })], {
+  it("counts what closed and what ran out under her rows", async () => {
+    const feed = hers([row({ key: "p", action: "assistant", source: "letter", session: null, title: "Example Studio", essence: "reply: A second call next week?", ref: "letter:5", t: T })], {
       closed_today: 5,
       expired_week: 2,
     });
     mount(<FeedView feed={feed} now={NOW} />);
     const section = await screen.findByRole("region", { name: "From the assistant" });
-    expect(within(section).queryByRole("button", { name: "Done" })).toBeNull();
-    expect(within(section).queryByTitle("Details")).toBeNull();
-    expect(within(section).getByRole("link", { name: "Open in Telegram" }).getAttribute("href")).toBe("https://t.me/retinue_bot");
     expect(within(section).getByText("Closed today: 5 · Ran out unmarked this week: 2")).toBeTruthy();
   });
 
@@ -285,14 +282,13 @@ describe("Her row's sheet", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
-  it("shows a draft's text with «Send in Telegram» first, and never asks for the private matter's", async () => {
+  it("shows a draft's text with «Send in Telegram» first", async () => {
     const load = vi.spyOn(api, "waitingDetail").mockResolvedValue({
       detail: { kind: "draft", who: "Anna Petrova", account: "me@example.com", asks: [], more: 0, open: { url: GMAIL, label: "Open in Gmail" },
         draft: { text: "Hello Anna,\n\nYes, Friday.", channel: "mail", subject: "Re: the trip", expires: NOW + 3600, state: "shown" } },
     });
     const draft = row({ key: "d", action: "assistant", source: "draft", session: null, track: null, title: "Anna Petrova", essence: "a reply draft waits for «Send»", ref: "draft:0000000c" });
-    const secret = row({ key: "p", action: "assistant", source: "draft", session: null, track: null, title: "Private", essence: "a reply draft waits for «Send»", ref: "draft:0000000d", private: true });
-    mount(<FeedView feed={hers([draft, secret])} now={NOW} />);
+    mount(<FeedView feed={hers([draft])} now={NOW} />);
     fireEvent.click(await screen.findByRole("button", { name: /Anna Petrova/ }));
     const sheet = await screen.findByRole("dialog");
     expect(load).toHaveBeenCalledWith("draft:0000000c", undefined);
@@ -302,23 +298,6 @@ describe("Her row's sheet", () => {
     expect(within(sheet).queryByRole("button", { name: "Done" })).toBeNull();
     expect(screen.getAllByTitle("Details")).toHaveLength(1);
     expect(load).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows a private letter as any letter of hers: named, with its own buttons, and no Telegram link", async () => {
-    vi.spyOn(api, "waitingDetail").mockResolvedValue({
-      detail: { kind: "letter", who: "Example Studio", account: "", more: 0, asks: [
-        { need: "reply", text: "A second call next week?", deadline: "Monday", at: NOW - 3600, open: { url: GMAIL, label: "Open in Gmail" } },
-      ], open: { url: GMAIL, label: "Open in Gmail" } },
-    });
-    const secret = row({ key: "p", action: "assistant", source: "letter", session: null, track: null, title: "Example Studio", essence: "reply: A second call next week?", ref: "letter:5", t: T, private: true });
-    mount(<FeedView feed={hers([secret], { bot: "retinue_bot" })} now={NOW} />);
-    const section = await screen.findByRole("region", { name: "From the assistant" });
-    expect(within(section).getByRole("button", { name: "Done" })).toBeTruthy();
-    fireEvent.click(within(section).getByRole("button", { name: /Example Studio/ }));
-    const sheet = await screen.findByRole("dialog", { name: "Example Studio" });
-    expect(await within(sheet).findByText("A second call next week?")).toBeTruthy();
-    expect(within(sheet).getByRole("button", { name: "Ask the assistant" })).toBeTruthy();
-    expect(within(sheet).queryByRole("link", { name: /Telegram/ })).toBeNull();
   });
 
   it("opens a base's date in its Record, with no sheet", async () => {

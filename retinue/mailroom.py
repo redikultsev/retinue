@@ -17,8 +17,8 @@ import time
 from . import clock
 from .archive import CALENDAR, CHAT, MAIL, Event, event_id, exchange_of
 from .attachments import Unreadable, Upload, prepare
-from .mail import (ANSWERS, ASKS, ASKS_LOOK_DAYS, EVENT_CHARS, EVENT_SCHEMA, KINDS, LATER, MARKS, NOW, PRIVATE, TRIAGE_SCHEMA, Card,
-                   Collector, MailStore, Private, Unavailable, card_of, decisions, event_record, invitation, later_until,
+from .mail import (ANSWERS, ASKS, ASKS_LOOK_DAYS, EVENT_CHARS, EVENT_SCHEMA, KINDS, LATER, MARKS, NOW, TRIAGE_SCHEMA, Card,
+                   Collector, MailStore, Unavailable, card_of, decisions, event_record, invitation, later_until,
                    letter_record, reply_head, route, safe_label, triage_prompt, when)
 from .tgbusiness import OWN_SPEECH
 
@@ -100,12 +100,11 @@ class Mailroom:
 
     def attach(self, core) -> None:
         self.core = core
-        Private.of(core.memory)  # a private matter the config names wrongly stops the router here
         try:
             self.heads(time.time())
         except Exception:
             log.exception("the reply heads of letters read before them were not filled in")
-        core.actions.update({"mail_show": self._show, "mail_mute": self._mute, "mail_block": self._block,
+        core.actions.update({"mail_mute": self._mute, "mail_block": self._block,
                              "mail_unrule": self._unrule,
                              **{f"ask_{mark}": (lambda value, mark=mark: self._ask(mark, value)) for mark in MARKS}})
 
@@ -364,7 +363,7 @@ class Mailroom:
             return None
         status, answer, meta, lost = "error", "", {}, False
         try:
-            reply = await core.ask(agent.url, triage_prompt(letter, item["account"], fact, Private.of(core.memory).line()),
+            reply = await core.ask(agent.url, triage_prompt(letter, item["account"], fact),
                                    context_id, None, None, control="bare", schema=TRIAGE_SCHEMA)
             (status, answer, _), meta = reply, getattr(reply, "meta", {})
         except Exception as exc:
@@ -440,11 +439,11 @@ class Mailroom:
     # --- her judgement and what code does with it ---------------------------------------------------------------
 
     def _owner_lines(self) -> list[str]:
-        """What the owner's config tells the judgement run: his private matter and his tracker, when there is one."""
+        """What the owner's config tells the judgement run: his tracker, when there is one."""
         from .pages import Tracker
 
         memory = self.core.memory
-        lines = [Private.of(memory).line(), Tracker.of(memory).line(str(getattr(memory, "tree", "") or ""))]
+        lines = [Tracker.of(memory).line(str(getattr(memory, "tree", "") or ""))]
         return [line for line in lines if line]
 
     def _entry(self, number: int, item: dict) -> list[str]:
@@ -640,7 +639,7 @@ class Mailroom:
             self._captions(item, decision.media, context_id, now)
             card = {**(item["card"] or {}), "text": decision.text, "needs_now": decision.needs,
                     "deadline_now": decision.deadline, "cost": decision.cost, "new": decision.new, "judged": now,
-                    PRIVATE: decision.private or item["kind"] == PRIVATE, "to_assistant": decision.to_assistant}
+                    "to_assistant": decision.to_assistant}
             where = route(decision, bool(item["sender"]) and self.store.muted(item["sender"], item["kind"] or ""))
             if where == NOW:
                 if item["sender"] and self.store.told_since(item["sender"], now - HOUR) is not None:
@@ -683,21 +682,13 @@ class Mailroom:
                 await self._tell(items, now, glued=True)
 
     async def _tell(self, items: list[dict], now: float, glued: bool = False) -> None:
-        """Code writes the message from her words. About the owner's private matter it says only how many: a preview
-        shows up on the screen during a call — the words come on «Show»."""
+        """Code writes the message from her words."""
         from .core import Button
 
-        seqs = ",".join(str(i["seq"]) for i in items)
         first = items[0]
-        if any(i["kind"] == PRIVATE or (i["card"] or {}).get(PRIVATE) for i in items):
-            count = len(items)
-            where = "Telegram" if first["source"] == TELEGRAM else "Mail"
-            text = f"{where}: {count} important."
-            buttons = [Button("Show", "mail_show", seqs, alone=True)]  # its marks come with its words
-        else:
-            lines = [f"{len(items)} more from {first['sender']} within the hour:"] if glued else []
-            lines += [("- " if glued else "") + self._said(i) for i in items]
-            text, buttons = "\n".join(lines), _ask_buttons(items)
+        lines = [f"{len(items)} more from {first['sender']} within the hour:"] if glued else []
+        lines += [("- " if glued else "") + self._said(i) for i in items]
+        text, buttons = "\n".join(lines), _ask_buttons(items)
         if first["source"] == "mail" and first["sender"]:
             count = self.store.letters_from(first["sender"], now)
             buttons += [Button("Don't notify about this", "mail_mute", str(first["seq"]), alone=True),
@@ -722,12 +713,6 @@ class Mailroom:
         else:
             source = "calendar"
         return f"{text}\n_({source})_"
-
-    async def _show(self, value: str) -> str:
-        items = [i for i in (self.store.get(int(seq)) for seq in value.split(",") if seq.isdigit()) if i]
-        text = "\n\n".join(self._said(i) for i in items) or "These letters are no longer in the list."
-        asyncio.create_task(self.core.tell_owner(text, buttons=_ask_buttons(items)))
-        return "Showing"
 
     async def _ask(self, action: str, value: str):
         """«Done», «Not a task», «Tomorrow» under a message that asks him something, «Undo» after one: his mark on

@@ -39,14 +39,12 @@ back from Sent or the reply comes back from Telegram. There is no daily ceiling:
 - A new message from the other person in the same chat or thread kills the open card at once — rewritten in place
   as «Expired: a new message came in.», buttons gone, even during the 10 s hold. She reads the new message with the
   exchange above it and drafts afresh if a reply is needed.
-- About your private matter (docs/mail.md) the card waits behind «Show», like the letter it answers.
 - **«Read while drafting»** — what the run that wrote the draft read outside this conversation, counted by code, never
   quoted: «mail 2, another chat 1, your conversation 1, Base (travel) 1». Code records every search find, every file
-  fetched and every read in the knowledge base of the run, and the other letters judged with it. Reading the private
-  matter, a closed Space (`/srv/retinue/memory/sensitive.txt`; `*`, the default, closes all of them) or — in a run
-  somebody else's message started — your own conversation adds a flag «read closed matter: …»; the private matter
-  also hides the card behind «Show». In a run somebody else's message started the search keeps to that exchange
-  unless she widens it, and never returns the private matter outside it.
+  fetched and every read in the knowledge base of the run, and the other letters judged with it. Reading a closed
+  Space (`/srv/retinue/memory/sensitive.txt`; `*`, the default, closes all of them) or — in a run somebody else's
+  message started — your own conversation adds a flag «read closed matter: …». In a run somebody else's message
+  started the search keeps to that exchange unless she widens it.
 - Outside Telegram's window, or with no gateway, the card gives a `t.me/<username>?text=…` link: the chat opens
   with the text in your field and you send it yourself. With no working mail sender the card says so, and you send
   from Gmail yourself.

@@ -25,11 +25,11 @@ const ASKS = [
   { key: "assistant:letter:2", source: "letter", sphere: "home", sphere_title: "home", title: "Acme Hosting", since: now() - 2 * 86400, essence: "pay: the hosting invoice for May · deadline Friday (+2)", ref: "letter:2", t: "b".repeat(32) },
   { key: "assistant:chat:3", source: "chat", sphere: null, sphere_title: null, title: "Ivan Example", since: now() - 9 * 86400, essence: "decide: which of the two venues to book for the team dinner, the one by the river or the one near the office, before both stop holding the date", ref: "chat:3", t: "c".repeat(32) },
   { key: "assistant:letter:4", source: "letter", sphere: null, sphere_title: null, title: "Example Bank", since: now() - 4 * 86400, essence: "decide: confirm a sign-in from a new device · deadline today", ref: "letter:4", t: "d".repeat(32) },
+  { key: "assistant:letter:5", source: "letter", sphere: "home", sphere_title: "home", title: "Example Studio", since: now() - 86400, essence: "reply: a second call next week · deadline Monday", ref: "letter:5", t: "e".repeat(32) },
 ];
-/** The others of hers: a draft waiting for «Send», and a letter of the private matter (named here, never in Telegram). */
+/** The others of hers: a draft waiting for «Send». */
 const OTHERS = [
   { key: "assistant:draft:0000000c", source: "draft", sphere: null, sphere_title: null, title: "Anna Petrova", since: now() - 1800, essence: "a reply draft waits for «Send»", ref: "draft:0000000c" },
-  { key: "assistant:letter:5", source: "letter", sphere: "home", sphere_title: "home", title: "Example Studio", since: now() - 86400, essence: "reply: a second call next week · deadline Monday", ref: "letter:5", private: true, t: "e".repeat(32) },
 ];
 const GMAIL = (thread: string) => ({ url: `https://mail.google.com/mail/?authuser=me@example.com#all/${thread}`, label: "Open in Gmail" });
 /** A row's sheet (`/api/waiting/detail`), as the router would say it: a moment later, invented. Ivan's router is
@@ -335,7 +335,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const { ref, t } = (await body(req)) as { ref?: string; t?: string };
     const row = [...ASKS, ...OTHERS].find((r) => r.ref === ref);
     if (typeof ref !== "string") return json(res, 400, { error: "Need ref — the row's id — and t, its token, on a person's row." });
-    if (!row || ("t" in row && row.t !== t) || (!("t" in row) && "private" in row) || ref === "letter:4")
+    if (!row || ("t" in row && row.t !== t) || ref === "letter:4")
       return json(res, 410, { error: "The assistant no longer has this row: the list is out of date." });
     if (ref === "chat:3") {
       await new Promise((done) => setTimeout(done, 3000));

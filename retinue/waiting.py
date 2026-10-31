@@ -6,9 +6,7 @@ Read from the router's own tables, by the rules they already have — nothing ne
 - **letter / chat**: what her judgement said asks him to do something (`needs` reply, decide, pay, attend or act;
   «read» is only to know) and is still open — `MailStore.asks`: not marked «Done» or «Not a task» by him, not put off
   till tomorrow, not answered as code sees it, not run out. One row per person and ask: «pay» and «decide» of one
-  sender are two rows, so a button closes exactly what the row says. A letter of the owner's private matter
-  (`mail.Private`) is a row like any other, marked `private` and in the sphere his config gives it: the app, behind
-  his login, names it; Telegram's `/wait` never does (`feed.Feed.telegram`).
+  sender are two rows, so a button closes exactly what the row says.
 - **draft**: a reply card whose «Send» still means something (`outbox.LIVE`, not expired). Its letter is not
   counted again.
 - **deadline**: a `deadline` of any Record, or an `until` of a profile Record, at most SOON_DAYS away (the face's
@@ -31,7 +29,7 @@ the week — no list of them.
 What a row is about goes only when the owner opens it in the app (`detail`), one row at a time and to that request
 alone — the digest itself never widens: her words and a draft's text masked as the title is (`masked`), and where the
 thing is, built from the ids the router holds — the Gmail thread in the mailbox it came to, the chat by the person's
-@username. Never the letter's text, its verbatim quote or the sender's address; nothing of a private matter's draft.
+@username. Never the letter's text, its verbatim quote or the sender's address.
 """
 
 from __future__ import annotations
@@ -47,9 +45,9 @@ from urllib.parse import quote
 
 from . import clock
 from .courier import INVISIBLE, line
-from .feed import CHIP_CHARS, DIGEST_BYTES, DIGEST_ITEMS, EMAIL, PRIVATE_WHO, RECORD, SPHERE
+from .feed import CHIP_CHARS, DIGEST_BYTES, DIGEST_ITEMS, EMAIL, RECORD, SPHERE
 from .pages import NEEDS, midnight, named, plural
-from .mail import ASKS, MARKS, Private, ask_row, is_private, later_until
+from .mail import ASKS, MARKS, ask_row, later_until
 from .outbox import LIVE
 from .proactive import FIELDS, PUSH_DAYS
 
@@ -152,7 +150,7 @@ def detail(core, ref: str, token: str, now: float) -> dict | None:
     still ask, newest first; a draft by its id. Her judgement and a draft's text with codes, numbers, links and
     addresses masked as in the digest (`masked`), and where the thing is (`open`: the Gmail thread, the Telegram chat by
     its @username) — never the letter's text, its verbatim quote or the sender's address. None when the token is not
-    known, nothing under it asks any more, or the draft no longer waits or is the private matter's."""
+    known, nothing under it asks any more, or the draft no longer waits."""
     if match := DRAFT_REF.fullmatch(ref):
         return _draft_detail(core, match[1], now)
     seqs = set(_rows(core, now).get(token) or ()) if token and core.mail else set()
@@ -177,12 +175,10 @@ def _ask(item: dict, now: float, link: bool = True) -> dict:
 def _draft_detail(core, draft_id: str, now: float) -> dict | None:
     """A draft waiting for «Send»: to whom, its text, until when it waits, and the letter or chat it answers."""
     found = core.outbox.store.get(draft_id) if core.outbox else None
-    if not found or found["state"] not in LIVE or found["expires"] <= now or found["private"]:
+    if not found or found["state"] not in LIVE or found["expires"] <= now:
         return None
     envelope, mail = found["envelope"] or {}, found["channel"] == "mail"
     answered = core.mail.store.by_event(str(found["reply_to"] or "")) if core.mail else None
-    if answered and is_private(answered):
-        return None
     link = _open(answered) if answered else \
         _mail_link(str(envelope.get("account") or ""), str(envelope.get("thread") or "")) if mail else None
     return {"kind": "draft", "who": named(str(envelope.get("name") or ""), str(envelope.get("to") or "") if mail else ""),
@@ -264,11 +260,6 @@ def _sent(core) -> dict[str, float]:
     return core.outbox.store.answered() if core.outbox else {}
 
 
-def _sphere(core) -> str | None:
-    """The sphere of the private matter's row: the owner's config (`memory.private.sphere`), none without it."""
-    return Private.of(getattr(core, "memory", None)).sphere or None
-
-
 def _drafts(core, now: float) -> list[dict]:
     if not core.outbox:
         return []
@@ -276,13 +267,11 @@ def _drafts(core, now: float) -> list[dict]:
     for draft in core.outbox.store.in_state(*LIVE):
         if draft is None or draft["expires"] <= now:
             continue
-        envelope, private = draft["envelope"] or {}, bool(draft["private"])
-        mail = draft["channel"] == "mail"
-        who = PRIVATE_WHO if private else named(str(envelope.get("name") or ""), str(envelope.get("to") or "")
-                                                if mail else "")
+        envelope, mail = draft["envelope"] or {}, draft["channel"] == "mail"
+        who = named(str(envelope.get("name") or ""), str(envelope.get("to") or "") if mail else "")
         rows.append({"id": f"draft:{draft['id']}", "kind": "draft", "who": who,
                      "title": LINK_DRAFT if draft["state"] == "link" else DRAFT, "since": float(draft["created"]),
-                     "sphere": _sphere(core) if private else None, "_reply": str(draft["reply_to"] or "")})
+                     "sphere": None, "_reply": str(draft["reply_to"] or "")})
     return rows
 
 
@@ -298,14 +287,10 @@ def _people(core, now: float, shown: set[str]) -> list[dict]:
         chat = item["source"] == "telegram"
         ts = float(item["ts"] or item["at"] or now)
         key = ask_row(item)
-        private = is_private(item)
-        letter = private or not chat
         group = groups.setdefault(key, {
-            "id": _id(core, "letter" if letter else "chat", key), "kind": "letter" if letter else "chat",
-            "who": named(str(data.get("name") or ""), "") if chat and not private
-            else named(str(card.get("who") or ""), sender),
-            "since": ts, "sphere": _sphere(core) if private else None, "count": 0, "need": need, "last": ts,
-            "text": "", "deadline": "", "private": private, "seqs": []})
+            "id": _id(core, "chat" if chat else "letter", key), "kind": "chat" if chat else "letter",
+            "who": named(str(data.get("name") or ""), "") if chat else named(str(card.get("who") or ""), sender),
+            "since": ts, "count": 0, "need": need, "last": ts, "text": "", "deadline": "", "seqs": []})
         group["count"] += 1
         group["seqs"].append(item["seq"])
         group["since"] = min(group["since"], ts)
@@ -318,13 +303,11 @@ def _people(core, now: float, shown: set[str]) -> list[dict]:
     rows = []
     for group in sorted(groups.values(), key=lambda g: (URGENCY[g["need"]], g["since"])):
         count = group["count"]
-        row = {"id": group["id"], "kind": group["kind"], "who": group["who"], "since": group["since"],
-               "sphere": group["sphere"]}
+        row = {"id": group["id"], "kind": group["kind"], "who": group["who"], "since": group["since"], "sphere": None}
         title = f"{NEEDS[group['need']]}: {said(group['text'])}"
         title += f" · deadline {said(group['deadline'])}" if group["deadline"] else ""
         title += f" (+{count - 1})" if count > 1 else ""
-        row.update(title=title, t=_token(core, group["seqs"]), _seqs=group["seqs"],
-                   **({"private": True} if group["private"] else {}))
+        row.update(title=title, t=_token(core, group["seqs"]), _seqs=group["seqs"])
         rows.append(row)
     return rows
 

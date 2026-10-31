@@ -203,32 +203,24 @@ def test_a_telegram_reply_inside_the_window_and_a_deep_link_outside_it(tmp_path)
     assert [d["state"] for d in outbox.store.in_state("link")] == ["link", "link", "link"]
 
 
-def test_a_private_draft_waits_behind_show_and_a_corrected_draft_kills_the_old_card(tmp_path):
-    """About the private matter the card hides behind «Show», like the letter it answers. «Change it» in words makes a
-    new card at once; the old one's buttons die and its last line says which card replaced it."""
+def test_a_corrected_draft_kills_the_old_card(tmp_path):
+    """«Change it» in words makes a new card at once; the old one's buttons die and its last line says which card
+    replaced it."""
     async def run():
         core, outbox = courier_core(tmp_path, mail=True)
         channel = CardChannel()
         await core.start([channel])
         event = letter(core.archive)
-        core.mail.store.keep([{"seq": 1, "account": ME, "source": "mail", "ref": "m1", "data": {}}], NOW)
-        core.mail.store.set(1, NOW, state="told", event_id=event.id, kind="private", sender="anna@acme.example")
         first = await propose(core, {"reply_to": event.id, "text": "Да, четверг подходит."}, {"mail"})
-        (hidden,) = outbox.store.in_state("hidden")
-        show = channel.cards[-1]
-        shown = await core.press(channel, show[1][0][1])
-        await drain()
-        again = await core.press(channel, show[1][0][1])
+        (shown,) = outbox.store.in_state("shown")
         second = await propose(core, {"reply_to": event.id, "text": "Да, четверг в 15:00 подходит.",
-                                      "replaces": hidden["id"]})
-        return core, outbox, channel, first, hidden, show, shown, again, second
+                                      "replaces": shown["id"]})
+        return core, outbox, channel, first, shown, second
 
-    core, outbox, channel, first, hidden, show, shown, again, second = asyncio.run(run())
-    assert first[0] and show[0] == "Draft to confirm: 1." and [b[0] for b in show[1]] == ["Show"]
-    assert "Да, четверг" not in show[0], "nothing of it on the screen before the press"
-    assert shown.toast == "Showing" and not again.ok, "a pressed button is spent"
-    card, retired = channel.shown
-    old, (new,) = outbox.store.get(hidden["id"]), outbox.store.in_state("hidden")
+    core, outbox, channel, first, shown, second = asyncio.run(run())
+    assert first[0]
+    card, retired, fresh = channel.shown
+    old, (new,) = outbox.store.get(shown["id"]), outbox.store.in_state("shown")
     assert card[0].body == "Да, четверг подходит." and card[2] == old["card"] and not card[3]
     assert old["state"] == "replaced" and retired[3] is True and retired[2] == old["card"] and retired[1] == []
     assert retired[0].status == f"Replaced by draft {new['id']}."
@@ -236,7 +228,7 @@ def test_a_private_draft_waits_behind_show_and_a_corrected_draft_kills_the_old_c
                                   (old["card"],)).fetchone()[0]
     assert alive == 0, "the old card's buttons are dead"
     assert second[0] and f"replaces draft {old['id']}" in new["head"][4]
-    assert channel.cards[-1][0] == "Draft to confirm: 1.", "the new one hides behind «Show» too"
+    assert fresh[0].body == "Да, четверг в 15:00 подходит." and fresh[2] == new["card"]
 
 
 async def card_of(core, channel, outbox, text="Да, четверг подходит.", foreign=("mail",)):
@@ -478,12 +470,11 @@ def test_a_telegram_reply_that_left_is_in_the_exchange_at_once(tmp_path, monkeyp
     assert reply.meta["by"] == "bot" and reply.meta["direction"] == "out" and reply.meta["message_id"] == 55
 
 
-def test_a_card_names_what_she_read_outside_this_conversation_and_warns_louder_about_the_private(tmp_path):
+def test_a_card_names_what_she_read_outside_this_conversation_and_warns_louder_about_the_closed(tmp_path):
     """A draft may use what she found elsewhere — a bus booking in the mail for a friend's «when do you arrive?» — but
     the card says so: «Read while drafting: …» with counts by source, never their words; code tracked every read of the
-    run (search finds, files, the base). The private matter, closed Spaces of the base and, in a run somebody else
-    started, the owner's own conversation make it louder; a run that read the private matter hides the card behind
-    «Show», like a card about it."""
+    run (search finds, files, the base). Closed Spaces of the base and, in a run somebody else started, the owner's own
+    conversation make it louder."""
     from types import SimpleNamespace
 
     async def run():
@@ -492,8 +483,7 @@ def test_a_card_names_what_she_read_outside_this_conversation_and_warns_louder_a
         channel = CardChannel()
         await core.start([channel])
         target = chat(core.archive)
-        for ref, text, kind in (("b1", "Бронь автобуса Энск — Зурбаган, 14:20", "travel"),
-                                ("j1", "Юрист ждёт вас в четверг", "private")):
+        for ref, text, kind in (("b1", "Бронь автобуса Энск — Зурбаган, 14:20", "travel"),):
             event, _ = core.archive.append("mail", text, conversation_id=f"mail:{ME}", channel="mail",
                                            native_id=f"{ME}/{ref}", ts=NOW - 3600, meta={"thread": ref})
             core.mail.store.keep([{"seq": len(ref), "account": ME, "source": "mail", "ref": ref, "data": {}}], NOW)
@@ -521,22 +511,16 @@ def test_a_card_names_what_she_read_outside_this_conversation_and_warns_louder_a
         await draft(True, [("chat", "Созвон")], "В 7 подходит.")
         await draft(True, [("mail", "автобус"), ("kb", "/kb/reading/knowledge/books.md")], "Приеду в 14:20.")
         await draft(True, [("kb", "/kb/work/profile/contract.md"), ("owner", "Зурбаган")], "Я в Зурбагане до пятницы.")
-        await draft(False, [("all", "юрист")], "Занят в четверг.")
         return outbox, channel, cards
 
-    outbox, channel, (only_here, booking, closed, private) = asyncio.run(run())
+    outbox, channel, (only_here, booking, closed) = asyncio.run(run())
     assert not any(line.startswith("Read while drafting") for line in only_here["head"]), "this chat only: nothing to say"
     assert "Read while drafting: mail 1, Base (reading) 1" in booking["head"]
     assert not any("closed matter" in line for line in booking["head"])
     assert "Read while drafting: your conversation 1, Base (work) 1" in closed["head"]
     warning = next(line for line in closed["head"] if line.startswith("Warning:"))
     assert "read closed matter: your conversation 1, Base (work) 1 — check that none of it went into the text" in warning
-    assert "read closed matter: private 1" in next(line for line in private["head"] if line.startswith("Warning:"))
-    assert private["private"] == 1 and outbox.store.get(private["id"])["state"] == "hidden", \
-        "behind «Show», as the private matter"
-    assert channel.cards[-1][0] == "Draft to confirm: 1."
-    assert all("Бронь" not in line and "Юрист" not in line for c in (booking, private) for line in c["head"]), \
-        "counts, never words"
+    assert all("Бронь" not in line for line in booking["head"]), "counts, never words"
 
 
 def test_a_draft_flagged_before_the_switch_to_english_still_names_its_recipient(tmp_path):
@@ -551,17 +535,21 @@ def test_a_draft_flagged_before_the_switch_to_english_still_names_its_recipient(
     assert outbox.buttons(draft)[0].label == "Send"
 
 
-def test_a_drafts_table_of_the_former_column_name_is_renamed_on_open():
-    """A router database written before the column was renamed: the drafts keep their flag."""
+@pytest.mark.parametrize("column", ["private", "job"])
+def test_a_drafts_column_no_longer_used_is_dropped_on_open_and_a_card_never_shown_expires(column):
+    """A router database with a column no longer used: dropped on open, the drafts kept. A card that waited behind
+    «Show» was never shown, and nothing shows it now: it expires."""
     db = sqlite3.connect(":memory:")
     db.execute("CREATE TABLE drafts (id TEXT PRIMARY KEY, created REAL NOT NULL, state TEXT NOT NULL, channel TEXT "
                "NOT NULL, envelope TEXT NOT NULL, digest TEXT NOT NULL, reply_to TEXT NOT NULL DEFAULT '', thread TEXT "
-               "NOT NULL DEFAULT '', head TEXT NOT NULL, job INTEGER NOT NULL DEFAULT 0, card TEXT NOT NULL DEFAULT "
-               "'', expires REAL NOT NULL, send_after REAL, result TEXT NOT NULL DEFAULT '{}', at REAL NOT NULL)")
-    db.execute("INSERT INTO drafts (id, created, state, channel, envelope, digest, head, job, expires, at) VALUES "
-               "('d1', 1, 'hidden', 'mail', '{}', 'x', '[]', 1, 9, 1)")
+               f"NOT NULL DEFAULT '', head TEXT NOT NULL, {column} INTEGER NOT NULL DEFAULT 0, card TEXT NOT NULL "
+               "DEFAULT '', expires REAL NOT NULL, send_after REAL, result TEXT NOT NULL DEFAULT '{}', at REAL NOT NULL)")
+    db.execute(f"INSERT INTO drafts (id, created, state, channel, envelope, digest, head, {column}, expires, at) VALUES "
+               "('d1', 1, 'hidden', 'mail', '{}', 'x', '[]', 1, 9, 1), ('d2', 1, 'shown', 'mail', '{}', 'y', '[]', 0, 9, 1)")
     store = OutboxStore(db)
-    assert store.get("d1")["private"] == 1 and OutboxStore(db).get("d1")["private"] == 1, "once, then as it is"
+    assert column not in {row[1] for row in db.execute("PRAGMA table_info(drafts)")}
+    assert (store.get("d1")["state"], store.get("d2")["state"]) == ("expired", "shown")
+    assert OutboxStore(db).get("d2") == store.get("d2"), "once, then as it is"
 
 
 @pytest.mark.parametrize("respond, said", [

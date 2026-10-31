@@ -87,13 +87,11 @@ DETAIL_NEEDS = ("reply", "decide", "pay", "attend", "act")
 DETAIL_ASKS = 10
 DETAIL_JUDGED, DETAIL_DEADLINE, DETAIL_ADDRESS, DETAIL_DRAFT = 700, 40, 120, 4000
 DRAFT_REF = re.compile(r"draft:[0-9a-f]{8}")
-DRAFT_STATES = ("shown", "hidden", "link")
+DRAFT_STATES = ("shown", "link")
 # Where a thing is, in the only shapes the router makes: a Gmail thread in a mailbox, a Telegram chat.
 LINKS = {"Open in Gmail": re.compile(r"https://mail\.google\.com/mail/\?authuser=[^\s@/?#&]{1,64}@[^\s@/?#&]{1,190}"
                                      r"#all/[0-9a-f]{10,24}"),
          "Open the chat": re.compile(r"https://t\.me/[A-Za-z][A-Za-z0-9_]{3,31}")}
-PRIVATE_WHO = "Private"      # who a private matter's draft names, and every private row in Telegram: no one
-PRIVATE_ESSENCE = "A private letter waits for a reply — open it in the app"
 
 
 class Refused(ValueError):
@@ -121,7 +119,7 @@ def clean(body: object, now: float) -> tuple[list[dict], str]:
     for n, item in enumerate(body["items"]):
         kind = item.get("kind") if isinstance(item, dict) else None
         allowed = DIGEST_KEYS | DEADLINE_KEYS if kind == "deadline" else \
-            DIGEST_KEYS | {"t", "private"} if kind in ("letter", "chat") else DIGEST_KEYS
+            DIGEST_KEYS | {"t"} if kind in ("letter", "chat") else DIGEST_KEYS
         if not isinstance(item, dict) or not allowed >= set(item) or not DIGEST_KEYS - {"sphere"} <= set(item):
             raise Refused(f"items[{n}]: wrong fields")
         if not isinstance(item["id"], str) or not DIGEST_ID.fullmatch(item["id"]) or item["id"] in seen:
@@ -138,13 +136,10 @@ def clean(body: object, now: float) -> tuple[list[dict], str]:
             raise Refused(f"items[{n}]: who and title must be strings")
         if "t" in item and (not isinstance(item["t"], str) or not TOKEN.fullmatch(item["t"])):
             raise Refused(f"items[{n}].t: not a token")
-        if "private" in item and item["private"] is not True:
-            raise Refused(f"items[{n}].private: only true")
         seen.add(item["id"])
         items.append({"id": item["id"], "kind": item["kind"], "who": _text(item["who"], WHO_CHARS),
                       "title": _text(item["title"], TITLE_CHARS), "since": float(since), "sphere": sphere,
-                      **({"t": item["t"]} if "t" in item else {}), **({"private": True} if "private" in item else {}),
-                      **_deadline(item, n)})
+                      **({"t": item["t"]} if "t" in item else {}), **_deadline(item, n)})
     return items, bot
 
 
@@ -199,12 +194,6 @@ def _link(value: object) -> dict | None:
     return {"url": value["url"], "label": value["label"]}
 
 
-def _token_of(value: object, field: str) -> str:
-    if not isinstance(value, str) or not TOKEN.fullmatch(value):
-        raise Refused(f"{field}: not a token")
-    return value
-
-
 def _time(value: object, field: str) -> float:
     if type(value) not in (int, float) or not 0 < value < 1e12 or not math.isfinite(value):
         raise Refused(f"{field}: not a time")
@@ -222,17 +211,14 @@ def clean_detail(body: object) -> dict:
         raise Refused("asks: not a list")
     out_asks = []
     for n, ask in enumerate(asks):
-        if not isinstance(ask, dict) or set(ask) - {"need", "text", "deadline", "at", "open", "who", "t"} or \
+        if not isinstance(ask, dict) or set(ask) - {"need", "text", "deadline", "at", "open"} or \
                 not {"need", "text", "at"} <= set(ask) or ask["need"] not in DETAIL_NEEDS:
             raise Refused(f"asks[{n}]: wrong fields")
         out_asks.append({"need": ask["need"], "text": _words(ask["text"], DETAIL_JUDGED, f"asks[{n}].text"),
                          "deadline": line(_words(ask.get("deadline", ""), 4 * DETAIL_DEADLINE, f"asks[{n}].deadline"),
                                           DETAIL_DEADLINE),
                          "at": _time(ask["at"], f"asks[{n}].at"),
-                         **({"open": link} if (link := _link(ask.get("open"))) else {}),
-                         **({"who": _text(_words(ask["who"], 4 * WHO_CHARS, f"asks[{n}].who"), WHO_CHARS)}
-                            if "who" in ask else {}),
-                         **({"t": _token_of(ask["t"], f"asks[{n}].t")} if "t" in ask else {})})
+                         **({"open": link} if (link := _link(ask.get("open"))) else {})})
     more = body.get("more", 0)
     if type(more) is not int or not 0 <= more <= COUNT_MAX:
         raise Refused("more: not a number")
@@ -379,12 +365,6 @@ def spheres(cfg) -> dict[str, dict]:
     return out
 
 
-def _private(item: dict) -> bool:
-    """The owner's private matter in her digest: a letter's row (`private`), named in the app and never in Telegram,
-    or a draft that names no one, whose text waits behind «Show» in Telegram."""
-    return item.get("private") is True or (item["kind"] == "draft" and item["who"] == PRIVATE_WHO)
-
-
 class Feed:
     def __init__(self, store: PlatformStore, cfg=None) -> None:
         self.store, self.cfg = store, cfg
@@ -491,7 +471,7 @@ class Feed:
         out["assistant"] = [{"key": f"assistant:{i['id']}", "action": "assistant", "source": i["kind"],
                              "session": None, "track": None, **self._sphere(i.get("sphere")), "title": i["who"],
                              "since": i["since"], "essence": i["title"], "ref": i["id"],
-                             **({"t": i["t"]} if i.get("t") else {}), **({"private": True} if _private(i) else {})}
+                             **({"t": i["t"]} if i.get("t") else {})}
                             for i in items if i["since"] <= now]  # a deadline days ahead waits under «Deadlines» only
         return [row for action, _ in ACTIONS for row in out[action]]
 
@@ -527,9 +507,7 @@ class Feed:
         shown = [{"action": r["action"], "group": titles[r["action"]], "source": r["source"],
                   "session": r["session"], "approval": r["approval"]["id"] if r.get("approval") else None,
                   "card": r.get("card"), "where": r["sphere_title"] or r["track"] or "",
-                  # a letter of the private matter is named in the app only: Telegram says no more than that it waits
-                  "title": PRIVATE_WHO if r.get("private") else r["title"], "since": r["since"],
-                  "essence": PRIVATE_ESSENCE if r.get("private") and r["source"] != "draft" else r["essence"],
+                  "title": r["title"], "since": r["since"], "essence": r["essence"],
                   **({"hint": r["hint"]} if r.get("hint") else {})}
                  for r in rows[:TELEGRAM_ROWS]]
         return {"count": len(rows), "rows": shown, "more": max(0, len(rows) - TELEGRAM_ROWS)}

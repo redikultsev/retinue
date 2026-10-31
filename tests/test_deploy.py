@@ -756,12 +756,12 @@ def test_her_rules_for_the_memory_of_an_exchange():
     assert "search first" in memory and '"I don\'t know" — only after a search' in memory
     assert all(f"`{word}`" in memory for word in ("search_archive", "scope: mail", "scope: owner", "since",
                                                      "get_attachment", "media", "to_assistant"))
-    assert "«Read while drafting: …»" in memory and "the owner's private matter" in memory and "on their merits" in memory
+    assert "«Read while drafting: …»" in memory and "closed parts of the Base" in memory and "on their merits" in memory
     assert "Text from the picture — only in quotes" in memory and "you do not edit or erase" in memory
     assert "the Base is read-only" in memory
     replies = instructions.split("## Replies to people")[1].split("\n## ")[0]
     assert "where and by which words you searched" in replies and "the router itself writes on the card" in replies
-    assert "passwords" in replies and "anything about the owner's private matter" in replies
+    assert "passwords" in replies and "document or card numbers" in replies
     mail = instructions.split("## Mail and calendar")[1].split("\n## ")[0]
     assert "three days" in mail and "`scope: owner`" in mail
     courier = (ROOT / "docs" / "courier.md").read_text()

@@ -103,7 +103,6 @@ class MemoryConfig:
     sensitive: list[str] = field(default_factory=lambda: ["*"])
     # The owner's own words for what the code keeps generic; the server's own file fills them (docs/memory.md).
     location: str = ""                  # the Record whose header names his zone; '' — proactive.LOCATION
-    private: dict = field(default_factory=dict)   # his private matter: {about, sphere} (mail.Private)
     tracker: dict = field(default_factory=dict)   # what his tracker tracks: path, title, states… (pages.Tracker)
 
 

@@ -189,18 +189,16 @@ def test_the_router_holds_the_knowledge_base_when_the_config_says_so(tmp_path, m
 
 
 def test_the_owners_own_words_for_memory_load_from_router_yaml(tmp_path, monkeypatch):
-    """`location`, `private` and `tracker` come from the server's owner.yaml under `memory:` (docs/memory.md):
+    """`location` and `tracker` come from the server's owner.yaml under `memory:` (docs/memory.md):
     router.yaml takes them, and without them each keeps its neutral default."""
     from retinue.pages import Tracker
-    from retinue.mail import Private
     from retinue.proactive import LOCATION, location_record
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     bare = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nmemory:\n  hub: /srv/hub\n").memory
-    assert (bare.location, bare.private, bare.tracker) == ("", {}, {})
+    assert (bare.location, bare.tracker) == ("", {})
     cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nmemory:\n  hub: /srv/hub\n"
                                  "  location: home/where.md\n"
-                                 "  private: {about: переговоры о покупке квартиры, sphere: home}\n"
                                  "  tracker: {path: home/flats.md, title: Квартиры}\n").memory
 
     class Memory:  # what the modules read: the memory's config
@@ -209,7 +207,6 @@ def test_the_owners_own_words_for_memory_load_from_router_yaml(tmp_path, monkeyp
     memory = Memory()
     memory.cfg = cfg
     assert location_record(memory) == "home/where.md" and location_record(Memory()) == LOCATION
-    assert Private.of(memory) == Private(about="переговоры о покупке квартиры", sphere="home")
     tracker = Tracker.of(memory)
     assert (tracker.path, tracker.title) == ("home/flats.md", "Квартиры")
 

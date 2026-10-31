@@ -29,7 +29,7 @@ import httpx
 from . import clock, courier, pages
 from .archive import CHAT, MAIL, exchange_of
 from .courier import MAIL as BY_MAIL, TELEGRAM as BY_TELEGRAM, CardView, Envelope, Refused
-from .mail import PRIVATE, Unavailable, safe_label
+from .mail import Unavailable, safe_label
 
 log = logging.getLogger("retinue.outbox")
 
@@ -38,7 +38,7 @@ HOLD_S = 10               # after «Send», this long to «Cancel» before anyth
 STALE = "Expired: a new message came in."  # a card whose exchange moved on: it never sends
 WINDOW_MARGIN_S = 600     # a Telegram reply is offered only while the 24-hour window has this much left
 DAY = 86400
-LIVE = ("shown", "hidden", "link")   # a card whose buttons still mean something
+LIVE = ("shown", "link")   # a card whose buttons still mean something
 GONE = "The draft is no longer valid."
 RESTARTED = "The router restarted during the hold: not sent."
 # A flagged card's head line; a draft made before the switch to English carries the Russian word.
@@ -97,8 +97,8 @@ class OutboxStore:
     long it lives, and what became of it. A state moves only from the states named (`move`): two presses, a press
     and the clock, a restart — exactly one of them wins."""
 
-    COLUMNS = ("id", "created", "state", "channel", "envelope", "digest", "reply_to", "thread", "head", "private",
-               "card", "expires", "send_after", "result", "at")
+    COLUMNS = ("id", "created", "state", "channel", "envelope", "digest", "reply_to", "thread", "head", "card",
+               "expires", "send_after", "result", "at")
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self.db = db
@@ -107,7 +107,7 @@ class OutboxStore:
             CREATE TABLE IF NOT EXISTS drafts (
                 id TEXT PRIMARY KEY,                -- 8 hex: the key a sender sends once
                 created REAL NOT NULL,
-                state TEXT NOT NULL,                -- shown | hidden | link | queued | sending | sent | failed | unknown
+                state TEXT NOT NULL,                -- shown | link | queued | sending | sent | failed | unknown
                                                     -- | cancelled | dropped | fixing | replaced | expired | stale
                 channel TEXT NOT NULL,              -- mail | telegram
                 envelope TEXT NOT NULL,             -- courier.Envelope as JSON
@@ -115,7 +115,6 @@ class OutboxStore:
                 reply_to TEXT NOT NULL DEFAULT '',  -- the archive id answered
                 thread TEXT NOT NULL DEFAULT '',    -- where a newer message makes the card stale: mail:<thread>, chat:<id>
                 head TEXT NOT NULL,                 -- the card's header lines, JSON
-                private INTEGER NOT NULL DEFAULT 0, -- about the owner's private matter: the card waits behind «Show»
                 card TEXT NOT NULL DEFAULT '',      -- the archive id of the card shown
                 expires REAL NOT NULL,
                 send_after REAL,                    -- queued: the end of the hold
@@ -124,8 +123,9 @@ class OutboxStore:
             );
             CREATE INDEX IF NOT EXISTS drafts_state ON drafts (state);
             """)
-        if "job" in {row[1] for row in db.execute("PRAGMA table_info(drafts)")}:  # the column's former name
-            db.execute("ALTER TABLE drafts RENAME COLUMN job TO private")
+        for column in {"job", "private"} & {row[1] for row in db.execute("PRAGMA table_info(drafts)")}:
+            db.execute(f"ALTER TABLE drafts DROP COLUMN {column}")  # a column no longer used
+        db.execute("UPDATE drafts SET state = 'expired' WHERE state = 'hidden'")  # a card never shown: nothing shows it
         db.commit()
 
     def add(self, draft: dict) -> None:
@@ -186,7 +186,6 @@ class Built:
     known: set[str] = field(default_factory=set)   # the thread's participants: their addresses are not findings
     flags: list[str] = field(default_factory=list)
     new: bool = False
-    private: bool = False         # about the owner's private matter
     mode: str = "send"            # send | link (t.me deep link) | copy (no link) | mailto (no working sender)
     why: str = ""                 # why not «send»
     window_end: float | None = None
@@ -201,7 +200,7 @@ class Outbox:
 
     def attach(self, core) -> None:
         self.core = core
-        core.actions.update({"courier_show": self._show, "courier_send": self._send, "courier_cancel": self._cancel,
+        core.actions.update({"courier_send": self._send, "courier_cancel": self._cancel,
                              "courier_fix": self._fix, "courier_skip": self._skip})
         self.tasks: set[asyncio.Task] = set()
 
@@ -225,10 +224,9 @@ class Outbox:
         except (Refused, pages.Refused) as exc:
             return False, f"Not accepted: {exc}"
         flags = list(built.flags) + (["at the other person's request"] if foreign & {"mail", "telegram"} else [])
-        read, closed, private = self._read_outside(built, reads, others)
+        read, closed = self._read_outside(built, reads, others)
         if closed:
             flags.append(f"read closed matter: {closed} — check that none of it went into the text")
-        built.private = built.private or private
         draft_id = secrets.token_hex(4)
         while self.store.get(draft_id):
             draft_id = secrets.token_hex(4)
@@ -240,7 +238,7 @@ class Outbox:
             flags.append(f"replaces draft {replaced['id']}")
         draft = {"id": draft_id, "created": now, "state": "shown" if built.mode == "send" else "link",
                  "channel": envelope.channel, "envelope": envelope.as_dict(), "digest": courier.digest(envelope),
-                 "reply_to": built.reply_to, "thread": built.thread, "private": int(built.private),
+                 "reply_to": built.reply_to, "thread": built.thread,
                  "head": courier.head(draft_id, envelope, built.about, flags, courier.findings(text, built.known), read),
                  "card": "", "expires": expires, "send_after": None, "at": now}
         if built.mode != "send":
@@ -256,16 +254,15 @@ class Outbox:
         return True, (f"Draft {draft_id} is shown to the owner, but the system cannot send it itself: {built.why} "
                       "The owner will send it himself if he wants.")
 
-    def _read_outside(self, built: Built, reads: list[dict], others: bool) -> tuple[str, str, bool]:
+    def _read_outside(self, built: Built, reads: list[dict], others: bool) -> tuple[str, str]:
         """What the run read outside the exchange this draft answers, counted by source: the card's «Read while drafting»;
-        the closed part of it — the owner's private matter, closed Spaces of the base, and, in a run somebody else
-        started, the owner's own conversation; and whether the private matter was among it. A new letter answers no
-        exchange: every read is outside."""
+        and the closed part of it — closed Spaces of the base and, in a run somebody else started, the owner's own
+        conversation. A new letter answers no exchange: every read is outside."""
         event = self.core.archive.get(built.reply_to) if built.reply_to else None
         here = exchange_of(event) if event else None
         counts: dict[str, int] = {}
         closed: dict[str, int] = {}
-        private, seen = False, set()
+        seen = set()
         for read in reads:
             if read.get("exchange") == here and read.get("source") != "kb" or read.get("id") in seen:
                 continue
@@ -273,10 +270,7 @@ class Outbox:
             name = f"Base ({read.get('space') or 'root'})" if read.get("source") == "kb" else \
                 SOURCES.get(read.get("source"), "other")
             counts[name] = counts.get(name, 0) + 1
-            if read.get("private"):
-                private = True
-                closed["private"] = closed.get("private", 0) + 1
-            elif read.get("closed") or (others and read.get("source") == "owner"):
+            if read.get("closed") or (others and read.get("source") == "owner"):
                 closed[name] = closed.get(name, 0) + 1
 
         def said(found: dict[str, int]) -> str:
@@ -284,7 +278,7 @@ class Outbox:
             names = sorted(found, key=lambda n: (order.index(n) if n in order else len(order), n))
             return ", ".join(f"{n} {found[n]}" for n in names)
 
-        return said(counts), said(closed), private
+        return said(counts), said(closed)
 
     async def _reply(self, reply_to: str, text: str, now: float) -> Built:
         event = self.core.archive.get(reply_to)
@@ -310,7 +304,7 @@ class Outbox:
                                 if courier.MESSAGE_ID.fullmatch(mid) else ())
             built = Built(envelope, f"Reply to the letter of {said}", event.id, f"mail:{thread}",
                           {sender, address, envelope.account, *(meta.get("to") or []), *(meta.get("cc") or [])}, flags,
-                          new=not self._wrote_to(address), private=self._private(event.id))
+                          new=not self._wrote_to(address))
             built.mode, built.why = await self._mailbox(envelope.account)
             courier.check(envelope)
         else:
@@ -324,7 +318,7 @@ class Outbox:
             last = self._last_in(chat) or event.ts
             built = Built(envelope, f"Reply to the message of {said}", event.id, f"chat:{chat}", set(),
                           [f"Telegram window until {clock.until(last + DAY, now, self.core.tz)}"],
-                          new=not self._chatted(chat), private=self._private(event.id), window_end=last + DAY)
+                          new=not self._chatted(chat), window_end=last + DAY)
             if built.window_end - now < WINDOW_MARGIN_S + 60:
                 built.mode, built.why = "link", "the Telegram window is closed: more than a day since their last message."
             elif not self.gateway:
@@ -355,7 +349,7 @@ class Outbox:
         envelope = Envelope(BY_MAIL, str(json.loads(rows[0][0]).get("account") or ""), address, text, subject=subject)
         courier.check(envelope)
         built = Built(envelope, "New letter", "", f"from:{address}", {address, envelope.account},
-                      new=not self._wrote_to(address), private=self._private_sender(address))
+                      new=not self._wrote_to(address))
         built.mode, built.why = await self._mailbox(envelope.account)
         if built.new:
             built.flags.insert(0, "new recipient")
@@ -395,20 +389,6 @@ class Outbox:
             "SELECT MAX(ts) FROM events WHERE kind = 'chat' AND conversation_id = ? AND json_extract(meta, "
             "'$.direction') = 'in' AND NOT json_extract(meta, '$.edit')", (f"chat:{chat}",)).fetchone()[0]
 
-    def _private(self, event_id: str) -> bool:
-        if not self.core.mail:
-            return False
-        row = self.core.mail.store.db.execute("SELECT kind, card FROM mail_items WHERE event_id = ?",
-                                              (event_id,)).fetchone()
-        return bool(row) and (row[0] == PRIVATE or bool(json.loads(row[1] or "{}").get(PRIVATE)))
-
-    def _private_sender(self, address: str) -> bool:
-        if not self.core.mail:
-            return False
-        return self.core.mail.store.db.execute(
-            "SELECT 1 FROM mail_items WHERE sender = ? AND (kind = ? OR json_extract(card, '$.private')) LIMIT 1",
-            (address, PRIVATE)).fetchone() is not None
-
     # --- the card -------------------------------------------------------------------------------------------------
 
     def view(self, draft: dict, status: str = "") -> CardView:
@@ -429,7 +409,7 @@ class Outbox:
 
         envelope = draft["envelope"]
         out = []
-        if draft["state"] in ("shown", "hidden"):
+        if draft["state"] == "shown":
             flagged = any(line.startswith(WARNING) for line in draft["head"])
             whom = envelope.get("name") or envelope["to"]
             label = safe_label(f"Send: {whom}", 60) if flagged else "Send"
@@ -437,37 +417,12 @@ class Outbox:
         return out + [Button("Edit", "courier_fix", draft["id"]), Button("Don't reply", "courier_skip", draft["id"])]
 
     async def show(self, draft: dict, now: float, status: str = "") -> None:
-        """The card — or, about the private matter, a line that says no more than that a draft waits, and the card on
-        «Show»: a notification shows the start of a message on the screen, during a call too."""
+        """The card."""
         ttl = max(60.0, draft["expires"] - now)
-        if draft["private"] and draft["state"] in ("shown", "link"):
-            if draft["state"] == "shown":
-                self.store.move(draft["id"], ("shown",), "hidden", now)
-            await self.core.tell_owner("Draft to confirm: 1.", ttl_s=ttl, meta={"draft": draft["id"]},
-                                       buttons=[self._button("Show", "courier_show", draft["id"])])
-            return
         card = await self.core.tell_card(self.view(draft, status), buttons=self.buttons(draft), ttl_s=ttl,
                                          meta={"draft": draft["id"]})
         self.store.db.execute("UPDATE drafts SET card = ? WHERE id = ?", (card, draft["id"]))
         self.store.db.commit()
-
-    @staticmethod
-    def _button(label: str, action: str, value: str):
-        from .core import Button
-
-        return Button(label, action, value)
-
-    async def _show(self, value: str) -> str:
-        """«Show»: the card itself, once."""
-        draft = self.store.get(value)
-        now = self.clock()
-        if not draft or draft["card"] or draft["state"] not in ("hidden", "link") or draft["expires"] <= now:
-            return GONE
-        if draft["state"] == "hidden":
-            self.store.move(draft["id"], ("hidden",), "shown", now)
-        draft = {**self.store.get(value), "private": 0}
-        asyncio.create_task(self.show(draft, now))
-        return "Showing"
 
     # --- the owner's presses --------------------------------------------------------------------------------------
 

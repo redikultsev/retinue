@@ -50,17 +50,14 @@ hub's own folder, which the containers' group may not write. So a new clone name
 
 ## Your own words: `owner.yaml`
 
-A few things the code keeps generic are yours to name: the Record whose header holds your zone, the matter you keep
-private in letters and drafts ([mail.md](mail.md)), what your tracker tracks ([proactive.md](proactive.md#the-tracker)).
-They are keys of `memory:` in `router.yaml`, which `setup.sh` writes anew on every run, so they live in a file of
-the server only, `/srv/retinue/memory/owner.yaml`: its lines go under `memory:` as they are, and `setup.sh` refuses
-any key but these three. Without the file every key keeps its neutral default.
+A few things the code keeps generic are yours to name: the Record whose header holds your zone and what your tracker
+tracks ([proactive.md](proactive.md#the-tracker)). They are keys of `memory:` in `router.yaml`, which `setup.sh` writes
+anew on every run, so they live in a file of the server only, `/srv/retinue/memory/owner.yaml`: its lines go under
+`memory:` as they are, and `setup.sh` refuses any key but these two. Without the file every key keeps its neutral
+default.
 
 ```yaml
 location: profile/location.md          # the Record whose header field `tz` names your zone
-private:
-  about: a private negotiation — letters from the other side, meetings about it   # in your words
-  sphere: work                         # the sphere its row of «Waiting for you» belongs to; '' — none
 tracker:
   path: profile/tracker.md             # all keys: proactive.md, «The tracker»
   title: Tracker

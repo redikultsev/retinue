@@ -1,6 +1,6 @@
 """What waits for the owner in the assistant's world, as the router reads it from its own tables for the digest
 (`waiting.digest`): people she judged to ask something of him, drafts waiting for «Send», the base's near
-deadlines — with no address, no letter's text, and the owner's private matter named by a count only."""
+deadlines — with no address and no letter's text."""
 
 from __future__ import annotations
 
@@ -25,8 +25,7 @@ def core(tmp_path, scanned=None):
     tmp_path.mkdir(parents=True, exist_ok=True)
     store = Store(str(tmp_path / "r.sqlite"))
     return SimpleNamespace(mail=SimpleNamespace(store=MailStore(store.db)), outbox=SimpleNamespace(
-        store=OutboxStore(store.db)), proactive=SimpleNamespace(scanned=scanned), tz="UTC", store=store,
-        memory=SimpleNamespace(cfg=SimpleNamespace(private={"sphere": "home"})))
+        store=OutboxStore(store.db)), proactive=SimpleNamespace(scanned=scanned), tz="UTC", store=store)
 
 
 def letters(mail: MailStore, *rows):
@@ -39,7 +38,7 @@ def letters(mail: MailStore, *rows):
 def draft(outbox: OutboxStore, draft_id: str, **over):
     outbox.add({"id": draft_id, "created": NOW - 600, "state": "shown", "channel": "mail",
                 "envelope": {"name": "Анна Петрова", "to": "anna@acme.example"}, "digest": "d", "reply_to": "",
-                "thread": "", "private": 0, "head": [], "card": "", "expires": NOW + HOUR, "send_after": None, "at": NOW,
+                "thread": "", "head": [], "card": "", "expires": NOW + HOUR, "send_after": None, "at": NOW,
                 **over})
 
 
@@ -50,7 +49,7 @@ def test_people_who_ask_something_come_once_each_without_an_address_or_their_wor
                                         "ts": NOW - 2 * DAY, "event_id": "e1",
                                         "card": {"who": "Банк (no-reply@bank.example)", "text": "Подтвердить адрес.",
                                                  "needs_now": "act", "deadline_now": "пт"}}),
-            ("mail", {"box": "INBOX"}, {"state": "told", "kind": "private", "sender": "desk@acme.example",
+            ("mail", {"box": "INBOX"}, {"state": "told", "kind": "person", "sender": "desk@acme.example",
                                         "ts": NOW - DAY, "card": {"text": "Клиника Acme ждёт в среду",
                                                                   "needs_now": "reply"}}),
             ("mail", {"box": "INBOX"}, {"state": "later", "kind": "service", "sender": "shop@x.example",
@@ -68,8 +67,7 @@ def test_people_who_ask_something_come_once_each_without_an_address_or_their_wor
         ("chat", "Мария", "reply: И когда рейс? (+1)"),
         ("letter", "Банк", "do: Подтвердить адрес. · deadline пт"),
     ], "reply before act; «read» only to know; Пётр was answered in his chat"
-    assert rows[0]["sphere"] == "home" and rows[0]["private"] is True and rows[1]["since"] == NOW - 3 * HOUR
-    assert "private" not in rows[1] and "private" not in rows[2]
+    assert rows[0]["sphere"] is None and rows[1]["since"] == NOW - 3 * HOUR
     said = json.dumps(rows, ensure_ascii=False)
     assert "@" not in said and "tg:7" not in said, "no address, no handle"
     assert feed.clean({"items": rows}, NOW)[0], "the platform takes it as it is"
@@ -84,14 +82,12 @@ def test_a_draft_waits_for_its_button_and_its_letter_is_not_counted_twice(tmp_pa
     draft(c.outbox.store, "aaaa0001", reply_to="e7")
     draft(c.outbox.store, "aaaa0002", created=NOW - 500, state="link", channel="telegram",
           envelope={"name": "", "to": "777"})
-    draft(c.outbox.store, "aaaa0003", created=NOW - 400, private=1)
-    draft(c.outbox.store, "aaaa0004", expires=NOW - 1)
-    draft(c.outbox.store, "aaaa0005", state="sent")
+    draft(c.outbox.store, "aaaa0003", expires=NOW - 1)
+    draft(c.outbox.store, "aaaa0004", state="sent")
     rows = waiting.digest(c, NOW)
     assert [(r["id"], r["who"], r["title"], r["sphere"]) for r in rows] == [
         ("draft:aaaa0001", "Анна Петрова", waiting.DRAFT, None),
         ("draft:aaaa0002", "sender", waiting.LINK_DRAFT, None),
-        ("draft:aaaa0003", "Private", waiting.DRAFT, "home"),
     ]
 
 
@@ -376,23 +372,6 @@ def test_an_unknown_or_outdated_token_applies_nothing(tmp_path):
     assert opened(c.mail.store) == [ask]
 
 
-def test_a_private_letter_is_a_row_of_its_own_named_in_the_app_and_closed_on_its_own(tmp_path):
-    c = core(tmp_path)
-    attend, pay = put(c.mail.store, *({**asking(need, message_id=f"<{need}@example.org>", ts=NOW - n * HOUR),
-                                       "fields": {**asking(need, ts=NOW - n * HOUR)["fields"], "kind": "private",
-                                                  "event_id": need}}
-                                      for n, need in ((2, "attend"), (1, "pay"))))
-    rows = waiting.digest(c, NOW)
-    assert [(r["who"], r["title"].split(":")[0], r["sphere"], r["private"]) for r in rows] == \
-        [("Анна Петрова", "pay", "home", True), ("Анна Петрова", "attend", "home", True)], "one row per ask, as any"
-    assert all(r["private"] is True for r in feed.clean({"items": rows}, NOW)[0])
-    sheet = waiting.detail(c, rows[0]["id"], rows[0]["t"], NOW)
-    assert sheet["who"] == "Анна Петрова" and [a["need"] for a in sheet["asks"]] == ["pay"]
-    assert feed.clean_detail(sheet) == sheet, "the platform takes it as it is"
-    assert waiting.press(c, rows[0]["t"], "done", NOW), "the row's token closes its letter"
-    assert opened(c.mail.store, NOW + 60) == [attend], "one letter closed, the other still asks"
-
-
 
 def test_people_writing_from_one_address_are_a_row_each(tmp_path):
     """LinkedIn's InMail sends every recruiter's message from one address: her judgement names the person."""
@@ -510,14 +489,13 @@ def test_a_chats_sheet_opens_the_chat_by_its_username_or_has_no_link(tmp_path):
     assert feed.clean_detail(sheet) and feed.clean_detail(bare)
 
 
-def test_a_drafts_sheet_has_its_text_and_its_letter_and_a_private_one_none(tmp_path):
+def test_a_drafts_sheet_has_its_text_and_its_letter(tmp_path):
     c = core(tmp_path)
     put(c.mail.store, asking(data={"box": "INBOX", "thread": THREAD, "head": {"message_id": "<m1@example.org>",
                                                                                "reply_to": ""}}))
     draft(c.outbox.store, "aaaa0001", reply_to="e<m1@example.org>", envelope={
         "name": "Анна Петрова", "to": "anna@example.org", "account": "me@example.com", "subject": "Re: hosting",
         "text": "Hello Anna,\n\nPaid, ref 99887766, code 4321.\n\nThanks", "thread": THREAD})
-    draft(c.outbox.store, "aaaa0002", private=1)
     draft(c.outbox.store, "aaaa0003", expires=NOW - 1)
     sheet = waiting.detail(c, "draft:aaaa0001", "", NOW)
     assert sheet["kind"] == "draft" and sheet["who"] == "Анна Петрова" and sheet["account"] == "me@example.com"
@@ -526,5 +504,4 @@ def test_a_drafts_sheet_has_its_text_and_its_letter_and_a_private_one_none(tmp_p
     assert sheet["open"]["url"].endswith(f"#all/{THREAD}") and sheet["asks"][0]["need"] == "reply"
     assert "anna@example.org" not in json.dumps(sheet, ensure_ascii=False)
     assert feed.clean_detail(sheet) == sheet
-    assert waiting.detail(c, "draft:aaaa0002", "", NOW) is None, "the private matter's draft waits behind «Show»"
     assert waiting.detail(c, "draft:aaaa0003", "", NOW) is None and waiting.detail(c, "draft:ffff0000", "", NOW) is None

@@ -66,8 +66,8 @@ type Loaded = { state: "loading" } | { state: "ok"; detail: WaitingDetail } | { 
 export function useDetail(row: FeedRow | null, load = api.waitingDetail): [Loaded | null, () => void] {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [attempt, setAttempt] = useState(0);
-  // a person's row by its token; a draft by its id, unless it is the private matter's
-  const asks = !!row && (!!row.t || (row.source === "draft" && !row.private));
+  // a person's row by its token; a draft by its id
+  const asks = !!row && (!!row.t || row.source === "draft");
   // biome-ignore lint/correctness/useExhaustiveDependencies: one request per opened row and per «Try again»
   useEffect(() => {
     if (!row || !asks) {
@@ -126,7 +126,6 @@ function Ask({
 }) {
   return (
     <li className="flex flex-col gap-1">
-      {ask.who && <p className="text-sm font-medium break-words">{ask.who}</p>}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
         <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">{NEED_WORDS[ask.need] ?? ask.need}</span>
         {ask.deadline && <span className="font-medium text-amber-700 dark:text-warning">deadline {ask.deadline}</span>}
@@ -192,12 +191,6 @@ function Skeleton() {
 }
 
 function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null; retry: () => void; now: number }) {
-  if (row.private && !row.t)
-    return (
-      <p className="text-sm text-muted-foreground">
-        A draft of your private matter: its text and «Send» are behind «Show» in Telegram.
-      </p>
-    );
   if (!loaded || loaded.state === "loading")
     return (
       <div className="flex flex-col gap-3" aria-busy="true">
@@ -252,7 +245,7 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
           <ul className="flex flex-col gap-3">
             {asks.map((ask) => (
               <Ask
-                key={ask.t ?? `${ask.at}:${ask.need}`}
+                key={`${ask.at}:${ask.need}`}
                 ask={ask}
                 now={now}
                 single={!many}
@@ -288,7 +281,7 @@ export function WaitingSheet({
 }) {
   const [loaded, retry] = useDetail(row, load);
   const detail = loaded?.state === "ok" ? loaded.detail : null;
-  // her chat with the owner, only where the thing itself is there: a draft's «Send» (a private one's behind «Show»)
+  // her chat with the owner, only where the thing itself is there: a draft's «Send»
   const botLink: DetailLink | null = bot && row?.source === "draft" ? { url: `https://t.me/${bot}`, label: "Send in Telegram" } : null;
   const open = linkOk(detail?.open) ? detail.open : null;
   const press = async (action: Press, label: string) => {

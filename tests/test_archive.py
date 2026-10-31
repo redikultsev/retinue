@@ -171,7 +171,7 @@ def test_an_exchange_is_a_chat_a_mail_thread_a_lone_letter_a_calendar_or_the_own
 
 def test_a_search_keeps_to_an_exchange_kinds_and_dates_and_hides_what_it_is_told_to(tmp_path):
     """The router narrows a search in code: one exchange (a chat with its captions, a mail thread with the captions
-    of its files), kinds, a span of dates; and it hides events — the private matter — with every caption about them."""
+    of its files), kinds, a span of dates; and it hides events — the messages a run answers — with every caption about them."""
     archive = make(tmp_path)
     chat, photo = photo_of(archive)
     archive.note(photo, chat, "Зурбаган: старый мост", run="r", ts=150.0)

@@ -559,15 +559,14 @@ session, a card or a summary changes on the stream (once per burst) and once a m
 | “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted (“To the Base: N files”, since the first of them) | “Allow” / “Deny”; a courier's “Copy command”; “To the Base · N”, the card in a dialog. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first: nothing is decided unseen |
 | “Reply” | a session waiting for your message with no card shown | “Open and answer” |
 | “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
-| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and the way to the thing. A person's row or a draft — its words, or › “Details” — opens [its sheet](#her-rows-sheet); a base's date — its words, or ↗ “Open the Record” — opens the Record in Spaces; a letter of the private matter is a row like any other here (named only in the app, never in Telegram's `/wait`). A draft of the private matter has only ↗ “Open in Telegram” (`https://t.me/<bot>`): its text and «Send» come after “Show” there. Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |
+| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and the way to the thing. A person's row or a draft — its words, or › “Details” — opens [its sheet](#her-rows-sheet); a base's date — its words, or ↗ “Open the Record” — opens the Record in Spaces. Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |
 
 Each row: an icon of where it came from, its sphere (or track), the session's title (her rows: who), how long it has
 waited and its one line — the question, the command, the summary's first line, her title. A card is the same object
 as everywhere (`approval`), decided by the same rules; the app shows its newest copy, so a press in Telegram shows at
 once. A row is `{key, action, source, session, track, sphere, sphere_title, sphere_icon, title, since, essence, ref}`
 plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row,
-`base` (the count) on a “To the Base” row (`source: base`), `t` (the row's token) on a person's row of hers, `private:
-true` on a row of hers about the private matter (a letter's, or a draft that names no one).
+`base` (the count) on a “To the Base” row (`source: base`), `t` (the row's token) on a person's row of hers.
 A pressed row leaves the feed at once and stays hidden while the feed still has its `t`, ten minutes at most — a press
 that did not go through brings it back; the toast “Done · Undo” stays 10 seconds, and “Undo” sends `open`
 with the same `t`. Under her rows: “Closed today: M · Ran out unmarked this week: N” (`closed_today`,
@@ -605,9 +604,7 @@ has one by that name, else “Auto” (`startNew`: this tab's sessionStorage, li
 “Not a task” and “Tomorrow”, as on the row. Inside the Mini App a t.me link goes to Telegram itself (`web_app_open_tg_link`) and
 Gmail to its browser (`web_app_open_link`), each from the tap itself.
 
-A letter of the private matter opens as any letter does. A draft of the private matter is never asked for, and is
-refused on both sides. When the router is
-silent the sheet says “The assistant's side did not answer in time.” with “Try again”; when the row is out of date
+When the router is silent the sheet says “The assistant's side did not answer in time.” with “Try again”; when the row is out of date
 it says so, drops the buttons and reads the feed again. Nothing of the sheet is kept: not by the platform (it relays
 the router's answer to the request that waits for it — [platform.md](platform.md#the-assistants-digest)), not by the
 app once the sheet closes.

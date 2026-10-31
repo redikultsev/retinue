@@ -57,7 +57,7 @@ class Tree:
     exchanges: set[str] = field(default_factory=set)
     asked: set[str] = field(default_factory=set)  # the archive ids of the new messages the run answers
     # What the run read, as code saw it: each search find, each file fetched, each read in the base, the other items
-    # of a judgement — {id, exchange, source, private, closed}. A draft's card names what lies outside its exchange.
+    # of a judgement — {id, exchange, source, closed}. A draft's card names what lies outside its exchange.
     reads: list[dict] = field(default_factory=list)
 
 

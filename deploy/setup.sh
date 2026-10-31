@@ -191,8 +191,8 @@ install -d -m 755 "$MEMORY_DIR" "$MEMORY_DIR/tree" "$MEMORY_DIR/git"
 [[ -f $MEMORY_DIR/policy.json ]] || install -m 644 "$REPO/deploy/memory/policy.example.json" "$MEMORY_DIR/policy.json"
 [[ -f $MEMORY_DIR/checkout.txt ]] || install -m 644 "$REPO/deploy/memory/checkout.example.txt" "$MEMORY_DIR/checkout.txt"
 [[ -f $MEMORY_DIR/sensitive.txt ]] || install -m 644 "$REPO/deploy/memory/sensitive.example.txt" "$MEMORY_DIR/sensitive.txt"
-if [[ -f $MEMORY_DIR/owner.yaml ]] && grep -vE '^([[:space:]]|#|$|(location|private|tracker):)' "$MEMORY_DIR/owner.yaml" >/dev/null; then
-  echo "$MEMORY_DIR/owner.yaml: only the keys location, private and tracker go there (docs/memory.md)" >&2; exit 1
+if [[ -f $MEMORY_DIR/owner.yaml ]] && grep -vE '^([[:space:]]|#|$|(location|tracker):)' "$MEMORY_DIR/owner.yaml" >/dev/null; then
+  echo "$MEMORY_DIR/owner.yaml: only the keys location and tracker go there (docs/memory.md)" >&2; exit 1
 fi
 SECRETS="$ROOT/secrets.env"
 [[ -f $SECRETS ]] || (umask 077; : > "$SECRETS")

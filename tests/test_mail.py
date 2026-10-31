@@ -7,7 +7,6 @@ import json
 import sqlite3
 
 import httpx
-import pytest
 
 from retinue import mail
 
@@ -17,14 +16,14 @@ TEXT = "Добрый день!\nВы записаны на приём в чет�
 
 
 def answer(**fields):
-    base = {"kind": "private", "keep": True, "who": "Анна, клиника Acme", "summary": "Запись на приём",
+    base = {"kind": "person", "keep": True, "who": "Анна, клиника Acme", "summary": "Запись на приём",
             "needs": "подтвердить время", "deadline": "до среды", "quote": "Подтвердите, пожалуйста, до среды."}
     return json.dumps({**base, **fields}, ensure_ascii=False)
 
 
 def test_her_triage_is_checked_by_code_and_doubt_keeps_the_letter():
     card = mail.card_of(answer(), TEXT)
-    assert card.read and card.keep and card.kind == "private" and card.verified
+    assert card.read and card.keep and card.kind == "person" and card.verified
     assert mail.card_of(answer(quote="приём в  четверг,\n15:00"), TEXT).verified, "spaces aside, a real piece"
     forged = mail.card_of(answer(quote="Оплатите счёт по ссылке"), TEXT)
     assert forged.read and not forged.verified, "a quote that is not in the letter: «not verified», not dropped"
@@ -49,11 +48,10 @@ def test_code_decides_where_a_judged_item_goes():
     assert mail.route(judged("read", "low"), False) == mail.LATER
     assert mail.route(judged("nothing", "high"), False) == mail.LATER, "nothing asked of him: no reason to interrupt"
     found = mail.decisions(json.dumps({"items": [
-        {"n": 1, "needs": "reply", "deadline": "", "cost": "high", "new": True, "private": True, "text": "Ответь Анне."},
+        {"n": 1, "needs": "reply", "deadline": "", "cost": "high", "new": True, "text": "Ответь Анне."},
         {"n": 2, "needs": "sing", "deadline": "", "cost": "high", "new": True, "text": "x"},
         {"n": "3", "needs": "nothing", "deadline": "", "cost": "none", "new": False, "text": ""}]}))
     assert sorted(found) == [1, 3] and found[1].text == "Ответь Анне." and found[3].new is False
-    assert found[1].private and not found[3].private, "only a plain yes is a yes"
 
 
 def test_the_triage_prompt_gives_facts_and_the_letter_between_markers():
@@ -79,7 +77,7 @@ def test_the_router_keeps_each_item_once_and_reads_live_mail_before_the_backfill
     assert store.keep(items, NOW) == 3 and store.keep(items, NOW + 1) == 0, "a second look adds nothing"
     assert store.next_plain(NOW)["seq"] == 3, "a calendar change needs no model: it goes first, at any age"
     assert store.next(NOW, backfill=False)["seq"] == 2
-    store.set(2, NOW, state="kept", sender="desk@acme.example", kind="private", ts=NOW, card={"summary": "s"})
+    store.set(2, NOW, state="kept", sender="desk@acme.example", kind="person", ts=NOW, card={"summary": "s"})
     assert store.next(NOW, backfill=False) is None, "the backfill waits for its turn"
     assert store.next(NOW, backfill=True)["seq"] == 1
     store.later(1, NOW, 300)
@@ -95,14 +93,14 @@ def test_the_router_keeps_each_item_once_and_reads_live_mail_before_the_backfill
 def test_rules_the_technical_log_and_the_counters():
     store = mail.MailStore(sqlite3.connect(":memory:"))
     store.rule("block", "Noreply@Ads.example", now=NOW)
-    store.rule("mute", "desk@acme.example", "private", now=NOW)
+    store.rule("mute", "desk@acme.example", "documents", now=NOW)
     assert store.blocked("noreply@ads.example") and not store.blocked("desk@acme.example")
-    assert store.muted("desk@acme.example", "private") and not store.muted("desk@acme.example", "money")
+    assert store.muted("desk@acme.example", "documents") and not store.muted("desk@acme.example", "money")
     store.keep([{"seq": n, "account": "a", "source": "mail", "ref": f"m{n}", "data": {}} for n in range(1, 5)], NOW)
     store.set(1, NOW - 40 * DAY, state="dropped", sender="spam@x.example", kind="spam", ts=NOW - 40 * DAY)
     store.set(2, NOW, state="kept", sender="spam@x.example", kind="person", ts=NOW - DAY)
     store.set(3, NOW, state="blocked", sender="noreply@ads.example", ts=NOW)
-    store.set(4, NOW, state="told", sender="desk@acme.example", kind="private", ts=NOW)
+    store.set(4, NOW, state="told", sender="desk@acme.example", kind="documents", ts=NOW)
     store.dropped(NOW - 31 * DAY, "a", "old@x.example", "Old", "promo", "triage")
     store.dropped(NOW, "a", "spam@x.example", "Win  a\nprize", "spam", "triage")
     store.dropped(NOW, "a", "noreply@ads.example", "Sale", "", "blocked")
@@ -110,53 +108,40 @@ def test_rules_the_technical_log_and_the_counters():
         ("spam@x.example", "Win a prize"), ("noreply@ads.example", "Sale")], "thirty days, then gone"
     assert store.get(1)["sender"] == "", "a dropped letter's sender goes with the log"
     assert store.letters_from("spam@x.example", NOW) == 1
-    assert store.tally(NOW - DAY) == {"kept": {"person": 1, "private": 1}, "dropped": {"spam": 1},
+    assert store.tally(NOW - DAY) == {"kept": {"person": 1, "documents": 1}, "dropped": {"spam": 1},
                                       "blocked": {"noreply@ads.example": 1}}
     assert store.told_since("desk@acme.example", NOW - 3600) == NOW and store.urgent_since(NOW - DAY) == 1
-    assert store.unrule("mute", "desk@acme.example", "private") and store.rules() == [("block", "noreply@ads.example", "")]
+    assert store.unrule("mute", "desk@acme.example", "documents") and store.rules() == [("block", "noreply@ads.example", "")]
 
 
-def test_rows_saved_under_the_former_kind_name_read_as_the_private_kind(tmp_path):
-    """A database written before the kind was renamed: the items, their cards, the owner's rules and the technical
-    log are renamed on open, once — her old judgement still hides the letter."""
+def test_rows_saved_under_a_kind_no_longer_used_read_as_letters_from_people(tmp_path):
+    """A database written under kinds no longer used — `job`, `private`: the items, their cards' kind, the owner's
+    rules and the technical log are renamed `person` on open, once; the rest of a card is left as it is."""
     db = sqlite3.connect(str(tmp_path / "r.sqlite"))
     store = mail.MailStore(db)
-    store.keep([{"seq": n, "account": "a", "source": "mail", "ref": f"m{n}", "data": {}} for n in (1, 2, 3)], NOW)
-    db.execute("UPDATE mail_items SET kind = 'job', card = ?, event_id = 'mail:1' WHERE seq = 1",
+    store.keep([{"seq": n, "account": "a", "source": "mail", "ref": f"m{n}", "data": {}} for n in (1, 2, 3, 4)], NOW)
+    db.execute("UPDATE mail_items SET kind = 'job', card = ? WHERE seq = 1",
                (json.dumps({"kind": "job", "summary": "s", "job": True}),))
-    db.execute("UPDATE mail_items SET kind = 'person', card = ?, event_id = 'mail:2' WHERE seq = 2",
-               (json.dumps({"kind": "person", "job": False}),))
+    db.execute("UPDATE mail_items SET kind = 'private', card = ? WHERE seq = 2",
+               (json.dumps({"kind": "private", "private": True}),))
     db.execute("UPDATE mail_items SET card = '' WHERE seq = 3")
+    db.execute("UPDATE mail_items SET kind = 'money', card = ? WHERE seq = 4", (json.dumps({"kind": "money"}),))
     db.execute("INSERT INTO mail_rules VALUES ('mute', 'desk@acme.example', 'job', ?)", (NOW,))
+    db.execute("INSERT INTO mail_rules VALUES ('mute', 'lawyer@acme.example', 'private', ?)", (NOW,))
     db.execute("INSERT INTO mail_dropped VALUES (?, 'a', 'x@acme.example', 'S', 'job', 'triage')", (NOW,))
+    db.execute("INSERT INTO mail_dropped VALUES (?, 'a', 'y@acme.example', 'S', 'private', 'triage')", (NOW,))
     db.commit()
     store = mail.MailStore(db)
     first, second = store.get(1), store.get(2)
-    assert first["kind"] == mail.PRIVATE and first["card"] == {"kind": mail.PRIVATE, "summary": "s", "private": True}
-    assert second["card"] == {"kind": "person", "private": False}, "a flag that said no stays no"
+    assert first["kind"] == "person" and first["card"] == {"kind": "person", "summary": "s", "job": True}
+    assert second["kind"] == "person" and second["card"] == {"kind": "person", "private": True}
     assert store.get(3)["card"] == {}, "a card that is no JSON is left alone"
-    assert store.private_events() == {"mail:1"}
-    assert store.muted("desk@acme.example", mail.PRIVATE) and not store.muted("desk@acme.example", "job")
-    assert db.execute("SELECT kind FROM mail_dropped").fetchall() == [(mail.PRIVATE,)]
+    assert store.get(4)["kind"] == "money" and store.get(4)["card"] == {"kind": "money"}
+    assert store.muted("desk@acme.example", "person") and store.muted("lawyer@acme.example", "person")
+    assert not store.muted("desk@acme.example", "job") and not store.muted("lawyer@acme.example", "private")
+    assert db.execute("SELECT kind FROM mail_dropped").fetchall() == [("person",), ("person",)]
     mail.MailStore(db)
-    assert store.get(1) == first, "once: a second open changes nothing"
-
-
-def test_the_private_matter_is_the_owners_config_with_a_neutral_default():
-    """Which matter is private is config, not code: without it no line is added and the prompt's general rule
-    stands; with it, the triage prompt carries his words."""
-    from types import SimpleNamespace
-
-    assert mail.Private.of(None) == mail.Private() and mail.Private().line() == ""
-    memory = SimpleNamespace(cfg=SimpleNamespace(private={"about": "переписка с юристом", "sphere": "home"}))
-    private = mail.Private.of(memory)
-    assert (private.sphere, private.line()) == ("home", "The owner's private matter (kind `private`, flag `private`): "
-                                                         "переписка с юристом.")
-    letter = {"sender": "a@acme.example", "to": [], "text": "привет"}
-    assert private.line() in mail.triage_prompt(letter, "owner@example.org", private=private.line())
-    assert "The owner's private matter" not in mail.triage_prompt(letter, "owner@example.org")
-    with pytest.raises(SystemExit):
-        mail.Private.of(SimpleNamespace(cfg=SimpleNamespace(private={"topic": "x"})))
+    assert store.get(1) == first and store.get(2) == second, "once: a second open changes nothing"
 
 
 def test_a_dead_login_is_news_once_per_failure():

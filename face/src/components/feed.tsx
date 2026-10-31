@@ -132,19 +132,13 @@ function Counts({ feed }: { feed: FeedData }) {
 }
 
 /** Where a row of hers goes at a tap: a base's date to its Record; a person's row or a draft to its sheet, which asks
- * the router where the thing is; a private matter's draft to the bot (its words are behind «Show» there). */
-function Way({ row, bot, record, onOpen }: { row: FeedRow; bot: string; record: (() => void) | null; onOpen: () => void }) {
+ * the router where the thing is. */
+function Way({ row, record, onOpen }: { row: FeedRow; record: (() => void) | null; onOpen: () => void }) {
   if (row.source === "deadline")
     return record ? (
       <button type="button" aria-label="Open the Record" title="Open the Record" className={ROW_ICON} onClick={record}>
         <ArrowUpRight />
       </button>
-    ) : null;
-  if (row.private && !row.t)
-    return bot ? (
-      <a href={`https://t.me/${bot}`} target="_blank" rel="noopener noreferrer" aria-label="Open in Telegram" title="Open in Telegram" className={ROW_ICON}>
-        <ArrowUpRight />
-      </a>
     ) : null;
   return (
     // the row's words open the same sheet and take the tab stop; this is the pointer's way to it, at the row's end
@@ -154,14 +148,14 @@ function Way({ row, bot, record, onOpen }: { row: FeedRow; bot: string; record: 
   );
 }
 
-function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: number; feed: FeedData; onOpen: (row: FeedRow) => void }) {
+function Row({ row, now, feed, onOpen }: { row: FeedRow; now: number; feed: FeedData; onOpen: (row: FeedRow) => void }) {
   const Icon = ICONS[row.source] ?? ListTodo;
   const where = row.sphere_title || row.track;
   const openRecord = useOpenRecord();
   const path = row.source === "deadline" ? feed.deadlines?.find((d) => d.id === row.ref)?.path : null;
   const split = path ? splitRecord(path) : null;
   const record = split ? () => openRecord(split.space, split.path) : null;
-  const tap = row.action !== "assistant" ? null : row.source === "deadline" ? record : row.private && !row.t ? null : () => onOpen(row);
+  const tap = row.action !== "assistant" ? null : row.source === "deadline" ? record : () => onOpen(row);
   const title = row.session ? (
     <Link to="/s/$id" params={{ id: row.session }} className="min-w-0 truncate font-medium hover:underline">
       {row.title}
@@ -174,7 +168,7 @@ function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: 
     row.action === "assistant" ? (
       <div className="flex shrink-0 items-center gap-0.5 self-end sm:self-center">
         {row.t && <PressButtons t={row.t} />}
-        <Way row={row} bot={bot} record={record} onOpen={() => onOpen(row)} />
+        <Way row={row} record={record} onOpen={() => onOpen(row)} />
       </div>
     ) : null;
   // spans only: inside a button (her rows) only phrasing content is valid
@@ -232,7 +226,6 @@ function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: 
           Open and answer
         </Link>
       )}
-      {row.action === "assistant" && row.private && !row.t && !bot && <span className="text-xs text-muted-foreground">in Telegram</span>}
     </li>
   );
 }
@@ -280,7 +273,7 @@ export function FeedView({
             )}
             <ul className={LIST}>
               {group.rows.map((row) => (
-                <Row key={row.key} row={row} bot={feed.bot} now={now} feed={feed} onOpen={setOpened} />
+                <Row key={row.key} row={row} now={now} feed={feed} onOpen={setOpened} />
               ))}
             </ul>
             {group.action === "assistant" && <Counts feed={feed} />}

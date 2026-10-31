@@ -174,31 +174,12 @@ def test_a_sheet_is_taken_only_in_its_shape_with_links_of_the_routers_own_shapes
     assert draft["draft"]["text"] == "Hello,\nyes." and draft["draft"]["state"] == "link"
 
 
-
-def test_a_private_letter_is_named_in_the_app_and_never_in_telegrams_wait(tmp_path):
-    async def body(world: FaceWorld):
-        await world.login()
-        secret = item(2, id="letter:000000000002", kind="letter", who="Анна Петрова", title="reply: созвон", private=True)
-        assert (await world.owner("waiting", {"items": [item(1), secret]}))["ok"]
-        rows = {r["ref"]: r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]}
-        assert (rows["letter:000000000002"]["title"], rows["letter:000000000002"]["private"]) == ("Анна Петрова", True)
-        said = await world.owner("feed", {})
-        wait = {r["essence"]: r for r in said["rows"]}
-        assert wait[feed.PRIVATE_ESSENCE]["title"] == feed.PRIVATE_WHO and "Мария" in {r["title"] for r in said["rows"]}
-        assert "Анна" not in json.dumps(said, ensure_ascii=False) and "созвон" not in json.dumps(said, ensure_ascii=False)
-    faced(tmp_path, body)
-
-
 def test_a_sheet_is_asked_of_the_router_by_its_long_call_and_relayed_never_kept(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
-        private_draft = item(4, id="draft:0000000d", kind="draft", who=feed.PRIVATE_WHO, sphere="home")
-        rows = [item(1, t=TOKEN), item(2, id="letter:000000000002", kind="letter", who=feed.PRIVATE_WHO, private=True),
-                item(3, id="draft:0000000c", kind="draft"), private_draft, deadline(5)]
+        rows = [item(1, t=TOKEN), item(2, id="letter:000000000002", kind="letter", who="Анна Петрова"),
+                item(3, id="draft:0000000c", kind="draft"), deadline(5)]
         assert (await world.owner("waiting", {"items": rows}))["ok"]
-        feed_rows = {r["ref"]: r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]}
-        assert feed_rows["letter:000000000002"].get("private") and feed_rows["draft:0000000d"].get("private")
-        assert not feed_rows["chat:000000000001"].get("private") and not feed_rows["draft:0000000c"].get("private")
 
         async def router(answer):
             status, said = await world.post("/owner/waiting/asked", {})

@@ -77,11 +77,10 @@ it as for live mail.
 
 ## Every day
 
-- **A message now** — when she judged that something is asked of you and waiting costs much. About your private
-  matter (kind `private`, below) it says only «Mail: 1 important»; the words come on «Show». Several urgent letters of one sender within an hour
-  are one message.
+- **A message now** — when she judged that something is asked of you and waiting costs much. Several urgent letters
+  of one sender within an hour are one message.
 - Under each that asks you to act: **«Done»**, **«Not a task»**, **«Tomorrow»** — they close it in «Waiting for you»
-  ([below](#closing-what-waits)); under the private matter's they come with its words, on «Show».
+  ([below](#closing-what-waits)).
 - Under each: **«Don't notify about this»** — this sender's letters of this kind go to the summary from then on;
   **«Always drop …»** — the address and how many letters it sent in 30 days; its letters are dropped by code,
   unread. Only these buttons change the rules; the assistant has no tool for them. `!mail` lists the mailboxes
@@ -132,23 +131,8 @@ What her judgement said asks you to act — reply, decide, pay, attend, act — 
   days more (after «Tomorrow»: from its morning). Her words set no date, so none of them can hide an ask. What runs out
   leaves «Waiting for you» and is counted: «Ran out unmarked this week: N» in the app and the morning summary. The
   router reads asks judged or pressed in the last 21 days: the longest wait, 14, and the week that count looks at.
-- **The counts** — «Closed today», «Ran out unmarked» — count rows as you see them (a person and an ask; the
-  private matter one row), not letters.
-
-## Your private matter
-
-Letters of kind `private` are about a matter you keep to yourself: a notification names nothing but a count, a
-draft's card waits behind «Show», no draft carries it, and a run somebody else's message started never finds it
-outside that exchange. Which matter that is, you say in your own words in the server's config — `memory.private`
-in router.yaml — and code puts the line into her triage and judgement runs; without it she goes by the general rule
-(a doctor, a lawyer, a private negotiation). `sphere` names the sphere its one row of «Waiting for you» belongs to:
-
-```yaml
-memory:
-  private:
-    about: letters with my lawyer about the lease    # what «private» means for you
-    sphere: home                                  # optional
-```
+- **The counts** — «Closed today», «Ran out unmarked» — count rows as you see them (a person and an ask), not
+  letters.
 
 ## What she may write
 

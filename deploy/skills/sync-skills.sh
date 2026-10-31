@@ -9,7 +9,7 @@
 # name and loses the frontmatter keys the lanes refuse (`allowed-tools`, `model`, `hooks`… — said, never silently),
 # then each skill is checked as the server checks it (retinue/instructions.py prune-skills, check-skills): a refused
 # one is left out and named. With no host it prints the two commands that send the folder and install it; with a host
-# it runs them (rsync, then install-skills.sh under sudo, which asks).
+# it runs them (a tar over ssh — the server needs no rsync — then install-skills.sh under sudo, which asks).
 #
 #   bash deploy/skills/sync-skills.sh               # put together, check, print the commands
 #   bash deploy/skills/sync-skills.sh <ssh-host>    # and send and install
@@ -114,13 +114,13 @@ PY
 python3 -I "$REPO/retinue/instructions.py" prune-skills --strip "$OUT"
 python3 -I "$REPO/retinue/instructions.py" check-skills "$OUT"
 
-send=(rsync -r --delete "$OUT/skills/" "$host:$REMOTE/")
+send() { COPYFILE_DISABLE=1 tar --no-xattrs -C "$OUT" -cf - skills | ssh "$host" "rm -rf ~/$REMOTE && mkdir -p ~/$REMOTE && tar -C ~/$REMOTE --strip-components=1 -xf -"; }
 install=(ssh -t "$host" "sudo bash $REMOTE_REPO/deploy/skills/install-skills.sh ~/$REMOTE")
 if [[ -z $host ]]; then
   echo "checked in $OUT. To send and install (<ssh-host>: the server):"
-  echo "  rsync -r --delete '$OUT/skills/' '<ssh-host>:$REMOTE/'"
+  echo "  tar -C '$OUT' -cf - skills | ssh <ssh-host> 'rm -rf ~/$REMOTE && mkdir -p ~/$REMOTE && tar -C ~/$REMOTE --strip-components=1 -xf -'"
   echo "  ssh -t <ssh-host> 'sudo bash $REMOTE_REPO/deploy/skills/install-skills.sh ~/$REMOTE'"
   exit 0
 fi
-"${send[@]}"
+send
 "${install[@]}"

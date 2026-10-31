@@ -130,7 +130,7 @@ server will and prints the two commands, or runs them when you give it the serve
 ```bash
 bash deploy/skills/sync-skills.sh              # put together, check, print the commands
 bash deploy/skills/sync-skills.sh server       # and send and install: the two commands below
-rsync -r --delete <folder>/skills/ server:retinue-skills/
+tar -C <folder> -cf - skills | ssh server 'rm -rf ~/retinue-skills && mkdir -p ~/retinue-skills && tar -C ~/retinue-skills --strip-components=1 -xf -'
 ssh -t server 'sudo bash /opt/retinue/deploy/skills/install-skills.sh ~/retinue-skills'
 ```
 

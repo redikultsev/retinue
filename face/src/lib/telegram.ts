@@ -9,6 +9,7 @@ interface TelegramWindow {
       expand?: () => void;
       close?: () => void;
       openLink?: (url: string) => void;
+      openTelegramLink?: (url: string) => void;
     };
   };
   /** What Telegram's own apps (iOS, Android, desktop) inject into the web view a Mini App runs in. */
@@ -50,6 +51,23 @@ export function openInTelegram(url: string, win: Window = window): boolean {
     return true;
   }
   return false;
+}
+
+/** A link where it opens best from the page: inside the Mini App a t.me link goes to Telegram itself
+ * (`web_app_open_tg_link`, `path_full`: the Mini App stays open) and any other to its browser (`openInTelegram`); outside
+ * Telegram nothing is done, and the link's own `target="_blank"` opens it. True when handed over. */
+export function openOutside(url: string, win: Window = window): boolean {
+  const w = win as unknown as TelegramWindow;
+  const tg = /^https:\/\/t\.me(\/.*)$/.exec(url);
+  if (tg?.[1] && typeof w.Telegram?.WebApp?.openTelegramLink === "function") {
+    w.Telegram.WebApp.openTelegramLink(url);
+    return true;
+  }
+  if (tg?.[1] && typeof w.TelegramWebviewProxy?.postEvent === "function") {
+    w.TelegramWebviewProxy.postEvent("web_app_open_tg_link", JSON.stringify({ path_full: tg[1] }));
+    return true;
+  }
+  return openInTelegram(url, win);
 }
 
 /** The signed init data if the page runs as a Mini App, else null. */

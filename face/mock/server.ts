@@ -22,8 +22,31 @@ const now = () => Date.now() / 1000;
 /** «From the assistant»: a person's rows, each with its token `t`; a press hides one until «Undo» (`open`). */
 const ASKS = [
   { key: "assistant:chat:1", source: "chat", sphere: "travel", sphere_title: "travel", title: "Anna Petrova", since: now() - 6 * 3600, essence: "reply: is an airport transfer needed", ref: "chat:1", t: "a".repeat(32) },
-  { key: "assistant:letter:2", source: "letter", sphere: "home", sphere_title: "home", title: "Acme Hosting", since: now() - 2 * 86400, essence: "pay: the hosting invoice for May · deadline Friday", ref: "letter:2", t: "b".repeat(32) },
+  { key: "assistant:letter:2", source: "letter", sphere: "home", sphere_title: "home", title: "Acme Hosting", since: now() - 2 * 86400, essence: "pay: the hosting invoice for May · deadline Friday (+2)", ref: "letter:2", t: "b".repeat(32) },
+  { key: "assistant:chat:3", source: "chat", sphere: null, sphere_title: null, title: "Ivan Example", since: now() - 9 * 86400, essence: "decide: whether to keep the shared server for another year or move everything to the new provider before the old contract renews on its own", ref: "chat:3", t: "c".repeat(32) },
+  { key: "assistant:letter:4", source: "letter", sphere: null, sphere_title: null, title: "Example Bank", since: now() - 4 * 86400, essence: "decide: a card payment of $30 was declined · deadline today", ref: "letter:4", t: "d".repeat(32) },
 ];
+/** The others of hers: a draft waiting for «Send», and the private matter's row (no token, no sheet). */
+const OTHERS = [
+  { key: "assistant:draft:0000000c", source: "draft", sphere: null, sphere_title: null, title: "Anna Petrova", since: now() - 1800, essence: "a reply draft waits for «Send»", ref: "draft:0000000c" },
+  { key: "assistant:letter:5", source: "letter", sphere: "home", sphere_title: "home", title: "Private", since: now() - 5 * 86400, essence: "2 private letters wait for a reply", ref: "letter:5", private: true },
+];
+const GMAIL = (thread: string) => ({ url: `https://mail.google.com/mail/?authuser=me@example.com#all/${thread}`, label: "Open in Gmail" });
+/** A row's sheet (`/api/waiting/detail`), as the router would say it: a moment later, invented. Ivan's router is
+ * silent (504 after a short wait), Example Bank's row is out of date (410). */
+const DETAILS: Record<string, unknown> = {
+  "chat:1": { kind: "chat", who: "Anna Petrova", account: "", more: 0, open: { url: "https://t.me/anna_example", label: "Open the chat" },
+    asks: [{ need: "reply", text: "Anna asks whether you need a transfer from the airport on Saturday, and if so for how many people.", deadline: "Thursday", at: now() - 6 * 3600 }] },
+  "letter:2": { kind: "letter", who: "Acme Hosting", account: "me@example.com", more: 0, open: GMAIL("18c2f0a1b2c3d4e7"),
+    asks: [
+      { need: "pay", text: "The last reminder before suspension.", deadline: "", at: now() - 3600, open: GMAIL("18c2f0a1b2c3d4e7") },
+      { need: "pay", text: "A reminder of the same invoice.", deadline: "Friday", at: now() - 86400, open: GMAIL("18c2f0a1b2c3d4e6") },
+      { need: "pay", text: "The invoice for May: ‹number›. Pay by card in the account's billing page.\nThe server is suspended if it is not paid by Friday.", deadline: "Friday", at: now() - 2 * 86400, open: GMAIL("18c2f0a1b2c3d4e5") },
+    ] },
+  "draft:0000000c": { kind: "draft", who: "Anna Petrova", account: "", more: 0, open: { url: "https://t.me/anna_example", label: "Open the chat" },
+    asks: [{ need: "reply", text: "Anna asks about the flight time.", deadline: "", at: now() - 7200 }],
+    draft: { text: "Hi Anna!\n\nThe flight lands at ‹number›, so pick-up at the arrivals hall works.\n\nSee you soon", channel: "telegram", subject: "", expires: now() + 4 * 3600, state: "shown" } },
+};
 const pressed = new Set<string>();
 let closedToday = 1;
 
@@ -42,6 +65,7 @@ function mockFeed() {
     { action: "read", title: "Read", rows: read.map((s) => row(s, { key: `read:${s.id}`, action: "read", source: "session", since: s.at, essence: last(s.id)?.text.split("\n")[0] ?? "" })) },
     { action: "assistant", title: "From the assistant", rows: [
       ...ASKS.filter((a) => !pressed.has(a.t)).map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, ...a })),
+      ...OTHERS.map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, ...a })),
       { key: "assistant:deadline:1", action: "assistant", source: "deadline", session: null, track: null, sphere: "home", sphere_title: "home", sphere_icon: null, title: "Base", since: now() - 86400, essence: "tomorrow: Pay for the internet — due", ref: "deadline:1" },
     ] },
   ].filter((g) => g.rows.length);
@@ -302,9 +326,23 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return json(res, 200, { ok: true });
   }
 
+  if (path === "/api/waiting/detail" && method === "POST") {
+    const { ref, t } = (await body(req)) as { ref?: string; t?: string };
+    const row = [...ASKS, ...OTHERS].find((r) => r.ref === ref);
+    if (typeof ref !== "string") return json(res, 400, { error: "Need ref — the row's id — and t, its token, on a person's row." });
+    if (!row || ("private" in row && row.private) || ("t" in row && row.t !== t) || ref === "letter:4")
+      return json(res, 410, { error: "The assistant no longer has this row: the list is out of date." });
+    if (ref === "chat:3") {
+      await new Promise((done) => setTimeout(done, 3000));
+      return json(res, 504, { error: "The assistant's side did not answer in time." });
+    }
+    await new Promise((done) => setTimeout(done, 700));
+    return json(res, 200, { detail: DETAILS[ref] });
+  }
+
   const space = method === "GET" ? mockSpaces(path) : null;
   if (space) return json(res, space.status, space.data);
-  // «Read»: synthetic pages on a made-up hub; `open` and `done` kept in memory like the platform's table.
+  // «Pages»: synthetic pages on a made-up hub; `open` and `done` kept in memory like the platform's table.
   if (path === "/api/library" && method === "GET") return json(res, 200, { schema: 1, hub: MOCK_HUB, at: now() - 120, pages: [...library.values()] });
   const reading = /^\/api\/library\/([a-z0-9-]+)\/(open|done)$/.exec(path);
   if (reading && method === "POST") {

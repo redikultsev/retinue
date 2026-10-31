@@ -126,7 +126,15 @@ const todayRoute = createRoute({ getParentRoute: () => shellRoute, path: "/today
 const sessionsRoute = createRoute({ getParentRoute: () => shellRoute, path: "/sessions", component: SessionsPage });
 // «＋»: a new task, where a session would be (pages/new.tsx).
 const newRoute = createRoute({ getParentRoute: () => shellRoute, path: "/new", component: () => <NewPage /> });
-const readRoute = createRoute({ getParentRoute: () => shellRoute, path: "/read", component: ReadPage });
+const pagesRoute = createRoute({ getParentRoute: () => shellRoute, path: "/pages", component: ReadPage });
+// «Pages» was «Read»: an old link or bookmark still lands on it.
+const readRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: "/read",
+  beforeLoad: () => {
+    throw redirect({ to: "/pages", replace: true });
+  },
+});
 const weekRoute = createRoute({ getParentRoute: () => shellRoute, path: "/week", component: () => <WeekPage /> });
 const spacesRoute = createRoute({ getParentRoute: () => shellRoute, path: "/spaces", component: SpacesPage });
 const spaceRoute = createRoute({
@@ -222,7 +230,7 @@ const pushRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   homeRoute,
   loginRoute,
-  shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, readRoute, weekRoute, spacesRoute, spaceRoute, recordRoute, sessionRoute]),
+  shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, spacesRoute, spaceRoute, recordRoute, sessionRoute]),
   approvalRoute,
   fileRoute,
   baseRoute,

@@ -91,7 +91,7 @@ describe("the library's rules", () => {
   });
 });
 
-describe("«Read»", () => {
+describe("«Pages»", () => {
   const view = (library: Library | null, extra: Partial<Parameters<typeof ReadView>[0]> = {}) => {
     const onOpen = vi.fn();
     const onDone = vi.fn();

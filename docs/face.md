@@ -87,8 +87,8 @@ passes all four; `RETINUE_FACE_HOST` is the platform's static address on `face-p
 | `RETINUE_FACE_HOST` | the IP address the face API listens on: the platform's own address on `face-platform`. Default `127.0.0.1` — reachable from nowhere. Never `0.0.0.0`: the platform also sits on the lanes' networks, and a lane must not reach the face (not even to spend the login limit). |
 
 and `face_port` from `platform.yaml` (default 9600; it must differ from `listen_port`), and `hub_origin`
-(`https://hub.in.<your domain>`, the life hub's address): the only origin a page of “Read” may open on — without it
-the router's list of pages is refused and “Read” stays empty ([below](#read)). The router takes `face_url:
+(`https://hub.in.<your domain>`, the life hub's address): the only origin a page of “Pages” may open on — without it
+the router's list of pages is refused and “Pages” stays empty ([below](#pages)). The router takes `face_url:
 https://<face host>` from `router.yaml`: with it, `/app` logs you in (without it, `/app` is the
 assistant's, as before), and every approval card gets the button “Open in the app”.
 
@@ -211,7 +211,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/spaces/{space}` | `{head, space: {name, title, rules, marker, sections: [{heading, kind, items: [{text, list}]}], counts, records: {knowledge, profile, journal, artifacts}}}`; 404 for no such Space |
 | `GET /api/spaces/{space}/r/{path}` | `{head, record: {space, path, nature, title, head, bad_head, body}}`; 404 for a path the rules refuse, 413 for a Record over 512 KB; 404 “The Base is not connected.” with no Base, 503 while it cannot be read |
 | `POST /api/speech?mode=dictate\|en` (body: the recording, `Content-Type` its type) | `{text}`; in `en` also `{message}`, the text as the session gets it, “(by voice, verbatim) …” — [Voice](#voice) |
-| `GET /api/library` | `{schema, hub, at, pages: [{id, title, url, updated, section, section_title, section_icon, minutes, opened, done}]}` — “Read”, [below](#read) |
+| `GET /api/library` | `{schema, hub, at, pages: [{id, title, url, updated, section, section_title, section_icon, minutes, opened, done}]}` — “Pages”, [below](#pages) |
 | `POST /api/library/{id}/open` · `/done {done}` | `{page}`: you opened the page; “Finished” (`done: true`) or taken back (`false`); 404 for a page not in the list |
 
 ## Voice
@@ -261,7 +261,7 @@ Voice is **input only**: you speak, the answers stay text (reading is faster tha
 
 ## The shell
 
-On a phone the app is five tabs at the bottom — **Today · Sessions · ＋ · Spaces · Read** — and on a wide
+On a phone the app is five tabs at the bottom — **Today · Sessions · ＋ · Spaces · Pages** — and on a wide
 screen (≥ 1024 px) three columns, as in Claude's desktop app (`face/src/components/shell.tsx`).
 
 The lines between the columns are dragged to resize them: the left column from 200 to 440 px (dragged past its
@@ -276,7 +276,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
 | `/new` | «＋»: a new task ([below](#a-new-task)); a tab on a phone, “New task” in the left column on a wide screen |
 | `/sessions` | the sessions by sphere ([below](#in-the-app)); on a wide screen the left column has them, the middle says so |
 | `/spaces`, `/spaces/<space>`, `/spaces/<space>/r/<path inside the Space>` | the Spaces of the Base, a Space's Showcase, a Record ([base.md](base.md)) |
-| `/read` | the hub's pages to read ([lifehub.md](lifehub.md)) |
+| `/pages` | the hub's pages: to read, and interactive ones ([lifehub.md](lifehub.md)); `/read`, its old name, leads here |
 | `/week` | “Week”: how the work went ([below](#week)); in the left column on a wide screen, a link on “Today” on a phone |
 | `/s/<id>`, `/a/<id>`, `/f/<id>`, `/b/<id>`, `/p/<id>`, `/login` | as before: a session, a card, a file, a commit card, a push card, the login |
 
@@ -292,7 +292,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
   middle, the right panel.
 - **«＋»** is `/new`, a page in its own place, not a sheet over another ([below](#a-new-task)).
 - **On a wide screen**, the left column (272 px by default): on top, fixed, the places — “New task” (`/new`), “Today”
-  with the count, “Read”, “Spaces”, “Week” — then the filters and the sessions by sphere, the one part of it that
+  with the count, “Pages”, “Spaces”, “Week” — then the filters and the sessions by sphere, the one part of it that
   scrolls. Starting a session in a sphere is the composer's sphere picker, the Spaces are their page: the column holds
   only where you go and what runs (Apple's HIG: two levels at most; NN/g: the rest one step away). The middle: the page. The right is one panel with tabs: a
   session's [“Summary”](#summary) (one session in the middle; the header's panel button folds it away and the device
@@ -424,7 +424,7 @@ One header and one list on every tab, after the design guidance the change was c
 - **A list** is one surface with dividers (`LIST`), not a card per row; a row that is a link has `LIST_ROW`.
 - **A row's actions**: at most one labelled button (the frequent action), the rest as icons with an `aria-label` and a
   tooltip; muted at rest, full contrast on the row's hover or focus — never hover-only — and a 44 px target on a touch
-  screen (`.hit`). A Read page's “Finished” is a ring that fills with a check.
+  screen (`.hit`). A page's “Finished” on “Pages” is a ring that fills with a check.
 
 ### Week
 
@@ -576,9 +576,9 @@ hours says so. `deadlines`: the digest's dates, `{id, when, title, sphere, spher
 the next week's and the overdue, also those days ahead that wait for no one yet (“Deadlines” on “Today”). `chips`: the
 hub's status chips `{key, text, level}` as the router last pushed them (`[]` before). A sphere's title and icon come from `platform.yaml`'s spheres when they are there.
 
-## Read
+## Pages
 
-`/read` lists the life hub's pages ([lifehub.md](lifehub.md#pages-страницы)) — your HTML pages under the hub's
+`/pages` (once “Read”, `/read`) lists the life hub's pages ([lifehub.md](lifehub.md#pages-страницы)) — your HTML pages under the hub's
 `/pages/` — by section (the Space they live in, titled and iconed as its sphere when `platform.yaml` names one,
 “No section” last; in each, the latest changed first), with a search over titles and sections. On top,
 **“Continue”**: the pages you opened and have not marked “Finished”, the last opened first. A row says the reading

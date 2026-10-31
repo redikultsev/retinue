@@ -177,6 +177,13 @@ export const Grid = icon(
     <rect width="7" height="7" x="3" y="14" rx="1" />
   </>,
 );
+export const AppWindow = icon(
+  "AppWindow",
+  <>
+    <rect x="2" y="4" width="20" height="16" rx="2" />
+    <path d="M10 4v4M2 8h20M6 4v4" />
+  </>,
+);
 export const Book = icon(
   "Book",
   <>

@@ -53,6 +53,9 @@ export interface FeedRow {
   /** «From the assistant»: a person's row's token — what «Done», «Not a task», «Tomorrow» name it by. Absent on the
    * private matter's row, a draft and a date. */
   t?: string;
+  /** «From the assistant»: the owner's private matter — its words and buttons wait behind «Show» in Telegram, and the
+   * app never asks for its sheet. */
+  private?: boolean;
 }
 
 export interface FeedGroup {
@@ -77,6 +80,43 @@ export interface Feed {
   /** Her asks closed today, and those that ran out with no mark in the week — the router's counts. */
   closed_today?: number;
   expired_week?: number;
+}
+
+/** Where a thing is: its Gmail thread, or the Telegram chat by the person's @username — the router's own shapes. */
+export interface DetailLink {
+  url: string;
+  label: "Open in Gmail" | "Open the chat" | string;
+}
+
+/** One ask of a person's row: what she judged it asks, in her words (codes, numbers, links masked). */
+export interface DetailAsk {
+  need: "reply" | "decide" | "pay" | "attend" | "act" | string;
+  text: string;
+  deadline: string;
+  at: number;
+  open?: DetailLink;
+}
+
+/** A row's sheet (`POST /api/waiting/detail`): asked of the router when the row is opened, never kept by the platform. */
+export interface WaitingDetail {
+  kind: "letter" | "chat" | "draft";
+  who: string;
+  /** The owner's mailbox it came to (a letter, a draft by mail); "" otherwise. */
+  account: string;
+  /** Newest first, at most 10; `more` beyond them. */
+  asks: DetailAsk[];
+  more: number;
+  open?: DetailLink;
+  draft?: { text: string; channel: "mail" | "telegram"; subject: string; expires: number; state: "shown" | "hidden" | "link" };
+}
+
+/** The only links a sheet may draw — the platform's own check, made a second time. */
+const LINK_SHAPES = [
+  /^https:\/\/mail\.google\.com\/mail\/\?authuser=[^\s@/?#&]{1,64}@[^\s@/?#&]{1,190}#all\/[0-9a-f]{10,24}$/,
+  /^https:\/\/t\.me\/[A-Za-z][A-Za-z0-9_]{3,31}$/,
+];
+export function linkOk(link: DetailLink | undefined): link is DetailLink {
+  return !!link && LINK_SHAPES.some((shape) => shape.test(link.url));
 }
 
 /** A press on her row: «Done», «Not a task», «Tomorrow», and «Undo» after one. */

@@ -1,4 +1,4 @@
-// «Read»: the life hub's pages (`GET /api/library`, retinue/library.py) — the owner's own HTML pages the hub serves
+// «Pages»: the life hub's pages (`GET /api/library`, retinue/library.py) — the owner's own HTML pages the hub serves
 // under /pages/, as the router last pushed their list. A page is never fetched or framed here: it opens on the hub's
 // own origin in a tab of its own (Telegram's openLink inside the Mini App), so its scripts stay away from the app's
 // login. What the owner opened and finished is the platform's row, the same on every device.

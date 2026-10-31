@@ -1,4 +1,4 @@
-// `/read`, «Read»: the life hub's pages by section with search, «Continue» (opened, not finished) on top. A page
+// `/pages`, «Pages» (once «Read», `/read`): the life hub's pages by section with search, «Continue» (opened, not finished) on top. A page
 // opens on the hub's own origin, never inside the app (lib/library.ts); what was opened and «Finished» are kept by the
 // platform, so the phone and the desktop agree.
 import { PageHeader, PAGE_X } from "@/components/page-header";
@@ -114,7 +114,7 @@ export function ReadView({
   );
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      <PageHeader title="Read">
+      <PageHeader title="Pages">
         {pages.length > 0 && (
           <Input
             type="search"

@@ -2,9 +2,10 @@
 // finished turn, and the assistant's items — not by where it came from. Each row: where it came from (icon), its
 // sphere, its title, how long it waits and its one line; the action itself in place where it is small (a question's
 // buttons, «Allow» / «Deny», the suggested replies), so the home screen is a peek, not a way elsewhere. The
-// assistant's items open the bot's chat: sending and deciding them stays in Telegram, under her cards' buttons. A
-// person's row of hers closes here too — «Done», «Not a task», «Tomorrow», with «Undo» in the toast — and under her
-// rows a line says how many closed today and how many ran out unmarked in the week.
+// assistant's items open a sheet (`WaitingSheet`): what the row is about, asked of the router, and the way to where it
+// is — the Gmail thread, the person's chat, her card in Telegram, where sending and deciding stay; a base's date opens
+// its Record. A person's row of hers closes here too — «Done», «Not a task», «Tomorrow», with «Undo» in the toast —
+// and under her rows a line says how many closed today and how many ran out unmarked in the week.
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
@@ -15,6 +16,7 @@ import {
   ArrowUpRight,
   Ban,
   Check,
+  ChevronRight,
   Clock,
   Database,
   GitBranch,
@@ -27,11 +29,12 @@ import {
   Terminal,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import { PRESSES, pressRow, WaitingSheet } from "@/components/waiting-sheet";
 import { api } from "@/lib/api";
 import { type Feed as FeedData, type FeedRow, feedSource, type Press, STALE_DIGEST_S, useFeed, waited } from "@/lib/feed";
+import { splitRecord, useOpenRecord } from "@/lib/pane";
 import { inputText, when } from "@/lib/format";
 import { useLiveState } from "@/lib/live";
-import { toast } from "@/lib/toast";
 import type { Approval, Summary } from "@/lib/types";
 import { cn, LIST } from "@/lib/utils";
 
@@ -47,17 +50,10 @@ const ICONS: Record<string, (props: React.SVGProps<SVGSVGElement>) => React.Reac
   base: Database,
   push: GitBranch,
 };
-const PRESSES: [Press, string][] = [
-  ["done", "Done"],
-  ["dismissed", "Not a task"],
-  ["later", "Tomorrow"],
-];
 /** A row's small actions: muted at rest, full contrast on the row's hover or focus; never hover-only (NN/g), and a
  * 44 px target on a touch screen (`hit`). */
 const ROW_ICON =
   "hit inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none group-hover/row:text-foreground [&_svg]:size-4";
-const UNDO_MS = 10_000;
-const PRESS_FAILED = "It did not go through — try again.";
 const SMALL_CHARS = 240;
 const SMALL_LINES = 4;
 const SOURCE_WORDS: Record<string, string> = {
@@ -110,25 +106,7 @@ function Replies({ row, reply = api.reply }: { row: FeedRow; reply?: typeof api.
 /** «Done», «Not a task», «Tomorrow» on her row: the row leaves the feed at once (`FeedSource.hide`), the router marks
  * what the row's token names, and the toast offers «Undo» for ten seconds. */
 export function PressButtons({ t, press = api.waitingPress }: { t: string; press?: typeof api.waitingPress }) {
-  const back = async () => {
-    try {
-      await press(t, "open");
-      feedSource.unhide(t);
-    } catch {
-      toast(PRESS_FAILED, "error");
-    }
-  };
-  const pressed = async (action: Press, label: string) => {
-    feedSource.hide(t);
-    try {
-      await press(t, action);
-    } catch {
-      feedSource.unhide(t);
-      toast(PRESS_FAILED, "error");
-      return;
-    }
-    toast(label, "info", UNDO_MS, undefined, { label: "Undo", run: () => void back() });
-  };
+  const pressed = async (action: Press, label: string) => void (await pressRow(t, action, label, press));
   // One labelled action — the frequent one — and the other two as icons with their names in the tooltip (HIG: one or
   // two prominent buttons in a view; 26 rows of three outlined buttons were noise).
   const [done, doneLabel] = PRESSES[0] ?? ["done", "Done"];
@@ -163,9 +141,36 @@ function Counts({ feed }: { feed: FeedData }) {
   );
 }
 
-function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
+/** Where a row of hers goes at a tap: a base's date to its Record; a person's row or a draft to its sheet, which asks
+ * the router where the thing is; the private matter's to the bot (its words are behind «Show» there). */
+function Way({ row, bot, record, onOpen }: { row: FeedRow; bot: string; record: (() => void) | null; onOpen: () => void }) {
+  if (row.source === "deadline")
+    return record ? (
+      <button type="button" aria-label="Open the Record" title="Open the Record" className={ROW_ICON} onClick={record}>
+        <ArrowUpRight />
+      </button>
+    ) : null;
+  if (row.private)
+    return bot ? (
+      <a href={`https://t.me/${bot}`} target="_blank" rel="noopener noreferrer" aria-label="Open in Telegram" title="Open in Telegram" className={ROW_ICON}>
+        <ArrowUpRight />
+      </a>
+    ) : null;
+  return (
+    <button type="button" aria-label="Details" title="Details" aria-haspopup="dialog" className={ROW_ICON} onClick={onOpen}>
+      <ChevronRight />
+    </button>
+  );
+}
+
+function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: number; feed: FeedData; onOpen: (row: FeedRow) => void }) {
   const Icon = ICONS[row.source] ?? ListTodo;
   const where = row.sphere_title || row.track;
+  const openRecord = useOpenRecord();
+  const path = row.source === "deadline" ? feed.deadlines?.find((d) => d.id === row.ref)?.path : null;
+  const split = path ? splitRecord(path) : null;
+  const record = split ? () => openRecord(split.space, split.path) : null;
+  const tap = row.action !== "assistant" ? null : row.source === "deadline" ? record : row.private ? null : () => onOpen(row);
   const title = row.session ? (
     <Link to="/s/$id" params={{ id: row.session }} className="min-w-0 truncate font-medium hover:underline">
       {row.title}
@@ -173,25 +178,31 @@ function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
   ) : (
     <span className="min-w-0 truncate font-medium">{row.title}</span>
   );
-  // Her rows' actions sit on the row itself, to the right: «Done», two icons, and the bot's chat as ↗.
+  // Her rows' actions sit on the row itself, to the right: «Done», two icons, and the way to the thing.
   const actions =
     row.action === "assistant" ? (
       <div className="flex shrink-0 items-center gap-0.5 self-end sm:self-center">
         {row.t && <PressButtons t={row.t} />}
-        {bot ? (
-          <a
-            href={`https://t.me/${bot}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Open in Telegram"
-            title="Open in Telegram"
-            className={ROW_ICON}
-          >
-            <ArrowUpRight />
-          </a>
-        ) : null}
+        <Way row={row} bot={bot} record={record} onOpen={() => onOpen(row)} />
       </div>
     ) : null;
+  const text = (
+    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex min-w-0 items-baseline gap-2 text-[15px] md:text-sm">
+        {title}
+        {where && (
+          <span className="hidden min-w-0 shrink truncate text-xs text-muted-foreground sm:inline">
+            {row.sphere_icon ? `${row.sphere_icon} ` : ""}
+            {where}
+          </span>
+        )}
+        <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+          {row.source === "deadline" ? "" : waited(row.since, now)}
+        </span>
+      </div>
+      {row.essence && !row.approval && <p className="line-clamp-2 text-sm break-words text-muted-foreground">{row.essence}</p>}
+    </div>
+  );
   return (
     <li data-testid="feed-row" className="group/row flex flex-col gap-2 px-3 py-2.5 hover:bg-accent/30 focus-within:bg-accent/30">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
@@ -202,21 +213,20 @@ function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
           >
             <Icon aria-label={SOURCE_WORDS[row.source] ?? row.source} />
           </span>
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <div className="flex min-w-0 items-baseline gap-2 text-[15px] md:text-sm">
-              {title}
-              {where && (
-                <span className="hidden min-w-0 shrink truncate text-xs text-muted-foreground sm:inline">
-                  {row.sphere_icon ? `${row.sphere_icon} ` : ""}
-                  {where}
-                </span>
-              )}
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-                {row.source === "deadline" ? "" : waited(row.since, now)}
-              </span>
-            </div>
-            {row.essence && !row.approval && <p className="line-clamp-2 text-sm break-words text-muted-foreground">{row.essence}</p>}
-          </div>
+          {tap ? (
+            // the row's words open its sheet (or a date's Record): a plain button around text, no control inside
+            <button
+              type="button"
+              data-testid="feed-open"
+              aria-haspopup={row.source === "deadline" ? undefined : "dialog"}
+              className="flex min-w-0 flex-1 cursor-pointer rounded-sm text-left focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+              onClick={tap}
+            >
+              {text}
+            </button>
+          ) : (
+            text
+          )}
         </div>
         {actions}
       </div>
@@ -231,7 +241,7 @@ function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
           Open and answer
         </Link>
       )}
-      {row.action === "assistant" && !bot && <span className="text-xs text-muted-foreground">in Telegram</span>}
+      {row.action === "assistant" && row.private && !bot && <span className="text-xs text-muted-foreground">in Telegram</span>}
     </li>
   );
 }
@@ -256,6 +266,7 @@ export function FeedView({
     .map((g) => (skip ? { ...g, rows: g.rows.filter((r) => !skip(r)) } : g))
     .filter((g) => g.rows.length > 0);
   const count = skip ? groups.reduce((n, g) => n + g.rows.length, 0) : (feed?.count ?? 0);
+  const [opened, setOpened] = useState<FeedRow | null>(null);
   const Heading = heading;
   const Sub = heading === "h1" ? "h2" : "h3";
   return (
@@ -278,7 +289,7 @@ export function FeedView({
             )}
             <ul className={LIST}>
               {group.rows.map((row) => (
-                <Row key={row.key} row={row} bot={feed.bot} now={now} />
+                <Row key={row.key} row={row} bot={feed.bot} now={now} feed={feed} onOpen={setOpened} />
               ))}
             </ul>
             {group.action === "assistant" && <Counts feed={feed} />}
@@ -288,6 +299,7 @@ export function FeedView({
       {feed && !groups.some((g) => g.action === "assistant") && (feed.closed_today || feed.expired_week) ? (
         <Counts feed={feed} />
       ) : null}
+      <WaitingSheet row={opened} bot={feed?.bot ?? ""} now={now} onClose={() => setOpened(null)} />
     </section>
   );
 }

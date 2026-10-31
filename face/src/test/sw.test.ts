@@ -51,7 +51,7 @@ describe("service worker", () => {
 
   it("knows the tabs and every page a link opens", () => {
     const { fetchEvent } = load();
-    for (const path of ["/today", "/sessions", "/new", "/read", "/spaces", "/spaces/travel", "/spaces/travel/r/knowledge/a.md",
+    for (const path of ["/today", "/sessions", "/new", "/pages", "/read", "/week", "/spaces", "/spaces/travel", "/spaces/travel/r/knowledge/a.md",
       "/b/b1", "/p/p1", "/f/f1"])
       expect(fetchEvent(`https://app.example${path}`, { mode: "navigate" }), path).toHaveBeenCalled();
     for (const path of ["/todayx", "/newx", "/new/x", "/spaces/travel/x", "/s/a/b"])

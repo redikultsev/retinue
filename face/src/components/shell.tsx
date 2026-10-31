@@ -1,6 +1,6 @@
 // The app's frame around its tabs and sessions.
 //
-// - A phone: the page, and under it the tab bar «Today · Sessions · ＋ · Spaces · Read». «＋» is `/new`, an
+// - A phone: the page, and under it the tab bar «Today · Sessions · ＋ · Spaces · Pages». «＋» is `/new`, an
 //   empty new task with the composer at the bottom (pages/new.tsx), as a new chat in Claude's apps. The bar is there on
 //   the tabs' own screens (a session's screen has its own input box and a way back), sits above the home indicator
 //   (the safe area) and steps aside while the keyboard is up.
@@ -15,7 +15,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Group, type Layout, type LayoutChangedMeta, Panel, Separator } from "react-resizable-panels";
 import { AppHeader } from "@/components/app-header";
 import { FileRow } from "@/components/files";
-import { Book, Chart, Close, Grid, Home, List, Plus } from "@/components/icons";
+import { AppWindow, Chart, Close, Grid, Home, List, Plus } from "@/components/icons";
 import { SessionList } from "@/components/session-list";
 import { SessionSummary } from "@/components/session-summary";
 import { Button } from "@/components/ui/button";
@@ -32,14 +32,14 @@ import { RecordPage } from "@/pages/spaces";
 const Changes = lazy(() => import("@/components/changes").then((m) => ({ default: m.Changes })));
 
 /** The screens the tab bar stands under on a phone. */
-export const TABBED = /^\/(today|sessions|new|read|spaces|week)(\/|$)/;
+export const TABBED = /^\/(today|sessions|new|pages|read|spaces|week)(\/|$)/;
 
 const TABS = [
   { to: "/today", label: "Today", Icon: Home },
   { to: "/sessions", label: "Sessions", Icon: List },
   null, // «＋»
   { to: "/spaces", label: "Spaces", Icon: Grid },
-  { to: "/read", label: "Read", Icon: Book },
+  { to: "/pages", label: "Pages", Icon: AppWindow },
 ] as const;
 
 export function TabBar({ pathname }: { pathname: string }) {
@@ -105,9 +105,9 @@ export function Sidebar({ pathname, current, beside }: { pathname: string; curre
           <span className="flex-1">Today</span>
           <TodayCount />
         </Link>
-        <Link to="/read" className={navClass(pathname.startsWith("/read"))}>
-          <Book className="size-4" />
-          Read
+        <Link to="/pages" className={navClass(pathname.startsWith("/pages"))}>
+          <AppWindow className="size-4" />
+          Pages
         </Link>
         <Link to="/spaces" className={navClass(pathname.startsWith("/spaces"))}>
           <Grid className="size-4" />

@@ -141,7 +141,7 @@ describe("the tab bar", () => {
   });
 
   it("is on exactly the tabs' screens", () => {
-    const on = ["/today", "/sessions", "/new", "/read", "/spaces", "/spaces/travel", "/spaces/travel/r/a.md"];
+    const on = ["/today", "/sessions", "/new", "/pages", "/read", "/spaces", "/spaces/travel", "/spaces/travel/r/a.md"];
     const off = ["/s/a1b2c3d4", "/a/x", "/login", "/f/x", "/sessionsx"];
     expect(on.every((p) => TABBED.test(p))).toBe(true);
     expect(off.some((p) => TABBED.test(p))).toBe(false);

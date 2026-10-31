@@ -11,7 +11,7 @@ const ASSETS = "retinue-assets-v1";
 const PRECACHE = ["/", "/manifest.webmanifest", "/icons/icon.svg", "/icons/icon-192.png", "/icons/apple-touch-icon.png"];
 const KEEP_ASSETS = 80;
 const APP_ROUTE =
-  /^\/(?:$|login$|today$|sessions$|new$|read$|spaces$|spaces\/[^/]+$|spaces\/[^/]+\/r\/.+$|[safbp]\/[^/]+$)/;
+  /^\/(?:$|login$|today$|sessions$|new$|pages$|read$|week$|spaces$|spaces\/[^/]+$|spaces\/[^/]+\/r\/.+$|[safbp]\/[^/]+$)/;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL).then((c) => c.addAll(PRECACHE)).then(() => self.skipWaiting()));

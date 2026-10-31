@@ -44,7 +44,7 @@ from urllib.parse import parse_qsl, quote
 
 from aiohttp import web
 
-from . import changes, feed, inbox, pings, signals, spaces, tobase, topush
+from . import changes, feed, inbox, signals, spaces, tobase, topush
 from .cliengine import UUID4
 from .sessions import PlatformStore
 from .speech import Scribe, SpeechError
@@ -296,6 +296,7 @@ class Face:
             web.post("/api/sessions", self.new), web.get("/api/sessions/{id}", self.session),
             web.post("/api/sessions/{id}/input", self.input), web.post("/api/sessions/{id}/stop", self.stop),
             web.post("/api/sessions/{id}/pin", self.pin), web.post("/api/sessions/{id}/side", self.side),
+            web.post("/api/sessions/{id}/archive", self.archive),
             web.get("/api/sessions/{id}/diff", self.diff), web.get("/api/approvals/{id}", self.approval),
             web.get("/api/sessions/{id}/inputs/{input}/{n:\\d{1,2}}", self.thumb),
             web.post("/api/approvals/{id}/decide", self.decide), web.post("/api/approvals/{id}/answer", self.answer),
@@ -606,14 +607,6 @@ class Face:
 
     async def input(self, request: web.Request) -> web.Response:
         body, session_id = await _body(request), request.match_info["id"]
-        if "reply" in body:  # a ping's reply pressed: its own input, the same press as in Telegram (`pings.press`)
-            reply = body["reply"] if isinstance(body["reply"], dict) else {}
-            if type(reply.get("seq")) is not int or type(reply.get("n")) is not int:
-                return _error(400, "reply: {seq: number, n: number}")
-            if self.store.session(session_id) is None:
-                return _error(404, "No such session.")
-            say = await pings.press(self.platform, session_id, reply["seq"], reply["n"])
-            return web.json_response({"say": say, "summary": pings.face_summary(self.store, session_id, reply["seq"])})
         input_id, text, attachments = body.get("input_id"), body.get("text", ""), body.get("attachments")
         if not isinstance(input_id, str) or not INPUT_ID.fullmatch(input_id) or not isinstance(text, str) or \
                 not (text.strip() or attachments):
@@ -634,6 +627,13 @@ class Face:
         if type(body.get("pinned")) is not bool:
             return _error(400, "pinned: true | false")
         if not self.store.set_pinned(session_id, body["pinned"]):
+            return _error(404, "No such session.")
+        return web.json_response({"session": self.store.face_session(session_id)})
+
+    async def archive(self, request: web.Request) -> web.Response:
+        """The owner's «Archive»: the session and its kin ended and out of the list on every device (`archive`)."""
+        session_id = request.match_info["id"]
+        if not await self.platform.archive(session_id):
             return _error(404, "No such session.")
         return web.json_response({"session": self.store.face_session(session_id)})
 

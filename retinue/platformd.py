@@ -238,11 +238,6 @@ class Platform:
             return web.json_response(await self.tobase.press(bound))
         if bound is not None and bound["approval"].startswith(topush.KEY):  # «Push»: the same, its own card
             return web.json_response(await self.topush.press(bound))
-        if bound is not None and (ping := pings.seq_of(bound["approval"])) is not None:  # a ping's reply
-            if self.store.spend_button(button, now) is None:
-                return web.json_response({"toast": pings.GONE})
-            return web.json_response({"toast": await pings.press(self, bound["digest"], ping,
-                                                                 pings.reply_of(bound["action"]))})
         approval = self.store.approval(bound["approval"]) if bound else None
         # A multi-select's tick stays live — two fast taps both count; every other button acts once.
         tick = approval is not None and approval["kind"] == "question" and questions.is_tick(approval, bound["action"])
@@ -481,11 +476,10 @@ class Platform:
         if not self.store.add_input(input_id, session_id, text, now, *((ready.meta, ready.thumbs) if ready else ()),
                                     by=by):
             return "The session already has this message."
-        if by is None:  # the owner's own word: his buttons answered, his family's exchanges counted again
+        if by is None:  # the owner's own word: his questions answered, his family's exchanges counted again
             self.subs.owner_wrote(session)
             self.store.db.execute("UPDATE sessions SET owner_joined = 1 WHERE id = ?", (session_id,))
-            self.store.db.commit()  # the turn's ping answers him: it rings and closes his buttons (`_summary`)
-            pings.close_open(self.store, session_id, now, input_id, text)  # its last ping answered, by a reply or not
+            self.store.db.commit()  # the turn's ping answers him: it rings (`_summary`)
             for approval in self.store.approvals(session=session_id, kind=questions.KINDS, states=("pending", "shown")):
                 if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
                     retire(self.store, {**approval, "state": "stale"}, "Expired: you wrote a new message", now)
@@ -556,20 +550,37 @@ class Platform:
         now, any_stopped = self.clock(), False
         for child in self.subs.family(parent["id"]):
             any_stopped = True
-            self.subs.stopped(child)
-            self.store.db.execute("DELETE FROM queue WHERE session = ? AND attempt IS NULL", (child["id"],))
-            self.store.db.commit()
-            for approval in self.store.approvals(session=child["id"], kind=questions.KINDS, states=("pending", "shown")):
-                if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
-                    retire(self.store, {**approval, "state": "stale"}, "Expired: you stopped the session", now)
-            running = any(r["session"] == child["id"] for r in self.store.open_runs())
-            if running and child["lane"] in self.lanes:
-                try:
-                    await self.lanes[child["lane"]].stop(child["id"])
-                except Unavailable as exc:
-                    log.warning("session %s not stopped: %s", child["id"], exc)
-            self._set_state(child["id"], "closed", now)
+            await self._halt(child, now)
         return any_stopped
+
+    async def _halt(self, session: dict, now: float, why: str = "Expired: you stopped the session") -> None:
+        """A session ended where it stands: its queued runs dropped, its running one interrupted, its cards stale,
+        and it closed."""
+        self.subs.stopped(session)
+        self.store.db.execute("DELETE FROM queue WHERE session = ? AND attempt IS NULL", (session["id"],))
+        self.store.db.commit()
+        for approval in self.store.approvals(session=session["id"], kind=questions.KINDS, states=("pending", "shown")):
+            if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
+                retire(self.store, {**approval, "state": "stale"}, why, now)
+        running = any(r["session"] == session["id"] for r in self.store.open_runs())
+        if running and session["lane"] in self.lanes:
+            try:
+                await self.lanes[session["lane"]].stop(session["id"])
+            except Unavailable as exc:
+                log.warning("session %s not stopped: %s", session["id"], exc)
+        self._set_state(session["id"], "closed", now)
+
+    async def archive(self, session_id: str) -> bool:
+        """«Archive»: the session and its sub-sessions and side questions out of the face's list, each one still
+        open ended where it stands (`_halt`). A message to one opens it again and brings it back (`_set_state`).
+        False when there is no such session."""
+        now = self.clock()
+        ids = self.store.archive(session_id, now)
+        for id_ in reversed(ids):  # its kin first: nothing they say after it starts a turn of it
+            session = self.store.session(id_)
+            if session is not None and session["state"] != "closed":
+                await self._halt(session, now, "Expired: you archived the session")
+        return bool(ids)
 
     def _pressable(self, approval: dict, digest: str, kind: str = "approval") -> bool:
         """The card still asks what the session waits on: shown, its session waiting with this call as the last
@@ -1181,16 +1192,15 @@ class Platform:
 
     def _summary(self, session: dict, text: str, kind: str = pings.DONE, run: str | None = None, **extra) -> None:
         """A note for the owner, in Telegram and in the face — a ping (`pings`): its kind, how long the turn took
-        (from `run`), the model's suggested replies; `turn` places it in the transcript, after that turn. A turn that
-        was not the owner's doing — a sub-session's on its parent's word, a parent's on a report — pings without a
-        sound when it is done, and leaves his open buttons as they are unless it brings its own (`subs`)."""
+        (from `run`); `turn` places it in the transcript, after that turn. A turn that was not the owner's doing — a
+        sub-session's on its parent's word, a parent's on a report — pings without a sound when it is done (`subs`)."""
         row = self.store.session(session["id"]) or session
         side = f" · question about {row['parent']}" if row.get("parent") else ""
         sub = f" · sub-session {row['sub_of']}" if row.get("sub_of") else ""
         head = f"Result · {session['track']} · session {session['id']}{side}{sub}"
         machine = row.get("turn_by") in ("parent", "report") and not row.get("owner_joined")
         pings.add(self.store, row, head, text, kind, self.clock(), run=run, spheres=_sphere_titles(self.cfg),
-                  quiet=machine, machine=machine, **extra)
+                  quiet=machine, **extra)
 
     summary = _summary
 
@@ -1210,7 +1220,7 @@ class Platform:
     def _set_state(self, session: str, state: str, now: float) -> None:
         """`turn_started` is set only when a turn begins — active from idle, closed or new — never on a resume after a
         card (waiting -> active), which moves `at`: the face's «Working» counts a turn from it."""
-        fields = {}
+        fields: dict = {"archived": None} if state == "active" else {}  # a turn begins: back in the list
         if state == "active" and (self.store.session(session) or {}).get("state") not in ("active", "waiting"):
             fields["turn_started"] = now
         self.store.update_session(session, now, state=state, idle_since=now if state == "idle" else None, **fields)

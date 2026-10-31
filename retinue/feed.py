@@ -7,8 +7,7 @@ Built by code on every read from the platform's own rows — never a copy kept b
 - «Answer the question»: a question card (AskUserQuestion) shown and not answered;
 - «Decide»: an approval card shown, a courier card of the last day whose session he has not written to since, and a
   session with Base files not committed yet («To the Base», `tobase`);
-- «Choose»: a ping (`pings`) whose suggested replies are still open — none pressed, no message of his after it, no
-  newer ping; or a session waiting with no card shown;
+- «Reply»: a session waiting for his message with no card shown;
 - «Read»: a session whose finished turn he has not read (the session's `unread`; nothing without it);
 - «From the assistant»: the assistant's digest.
 
@@ -43,12 +42,11 @@ from .tobase import files_word
 if TYPE_CHECKING:
     from .sessions import PlatformStore
 
-ACTIONS = (("answer", "Answer the question"), ("decide", "Decide"), ("choose", "Choose"), ("read", "Read"),
+ACTIONS = (("answer", "Answer the question"), ("decide", "Decide"), ("reply", "Reply"), ("read", "Read"),
            ("assistant", "From the assistant"))
 COURIER_S = 86400            # a courier card waits in «Decide» this long, unless he wrote into its session after it
-RECENT_S = 7 * 86400         # a summary older than this leaves no choice and nothing to read in the feed
+RECENT_S = 7 * 86400         # a summary older than this leaves nothing to read in the feed
 ESSENCE_CHARS = 200          # the one line a row says
-REPLIES, REPLY_CHARS = 3, 80  # suggested replies shown under a «Choose» row
 TELEGRAM_ROWS = 10           # `/wait` names this many rows; the rest are counted
 BASE_HINT = "Press «To the Base» under its result or open it in the app."
 NOBODY_HINT = "They are on the «To the Base» card of any Base session, turned off: turn on the ones you want and commit."
@@ -338,9 +336,9 @@ def clean_chips(body: object) -> list[dict]:
 
 
 def _essence(text: object) -> str:
-    """A row's one line: the first line of the text that says something."""
+    """A row's one line: the first line of the text that says something, as words — no Markdown emphasis marks."""
     first = next((s for s in str(text or "").splitlines() if s.strip()), "")
-    return line(first.strip(" #*>-"), ESSENCE_CHARS)
+    return line(re.sub(r"\*\*|__", "", first).strip(" #*>-"), ESSENCE_CHARS)
 
 
 def _call(tool: str, tool_input: dict) -> str:
@@ -356,15 +354,6 @@ def _open_question(approval: dict) -> int:
     answered = (approval.get("view") or {}).get("answers") or {}
     asked = questions.of(approval["input"])
     return next((n for n in range(len(asked)) if str(n) not in answered), 0)
-
-
-def _replies(data: dict) -> list[str]:
-    """A ping's suggested replies while they are open (`pings.add` parsed them; `pings._close` closes them), in their
-    own order — a press names a reply by its place (`{reply: {seq, n}}`). Closed, or not shaped so: none."""
-    given = data.get("replies")
-    if data.get("open") is not True or not isinstance(given, list) or not all(isinstance(r, str) for r in given):
-        return []
-    return [line(r, REPLY_CHARS) for r in given][:REPLIES]
 
 
 def spheres(cfg) -> dict[str, dict]:
@@ -477,17 +466,13 @@ class Feed:
                 continue
             seq, data = said.get(session["id"], (None, {}))
             at = data.get("at") if isinstance(data.get("at"), (int, float)) else None
-            fresh = at is not None and at >= now - RECENT_S  # his message after it closed the ping (`pings`)
-            replies = _replies(data) if fresh else []
-            if (fresh and replies) or \
-                    (session["state"] == "waiting" and not session.get("waiting")):
-                out["choose"].append({**self._row(f"choose:{session['id']}/{seq}", "choose", "session", session,
-                                                  at or session["at"], _essence(data.get("text"))),
-                                      "replies": replies, "summary": seq})
+            if session["state"] == "waiting" and not session.get("waiting"):
+                out["reply"].append(self._row(f"reply:{session['id']}/{seq}", "reply", "session", session,
+                                              at or session["at"], _essence(data.get("text"))))
             elif session.get("unread") is True and (at or session["at"]) >= now - RECENT_S:
                 out["read"].append(self._row(f"read:{session['id']}", "read", "session", session,
                                              at or session["at"], _essence(data.get("text"))))
-        for action in ("answer", "decide", "choose"):
+        for action in ("answer", "decide", "reply"):
             out[action].sort(key=lambda r: r["since"])
         out["read"].sort(key=lambda r: -r["since"])
         items, _, _ = self.digest()

@@ -8,7 +8,7 @@ import { request } from "./api";
 import type { State } from "./store";
 import type { Approval } from "./types";
 
-export type FeedAction = "answer" | "decide" | "choose" | "read" | "assistant";
+export type FeedAction = "answer" | "decide" | "reply" | "read" | "assistant";
 /** Where a row came from: a card's kind, a session, or the kind of the assistant's item. */
 export type FeedSourceKind =
   | "question"
@@ -42,9 +42,6 @@ export interface FeedRow {
   ref: string;
   /** «Answer», «Decide»: the card itself, decided in place. */
   approval?: Approval;
-  /** «Choose»: the turn's suggested replies (may be empty). */
-  replies?: string[];
-  summary?: number | null;
   /** «Decide» · «To the Base»: the session's Base files not committed yet (retinue/tobase.py). */
   base?: number;
   /** «Decide» · «Push»: commits no branch of the remote has, and in which repositories (retinue/topush.py). */

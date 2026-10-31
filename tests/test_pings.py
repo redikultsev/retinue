@@ -1,13 +1,11 @@
-"""Pings: the replies line parsed strictly, the loudness rule, and a ping's life on the platform — its reply pressed in
-Telegram or in the face goes in once, closes everywhere, and survives a restart — and in the bridge."""
+"""Pings: the loudness rule and the header, a ping's life on the platform — its kind, how long its turn took, where
+it is read — and in the bridge: its parts, its sound and its «To the Base»/«Push» buttons."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 from pathlib import Path
-
-import pytest
 
 from retinue import pings
 from retinue.bridge import PING, SESSION, ping_parts
@@ -17,85 +15,18 @@ from retinue.render import TELEGRAM_LIMIT
 from test_bridge import make
 from test_face import FaceWorld, faced
 from test_face import input_id as face_input_id
-from test_platformd import CLI_SESSION, HOUR, short_wait  # noqa: F401 — the fixture is autouse
+from test_platformd import CLI_SESSION, short_wait  # noqa: F401 — the fixture is autouse
 
 COMMON = Path(__file__).parent.parent / "deploy" / "lanes" / "instructions" / "common.md"
 
+# --- the instructions and the header ------------------------------------------------------------------------------
 
-# --- the replies line ---------------------------------------------------------------------------------------------
-
-def test_the_instructions_ask_with_a_question_card_and_no_longer_teach_the_replies_line():
+def test_the_instructions_ask_with_a_question_card_and_never_teach_a_replies_line():
     common = " ".join(COMMON.read_text().split())
-    assert "Replies:" not in common, "the older way is read, not taught"
+    assert "Replies:" not in common and "Ответы:" not in common, "a choice is a question card, never a line of text"
     for rule in ("ask with AskUserQuestion, never as a question in the text", "(Recommended)",
                  "Never ask to go on", "his answer changes what you do next"):
         assert rule in common, rule
-
-
-@pytest.mark.parametrize("text, expected", [
-    ("Готово.\nОтветы: «Да» · «Нет»", ("Готово.", ["Да", "Нет"])),
-    ("Готово.\n\n**Ответы:** «Да»  ·  «Нет»  \n\n", ("Готово.", ["Да", "Нет"])),
-    ("Готово.\nОтветы: «a» · «b» · «c» · «d»", ("Готово.", ["a", "b", "c"])),  # three at most, in its order
-    ("Готово.\nОтветы: «Да» · «Да» · «  »", ("Готово.", ["Да"])),  # duplicates and empty ones dropped
-    ("Готово.\nОтветы: «" + "x" * 61 + "» · «Коротко»", ("Готово.", ["Коротко"])),  # too long for a button: out
-    ("Готово.\nОтветы: «на‮зад» · «a​b»", ("Готово.", ["назад", "ab"])),  # bidi and invisible chars out
-    ("Ответы: «Да»", ("", ["Да"])),  # the line alone: an empty text, the header carries the message
-    # The instructed English form, and the quotes a model may write in it.
-    ('Done.\nReplies: "Yes" · "No"', ("Done.", ["Yes", "No"])),
-    ('Done.\n\n**Replies:** "Yes"  ·  "No"  \n\n', ("Done.", ["Yes", "No"])),
-    ("Done.\nReplies: “Yes, go ahead” · “Not now”", ("Done.", ["Yes, go ahead", "Not now"])),
-    ('Done.\nReplies: «Yes» · "No"', ("Done.", ["Yes", "No"])),  # either quotes, under either label
-    ('Done.\nОтветы: "Да" · «Нет»', ("Done.", ["Да", "Нет"])),
-    ('Done.\nReplies: "a" · "b" · "c" · "d"', ("Done.", ["a", "b", "c"])),
-    ('Replies: "Yes"', ("", ["Yes"])),
-])
-def test_a_well_formed_last_line_becomes_replies(text, expected):
-    assert pings.split(text) == expected
-
-
-@pytest.mark.parametrize("text", [
-    "Готово.",
-    "Ответы: «Да» · «Нет»\nА вот ещё текст.",  # not the last line
-    "Готово.\nОтветы: Да · Нет",  # no quotes
-    "Готово.\nОтветы: «Да» «Нет»",  # no separator
-    "Готово.\nОтветы: «Да» · «Нет» и ещё",  # trailing words
-    "Готово.\nОтветы: «Да «вложенный» ответ»",  # nested quotes
-    "Готово.\nответы: «Да»",  # another label
-    "Готово.\n> Ответы: «Да»",  # quoted
-    "```\nОтветы: «Да»",  # inside an open code fence
-    "Готово.\nОтветы: «" + "x" * 61 + "»",  # nothing left after the caps: the line stays as it was
-    "Готово.\nОтветы: «<b>жирно</b>" + "x" * 60 + "»",
-    "Готово.\nОтветы: «/deploy» · «!rm -rf .» · «#remember»",  # a command in the owner's mouth: never a button
-    "Готово.\nОтветы: «\u3164» · «\u2800» · «\u0301» · «…»",  # blank letters, a braille blank, a lone mark, no word
-    "```\n~~~\nОтветы: «Да»",  # a ~~~ never closes a ``` fence
-    "````\n```\nОтветы: «Да»",  # nor does a shorter one
-    "```\n``` not a close\nОтветы: «Да»",  # nor one with words after it
-    'Done.\nReplies: Yes · No',  # no quotes
-    'Done.\nReplies: "Yes" "No"',  # no separator
-    'Done.\nReplies: "Yes "nested" answer"',  # nested quotes
-    'Done.\nReplies: "Yes» · "No"',  # mismatched quotes
-    'Done.\nreplies: "Yes"',  # another label
-    '```\nReplies: "Yes"',  # inside an open code fence
-    'Done.\nReplies: "/deploy" · "!rm -rf ."',  # a command in the owner's mouth: never a button
-])
-def test_anything_else_stays_text_and_gives_no_replies(text):
-    assert pings.split(text) == (text, [])
-
-
-@pytest.mark.parametrize("text", ["~~~\ncode\n~~~\nОтветы: «Да»", "```py\nx = 1\n```\nОтветы: «Да»",
-                                  "````\n```\n````\nОтветы: «Да»"])
-def test_a_closed_fence_of_its_own_kind_lets_the_line_count(text):
-    assert pings.split(text)[1] == ["Да"]
-
-
-def test_parse_gives_the_line_as_written_and_drops_only_the_bad_replies():
-    assert pings.parse("Ок.\n  Ответы: «/run» · «Да, делай» · «ㅤ»  ") == ("Ок.", ["Да, делай"], "Ответы: «/run» · «Да, делай» · «ㅤ»")
-    assert pings.parse("Ок.") == ("Ок.", [], "")
-
-
-def test_a_reply_keeps_markup_as_plain_text():
-    assert pings.split("Ок.\nОтветы: «<b>да</b>» · «*нет*»")[1] == ["<b>да</b>", "*нет*"]
-
 
 def test_loudness_and_the_header():
     assert not pings.loud({"kind": "done", "took_s": 119, "attended": True})
@@ -126,103 +57,45 @@ async def turn(world: FaceWorld, text: str, *, input_id_: str = "tg:1", took: fl
     return session
 
 
-def test_a_turn_with_replies_is_a_decision_and_its_reply_goes_in_once_from_either_place(tmp_path):
+def question_card(world: FaceWorld, session: str, approval: str = "q1", state: str = "shown") -> None:
+    world.store.db.execute("INSERT INTO approvals (id, session, run, tool_use_id, kind, tool, input, cwd, "
+                           "file_hash, digest, state, created, at) VALUES (?, ?, 'r', 't', 'question', "
+                           "'AskUserQuestion', '{}', '', '', 'd', ?, 0, 0)", (approval, session, state))
+    world.store.db.commit()
+
+def test_a_turn_is_a_decision_only_while_a_question_card_of_its_session_is_shown_and_offers_no_replies(tmp_path):
     async def body(world: FaceWorld):
         session = await turn(world, 'Нашёл три варианта.\nReplies: "Бери первый" · "Покажи ещё"', took=600)
         [ping] = world.notes("summary")
         data = ping["data"]
-        assert (data["text"], data["replies"], data["kind"], data["took_s"]) == \
-            ("Нашёл три варианта.", ["Бери первый", "Покажи ещё"], "decision", 600)
+        assert (data["text"], data["kind"], data["took_s"], data["line"]) == \
+            ('Нашёл три варианта.\nReplies: "Бери первый" · "Покажи ещё"', "done", 600, None), \
+            "a replies line is the model's text like any other"
         assert data["head"].startswith("Result · notes · session") and data["place"] == "notes"
         assert data["title"] == "найди жильё"
-        assert [label for label, _ in data["buttons"]] == ["Бери первый", "Покажи ещё"]
-
+        assert not {"replies", "open", "answered", "buttons"} & data.keys()
         await world.login()
-        snapshot = await world.get(f"/api/sessions/{session}")
-        assert snapshot["summaries"][0]["replies"] == ["Бери первый", "Покажи ещё"]
+        [summary] = (await world.get(f"/api/sessions/{session}"))["summaries"]
+        assert not {"replies", "answered"} & summary.keys() and summary["kind"] == "done"
 
-        # A restart, an hour: the Telegram press still sends once.
-        await world.down()
-        world.clock.now += HOUR
-        await world.up()
-        await world.login()
-        pressed = await world.owner("press", {"button": data["buttons"][1][1]})
-        assert pressed["toast"] == "Accepted."
-        assert world.lanes["private"].runs()[-1]["prompt"] == "Покажи ещё"
-        assert world.store.input_session(pings.input_of(ping["seq"])) == session
-
-        again = await world.owner("press", {"button": data["buttons"][0][1]})
-        assert again["toast"] == pings.GONE, "the ping's other buttons are spent with it"
-        status, said, _ = await world.call("POST", f"/api/sessions/{session}/input",
-                                           {"reply": {"seq": ping["seq"], "n": 0}})
-        assert status == 200 and said["say"] == 'Already sent: "Покажи ещё"'
-        assert len(world.lanes["private"].runs()) == 2, "one run for the reply, whatever was pressed after"
-
-        snapshot = await world.get(f"/api/sessions/{session}")
-        assert snapshot["summaries"][0]["replies"] == [] and snapshot["summaries"][0]["answered"] == "Покажи ещё"
-        [closed] = world.notes("ping")
-        assert closed["data"]["seq"] == ping["seq"] and closed["data"]["answered"] == "Покажи ещё"
-        assert "buttons" not in closed["data"]
-
-    faced(tmp_path, body)
-
-
-def test_a_face_press_is_the_same_press_and_the_owner_typing_instead_makes_the_replies_stale(tmp_path):
-    async def body(world: FaceWorld):
-        await world.login()
-        first = await turn(world, "Готово.\nОтветы: «Да» · «Нет»")
-        [ping] = world.notes("summary")
-        status, said, _ = await world.call("POST", f"/api/sessions/{first}/input",
-                                           {"reply": {"seq": ping["seq"], "n": 0}})
-        assert status == 200 and said["say"] == "Accepted."
-        assert (said["summary"]["replies"], said["summary"]["answered"]) == ([], "Да")
-        assert world.lanes["private"].runs()[-1]["prompt"] == "Да"
-        assert (await world.owner("press", {"button": ping["data"]["buttons"][1][1]}))["toast"] == pings.GONE
-
-        second = await turn(world, "Готово.\nОтветы: «Да» · «Нет»", input_id_="tg:2")
-        [_, ping2] = world.notes("summary")
-        await world.owner("input", {"input_id": "tg:3", "session": second, "text": "Нет, по-другому"})
-        status, said, _ = await world.call("POST", f"/api/sessions/{second}/input",
-                                           {"reply": {"seq": ping2["seq"], "n": 0}})
-        assert said["say"] == pings.STALE
-        assert world.lanes["private"].runs()[-1]["prompt"] == "Нет, по-другому"
-        assert [n["data"]["answered"] for n in world.notes("ping")] == ["Да", None]
-
-        for bad in ({"seq": ping2["seq"], "n": 5}, {"seq": 999, "n": 0}, {"seq": ping["seq"], "n": 0}):
-            status, said, _ = await world.call("POST", f"/api/sessions/{second}/input", {"reply": bad})
-            assert status == 200 and said["say"] in (pings.GONE, pings.STALE)
-        status, _, _ = await world.call("POST", f"/api/sessions/{second}/input", {"reply": {"seq": "1", "n": 0}})
-        assert status == 400
-
-    faced(tmp_path, body)
-
-
-def test_a_newer_ping_closes_the_older_one_and_a_waiting_card_or_a_failure_gets_no_replies(tmp_path):
-    async def body(world: FaceWorld):
-        session = await turn(world, "Готово.\nОтветы: «Да»")
         run = world.lanes["private"].runs()[-1]
         world.platform._summary(world.store.session(session), "Лимит подписки — жду сброса до 12:00", pings.FAILED,
                                 run["run"], limit_until=1.0)
-        first, limit = world.notes("summary")
-        assert world.notes("ping")[0]["data"]["seq"] == first["seq"]
-        assert (limit["data"]["kind"], limit["data"]["replies"], limit["data"]["buttons"]) == ("failed", [], [])
+        assert world.notes("summary")[-1]["data"]["kind"] == "failed"
         assert world.store.last_summary(session)["limit_until"] == 1.0
 
-        broken = await turn(world, "Ответы: «Да»", input_id_="tg:9", error=True)
-        failed = world.notes("summary")[-1]["data"]
-        assert failed["kind"] == "failed" and failed["replies"] == [] and failed["text"].endswith("Ответы: «Да»")
-        assert world.store.session(broken)["state"] == "idle"
-
-        world.store.db.execute("INSERT INTO approvals (id, session, run, tool_use_id, kind, tool, input, cwd, "
-                               "file_hash, digest, state, created, at) VALUES ('q1', ?, 'r', 't', 'question', "
-                               "'AskUserQuestion', '{}', '', '', 'd', 'shown', 0, 0)", (broken,))
-        world.platform._summary(world.store.session(broken), "Выбери.\nОтветы: «Да»")
+        question_card(world, session, "q0", state="answered")
+        world.platform._summary(world.store.session(session), "Готово.")
+        assert world.notes("summary")[-1]["data"]["kind"] == "done", "a card already answered waits on nobody"
+        question_card(world, session)
+        world.platform._summary(world.store.session(session), "Выбери.")
         asked = world.notes("summary")[-1]["data"]
-        assert (asked["kind"], asked["replies"], asked["text"]) == ("decision", [], "Выбери."), \
-            "the question card has its own buttons"
+        assert (asked["kind"], asked["text"]) == ("decision", "Выбери."), "the question card asks, with its own buttons"
+        world.platform._summary(world.store.session(session), "Сломалось.", pings.FAILED)
+        assert world.notes("summary")[-1]["data"]["kind"] == "failed", "a failure stays a failure"
+        assert world.notes("ping") == [], "nothing to close: a ping has no buttons of its own"
 
     faced(tmp_path, body)
-
 
 def test_a_quick_done_turn_is_marked_quiet_and_a_long_one_loud(tmp_path):
     async def body(world: FaceWorld):
@@ -272,86 +145,72 @@ def test_a_run_no_owner_started_is_never_quiet(tmp_path):
     faced(tmp_path, body)
 
 
+async def ends(world: FaceWorld, session: str, text: str = "Сделал.") -> dict:
+    """The session's running turn ends with `text`: its ping's data."""
+    run = world.lanes["private"].runs()[-1]
+    world.lanes["private"].add(session, run["run"], result(text))
+    world.lanes["private"].exited(session, run["run"])
+    await world.poll()
+    return world.notes("summary")[-1]["data"]
+
 def test_a_session_the_owner_drives_from_the_app_is_marked_read_there(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
-        session = await turn(world, "Готово.\nОтветы: «Да» · «Нет»")
-        [by_telegram] = world.notes("summary")
-        assert "in_app" not in by_telegram["data"], "begun in Telegram: its turn goes there"
+        session = await turn(world, "Готово.")
+        assert "in_app" not in world.notes("summary")[0]["data"], "begun in Telegram: its turn goes there"
 
         status, _, _ = await world.call("POST", f"/api/sessions/{session}/input",
                                         {"input_id": face_input_id(), "text": "А подробнее?"})
         assert status == 200
-        run = world.lanes["private"].runs()[-1]
-        world.lanes["private"].add(session, run["run"], result("Вот.\nОтветы: «Да» · «Нет»"))
-        world.lanes["private"].exited(session, run["run"])
-        await world.poll()
-        written_in_app = world.notes("summary")[-1]
-        assert written_in_app["data"]["in_app"] is True
-
-        status, said, _ = await world.call("POST", f"/api/sessions/{session}/input",
-                                           {"reply": {"seq": written_in_app["seq"], "n": 0}})
-        assert said["say"] == "Accepted."
-        run = world.lanes["private"].runs()[-1]
-        world.lanes["private"].add(session, run["run"], result("Сделал."))
-        world.lanes["private"].exited(session, run["run"])
-        await world.poll()
-        assert world.notes("summary")[-1]["data"]["in_app"] is True, "a reply pressed on a ping only the app showed"
+        assert (await ends(world, session, "Вот."))["in_app"] is True, "his last message was written in the app"
 
         await world.owner("input", {"input_id": "tg:7", "session": session, "text": "Ещё раз"})
-        run = world.lanes["private"].runs()[-1]
-        world.lanes["private"].add(session, run["run"], result("Сделал."))
-        world.lanes["private"].exited(session, run["run"])
-        await world.poll()
-        assert "in_app" not in world.notes("summary")[-1]["data"], "back in Telegram: its turns go there again"
+        assert "in_app" not in await ends(world, session), "back in Telegram: its turns go there again"
 
     faced(tmp_path, body)
 
-
-def test_a_face_press_lives_as_long_as_the_telegram_button(tmp_path):
+def test_the_app_no_longer_takes_a_reply_as_input(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
-        session = await turn(world, "Готово.\nОтветы: «Да»")
+        session = await turn(world, "Готово.")
         [ping] = world.notes("summary")
-        assert (await world.get(f"/api/sessions/{session}"))["summaries"][0]["line"] == "Ответы: «Да»"
-        world.clock.now += pings.BUTTON_TTL_S
-        status, said, _ = await world.call("POST", f"/api/sessions/{session}/input",
-                                           {"reply": {"seq": ping["seq"], "n": 0}})
-        assert said["say"] == pings.GONE and len(world.lanes["private"].runs()) == 1
+        status, _, _ = await world.call("POST", f"/api/sessions/{session}/input", {"reply": {"seq": ping["seq"], "n": 0}})
+        assert status == 400 and len(world.lanes["private"].runs()) == 1
 
     faced(tmp_path, body)
-
 
 # --- in the bridge ------------------------------------------------------------------------------------------------
 
 def ping_note(seq=5, session="ab12cd34", **data):
     base = {"head": "Result · notes · session ab12cd34", "text": "Нашёл три варианта.", "kind": "decision", "took_s": 600,
-            "place": "Путешествия", "title": "жильё <в> Энске", "replies": ["Бери первый", "Покажи ещё"],
-            "open": True, "answered": None, "buttons": [["Бери первый", "p.r0"], ["Покажи ещё", "p.r1"]]}
+            "place": "Путешествия", "title": "жильё <в> Энске"}
     return {"seq": seq, "kind": "summary", "session": session, "approval": "", "data": {**base, **data}}
 
+BASE = ["To the Base · 1", "p.base"]
+PUSH = [["Push retinue · 2", "p.push1"], ["Push site · 1", "p.push2"]]
 
 def test_a_ping_goes_out_with_its_header_its_buttons_on_the_last_part_and_its_sound(tmp_path):
-    ch, bridge, _ = make(tmp_path, [ping_note(text="Сделал. " * 900),
-                                    ping_note(6, kind="done", took_s=30, attended=True, replies=[], open=False,
-                                              buttons=[])])
+    ch, bridge, _ = make(tmp_path, [ping_note(text="Сделал. " * 900, base=BASE, push=PUSH),
+                                    ping_note(6, kind="done", took_s=30, attended=True)])
     asyncio.run(bridge.deliver())
     long_parts = [p for m, p, _ in ch.sent if m == "sendMessage"][:-1]
     quick = [p for m, p, _ in ch.sent if m == "sendMessage"][-1]
     assert len(long_parts) > 1
     assert long_parts[0]["text"].startswith("<b>❓ Путешествия · жильё &lt;в&gt; Энске · 10 min</b>\n\n")
     assert all("reply_markup" not in p for p in long_parts[:-1])
-    assert long_parts[-1]["reply_markup"] == {"inline_keyboard": [[{"text": "Бери первый", "callback_data": "p.r0"}],
-                                                                  [{"text": "Покажи ещё", "callback_data": "p.r1"}]]}
+    assert long_parts[-1]["reply_markup"] == {"inline_keyboard": [
+        [{"text": "To the Base · 1", "callback_data": "p.base"}],
+        [{"text": "Push retinue · 2", "callback_data": "p.push1"}],
+        [{"text": "Push site · 1", "callback_data": "p.push2"}]]}
     assert all("disable_notification" not in p for p in long_parts), "a decision notifies"
     assert quick["disable_notification"] is True and quick["text"].startswith("<b>✅ Путешествия")
+    assert "reply_markup" not in quick, "nothing to carry: no buttons"
     sent = [900 + n for n in range(len(long_parts) + 1)]
     assert all(ch.store.sent_event(SESSION, str(n)) == "ab12cd34" for n in sent), "a reply to any part goes in"
     assert ch.store.sent_native(PING, "5") == [str(sent[len(long_parts) - 1])]
 
-
 def test_buttons_telegram_refuses_cost_the_buttons_never_the_text(tmp_path):
-    ch, bridge, platform = make(tmp_path, [ping_note()])
+    ch, bridge, platform = make(tmp_path, [ping_note(base=BASE)])
     real = ch.call
 
     async def call(method, files=None, **params):
@@ -367,17 +226,22 @@ def test_buttons_telegram_refuses_cost_the_buttons_never_the_text(tmp_path):
     assert sent[1]["text"] == sent[0]["text"] and platform.confirmed == [5]
     assert ch.store.sent_event(SESSION, "900") == "ab12cd34", "a reply to it still goes into the session"
 
-
-def test_a_closed_ping_rewrites_its_last_message_without_buttons(tmp_path):
-    answered = {"seq": 7, "kind": "ping", "session": "ab12cd34", "approval": "",
-                "data": {**ping_note()["data"], "open": False, "answered": "Покажи ещё", "seq": 5}}
-    ch, bridge, platform = make(tmp_path, [ping_note(), answered])
+def test_a_ping_note_rewrites_the_last_message_with_its_new_buttons_and_the_same_text(tmp_path):
+    first = ping_note(base=BASE)
+    relabelled = {"seq": 7, "kind": "ping", "session": "ab12cd34", "approval": "",
+                  "data": {**first["data"], "base": ["To the Base · 2", "p.base"], "push": PUSH[:1], "seq": 5}}
+    taken_off = {"seq": 8, "kind": "ping", "session": "ab12cd34", "approval": "",
+                 "data": {**first["data"], "base": None, "push": [], "seq": 5}}
+    ch, bridge, platform = make(tmp_path, [first, relabelled, taken_off])
     asyncio.run(bridge.deliver())
-    [(method, params, _)] = [s for s in ch.sent if s[0] == "editMessageText"]
-    assert params["message_id"] == 900 and "reply_markup" not in params
-    assert params["text"].endswith("\n\n→ Покажи ещё") and "Нашёл три варианта." in params["text"]
-    assert platform.confirmed == [7]
-
+    [(_, sent, _)] = [s for s in ch.sent if s[0] == "sendMessage"]
+    (_, put_on, _), (_, bare, _) = [s for s in ch.sent if s[0] == "editMessageText"]
+    assert put_on["message_id"] == bare["message_id"] == 900
+    assert put_on["text"] == bare["text"] == sent["text"] and "→" not in sent["text"]
+    assert put_on["reply_markup"] == {"inline_keyboard": [[{"text": "To the Base · 2", "callback_data": "p.base"}],
+                                                          [{"text": "Push retinue · 2", "callback_data": "p.push1"}]]}
+    assert "reply_markup" not in bare
+    assert platform.confirmed == [8]
 
 def test_a_turn_read_in_the_app_reaches_telegram_only_when_long_and_only_as_its_header(tmp_path):
     ch, bridge, platform = make(tmp_path, [ping_note(in_app=True, took_s=40),
@@ -393,6 +257,6 @@ def test_a_turn_read_in_the_app_reaches_telegram_only_when_long_and_only_as_its_
 
 
 def test_ping_parts_never_exceed_a_message_and_an_empty_text_is_the_header_alone():
-    parts = ping_parts({**ping_note()["data"], "text": "x" * 5000, "answered": "Да"})
+    parts = ping_parts({**ping_note()["data"], "text": "x" * 5000})
     assert all(len(p) <= TELEGRAM_LIMIT for p in parts)
     assert ping_parts({**ping_note()["data"], "text": ""}) == ["<b>❓ Путешествия · жильё &lt;в&gt; Энске · 10 min</b>"]

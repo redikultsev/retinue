@@ -283,8 +283,8 @@ export function items(): Item[] {
 }
 
 export const summaries: Summary[] = [
-  { session: "a1b2c3d4", seq: 1, head: "Result · retinue · session a1b2c3d4", text: "The gate did not change this week; the failure reproduces. Two open issues about the restart (#41, #38) — that is it. Fixing next.", at: T0 - 3000, turn: 0, kind: "decision", replies: [], answered: "Fix it" },
-  { session: "e5f6a7b8", seq: 5, head: "Result · notes · session e5f6a7b8", text: "Good, **Centre**. Putting together a plan by day:\n\n| Day | What |\n|---|---|\n| 7 May | arrival, check-in, dinner |\n| 8 May | the old town, a museum |\n| 9 May | the azulejo museum |", at: T0 - 25, turn: 0, kind: "decision", replies: ["Add Sintra", "Book the place", "Leave it for now"], answered: null },
+  { session: "a1b2c3d4", seq: 1, head: "Result · retinue · session a1b2c3d4", text: "The gate did not change this week; the failure reproduces. Two open issues about the restart (#41, #38) — that is it. Fixing next.", at: T0 - 3000, turn: 0, kind: "decision" },
+  { session: "e5f6a7b8", seq: 5, head: "Result · notes · session e5f6a7b8", text: "Good, **Centre**. Putting together a plan by day:\n\n| Day | What |\n|---|---|\n| 7 May | arrival, check-in, dinner |\n| 8 May | the old town, a museum |\n| 9 May | the azulejo museum |", at: T0 - 25, turn: 0, kind: "decision" },
   { session: "c9d0e1f2", seq: 3, head: "Result · retinue · session c9d0e1f2", text: "Done: changelog and tag `v0.4.0`. Do the push (`git push`) yourself — the command is in the courier card.", at: T0 - 80000 },
   { session: "0a1b2c3d", seq: 4, head: "Result · notes · session 0a1b2c3d", text: "The turn ended without text.", at: T0 - 5400 },
 ];

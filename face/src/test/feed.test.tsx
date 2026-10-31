@@ -63,7 +63,7 @@ const FEED: Feed = {
       title: "Decide",
       rows: [row({ key: "a", action: "decide", source: "approval", approval: approval(), sphere: "travel", sphere_title: "Travel", sphere_icon: "✈️" })],
     },
-    { action: "choose", title: "Choose", rows: [row({ key: "c", action: "choose", summary: 7, replies: ["Take the first", "More options"] })] },
+    { action: "reply", title: "Reply", rows: [row({ key: "c", action: "reply" })] },
     { action: "read", title: "Read", rows: [row({ key: "r", session: "b2c3d4e5", title: "Post" })] },
     {
       action: "assistant",
@@ -93,7 +93,7 @@ describe("FeedView", () => {
     mount(<FeedView feed={FEED} now={NOW} />);
     expect(await screen.findByRole("heading", { name: "Waiting for you (5)" })).toBeTruthy();
     const groups = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(groups).toEqual(["Answer a question (1)", "Decide (1)", "Choose (1)", "Read (1)", "From the assistant (1)"]);
+    expect(groups).toEqual(["Answer a question (1)", "Decide (1)", "Reply (1)", "Read (1)", "From the assistant (1)"]);
 
     const answer = screen.getByRole("region", { name: "Answer a question" });
     expect(within(answer).getByRole("button", { name: /Centre/ })).toBeTruthy();
@@ -101,9 +101,9 @@ describe("FeedView", () => {
     expect(within(decide).getByText("✈️ Travel")).toBeTruthy();
     expect(within(decide).getByText("20 min")).toBeTruthy();
     expect(within(decide).getByRole("button", { name: "Allow" })).toBeTruthy();
-    const choose = screen.getByRole("region", { name: "Choose" });
-    expect(within(choose).getByText("Found three hotels")).toBeTruthy();
-    expect(within(choose).getByRole("button", { name: "Take the first" })).toBeTruthy();
+    const reply = screen.getByRole("region", { name: "Reply" });
+    expect(within(reply).getByText("Found three hotels")).toBeTruthy();
+    expect(within(reply).getByRole("link", { name: "Open and answer" }).getAttribute("href")).toBe("/s/a1b2c3d4");
     const read = screen.getByRole("region", { name: "Read" });
     expect(within(read).getByRole("link", { name: "Post" }).getAttribute("href")).toBe("/s/b2c3d4e5");
     const hers = screen.getByRole("region", { name: "From the assistant" });
@@ -292,20 +292,6 @@ describe("Her row's sheet", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open the Record" }));
     expect(await screen.findByText("record opened")).toBeTruthy();
     expect(load).not.toHaveBeenCalled();
-  });
-});
-
-describe("A choice in the feed", () => {
-  it("presses a ping's reply by its place, as under the summary, and shows what went in", async () => {
-    const reply = vi.spyOn(api, "reply").mockResolvedValue({
-      say: "Accepted.",
-      summary: { session: "a1b2c3d4", seq: 7, head: "", text: "", at: NOW, replies: [], answered: "More options" },
-    });
-    const feed: Feed = { ...FEED, count: 1, groups: [{ action: "choose", title: "Choose", rows: [row({ key: "c", action: "choose", summary: 7, replies: ["Take the first", "More options"] })] }] };
-    mount(<FeedView feed={feed} now={NOW} />);
-    fireEvent.click(await screen.findByRole("button", { name: "More options" }));
-    await waitFor(() => expect(reply).toHaveBeenCalledWith("a1b2c3d4", 7, 1));
-    expect(live.getState().summaries.a1b2c3d4?.["7"]?.answered).toBe("More options");
   });
 });
 

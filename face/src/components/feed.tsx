@@ -1,7 +1,7 @@
-// «Waiting for you»: one queue grouped by what the owner does — answer a question, decide a card, choose a reply, read a
-// finished turn, and the assistant's items — not by where it came from. Each row: where it came from (icon), its
-// sphere, its title, how long it waits and its one line; the action itself in place where it is small (a question's
-// buttons, «Allow» / «Deny», the suggested replies), so the home screen is a peek, not a way elsewhere. The
+// «Waiting for you»: one queue grouped by what the owner does — answer a question, decide a card, reply to a session
+// that waits for his word, read a finished turn, and the assistant's items — not by where it came from. Each row: where
+// it came from (icon), its sphere, its title, how long it waits and its one line; the action itself in place where it
+// is small (a question's buttons, «Allow» / «Deny»), so the home screen is a peek, not a way elsewhere. The
 // assistant's items open a sheet (`WaitingSheet`): what the row is about, asked of the router, and the way to where it
 // is — the Gmail thread, the person's chat, her card in Telegram, where sending and deciding stay; a base's date opens
 // its Record. A person's row of hers closes here too — «Done», «Not a task», «Tomorrow», with «Undo» in the toast —
@@ -11,7 +11,6 @@ import { useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { BaseButton } from "@/components/base-card";
 import { PushButton } from "@/components/push-card";
-import { ReplyButtons } from "@/components/reply-buttons";
 import {
   ArrowUpRight,
   Ban,
@@ -35,7 +34,7 @@ import { type Feed as FeedData, type FeedRow, feedSource, type Press, STALE_DIGE
 import { splitRecord, useOpenRecord } from "@/lib/pane";
 import { inputText, when } from "@/lib/format";
 import { useLiveState } from "@/lib/live";
-import type { Approval, Summary } from "@/lib/types";
+import type { Approval } from "@/lib/types";
 import { cn, LIST } from "@/lib/utils";
 
 const ICONS: Record<string, (props: React.SVGProps<SVGSVGElement>) => React.ReactNode> = {
@@ -92,15 +91,6 @@ function CardAction({ approval, essence }: { approval: Approval; essence: string
       </Button>
     </div>
   );
-}
-
-/** A ping's suggested replies, pressed exactly as under the summary (`ReplyButtons`, `{reply: {seq, n}}`): once,
- * whichever place pressed it; the ping as it now is goes into the store, and the feed reads itself again. */
-function Replies({ row, reply = api.reply }: { row: FeedRow; reply?: typeof api.reply }) {
-  if (!row.session || typeof row.summary !== "number" || !row.replies?.length) return null;
-  const summary: Summary = { session: row.session, seq: row.summary, head: "", text: row.essence, at: row.since,
-    kind: "decision", replies: row.replies };
-  return <ReplyButtons summary={summary} reply={reply} />;
 }
 
 /** «Done», «Not a task», «Tomorrow» on her row: the row leaves the feed at once (`FeedSource.hide`), the router marks
@@ -237,8 +227,7 @@ function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: 
       {row.source === "push" && row.session && (
         <PushButton session={row.session} count={row.push ?? 0} repo={row.repos?.length === 1 ? undefined : row.repos?.[0]} />
       )}
-      {row.action === "choose" && <Replies row={row} />}
-      {row.action === "choose" && !row.replies?.length && row.session && (
+      {row.action === "reply" && row.session && (
         <Link to="/s/$id" params={{ id: row.session }} className="w-fit text-sm text-primary underline-offset-4 hover:underline">
           Open and answer
         </Link>

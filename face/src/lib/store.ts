@@ -20,7 +20,7 @@ import type {
   StreamEvent,
   Summary,
 } from "./types";
-import { hideReplyLines } from "./replies";
+import { hideSphereLines } from "./sphere-line";
 
 export interface State {
   /** The id of the last stream event seen: where the stream resumes. Null before the first snapshot. */
@@ -427,13 +427,18 @@ export function groupSessions(sessions: Session[], now: number): Groups {
 /** What a peek shows of a session: the text being written now, else its last message from the model, else its last
  * summary. */
 export function lastWords(items: Item[], delta: string | undefined, summaries: Summary[]): string {
-  items = hideReplyLines(items, summaries);
+  items = hideSphereLines(items, summaries);
   if (delta?.trim()) return delta;
   for (let k = items.length - 1; k >= 0; k--) {
     const it = items[k]!;
     if (it.kind === "message" && it.data.role === "assistant" && it.data.text.trim()) return it.data.text;
   }
   return summaries.at(-1)?.text ?? "";
+}
+
+/** The sessions a list shows: every one the owner has not archived. */
+export function listed(sessions: Record<string, Session>): Session[] {
+  return Object.values(sessions).filter((s) => !s.archived);
 }
 
 /** The number in the title and the app badge: the cards waiting for the owner. */

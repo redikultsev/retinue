@@ -51,7 +51,7 @@ NOTES_PER_PULL = 50
 SESSION, CARD = "platform", "platform-card"  # the router's `sent` channels: message → session, message → approval
 # `/wait`'s line of a question: message → `<approval>/<n>`. Not CARD: a card's update rewrites every CARD message.
 QUESTION = "platform-question"
-PING = "platform-ping"       # and: a ping's message with its reply buttons → the ping's note number
+PING = "platform-ping"       # and: a ping's last message → the ping's note number, so new buttons rewrite it
 UNAVAILABLE = "The platform is unavailable — try again later."
 # Telegram's answers to an edit that has nothing left to do: the card already reads so, or the owner deleted it.
 SETTLED_EDITS = ("message is not modified", "message to edit not found")
@@ -328,11 +328,11 @@ class PlatformBridge:
             keyboard = self._keyboard(data["buttons"], str(note["approval"]))
             for native_id in self.store.sent_native(CARD, str(note["approval"])):
                 await self._edit(html, int(native_id), keyboard)
-        elif kind == "summary" and "kind" in data:
+        elif kind == "summary":
             await self._ping(int(note["seq"]), session, data)
         elif kind == "ping":
-            await self._ping_closed(data)
-        elif kind in ("summary", "file_skipped"):  # a summary from before pings
+            await self._ping_buttons(data)
+        elif kind == "file_skipped":
             await self.say(f"{data['head']}\n\n{data['text']}", session)
         elif kind == "file":
             await self._file(session, str(data["id"]), data)
@@ -362,7 +362,7 @@ class PlatformBridge:
 
     async def _ping(self, seq: int, session: str, data: dict) -> None:
         """The end of a turn (`pings`): its header and text, split as any text is, each message answering into the
-        session; the reply buttons on the last one, which is mapped to the ping so a press elsewhere rewrites it. A
+        session; its buttons («To the Base», «Push») on the last one, which is mapped to the ping so new buttons rewrite it. A
         quick done turn goes out without a sound. Buttons Telegram refuses cost the buttons, never the text: the last
         part goes again without them (a reply to it still answers). A turn of a session the owner drives from the app
         is read there (`_in_app`)."""
@@ -400,9 +400,9 @@ class PlatformBridge:
         if native_id:
             self.store.save_sent(SESSION, native_id, session)
 
-    async def _ping_closed(self, data: dict) -> None:
-        """A ping's replies closed: its last message rewritten without its buttons, with «→ <reply>» when one went in;
-        or its «To the Base · N» put on, relabelled or taken off (`tobase`), the replies kept while they are open."""
+    async def _ping_buttons(self, data: dict) -> None:
+        """A ping's buttons changed: its «To the Base · N» or «Push · N» put on, relabelled or taken off (`tobase`,
+        `topush`) — its last message rewritten with them."""
         html = ping_parts(data)[-1]
         for native_id in self.store.sent_native(PING, str(data["seq"])):
             await self._edit(html, int(native_id), ping_keyboard(data))
@@ -809,8 +809,7 @@ def _file_answer(content: bytes) -> dict:
 
 def ping_parts(data: dict) -> list[str]:
     """A ping as Telegram messages: its header line (escaped, bold) above the text, in the first message while both
-    fit; «→ <reply>» under the last once a reply went in. The same parts every time for the same data: the message a
-    closed ping rewrites is the last of them."""
+    fit. The same parts every time for the same data: the message a ping's new buttons rewrite is the last of them."""
     head = f"<b>{_tg_escape(pings.header(data))}</b>"
     text = str(data.get("text") or "")
     parts = render_telegram(text) if text.strip() else [head]
@@ -819,17 +818,12 @@ def ping_parts(data: dict) -> list[str]:
             parts[0] = f"{head}\n\n{parts[0]}"
         else:
             parts.insert(0, head)
-    if isinstance(answered := data.get("answered"), str) and answered:
-        arrow = f"→ {_tg_escape(answered)}"
-        if len(parts[-1]) + 2 + len(arrow) <= TELEGRAM_LIMIT:
-            parts[-1] = f"{parts[-1]}\n\n{arrow}"
     return parts
 
 
 def ping_keyboard(data: dict) -> dict | None:
-    """A ping's buttons: its suggested replies while they are open, then «To the Base · N» and «Push · N» while it
-    carries them."""
-    buttons = list(data.get("buttons") or []) if data.get("open") else []
+    """A ping's buttons: «To the Base · N» and «Push · N» while it carries them."""
+    buttons = []
     if isinstance(base := data.get("base"), list) and len(base) == 2:
         buttons.append(base)
     buttons += [b for b in data.get("push") or [] if isinstance(b, list) and len(b) == 2]

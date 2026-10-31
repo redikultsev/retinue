@@ -7,8 +7,7 @@ import { type ReactNode, useMemo } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { BaseButton } from "@/components/base-card";
 import { PushButton } from "@/components/push-card";
-import { ReplyButtons } from "@/components/reply-buttons";
-import { hideReplyLines } from "@/lib/replies";
+import { hideSphereLines } from "@/lib/sphere-line";
 import type { Approval, Input, Item, Summary } from "@/lib/types";
 import { InputBubble } from "./input";
 import { isStep, Markdown, StepRun, TranscriptItem } from "./item";
@@ -121,16 +120,8 @@ function turnText(items: Item[], index: number): string {
 }
 
 function SummaryNote({ summary, repeats, base }: { summary: Summary; repeats: boolean; base?: ReactNode }) {
-  // A ping's suggested replies under it, while they can be pressed; the one that went in after; «To the Base · N» on the
-  // last one while the session has Base files uncommitted.
-  const replies = (
-    <>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <ReplyButtons summary={summary} />
-        {base}
-      </div>
-    </>
-  );
+  // «To the Base · N» on the last one while the session has Base files uncommitted.
+  const buttons = base ? <div className="flex flex-wrap items-center gap-1.5">{base}</div> : null;
   if (repeats)
     return (
       <div data-testid="summary" className="flex flex-col gap-2">
@@ -139,14 +130,14 @@ function SummaryNote({ summary, repeats, base }: { summary: Summary; repeats: bo
           <span className="truncate">{summary.head}</span>
           <span className="h-px flex-1 bg-border" />
         </div>
-        {replies}
+        {buttons}
       </div>
     );
   return (
     <div data-testid="summary" className="flex flex-col gap-1.5 rounded-lg bg-muted/60 px-3 py-2.5">
       <div className="text-[11px] text-muted-foreground">{summary.head}</div>
       <Markdown text={summary.text} />
-      {replies}
+      {buttons}
     </div>
   );
 }
@@ -167,8 +158,8 @@ interface Props {
 }
 
 export function Transcript({ items: given, approvals, delta, running, summaries = [], inputs = [], base, push }: Props) {
-  // A ping's replies line is its buttons, not words: off the message it ends.
-  const items = useMemo(() => hideReplyLines(given, summaries), [given, summaries]);
+  // A ping's sphere line is the platform's, not words: off the message it ends.
+  const items = useMemo(() => hideSphereLines(given, summaries), [given, summaries]);
   const cards = useMemo(() => placeCards(items, approvals), [items, approvals]);
   const notes = useMemo(() => placeSummaries(items, summaries), [items, summaries]);
   const mine = useMemo(() => placeInputs(items, inputs), [items, inputs]);

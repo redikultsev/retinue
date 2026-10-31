@@ -155,7 +155,7 @@ in the snapshot, never wrapped in an envelope. The kinds and their keys:
 | `item` | `<session>/<turn>/<n>` | `{session, turn, n, kind, data}` |
 | `items_reset` | `<session>/<turn>` | `{session, turn, count}`: that turn's items from `count` on are gone |
 | `approval` | the approval's id | a card, as in the snapshot |
-| `summary` | `<session>/<seq>` | `{session, seq, head, text, at, turn, kind, took_s, replies, answered, line}`: every summary its own object; `turn` is the turn it ends (`null` on old ones); a ping's `kind` (`done` · `decision` · `failed`, `null` on old ones), `took_s`, `replies` — the suggested answers still pressable, `[]` once one went in, you wrote, or a newer ping came — `answered`, the one that went in, and `line`, the replies line exactly as the model wrote it ([platform.md](platform.md#pings)) |
+| `summary` | `<session>/<seq>` | `{session, seq, head, text, at, turn, kind, took_s, line}`: every summary its own object; `turn` is the turn it ends; a ping's `kind` (`done` · `decision` — a card of the session waits on you — · `failed`), `took_s`, and `line`, the sphere line exactly as the model wrote it ([platform.md](platform.md#pings)) |
 | `input` | `<session>/<input_id>` | `{session, input_id, text, at, turn, n, attachments}`: your message; it goes before the item (`turn`, `n`) the session had not yet written (`null` on old ones: not shown); `attachments`: `[{kind: image\|pdf\|file, name, size, what, thumb}]` |
 | `file` | the file's id | `{id, session, path, name, size, mime, at}`: a file the session handed over ([below](#a-sessions-files)) |
 | `delta` | none, no `id` | `{session, text}`: text being written, never replayed |
@@ -180,11 +180,11 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/sessions/{id}` | `{schema, cursor, session, items, approvals, summaries, inputs, files, base_cards, push_cards, about}` — `about`: `{cwd, context_tokens, model, cli_version, permission_mode, mcp: [{name, status}]}` for “Summary” ([below](#summary)), from the session's row and its newest top-level `init` line; null (or `[]`) where nothing said it |
 | `GET /api/events?since=<cursor>` | the stream; `Last-Event-ID` wins over `since` |
 | `POST /api/sessions {input_id, track, sphere?, text}` | `{session, say}`; `input_id` is `face:<uuid4>`, so a retried POST starts one session; with `sphere` and no `track`, the sphere's track |
-| `POST /api/sessions/{id}/input {reply: {seq, n}}` | `{say, summary}`: a ping's reply `n` pressed — the platform sends that reply as your message, once, whichever place pressed it, within the 7 days a Telegram button lives (no `input_id`: the ping is the key); `summary`, the ping as it now is |
 | `POST /api/sessions/{id}/input {input_id, text, attachments?}` | `{say}`; `attachments`: `[{name, media_type, data (base64), sha256}]`, at most 10 files and 30 MB, 20 MB a file — text, files or both ([platform.md](platform.md#what-a-session-gets-from-you)); `POST /api/sessions` takes them too |
 | `GET /api/sessions/{id}/inputs/{input_id}/{n}` | a picture you sent, as the platform's 320 px JPEG of its own re-encoding (never your bytes); 404 for anything else |
 | `POST /api/sessions/{id}/stop` | `{ok}`: the lane interrupts the running turn |
 | `POST /api/sessions/{id}/pin {pinned}` | `{session}`: the pin is the session's row (`pinned`), so every device agrees; its `at` stays |
+| `POST /api/sessions/{id}/archive` | `{session}`: “Archive” — the session, its sub-sessions and side questions end where they stand (queue dropped, run stopped, cards stale) and leave every list (`archived`); a turn of it beginning again, a message from you, brings it back ([platform.md](platform.md#archive)) |
 | `POST /api/sessions/{id}/side {input_id, text}` | `{session, say}`: a side question — see below |
 | `POST /api/sessions/{id}/sphere {sphere}` | `{session}`: a sphere's name, or `null` for none; the session is no sphere's main session after it |
 | `POST /api/sessions/{id}/main {main}` | `{session}`: the sphere's main session — marking one unmarks the sphere's previous one; 400 without a sphere |
@@ -407,7 +407,7 @@ no Radix, no icon package, no new dependency; no code copied):
   The latest TodoWrite plan is pinned above the input box as one line “2 of 4 · Fixing …”, opening to the list (AI
   Elements' `Task`/`Plan`); it hides once every step is done.
 - **Cards** (approval, question) keep their full input and both buttons but sit in a denser card with a warm edge; the
-  ping's «Ответы:» are small chips. Every control is a 44 px target on a touch screen (`pointer-coarse:` sizes, or the
+  question's options are buttons with their description under the label. Every control is a 44 px target on a touch screen (`pointer-coarse:` sizes, or the
   `.hit` class that grows the box invisibly) while it looks small.
 - Looked at and not taken: [CopilotKit](https://github.com/CopilotKit/CopilotKit) (a runtime and its own chat),
   [Lobe UI](https://github.com/lobehub/lobe-ui) (MIT, antd-based until v6 — not Tailwind), [Open
@@ -472,7 +472,7 @@ is as of opening the session.
   30 px line (44 px on a touch screen): a state dot (waiting, working), its title cut to the line, and on the right
   small marks — “waiting”, ↑N commits not pushed (a PR icon once a push opened one), the Base files N, a queued clock, the
   unread dot; pin, peek, menu and “Open beside” show on hover with a mouse and stay on a touch screen (the pin there only once
-  pinned; “Pin” is in the menu). A sphere's heading (small, muted) folds
+  pinned; “Pin” is in the menu; “Archive” at its foot asks once, then takes the session out of every list). A sphere's heading (small, muted) folds
   the sphere; «⑂ N ⌄» on a row with rows under it folds them (the tooltip adds the open sub-sessions, `children`); the
   device remembers both. A fold never hides what waits on you — a folded row and a folded heading say “N waiting” — nor
   the session on screen (its sphere and parent stay open), and under “Waiting” nothing is folded. A row is “side question: …”
@@ -502,11 +502,9 @@ is as of opening the session.
   by its name and size. The composer's «+» attaches photos, PDFs and files (or paste one); the app checks the
   platform's limits before it uploads, and a message may be files alone.
 - **Summaries** are inline, each at the end of the turn it was said for. One that only repeats the turn's last message
-  is a divider with its header; one that says more (an error, a restart, a limit) is shown whole. A ping's suggested
-  replies (the older way: a session now asks with a question card) are buttons under it, never under the session's
-  row in the list, where they were noise: a press sends that reply into the session, once — a press in Telegram counts
-  as the same press — and the buttons go in both places; the reply that went in shows as «→ …». The turn's last message
-  hides its replies line — the exact `line` the platform parsed, never one the app parses itself.
+  is a divider with its header; one that says more (an error, a restart, a limit) is shown whole. A ping's only
+  buttons are “To the Base” and “Push” (below): a session that needs your choice asks with a question card. The turn's
+  last message hides its sphere line — the exact `line` the platform parsed, never one the app parses itself.
 - **“To the Base”** ([base.md](base.md#the-button)): “To the Base · N” under the session's last summary, in its
   menu and in its feed row opens its commit card in a dialog — the same card as in Telegram (the event `base`): the
   files with A/M/D, +/− and ⇄ for one another session's run changed too, “nobody's” for one no session changed (turned
@@ -558,7 +556,7 @@ session, a card or a summary changes on the stream (once per burst) and once a m
 |---|---|---|
 | “Answer the question” | a question card that asks | the question's buttons, “Own answer…” |
 | “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted (“To the Base: N files”, since the first of them) | “Allow” / “Deny”; a courier's “Copy command”; “To the Base · N”, the card in a dialog. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first: nothing is decided unseen |
-| “Choose” | a ping of the last 7 days whose suggested replies are still open ([platform.md](platform.md#pings): none pressed, nothing written into the session after it, no newer ping); a session waiting with no card shown | its replies as under the summary (`{reply: {seq, n}}`): pressed here or in Telegram, one goes in once and the ping closes in both places; no replies — “Open and answer” |
+| “Reply” | a session waiting for your message with no card shown | “Open and answer” |
 | “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
 | “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and the way to the thing. A person's row or a draft — its words, or › “Details” — opens [its sheet](#her-rows-sheet); a base's date — its words, or ↗ “Open the Record” — opens the Record in Spaces; the private matter's row has only ↗ “Open in Telegram” (`https://t.me/<bot>`): its words and buttons come after “Show” there. Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |
 
@@ -566,7 +564,7 @@ Each row: an icon of where it came from, its sphere (or track), the session's ti
 waited and its one line — the question, the command, the summary's first line, her title. A card is the same object
 as everywhere (`approval`), decided by the same rules; the app shows its newest copy, so a press in Telegram shows at
 once. A row is `{key, action, source, session, track, sphere, sphere_title, sphere_icon, title, since, essence, ref}`
-plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row, `replies` and `summary` on a choice's,
+plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row,
 `base` (the count) on a “To the Base” row (`source: base`), `t` (the row's token) on a person's row of hers, `private:
 true` on the private matter's row of hers (a letter's row with no token, or a draft that names no one).
 A pressed row leaves the feed at once and stays hidden while the feed still has its `t`, ten minutes at most — a press

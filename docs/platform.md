@@ -95,6 +95,14 @@ to nothing. The first 10 rows; «N more — in the app.».
 - If the platform is down, the router says «The platform is unavailable — try again later.» and never hands the message to
   the assistant.
 
+### Archive
+
+«Archive» in a session's menu in the app (`POST /api/sessions/{id}/archive`, `Platform.archive`) takes the session out
+of every list at once, with its sub-sessions and side questions and theirs. Each one still open ends where it stands, as
+a stopped sub-session does: its queued runs dropped, its running turn interrupted, its cards stale («Expired: you
+archived the session»), closed. Nothing is deleted: its link still opens it, and the row carries `archived` until a turn
+of it begins again — a message from you brings it back to the list.
+
 ### The assistant's digest
 
 The feed also shows what waits in the assistant's world. The router reads it from its own tables and pushes it to
@@ -263,7 +271,7 @@ yours: it reports nothing. Reports are held and go in as one message (`by: repor
 instructions») when the parent is idle or closed, has no run and nothing queued — never into a running turn, never while
 it waits on a card — and no subscription limit is being waited out; while another of its sub-sessions still works, up
 to 20 minutes, so one resume takes them all. One delivery is one parent turn, so a child's turn never makes more than
-one. A report-started turn leaves your open reply buttons as they are, and its done ping is silent.
+one. A report-started turn's done ping is silent.
 
 **Limits** (`subs.py`) — loose on purpose, near Claude Code's own on your Mac:
 
@@ -301,9 +309,8 @@ dies with its session, `claude --bg` is interactive only.
 ### The sphere line
 
 A session started with no sphere and not placed by you names its own: the server's instructions list the sphere names,
-and the model ends its turn with one line `Sphere: <name>` (the older `Сфера:` is read too) — the last line, or the one right before
-`Replies:`, outside a code fence; bold or code marks tolerated; only a configured name. The platform takes it off the ping (the app hides it
-with the replies' line), sets the sphere, never the main mark, and the session's sub-sessions follow — but one you
+and the model ends its turn with one line `Sphere: <name>` — the very last line, outside a code fence; bold or code marks
+tolerated; only a configured name. The platform takes it off the ping (the app hides it), sets the sphere, never the main mark, and the session's sub-sessions follow — but one you
 placed yourself. Once you place a
 session in the menu (`sphere_by: owner`), its line is ignored; a sub-session and a side question never read theirs.
 
@@ -701,7 +708,7 @@ another lane's.
 (`COMPOSE_PROFILES` names `platform`): their volumes stay as the archive, the platform is on neither network and
 mounts neither volume. A session whose lane is not in `platform.yaml`, or is there with `retired: true`, stays in the
 app's list, opens with its transcript, cards and files (all in the platform's database), and takes nothing in: a
-message, a reply button, a card's decision or a question's answer gets «The lane is retired: start a new session.», and
+message, a card's decision or a question's answer gets «The lane is retired: start a new session.», and
 nothing runs. At the platform's start every card still asking in such a session goes stale («Expired: the lane
 is retired») and the session stops waiting, so it leaves «Decide» and `/wait`. A retired lane needs no token, gets no
 client and no poller, a run sent to it is refused at once, and a run of it left open holds no room. A lane still
@@ -915,8 +922,7 @@ is told it went unanswered. A reply to a question that no longer asks is a messa
 ## Pings
 
 The end of every turn comes to you as a ping (`retinue/pings.py`): a header `<icon> <sphere or track> · <title> ·
-<took>`, then the text — ✅ done, ❓ waits on your choice (the model offered answers, or a card of the session still
-waits), ⚠️ broke (an error, the subscription's limit, a turn a restart cut, a run its lane refused). `<took>` is the
+<took>`, then the text — ✅ done, ❓ waits on you (a question or an approval card of the session is shown), ⚠️ broke (an error, the subscription's limit, a turn a restart cut, a run its lane refused). `<took>` is the
 time since you last acted on the session: your last message, or the start of the run that ended (a run starts on your
 message or on your decision on a card; one that waited for room on its lane counts from its start). A long text is
 split as before; a reply to any of its messages goes into the session.
@@ -931,29 +937,7 @@ what follows from it in a line; the one it recommends first, marked «(Recommend
 one. You can always answer in your own words. So a decision is a question card — its options described, an answer of
 your own always open, alive 7 days and through restarts — and the run stops on it, holding no room on its lane.
 
-**Suggested replies** are the older way, no longer taught: a turn's last line `Replies: "Yes, go ahead" · "Show me
-the plan first"`. A model that still writes one gets its buttons, read as before. The platform takes that
-line off the text and parses it strictly: only the very last line, not inside an open code fence (a fence closes only
-with its own marker, ``` or ~~~, at least as long), `"…"` (or `“…”`, `«…»`) joined by ` · ` (a bold label is
-tolerated; the older label `Ответы:` is read too); each reply loses
-invisible, bidi and blank characters, and one longer than 60 characters, one with no letter or digit, one that starts
-with `/`, `!` or `#` (the CLI would read a command or a skill, maybe one a page steered the model to), an empty one
-and a repeat are dropped; three at most are kept, in the model's order. Anything else stays text as the model
-wrote it: a model that forgets or garbles the line costs the buttons, never the message. The replies are plain text —
-a button's label in Telegram, a text node in the app. A ping whose session has a question or an approval card open
-gets none: the card has its own buttons. The convention was chosen over a tool the platform would serve (an MCP
-server by `--mcp-config`): no new path out of a lane, nothing for the gate to rule on, and the failure is the same —
-no line, no buttons.
-
-The replies are buttons under the ping's last message, one per row (and under the summary in the app, [face.md](face.md#in-the-app), never under the session's row in its list);
-buttons Telegram refuses cost the buttons, never the text — the message goes again without them.
-A press sends that reply into the session as your message — input `ping:<seq>`, taken once whichever place and however
-often it is pressed: like a question's buttons, it survives restarts, and a press an hour later sends once. The
-ping's replies close when one goes in, when you write anything else into the session, or when a newer ping comes: the
-message is rewritten with «→ <reply>» (or just without its buttons), its buttons are spent, and the app drops them.
-Buttons last 7 days, in the app too.
-
-A session in the Base with files not committed yet has one more button on its latest ping, after the replies:
+A session in the Base with files not committed yet has a button on its latest ping:
 **«To the Base · N»** ([base.md](base.md#the-button)). It comes a poll after the ping (the message is rewritten
 with it), moves to the next ping, is relabelled when N changes and goes when nothing is left.
 

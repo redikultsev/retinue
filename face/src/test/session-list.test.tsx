@@ -1,5 +1,5 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionList } from "@/components/session-list";
 import { SessionPanel } from "@/components/session-panel";
@@ -75,17 +75,6 @@ describe("SessionList", () => {
     expect(screen.queryByText("session opened")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Collapse: Session a1b2c3d4" }));
     expect(screen.queryByTestId("peek")).toBeNull();
-  });
-
-  it("never shows a ping's replies under the session's row: they are under its summary", async () => {
-    seed([session("a1b2c3d4")]);
-    mount(<SessionList />);
-    await screen.findByText("Session a1b2c3d4");
-    const summary = { session: "a1b2c3d4", seq: 3, head: "Result", text: "Done.", at: 2, turn: 0, kind: "decision" as const,
-      took_s: 10, replies: ["Yes", "No"], answered: null };
-    act(() => live.dispatch({ type: "event", id: 9, event: { kind: "summary", data: summary } }));
-    await waitFor(() => expect(live.getState().summaries.a1b2c3d4?.["3"]).toBeTruthy());
-    expect(screen.queryByRole("group", { name: "Replies" })).toBeNull();
   });
 
   it("pins on the server, the pinned filter shows it, and side sessions hang under theirs", async () => {

@@ -262,12 +262,12 @@ def test_the_ping_gets_the_button_its_press_sends_the_card_and_a_newer_ping_take
     async def body(world: BaseWorld):
         a = await world.new()
         world.fake.tree["travel/hotel.md"] = "Отель\n"
-        await world.end(a, "Добавил.\nОтветы: «Ещё» · «Хватит»")
+        await world.end(a, "Добавил.")
         [summary] = world.notes("summary")
         [ping] = world.notes("ping")
         assert ping["data"]["seq"] == summary["seq"] and ping["data"]["base"][0] == "To the Base · 1"
         keyboard = ping_keyboard(ping["data"])
-        assert [row[0]["text"] for row in keyboard["inline_keyboard"]] == ["Ещё", "Хватит", "To the Base · 1"]
+        assert [row[0]["text"] for row in keyboard["inline_keyboard"]] == ["To the Base · 1"]
 
         pressed = await world.owner("press", {"button": ping["data"]["base"][1]})
         assert pressed == {"toast": "The card is below."}
@@ -528,22 +528,21 @@ def test_no_base_configured_changes_nothing(tmp_path):
 
 # --- the bridge ----------------------------------------------------------------------------------------------------
 
-def test_the_bridge_puts_the_button_beside_the_replies_and_links_a_card_to_its_page(tmp_path):
-    data = {"head": "Итог", "text": "Готово.", "kind": "decision", "open": True, "place": "base", "title": "t",
-            "buttons": [["Да", "p.yes"]], "base": ["To the Base · 2", "p.base"]}
+def test_the_bridge_puts_the_button_on_the_ping_takes_it_off_and_links_a_card_to_its_page(tmp_path):
+    data = {"head": "Итог", "text": "Готово.", "kind": "done", "place": "base", "title": "t",
+            "base": ["To the Base · 2", "p.base"]}
     ch, bridge, platform = make(tmp_path, [
         {"seq": 1, "kind": "summary", "session": "ab12cd34", "data": data},
-        {"seq": 2, "kind": "ping", "session": "ab12cd34", "data": {**data, "open": False, "buttons": None,
-                                                                  "base": None, "seq": 1}},
+        {"seq": 2, "kind": "ping", "session": "ab12cd34", "data": {**data, "base": None, "seq": 1}},
         {"seq": 3, "kind": "card", "session": "ab12cd34", "approval": "base/c0ffee00",
          "data": {"view": {"head": ["To the Base · base · session ab12cd34", "Subject: t"], "body": "☑ M a.md", "status": "",
                            "link": []}, "buttons": [["Commit", "p.commit"]]}}])
     bridge.face_url = "https://app.example"
     asyncio.run(bridge.deliver())
     (_, first, _), (_, edited, _), (_, card, _) = ch.sent
-    assert [row[0]["text"] for row in first["reply_markup"]["inline_keyboard"]] == ["Да", "To the Base · 2"]
+    assert [row[0]["text"] for row in first["reply_markup"]["inline_keyboard"]] == ["To the Base · 2"]
     assert ch.store.sent_native(PING, "1") == ["900"] and edited["message_id"] == 900
-    assert "reply_markup" not in edited, "the button taken off with the replies closed"
+    assert "reply_markup" not in edited and edited["text"] == first["text"], "the button taken off, the text kept"
     assert card["reply_markup"]["inline_keyboard"][-1] == [{"text": "Open in the app",
                                                             "web_app": {"url": "https://app.example/b/c0ffee00"}}]
     assert ch.store.sent_event(CARD, "902") == "base/c0ffee00"

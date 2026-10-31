@@ -71,6 +71,8 @@ export interface Session {
   turn_started?: number;
   /** Its run waits for room in the lane (a sub-session beyond the room's share, retinue/subs.py). */
   queued?: boolean;
+  /** The owner archived it: out of every list until a turn of it begins again (its link still opens it). */
+  archived?: boolean;
 }
 
 /** What the face says of a session whose run waits for room. */
@@ -136,15 +138,11 @@ export interface Summary {
   at: number;
   /** The turn it was said at the end of: shown right after that turn's items. Absent on old summaries. */
   turn?: number | null;
-  /** A ping (retinue/pings.py): done, waits on the owner's choice, or broke. Null on summaries from before pings. */
+  /** A ping (retinue/pings.py): done, waits on the owner (a card of the session is shown), or broke. */
   kind?: PingKind | null;
   /** Seconds since the owner last acted on the session when the turn ended. */
   took_s?: number | null;
-  /** The suggested answers still pressable (≤3); emptied once one went in, the owner wrote, or a newer ping came. */
-  replies?: string[];
-  /** The reply that went in, from here or from Telegram. */
-  answered?: string | null;
-  /** The replies line exactly as the model wrote it at the end of the turn's last message: the face hides it there. */
+  /** The sphere line exactly as the model wrote it at the end of the turn's last message: the face hides it there. */
   line?: string | null;
 }
 

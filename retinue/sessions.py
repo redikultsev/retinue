@@ -81,7 +81,9 @@ class PlatformStore:
                 owner_hold TEXT,                    -- a sub-session the owner stopped or wrote into: stopped | wrote;
                                                     -- its parent may not write to it until he writes to the parent
                 owner_joined INTEGER NOT NULL DEFAULT 0, -- the owner wrote into its current turn (its ping is his)
-                stopped_run TEXT                    -- the run of it the owner stopped: what it says is no report
+                stopped_run TEXT,                   -- the run of it the owner stopped: what it says is no report
+                archived REAL                       -- when the owner archived it: out of the face's list until a turn
+                                                    -- of it begins again
             );
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY,
@@ -235,7 +237,8 @@ class PlatformStore:
                              ("fork_of", "TEXT"), ("seen_at", "REAL"), ("news_at", "REAL"), ("cwd", "TEXT"),
                              ("turn_started", "REAL"), ("sub_of", "TEXT"), ("title", "TEXT"), ("turn_by", "TEXT"),
                              ("sphere_by", "TEXT"), ("hops", "INTEGER NOT NULL DEFAULT 0"), ("owner_hold", "TEXT"),
-                             ("owner_joined", "INTEGER NOT NULL DEFAULT 0"), ("stopped_run", "TEXT")):
+                             ("owner_joined", "INTEGER NOT NULL DEFAULT 0"), ("stopped_run", "TEXT"),
+                             ("archived", "REAL")):
             if column not in columns:  # a database from before the column
                 self.db.execute(f"ALTER TABLE sessions ADD COLUMN {column} {kind}")
         for table, column, kind in (("runs", "mode", "TEXT"), ("approvals", "why", "TEXT NOT NULL DEFAULT ''"),
@@ -253,7 +256,7 @@ class PlatformStore:
 
     SESSION = ("id", "track", "lane", "kind", "state", "cli_session", "cli_version", "created", "at", "idle_since",
                "turn", "parent", "context_tokens", "sphere", "main", "fork_of", "cwd", "sub_of", "title", "turn_by",
-               "sphere_by", "hops", "owner_hold", "owner_joined", "stopped_run")
+               "sphere_by", "hops", "owner_hold", "owner_joined", "stopped_run", "archived")
 
     def new_session(self, track: str, lane: str, kind: str, now: float, parent: str | None = None,
                     sphere: str | None = None, fork_of: str | None = None, main: bool = False,
@@ -352,6 +355,19 @@ class PlatformStore:
             self._session_event(session)
         self.db.commit()
         return cursor.rowcount == 1
+
+    def archive(self, session: str, now: float) -> list[str]:
+        """The owner's «Archive»: the session, its sub-sessions and side questions, theirs too, out of the face's list;
+        each one's event says so. Its ids, the session first; empty when there is no such session."""
+        rows = self.db.execute("""WITH RECURSIVE kin(id) AS (SELECT id FROM sessions WHERE id = ?
+            UNION SELECT s.id FROM sessions s JOIN kin ON s.sub_of = kin.id OR s.parent = kin.id) SELECT id FROM kin""",
+                               (session,)).fetchall()
+        ids = sorted((row[0] for row in rows), key=lambda id_: id_ != session)
+        for id_ in ids:
+            self.db.execute("UPDATE sessions SET archived = COALESCE(archived, ?) WHERE id = ?", (now, id_))
+            self._session_event(id_)
+        self.db.commit()
+        return ids
 
     def face_about(self, session: str) -> dict:
         """What the face's «Summary» says of a session besides its row — only what the platform was told: the directory
@@ -827,13 +843,14 @@ class PlatformStore:
         s.turn_started, s.sub_of,
         (SELECT COUNT(*) FROM sessions c WHERE c.sub_of = s.id AND c.state != 'closed'),
         s.state = 'active' AND EXISTS (SELECT 1 FROM queue q WHERE q.session = s.id)
-            AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.session = s.id AND r.ended IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.session = s.id AND r.ended IS NULL),
+        s.archived IS NOT NULL
         FROM sessions s"""
 
     @staticmethod
     def _face_session(row: tuple) -> dict:
         session, track, lane, kind, state, created, at, pinned, parent, sphere, main, fork_of, unread, first, \
-            waiting, base, push, push_why, turn_started, sub_of, children, queued = row
+            waiting, base, push, push_why, turn_started, sub_of, children, queued, archived = row
         return {"id": session, "track": track, "lane": lane, "kind": kind, "state": state, "created": created,
                 "at": at, "title": unmarked(first or "")[:TITLE_LEN] or track, "waiting": waiting, "pinned": bool(pinned),
                 "parent": parent, "sphere": sphere, "main": bool(main), "fork_of": fork_of, "unread": bool(unread),
@@ -841,7 +858,8 @@ class PlatformStore:
                 **({"turn_started": turn_started} if turn_started is not None else {}),
                 # `side`: a side question (its `parent`); `sub_of`: a sub-session's parent session, `children` its own
                 # open ones, `queued`: waiting for room in the lane (`subs`).
-                "side": parent is not None, "sub_of": sub_of, "children": children, "queued": bool(queued)}
+                "side": parent is not None, "sub_of": sub_of, "children": children, "queued": bool(queued),
+                **({"archived": True} if archived else {})}
 
     def face_session(self, session: str) -> dict | None:
         """A session as the face lists it: its title is the first thing the owner wrote into it, or its track,
@@ -851,8 +869,9 @@ class PlatformStore:
 
     def face_sessions(self, now: float) -> list[dict]:
         """Every session that is not closed, those closed in the last 30 days and every sphere's main session, however
-        long closed (a message to it opens it again); the latest first."""
-        rows = self.db.execute(f"{self.FACE_SESSION} WHERE s.state != 'closed' OR s.at >= ? OR s.main = 1 "
+        long closed (a message to it opens it again); the latest first. An archived one is none of them."""
+        rows = self.db.execute(f"{self.FACE_SESSION} WHERE s.archived IS NULL "
+                               "AND (s.state != 'closed' OR s.at >= ? OR s.main = 1) "
                                "ORDER BY s.at DESC",
                                (now - FACE_CLOSED_S,))
         return [self._based(self._face_session(row)) for row in rows]
@@ -983,12 +1002,10 @@ def _face_input(row: tuple) -> dict:
 
 def _face_summary(session: str, seq: int, data: dict) -> dict:
     """A summary as the face shows it; its event's key is `<session>/<seq>`. `turn`: the turn it ends (it is said
-    when that turn's last line comes); absent in a summary from before it was recorded. A ping's fields (`pings`):
-    `kind`, `took_s`, `replies` — only those still pressable — `answered`, the reply that went in, and `line`, the
-    replies line exactly as the model wrote it at the end of its message (the face hides it there)."""
+    when that turn's last line comes). A ping's fields (`pings`): `kind`, `took_s`, and `line`, the sphere line exactly
+    as the model wrote it at the end of its message (the face hides it there)."""
     return {"session": session, "seq": seq, "head": data.get("head", ""), "text": data.get("text", ""),
             "at": data.get("at"), "turn": data.get("turn"), "kind": data.get("kind"), "took_s": data.get("took_s"),
-            "replies": list(data.get("replies") or []) if data.get("open") else [], "answered": data.get("answered"),
             "line": data.get("line")}
 
 

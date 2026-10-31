@@ -13,7 +13,6 @@ import type {
   Session,
   SessionSnapshot,
   SessionsSnapshot,
-  Summary,
   Tally,
 } from "./types";
 import type { Encoded } from "./attach";
@@ -111,16 +110,14 @@ export const api = {
       `/api/sessions/${encodeURIComponent(session)}/input`,
       attachments.length ? { input_id: id, text, attachments } : { input_id: id, text },
     ),
-  /** A ping's suggested reply pressed: the platform sends that reply once, whichever place pressed it. */
-  reply: (session: string, seq: number, n: number) =>
-    request<{ say: string; summary: Summary | null }>(`/api/sessions/${encodeURIComponent(session)}/input`, {
-      reply: { seq, n },
-    }),
   /** A picture the owner sent: the platform's own thumbnail of it. */
   thumbUrl: (session: string, input: string, n: number) =>
     `/api/sessions/${encodeURIComponent(session)}/inputs/${encodeURIComponent(input)}/${n}`,
   pin: (session: string, pinned: boolean) =>
     request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/pin`, { pinned }),
+  /** «Archive»: the session and its kin end and leave the list; a message to it brings it back. */
+  archive: (session: string) =>
+    request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/archive`, {}),
   side: (session: string, text: string, id = inputId()) =>
     request<{ session: string; say: string }>(`/api/sessions/${encodeURIComponent(session)}/side`, {
       input_id: id,

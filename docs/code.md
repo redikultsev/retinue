@@ -127,7 +127,7 @@ its tip, and how many commits on it no branch of the remote has yet (`push_repos
 the room, so this count is the repository's; every session that worked in it shows it.
 
 **The ping.** The session's latest ping gets «Push · N» (one per repository, «Push retinue · N» when there
-are several) beside its replies and «To the Base», in Telegram and in the app; in its menu and as a «Decide» row of the
+are several) beside «To the Base», in Telegram and in the app; in its menu and as a «Decide» row of the
 feed too (`/wait` says «Press «Push» under its result or open it in the app»).
 
 **The card.** «Push · <repo> · <sphere or track> · session <id>», «Branch: <the room's branch> → <the remote

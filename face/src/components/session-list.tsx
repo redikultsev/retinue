@@ -15,7 +15,7 @@ import { ApiError, api } from "@/lib/api";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { FILTERS, type Filter, type FoldedRow, foldRows, isWaiting, sphereGroups } from "@/lib/spheres";
-import { approvalsOf, lastWords, orderedItems, orderedSummaries, waitsOnOwner } from "@/lib/store";
+import { approvalsOf, lastWords, listed, orderedItems, orderedSummaries, waitsOnOwner } from "@/lib/store";
 import { toast } from "@/lib/toast";
 import { QUEUED, type Session, type Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -368,7 +368,7 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
   const [starting, setStarting] = useState<string | null | undefined>(undefined); // a sphere's «＋»: its name
   const [folded, fold] = useFolded();
   const { groups } = useMemo(
-    () => sphereGroups(Object.values(sessions), spheres, filter, Date.now() / 1000),
+    () => sphereGroups(listed(sessions), spheres, filter, Date.now() / 1000),
     [sessions, spheres, filter],
   );
   function pick(value: Filter) {

@@ -19,7 +19,7 @@ restart picks up where it was. A run whose first snapshot failed is still watche
 from its next mark on. An uncommitted file no session claims is **nobody's** («nobody's»): never hidden — every card
 lists such files, turned off, for the owner to include, and the feed has a row while there are any.
 
-**The ping.** The latest ping of a session with uncommitted Base files carries «To the Base · N» beside its reply buttons
+**The ping.** The latest ping of a session with uncommitted Base files carries «To the Base · N»
 (its summary's `base`, rendered by the bridge): added — by a `ping` note that rewrites the message — once the turn's
 mark is taken, which comes a poll after the ping itself; moved to the newer ping when one comes; relabelled when N
 changes; taken off when nothing is left. A press opens the card.
@@ -365,8 +365,7 @@ class ToBase:
         db.commit()
 
     def _ping_button(self, seq: int, button: list | None) -> None:
-        """The ping's summary note with `base` set (or taken off), and a `ping` note that rewrites its message: its
-        reply buttons stay while they are open."""
+        """The ping's summary note with `base` set (or taken off), and a `ping` note that rewrites its message."""
         row = self.store.db.execute("SELECT session, data FROM notes WHERE seq = ? AND kind = 'summary'",
                                     (seq,)).fetchone()
         if row is None:

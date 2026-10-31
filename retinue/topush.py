@@ -13,7 +13,7 @@ repository has one working clone in the room whichever session committed. The lo
 the platform's outbox through `CodeRepos.count`, which treats the room's repository as hostile.
 
 **The ping.** The latest ping of such a session carries «Push · N» — one button per repository with N > 0 (with
-its name when there are several) — beside its reply buttons and «To the Base». A press opens the card.
+its name when there are several) — beside «To the Base». A press opens the card.
 
 **The card** (`push_cards`, its buttons bound to `push/<id>`): «Push · <repo> · <sphere or track> · session <id>»,
 the local branch and the remote one it goes to (`retinue/<session>-<slug>` by default; a reply of one word sets it,

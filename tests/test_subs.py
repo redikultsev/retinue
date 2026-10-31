@@ -85,18 +85,16 @@ def subs_scenario(tmp_path, body):
 
 # --- the pieces -----------------------------------------------------------------------------------------------------
 
-def test_the_sphere_line_is_taken_only_last_or_before_the_replies_and_only_for_a_configured_sphere():
+def test_the_sphere_line_is_taken_only_as_the_very_last_line_and_only_for_a_configured_sphere():
     names = frozenset({"travel", "home"})
-    assert subs.sphere_line("Готово.\nСфера: travel", names) == ("Готово.", "travel", "Сфера: travel")
-    assert subs.sphere_line("Готово.\n**Сфера:** `home`\nОтветы: «Да»", names) == \
-        ("Готово.\nОтветы: «Да»", "home", "**Сфера:** `home`")
-    # The instructed English form, before an English replies line too.
     assert subs.sphere_line("Done.\nSphere: travel", names) == ("Done.", "travel", "Sphere: travel")
-    assert subs.sphere_line('Done.\n**Sphere:** `home`\nReplies: "Yes"', names) == \
-        ('Done.\nReplies: "Yes"', "home", "**Sphere:** `home`")
-    for text in ("Готово.\nСфера: finance", "Сфера: travel\nГотово.", "```\nСфера: travel", "Сфера: Travel",
-                 "Готово. Сфера: travel", "Сфера: travel home", "Done.\nSphere: finance", "Done.\nsphere: travel",
-                 "```\nSphere: travel", "Done. Sphere: travel", "Sphere: travel\nDone."):
+    assert subs.sphere_line("Done.\n\n**Sphere:** `home`  \n\n", names) == ("Done.", "home", "**Sphere:** `home`")
+    assert subs.sphere_line("~~~\ncode\n~~~\nSphere: home", names) == ("~~~\ncode\n~~~", "home", "Sphere: home")
+    for text in ("Done.\nSphere: finance", "Done.\nsphere: travel", "```\nSphere: travel", "Done. Sphere: travel",
+                 "Sphere: travel\nDone.", "Sphere: Travel", "Sphere: travel home", "```\n~~~\nSphere: travel",
+                 # The older Russian label is no longer read, and a line before another last line is not the last.
+                 "Готово.\nСфера: travel", "Готово.\n**Сфера:** `home`",
+                 'Done.\nSphere: travel\nReplies: "Yes"', "Готово.\nSphere: home\nОтветы: «Да»"):
         assert subs.sphere_line(text, names) == (text, None, ""), text
 
 
@@ -464,23 +462,22 @@ def test_the_token_of_a_run_that_ended_opens_neither_a_hook_nor_the_server(tmp_p
 # --- the sphere a session names -----------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("before, line, after", [
-    (None, "Сфера: travel", "travel"),
-    (None, "Сфера: finance", None),
-    ("home", "Сфера: travel", "home"),
     (None, "Sphere: travel", "travel"),
     (None, "Sphere: finance", None),
+    ("home", "Sphere: travel", "home"),
+    (None, "Сфера: travel", None),
 ])
 def test_a_session_nobody_placed_names_its_own_sphere_and_its_children_follow(tmp_path, before, line, after):
     async def body(world: SubsWorld):
         parent = await world.parent("найди жильё", sphere=before)
         child = await world.start_child(parent, "жильё", "toolu_a")
-        await world.turn(parent, f"Нашёл.\n{line}\nОтветы: «Бронируй»")
+        await world.turn(parent, f"Нашёл.\n{line}")
         row = world.store.session(parent)
         assert row["sphere"] == after and not row["main"]
         assert world.store.session(child)["sphere"] == after
         ping = [n for n in world.notes("summary") if n["session"] == parent][-1]["data"]
         if after == "travel":
-            assert ping["text"] == "Нашёл." and ping["line"] == f"{line}\nОтветы: «Бронируй»"
+            assert ping["text"] == "Нашёл." and ping["line"] == line
             assert row["sphere_by"] == "session"
         if after is None and before is None:
             world.store.set_sphere(child, "home")  # the owner places the child himself
@@ -488,7 +485,7 @@ def test_a_session_nobody_placed_names_its_own_sphere_and_its_children_follow(tm
             assert world.store.session(child)["sphere"] == "home", "the cascade leaves his placing alone"
         world.store.set_sphere(parent, None)
         await world.platform.write("tg:again", parent, "ещё")
-        await world.turn(parent, "Ещё.\nСфера: home")
+        await world.turn(parent, "Ещё.\nSphere: home")
         assert world.store.session(parent)["sphere"] is None, "the owner placed it: the line is ignored"
     subs_scenario(tmp_path, body)
 

@@ -20,8 +20,8 @@ many running as the room holds, but one place is always left for the owner's own
 report never starts more than one parent turn per child turn; after 30 automatic exchanges without the owner, reports
 stop waking the parent and wait, quietly, for his next message.
 
-**The sphere line**: a session nobody placed names its own sphere by a last line `Sphere: <name>` (`sphere_line`; the
-older `Сфера: <name>` is read too), parsed strictly and allow-listed, as `Replies:` is (`pings.parse`).
+**The sphere line**: a session nobody placed names its own sphere by a last line `Sphere: <name>` (`sphere_line`),
+parsed strictly — the very last line, outside a code fence — and allow-listed.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ TOOLS = [
 NO_DEPTH = ("Only a session the owner started can start sub-sessions: not a sub-session, a side question or a "
             "subagent. Do it yourself or say so in the summary.")
 FROM_REPORT = ("This turn was started by a sub-session's report, not by the owner — no new sub-session can be started "
-               "from it. Say in the summary what to start, and offer the owner a reply button.")
+               "from it. Ask the owner whether to start it (AskUserQuestion).")
 FROM_REPORT_CARD = ("A new sub-session is asked for by a turn a sub-session's report started, not you: the report may "
                     "have read someone else's text. Allow it if you want it started")
 UNSEEN = "The platform did not see this call checked — it was not run. Repeat the same call."
@@ -86,8 +86,24 @@ HELD = ("The owner stopped this sub-session or wrote into it himself — you can
 LIMIT = "The subscription is waiting for its limit to reset — a sub-session would only queue now. Start it after the reset."
 OWNER_QUOTE = 600       # what a brief carries of the owner's last message to the parent
 
-# `Sphere:`, the instructed label, or the older `Сфера:`.
-_SPHERE = re.compile(r"(?:\*\*|__)?(?:Sphere|Сфера):(?:\*\*|__)?[ \t]*`?([a-z0-9_]{1,40})`?[ \t]*")
+# `Sphere:`, the instructed label.
+_SPHERE = re.compile(r"(?:\*\*|__)?Sphere:(?:\*\*|__)?[ \t]*`?([a-z0-9_]{1,40})`?[ \t]*")
+_FENCE = re.compile(r"[ \t]{0,3}(`{3,}|~{3,})(.*)")
+
+
+def _in_fence(rows: list[str]) -> bool:
+    """The rows end inside an open code fence (CommonMark: closed only by a fence of the same character, at least as
+    long, with nothing after it)."""
+    opened = ""
+    for row in rows:
+        if not (fence := _FENCE.match(row)):
+            continue
+        marker, rest = fence.groups()
+        if not opened:
+            opened = marker
+        elif marker[0] == opened[0] and len(marker) >= len(opened) and not rest.strip():
+            opened = ""
+    return bool(opened)
 
 
 def may_start(session: dict) -> bool:
@@ -120,14 +136,11 @@ def args_digest(arguments: object) -> str:
 
 def sphere_line(text: str, names: set[str] | frozenset[str]) -> tuple[str, str | None, str]:
     """The text without its `Sphere: <name>` line, the name, and the line as written — taken only when it is the last
-    line, or the one right before a last `Replies:` line, outside a code fence, and the name is a configured sphere.
-    Otherwise the text as it was, None, ''."""
+    line, outside a code fence, and the name is a configured sphere. Otherwise the text as it was, None, ''."""
     lines = text.rstrip().split("\n")
     at = len(lines) - 1
-    if at >= 1 and pings._LINE.fullmatch(lines[at].strip()):
-        at -= 1
     found = _SPHERE.fullmatch(lines[at].strip()) if at >= 0 else None
-    if not found or found.group(1) not in names or pings._in_fence(lines[:at]):
+    if not found or found.group(1) not in names or _in_fence(lines[:at]):
         return text, None, ""
     return "\n".join(lines[:at] + lines[at + 1:]).rstrip(), found.group(1), lines[at].strip()
 
@@ -207,7 +220,7 @@ class Subs:
         if session.get("sphere") is None and session.get("sphere_by") is None and self.platform.spheres.by_name:
             names = ", ".join(self.platform.spheres.by_name)
             said += (f"\nThis session's sphere is not set. At the end of your first turn add a separate line "
-                     f"`Sphere: <name>` (before the `Replies:` line, if there is one), the name one of: {names}. If "
+                     f"`Sphere: <name>` as the very last line, the name one of: {names}. If "
                      "none fits, no line.")
         return said
 
@@ -339,7 +352,7 @@ class Subs:
         if not row.get("sub_of") or row.get("turn_by") != "parent" or (run is not None and run == row.get("stopped_run")):
             return
         run = run or f"turn:{row.get('turn')}"  # a refusal before any run: keyed all the same, so a replay adds none
-        body = pings.split(text)[0].strip() or "(no text)"
+        body = text.strip() or "(no text)"
         cut = body if len(body) <= REPORT_CHARS else body[:REPORT_CHARS - 1] + "…"
         said = f'Sub-session "{row.get("title") or ""}" ({row["id"]}){" — turn cut short" if failed else ""}: {cut}'
         self.store.db.execute("INSERT OR IGNORE INTO sub_reports (parent, child, text, at, run) VALUES (?, ?, ?, ?, ?)",
@@ -413,7 +426,7 @@ class Subs:
         pings.add(self.store, parent, f"Result · {parent['track']} · session {parent['id']}",
                   f"The sub-sessions and the session exchanged {AUTO_MAX} times in a row without you — their reports "
                   "wait for your message.",
-                  pings.DONE, self.platform.clock(), quiet=True, machine=True, spheres=self.platform.sphere_titles())
+                  pings.DONE, self.platform.clock(), quiet=True, spheres=self.platform.sphere_titles())
 
     def family(self, parent: str) -> list[dict]:
         rows = self.store.db.execute("SELECT id FROM sessions WHERE sub_of = ? AND state != 'closed'",

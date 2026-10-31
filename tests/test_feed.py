@@ -1,6 +1,6 @@
 """«Waiting for you» on the platform of `test_platformd` and its face: one queue by action across the sessions and the
-assistant's digest — question cards to answer, approval and courier cards to decide, a summary that left a choice, an
-unread turn, the router's pushed digest — the digest's checks and caps, and the rows `/wait` takes."""
+assistant's digest — question cards to answer, approval and courier cards to decide, a session waiting for his
+message with no card, an unread turn, the router's pushed digest — the digest's checks and caps, and the rows `/wait` takes."""
 
 from __future__ import annotations
 
@@ -314,8 +314,8 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
         world.clock.now += 60
         question = await asked(world)
         world.clock.now += 60
-        chose = await turn(world, "\n## Нашёл три отеля\nдальше…\nОтветы: «Бери первый» · «Ещё варианты»",
-                           input_id_="tg:50")
+        replying = await turn(world, "\n## **Нашёл три отеля**\nдальше…", input_id_="tg:50")
+        world.platform.set_state(replying, "waiting", world.clock.now)  # waits for his message, no card shown
         world.clock.now += 60
         read = await turn(world, "Готово: пост в черновиках.", input_id_="tg:51", took=60)
         world.store.set_sphere(read, "reading")
@@ -326,9 +326,9 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
 
         got = await world.get("/api/feed")
         assert got["count"] == 6 and got["bot"] == "retinue_bot" and got["assistant_at"] == world.clock.now
-        assert [g["title"] for g in got["groups"]] == ["Answer the question", "Decide", "Choose", "Read",
+        assert [g["title"] for g in got["groups"]] == ["Answer the question", "Decide", "Reply", "Read",
                                                        "From the assistant"]
-        answer, decide, choose, unread, assistant = (g["rows"] for g in got["groups"])
+        answer, decide, reply, unread, assistant = (g["rows"] for g in got["groups"])
         [row] = answer
         assert (row["session"], row["source"], row["essence"]) == (question, "question", "Где жить?")
         assert row["approval"]["kind"] == "question" and row["card"] == f"{row['approval']['id']}/0"
@@ -336,21 +336,17 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
         assert (row["session"], row["source"], row["approval"]["id"]) == (decided, "approval", card["approval"])
         assert row["essence"] == "echo ran >> ran.txt" and row["title"] == "почини"
         assert (row["sphere"], row["sphere_title"], row["sphere_icon"]) == ("travel", "Путешествия", "✈️")
-        [row] = choose
-        choice = row
-        assert row["session"] == chose and row["essence"] == "Нашёл три отеля"
-        assert row["replies"] == ["Бери первый", "Ещё варианты"] and isinstance(row["summary"], int)
+        [row] = reply
+        assert (row["action"], row["session"], row["essence"]) == ("reply", replying, "Нашёл три отеля")
+        assert "replies" not in row
         [row] = unread
         assert (row["session"], row["essence"], row["sphere_title"]) == (read, "Готово: пост в черновиках.", "reading")
         assert [(r["source"], r["title"], r["essence"], r["session"]) for r in assistant] == \
             [("chat", "Мария", "ответить: нужен ли трансфер", None), ("deadline", "The Base", item()["title"], None)]
 
-        status, said, _ = await world.call("POST", f"/api/sessions/{chose}/input",
-                                           {"reply": {"seq": choice["summary"], "n": 1}})
-        assert status == 200 and said["say"] == "Accepted."
-        assert "Choose" not in [g["title"] for g in (await world.get("/api/feed"))["groups"]], \
-            "a pressed reply leaves «Choose»"
-        assert world.lanes["private"].runs()[-1]["prompt"] == "Ещё варианты"
+        await world.owner("input", {"input_id": "tg:52", "session": replying, "text": "Бери первый"})
+        assert "Reply" not in [g["title"] for g in (await world.get("/api/feed"))["groups"]], "his message leaves «Reply»"
+        assert world.lanes["private"].runs()[-1]["prompt"] == "Бери первый"
 
     faced(tmp_path, body)
 
@@ -389,16 +385,25 @@ def test_wait_gets_the_first_ten_rows_without_inputs_and_the_count_of_the_rest(t
     scenario(tmp_path, body)
 
 
-def test_a_ping_with_replies_waits_under_choose_until_typed_over_or_a_newer_ping(tmp_path):
+def test_a_session_waits_under_reply_only_while_it_waits_with_no_card_and_a_replies_line_is_just_text(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
-        session = await turn(world, "Готово.\nОтветы: «Да» · «Нет»")
+        session = await turn(world, 'Готово.\nReplies: "Да" · "Нет"')
+        rows = [r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]]
+        assert all(r["action"] != "reply" and "replies" not in r for r in rows), "a finished turn waits for nothing"
+        world.platform.set_state(session, "waiting", world.clock.now)
         [row] = (await world.get("/api/feed"))["groups"][0]["rows"]
-        assert (row["action"], row["replies"]) == ("choose", ["Да", "Нет"])
+        assert (row["action"], row["essence"]) == ("reply", "Готово.") and "replies" not in row
         await world.owner("input", {"input_id": "tg:2", "session": session, "text": "Нет, по-другому"})
-        assert (await world.get("/api/feed"))["count"] == 0, "he typed instead: the replies closed"
+        assert (await world.get("/api/feed"))["count"] == 0, "he wrote: the session works again"
 
     faced(tmp_path, body)
+
+
+def test_a_rows_line_is_its_first_words_without_markdown_emphasis():
+    assert feed._essence("\n## **Итог:** __всё__ готово\nдальше") == "Итог: всё готово"
+    assert feed._essence("> **Готово**") == "Готово"
+    assert feed._essence("2 * 3 = 6") == "2 * 3 = 6", "a lone star is a word, not emphasis"
 
 
 def test_what_a_gone_router_took_is_asked_again_and_what_nobody_waits_for_is_not():

@@ -89,9 +89,10 @@ def test_a_card_goes_out_once_with_one_button_per_row_and_maps_to_its_session_an
 
 def test_a_note_that_did_not_go_out_is_not_confirmed_and_comes_again(tmp_path):
     summary = {"seq": 2, "kind": "summary", "session": "ab12cd34",
-               "data": {"head": "Result · retinue · session ab12cd34", "text": "Done."}}
+               "data": {"head": "Result · retinue · session ab12cd34", "text": "Done.", "kind": "done",
+                        "place": "retinue", "title": "build"}}
     ch, bridge, platform = make(tmp_path, [card(1), summary])
-    ch.fail = {"Result": "429 Too Many Requests: retry after 5"}
+    ch.fail = {"Done.": "429 Too Many Requests: retry after 5"}
 
     async def run():
         try:
@@ -104,7 +105,7 @@ def test_a_note_that_did_not_go_out_is_not_confirmed_and_comes_again(tmp_path):
 
     asyncio.run(run())
     assert platform.confirmed == [1, 2]
-    assert [p["text"] for m, p, _ in ch.sent if m == "sendMessage"].count("Result · retinue · session ab12cd34\n\nDone.") == 2
+    assert [p["text"] for m, p, _ in ch.sent if m == "sendMessage"].count("<b>✅ retinue · build</b>\n\nDone.") == 2
 
 
 def test_an_update_rewrites_every_message_of_its_approval_and_a_summary_maps_its_messages(tmp_path):
@@ -138,7 +139,8 @@ def test_an_update_telegram_has_nothing_left_to_do_for_is_settled(tmp_path):
 def test_a_note_that_can_never_be_shown_is_said_and_does_not_hold_back_the_notes_after_it(tmp_path):
     malformed = {"seq": 2, "kind": "card", "session": "ef56gh78", "approval": "a2", "data": {"buttons": []}}
     summary = {"seq": 3, "kind": "summary", "session": "ab12cd34",
-               "data": {"head": "Result · retinue · session ab12cd34", "text": "Done."}}
+               "data": {"head": "Result · retinue · session ab12cd34", "text": "Done.", "kind": "done",
+                        "place": "retinue", "title": "build"}}
     ch, bridge, platform = make(tmp_path, [card(1), malformed, summary])
     ch.fail = {"make test": "400 Bad Request: message is too long"}
     assert asyncio.run(bridge.deliver()) == 3
@@ -146,7 +148,7 @@ def test_a_note_that_can_never_be_shown_is_said_and_does_not_hold_back_the_notes
     said = [p["text"] for m, p, _ in ch.sent if m == "sendMessage"]
     assert [t.startswith(NOT_SHOWN) for t in said] == [False, True, True, False], "the refused card, two notices"
     assert "message is too long" in said[1] and "KeyError" in said[2]
-    assert said[3] == "Result · retinue · session ab12cd34\n\nDone."
+    assert said[3] == "<b>✅ retinue · build</b>\n\nDone."
     assert ch.store.sent_event(SESSION, "900") == "ab12cd34" and ch.store.sent_event(SESSION, "901") == "ef56gh78", \
         "a reply to a notice goes to the session the note was for"
     assert ch.store.sent_event(CARD, "900") is None

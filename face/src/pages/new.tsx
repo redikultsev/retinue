@@ -13,7 +13,7 @@ import { api } from "@/lib/api";
 import { type Deadline, useFeed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { useCoarsePointer, useWide } from "@/lib/media";
-import { waitingCount } from "@/lib/store";
+import { listed, waitingCount } from "@/lib/store";
 import { sphereLabel } from "@/lib/spheres";
 import { running } from "@/lib/today";
 import type { Meta, Sphere } from "@/lib/types";
@@ -120,7 +120,7 @@ export function NewPage({ newSession = api.newSession, transcribe = api.speech, 
   const navigate = useNavigate();
   const feed = useFeed();
   const { sessions } = useLiveState();
-  const list = useMemo(() => Object.values(sessions), [sessions]);
+  const list = useMemo(() => listed(sessions), [sessions]);
   const waiting = feed ? feed.count : waitingCount(list);
   const working = useMemo(() => running(list).length, [list]);
   const deadline = nearest(feed?.deadlines);

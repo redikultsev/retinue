@@ -1,12 +1,13 @@
 // A session's menu: its sphere, whether it is the sphere's main session, «To the Base» while its runs left Base files
 // uncommitted (retinue/tobase.py), and «Fork» — a new session from a copy of this one's conversation, with the
-// track's full rights (retinue/spheres.py); «Pin» too, since a phone's row shows its pin only once pinned. Each
+// track's full rights (retinue/spheres.py); «Pin» too, since a phone's row shows its pin only once pinned; «Archive»
+// ends it and its kin and takes them out of every list until a message brings it back (asked once first). Each
 // change is the platform's: the answer's row goes into the store as the session's event, and every device shows it.
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import { BaseDialog, openBase } from "@/components/base-card";
 import { PushDialog, openPush } from "@/components/push-card";
-import { Database, Fork, GitBranch, More, Pin, Star } from "@/components/icons";
+import { Archive, Database, Fork, GitBranch, More, Pin, Star } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,10 +18,13 @@ import { toast } from "@/lib/toast";
 import type { Session } from "@/lib/types";
 import { cn, inputId } from "@/lib/utils";
 
-type Api = Pick<typeof api, "setSphere" | "setMain" | "fork"> & Partial<Pick<typeof api, "pin">>;
+type Api = Pick<typeof api, "setSphere" | "setMain" | "fork"> & Partial<Pick<typeof api, "pin" | "archive">>;
 
 export function SessionMenu({ s, calls = api, className }: { s: Session; calls?: Api; className?: string }) {
   const pin = calls.pin ?? api.pin;
+  const archive = calls.archive ?? api.archive;
+  const [archiving, setArchiving] = useState(false);
+  const here = useRouterState({ select: (r) => r.location.pathname });
   const spheres = live.meta?.spheres ?? [];
   const [open, setOpen] = useState(false);
   const [forking, setForking] = useState(false);
@@ -34,6 +38,13 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
   function close() {
     setOpen(false);
     setForking(false);
+    setArchiving(false);
+  }
+
+  async function archiveIt() {
+    await change(() => archive(s.id));
+    close();
+    if (here.startsWith(`/s/${s.id}`)) await navigate({ to: "/sessions" });
   }
 
   async function change(call: () => Promise<{ session: Session }>) {
@@ -86,14 +97,28 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
         variant="ghost"
         size="icon"
         aria-label={`Menu: ${s.title}`}
-        title="Sphere, main, fork"
+        title="Sphere, pin, fork, archive"
         className={className}
         onClick={() => setOpen(true)}
       >
         <More />
       </Button>
-      <Dialog open={open} onClose={close} title={forking ? "Fork" : s.title || "Session"}>
-        {forking ? (
+      <Dialog open={open} onClose={close} title={forking ? "Fork" : archiving ? "Archive this session?" : s.title || "Session"}>
+        {archiving ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-muted-foreground">
+              It stops, and its cards and sub-sessions go with it. Writing to it brings it back.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setArchiving(false)}>
+                Back
+              </Button>
+              <Button disabled={busy} onClick={() => void archiveIt()}>
+                {busy ? "Archiving…" : "Archive"}
+              </Button>
+            </div>
+          </div>
+        ) : forking ? (
           <form
             className="flex flex-col gap-3"
             onSubmit={(e) => {
@@ -176,7 +201,11 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
                 Fork…
               </Button>
             )}
-            <div className="flex justify-end">
+            <div className="flex items-center justify-between gap-2">
+              <Button variant="ghost" className="text-muted-foreground" onClick={() => setArchiving(true)}>
+                <Archive />
+                Archive
+              </Button>
               <Button variant="ghost" onClick={close}>
                 Close
               </Button>

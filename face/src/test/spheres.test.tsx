@@ -6,6 +6,7 @@ import { SessionMenu } from "@/components/session-menu";
 import { live } from "@/lib/live";
 import { useMarkSeen } from "@/lib/seen";
 import { foldRows } from "@/lib/spheres";
+import { listed } from "@/lib/store";
 import type { Session } from "@/lib/types";
 
 const session = (id: string, over: Partial<Session> = {}): Session => ({
@@ -210,6 +211,25 @@ describe("SessionMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fork" }));
     expect(await screen.findByText("session opened")).toBeTruthy();
     expect(calls.fork).toHaveBeenCalledWith("a1b2c3d4", "by train?", expect.stringMatching(/^face:/));
+  });
+
+  it("archives only once asked, and an archived session leaves every list", async () => {
+    const s = session("a1b2c3d4");
+    const calls = {
+      setSphere: vi.fn(),
+      setMain: vi.fn(),
+      fork: vi.fn(),
+      archive: vi.fn().mockResolvedValue({ session: { ...s, state: "closed", archived: true, at: 2 } }),
+    };
+    mount(<SessionMenu s={s} calls={calls} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Menu: Session a1b2c3d4" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Archive" }));
+    expect(calls.archive).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog").textContent).toContain("Archive this session?");
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(calls.archive).toHaveBeenCalledWith("a1b2c3d4"));
+    await waitFor(() => expect(live.getState().sessions.a1b2c3d4?.archived).toBe(true));
+    expect(listed(live.getState().sessions).map((x) => x.id)).not.toContain("a1b2c3d4");
   });
 
   it("offers no fork for a side question", async () => {

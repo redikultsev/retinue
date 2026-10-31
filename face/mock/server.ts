@@ -137,6 +137,7 @@ function setSession(id: string, patch: Partial<Session>) {
   const s = sessions.get(id);
   if (!s) return;
   const next = { ...s, ...patch, at: now() };
+  if (next.state === "active") delete next.archived; // a turn begins: back in the list
   next.waiting = [...approvals.values()].filter((a) => a.session === id && a.kind === "approval" && a.state === "shown").length;
   sessions.set(id, next);
   emit("session", id, next);
@@ -425,6 +426,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     if (sub === "/stop" && method === "POST") {
       setSession(id, { state: "idle" });
       return json(res, 200, { ok: true });
+    }
+    if (sub === "/archive" && method === "POST") {
+      for (const a of approvals.values()) if (a.session === id && a.state === "shown") approvals.set(a.id, { ...a, state: "stale" });
+      setSession(id, { state: "closed", archived: true, waiting: 0 });
+      return json(res, 200, { session: sessions.get(id) });
     }
     if (sub === "/pin" && method === "POST") {
       const b = await body(req);

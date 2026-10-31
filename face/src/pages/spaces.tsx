@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { plural, sessionStateWord, when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
+import { listed } from "@/lib/store";
 import {
   discussText,
   headWords,
@@ -227,7 +228,7 @@ export function SpacesPage({ read = spacesApi.list }: { read?: typeof spacesApi.
   const { sessions } = useLiveState();
   const spheres = useSpheres();
   const { data, error } = useRead("spaces", read);
-  const live_ = useMemo(() => sessionBadges(Object.values(sessions)), [sessions]);
+  const live_ = useMemo(() => sessionBadges(listed(sessions)), [sessions]);
   const loaded = Object.keys(sessions).length > 0;
   const rows = useMemo(() => orderSpaces(data?.spaces ?? [], spheres), [data, spheres]);
   const badges = (row: SpaceRow) => (loaded ? (live_.get(row.name) ?? { waiting: 0, working: 0 }) : row);
@@ -385,7 +386,7 @@ export function SpacePage({ space, read = spacesApi.space }: { space: string; re
   const { data, error } = useRead(`space:${space}`, () => read(space));
   const [topic, setTopic] = useState<Topic | null>(null);
   const view = data?.space;
-  const mine = useMemo(() => sessionsOf(Object.values(sessions), space, Date.now() / 1000), [sessions, space]);
+  const mine = useMemo(() => sessionsOf(listed(sessions), space, Date.now() / 1000), [sessions, space]);
   const waiting = mine.filter((s) => s.state === "waiting" || s.waiting > 0).length;
   const working = mine.filter((s) => s.state === "active" && !s.waiting).length;
   const questions = view?.sections.filter((s) => s.kind === "questions").flatMap((s) => s.items) ?? [];

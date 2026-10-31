@@ -15,7 +15,7 @@ import { useWide } from "@/lib/media";
 import { live, useLiveState } from "@/lib/live";
 import { splitRecord, useOpenRecord } from "@/lib/pane";
 import { sphereLabel } from "@/lib/spheres";
-import { orderedItems } from "@/lib/store";
+import { listed, orderedItems } from "@/lib/store";
 import { dayWords, elapsed, finished, lastLine, running, tickMs, todayWord, turnStart, useSince } from "@/lib/today";
 import type { Session, Sphere } from "@/lib/types";
 import { cn, LIST, LIST_ROW } from "@/lib/utils";
@@ -245,7 +245,7 @@ export function TodayPage() {
   const { sessions } = useLiveState();
   const since = useSince();
   const now = useNow();
-  const list = useMemo(() => Object.values(sessions), [sessions]);
+  const list = useMemo(() => listed(sessions), [sessions]);
   const wide = useWide();
   return (
     <div className="flex h-full min-h-0 flex-col">

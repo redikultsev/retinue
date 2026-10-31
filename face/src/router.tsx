@@ -15,7 +15,7 @@ import { feedSource, useFeed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { cardNotice, visibleSessions } from "@/lib/notify";
 import { toast } from "@/lib/toast";
-import { waitingCount } from "@/lib/store";
+import { listed, waitingCount } from "@/lib/store";
 import { ApprovalPage } from "@/pages/approval";
 import { BasePage } from "@/pages/base";
 import { PushPage } from "@/pages/push";
@@ -37,7 +37,7 @@ const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
 function useWaitingTitle() {
   const { sessions } = useLiveState();
   const feed = useFeed();
-  const cards = useMemo(() => waitingCount(Object.values(sessions)), [sessions]);
+  const cards = useMemo(() => waitingCount(listed(sessions)), [sessions]);
   const n = feed ? feed.count : cards;
   useEffect(() => {
     document.title = n > 0 ? `(${n}) Retinue` : "Retinue";

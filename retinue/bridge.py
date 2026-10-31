@@ -59,6 +59,7 @@ NOT_SHOWN = "A platform message was not shown: Telegram did not take it, or it i
 NOT_SHOWABLE = (TelegramError, KeyError, TypeError, ValueError, AttributeError)
 IN_APP = "Open in the app"
 OPEN_APP = "Open"            # `/app`'s button: the face as a Mini App
+READ_IN_APP = "Answered in the app."  # under the header of a long turn of a session he drives from the app
 NOT_PASSED = "Not passed to the session"
 ECHO_CHARS = 3000            # what was heard, said back, escaped: room is left for the platform's answer
 ALBUMS = "platform.albums"   # the router's kv: the albums being gathered or sent into sessions, as JSON
@@ -307,7 +308,11 @@ class PlatformBridge:
         """The end of a turn (`pings`): its header and text, split as any text is, each message answering into the
         session; the reply buttons on the last one, which is mapped to the ping so a press elsewhere rewrites it. A
         quick done turn goes out without a sound. Buttons Telegram refuses cost the buttons, never the text: the last
-        part goes again without them (a reply to it still answers)."""
+        part goes again without them (a reply to it still answers). A turn of a session the owner drives from the app
+        is read there (`_in_app`)."""
+        if data.get("in_app") is True:
+            await self._in_app(session, data)
+            return
         parts = ping_parts(data)
         keyboard = ping_keyboard(data)
         silent = not pings.loud(data)
@@ -324,6 +329,20 @@ class PlatformBridge:
                 self.store.save_sent(SESSION, native_id, session)
                 if last:
                     self.store.save_sent(PING, native_id, str(seq))
+
+    async def _in_app(self, session: str, data: dict) -> None:
+        """A turn of a session the owner drives from the app (`pings.in_app`): nothing, unless it took AWAY_S or more
+        and he may have left the app — then its header line and the app's button to the session. A reply to it still
+        goes into the session; it is not the ping's message, so a press in the app rewrites nothing here."""
+        took_s = data.get("took_s")
+        if not isinstance(took_s, (int, float)) or took_s < pings.AWAY_S:
+            return
+        keyboard = {"inline_keyboard": [[{"text": OPEN_APP, "web_app": {"url": f"{self.face_url}/s/{session}"}}]]} \
+            if self.face_url else None
+        html = f"<b>{_tg_escape(pings.header(data))}</b>\n{READ_IN_APP}"
+        native_id = await self.channel._message(html, keyboard=keyboard, silent=not pings.loud(data))
+        if native_id:
+            self.store.save_sent(SESSION, native_id, session)
 
     async def _ping_closed(self, data: dict) -> None:
         """A ping's replies closed: its last message rewritten without its buttons, with «→ <reply>» when one went in;

@@ -17,6 +17,7 @@ from retinue.config import Sphere
 from retinue.render import TELEGRAM_LIMIT
 from test_bridge import make
 from test_face import FaceWorld, faced
+from test_face import input_id as face_input_id
 from test_platformd import CLI_SESSION, HOUR, short_wait  # noqa: F401 — the fixture is autouse
 
 COMMON = Path(__file__).parent.parent / "deploy" / "lanes" / "instructions" / "common.md"
@@ -269,6 +270,42 @@ def test_a_run_no_owner_started_is_never_quiet(tmp_path):
     faced(tmp_path, body)
 
 
+def test_a_session_the_owner_drives_from_the_app_is_marked_read_there(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        session = await turn(world, "Готово.\nОтветы: «Да» · «Нет»")
+        [by_telegram] = world.notes("summary")
+        assert "in_app" not in by_telegram["data"], "begun in Telegram: its turn goes there"
+
+        status, _, _ = await world.call("POST", f"/api/sessions/{session}/input",
+                                        {"input_id": face_input_id(), "text": "А подробнее?"})
+        assert status == 200
+        run = world.lanes["private"].runs()[-1]
+        world.lanes["private"].add(session, run["run"], result("Вот.\nОтветы: «Да» · «Нет»"))
+        world.lanes["private"].exited(session, run["run"])
+        await world.poll()
+        written_in_app = world.notes("summary")[-1]
+        assert written_in_app["data"]["in_app"] is True
+
+        status, said, _ = await world.call("POST", f"/api/sessions/{session}/input",
+                                           {"reply": {"seq": written_in_app["seq"], "n": 0}})
+        assert said["say"] == "Accepted."
+        run = world.lanes["private"].runs()[-1]
+        world.lanes["private"].add(session, run["run"], result("Сделал."))
+        world.lanes["private"].exited(session, run["run"])
+        await world.poll()
+        assert world.notes("summary")[-1]["data"]["in_app"] is True, "a reply pressed on a ping only the app showed"
+
+        await world.owner("input", {"input_id": "tg:7", "session": session, "text": "Ещё раз"})
+        run = world.lanes["private"].runs()[-1]
+        world.lanes["private"].add(session, run["run"], result("Сделал."))
+        world.lanes["private"].exited(session, run["run"])
+        await world.poll()
+        assert "in_app" not in world.notes("summary")[-1]["data"], "back in Telegram: its turns go there again"
+
+    faced(tmp_path, body)
+
+
 def test_a_face_press_lives_as_long_as_the_telegram_button(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
@@ -338,6 +375,19 @@ def test_a_closed_ping_rewrites_its_last_message_without_buttons(tmp_path):
     assert params["message_id"] == 900 and "reply_markup" not in params
     assert params["text"].endswith("\n\n→ Покажи ещё") and "Нашёл три варианта." in params["text"]
     assert platform.confirmed == [7]
+
+
+def test_a_turn_read_in_the_app_reaches_telegram_only_when_long_and_only_as_its_header(tmp_path):
+    ch, bridge, platform = make(tmp_path, [ping_note(in_app=True, took_s=40),
+                                           ping_note(6, in_app=True, took_s=pings.AWAY_S, text="Сделал. " * 900)])
+    bridge.face_url = "https://app.example.com"
+    asyncio.run(bridge.deliver())
+    [(_, params, _)] = [s for s in ch.sent if s[0] == "sendMessage"]
+    assert params["text"] == "<b>❓ Путешествия · жильё &lt;в&gt; Энске · 5 min</b>\nAnswered in the app."
+    assert params["reply_markup"] == {"inline_keyboard": [[{"text": "Open", "web_app": {
+        "url": "https://app.example.com/s/ab12cd34"}}]]}
+    assert platform.confirmed == [6], "both gone past: the quick one said nothing"
+    assert ch.store.sent_event(SESSION, "900") == "ab12cd34" and ch.store.sent_native(PING, "6") == []
 
 
 def test_ping_parts_never_exceed_a_message_and_an_empty_text_is_the_header_alone():

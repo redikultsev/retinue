@@ -934,6 +934,12 @@ and a ⚠️ one, and one of a run the platform started by itself — a turn goi
 own shutdown left owed (`ping_unattended`) — notify. A summary from before pings
 (no `kind` in its note) goes out as it did, «Result · <track> · session <id>» and the text.
 
+**A session you drive from the app is read there.** When your last message into a session was written in the app —
+or was a reply you pressed on a ping only the app showed — its ping is marked `in_app` and Telegram does not get it
+again. Only a turn that took 5 minutes or more (`pings.AWAY_S`), when you may have left the app, reaches Telegram, as
+its header line, «Answered in the app.» and an «Open» button to the session. Write into the session from Telegram and
+its turns come there in full again.
+
 ## The never list and the courier card
 
 `git push`, `gh pr create`, `gh pr merge`, `gh release create`, `npm publish`, `pnpm publish`, `yarn publish`,

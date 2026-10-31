@@ -25,6 +25,10 @@ buttons. A ping whose session has a question or an approval card open gets no re
 **Loudness**: a `done` ping less than QUIET_S after the owner last acted on the session goes out silently (Telegram's
 `disable_notification`) — he is looking — when that run was his own doing; a longer one, a `decision`, a `failed`
 one, and one of a run the platform started by itself (`unattended`, `started`) notify (`loud`).
+
+**Where it is read**: a session the owner drives from the app — his last message into it was written there, or was a
+reply pressed on a ping only the app showed — is read in the app (`in_app`). Telegram does not get its turns again: only
+one that took AWAY_S or longer, when he may have left the app, and then as its header line with the app's button.
 """
 
 from __future__ import annotations
@@ -46,6 +50,8 @@ MAX_REPLIES = 3
 REPLY_CHARS = 60             # a button's words, on a phone
 TITLE_CHARS = 40             # the session's title in a ping's header
 QUIET_S = 120                # a done turn this soon after the owner's own input or press: no sound
+AWAY_S = 300                 # a turn of a session he drives from the app: this long, and Telegram hears of it
+APP = "face:"                # an input written in the app
 BUTTON_TTL_S = 7 * 86400     # as long as a card's buttons
 KEY = "ping/"                # a reply button's `approval`: ping/<seq>, never an approval's 8 hex
 ACTION = "reply:"            # a reply button's action: reply:<n>
@@ -191,6 +197,21 @@ def attended(store: PlatformStore, run: str | None) -> bool:
                                                 (f"r{run}",)).fetchone() is None
 
 
+def in_app(store: PlatformStore, session: str) -> bool:
+    """The owner drives the session from the app: his last message into it was written there, or was a reply pressed
+    on a ping that only the app showed."""
+    row = store.db.execute("SELECT input_id FROM inputs WHERE session = ? AND by IS NULL ORDER BY at DESC, rowid DESC "
+                           "LIMIT 1", (session,)).fetchone()
+    if row is None:
+        return False
+    if row[0].startswith(APP):
+        return True
+    seq = row[0][len(INPUT):] if row[0].startswith(INPUT) else ""
+    note = store.db.execute("SELECT data FROM notes WHERE seq = ? AND kind = 'summary'",
+                            (int(seq),)).fetchone() if seq.isdigit() else None
+    return note is not None and json.loads(note[0]).get("in_app") is True
+
+
 def add(store: PlatformStore, session: dict, head: str, text: str, kind: str, now: float, *, run: str | None = None,
         spheres: dict[str, str] | None = None, quiet: bool = False, machine: bool = False, line_before: str = "",
         **extra) -> int:
@@ -219,7 +240,7 @@ def add(store: PlatformStore, session: dict, head: str, text: str, kind: str, no
             "took_s": took(store, sid, run, now), "attended": attended(store, run), "line": written or None,
             "place": place, "title": line(face.get("title") or "", TITLE_CHARS),
             "replies": replies, "open": bool(replies), "answered": None, "buttons": buttons,
-            **({"quiet": True} if quiet else {}), **extra}
+            **({"quiet": True} if quiet else {}), **({"in_app": True} if in_app(store, sid) else {}), **extra}
     seq = store._note("summary", sid, data)
     store.db.executemany("INSERT INTO buttons (id, approval, action, digest, expires) VALUES (?, ?, ?, ?, ?)",
                          [(button, key(seq), f"{ACTION}{n}", sid, now + BUTTON_TTL_S)

@@ -247,7 +247,9 @@ const separatorClass =
 function Columns({ sidebar, main, right, rightId }: { sidebar: React.ReactNode; main: React.ReactNode; right: React.ReactNode; rightId: "summary" | "pane" | null }) {
   const sizes = readSizes();
   return (
-    <Group orientation="horizontal" className="h-dvh" onLayoutChanged={saveSizes}>
+    // The library sets the group's own `height: 100%`, so the window's height is given by a box around it.
+    <div className="h-dvh overflow-hidden">
+    <Group orientation="horizontal" onLayoutChanged={saveSizes}>
       <Panel
         id="sidebar"
         defaultSize={sizes.sidebar ?? 272}
@@ -279,6 +281,7 @@ function Columns({ sidebar, main, right, rightId }: { sidebar: React.ReactNode; 
         </>
       )}
     </Group>
+    </div>
   );
 }
 

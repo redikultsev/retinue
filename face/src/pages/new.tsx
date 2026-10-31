@@ -64,14 +64,32 @@ export function generalTrack(meta: Meta | null): string | null {
 export const NO_TRACK = "There is nowhere to start a new session: platform.yaml has no track at the root of the Base.";
 
 /** «Auto» and the spheres, one of them chosen: where the new session starts. */
-export function SpherePicker({ spheres, value, onChange }: { spheres: Sphere[]; value: string | null; onChange: (name: string | null) => void }) {
+export function SpherePicker({
+  spheres,
+  value,
+  onChange,
+  wrap,
+}: {
+  spheres: Sphere[];
+  value: string | null;
+  onChange: (name: string | null) => void;
+  /** Wrap the chips into rows (a wide screen) instead of one row that scrolls sideways (a phone). */
+  wrap?: boolean;
+}) {
   const chip = (on: boolean) =>
     cn(
       "inline-flex h-8 shrink-0 items-center gap-1 rounded-full border px-3 text-[13px] whitespace-nowrap pointer-coarse:h-9",
       on ? "border-primary bg-primary/10 font-medium text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
     );
   return (
-    <fieldset aria-label="Sphere" className="flex gap-1.5 overflow-x-auto px-1 pt-2 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <fieldset
+      aria-label="Sphere"
+      // a fieldset is as wide as its content unless told otherwise: `min-w-0` keeps the chips inside the composer's width
+      className={cn(
+        "flex min-w-0 gap-1.5 px-1 pt-2 pb-1",
+        wrap ? "flex-wrap justify-center" : "overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+      )}
+    >
       <button type="button" aria-pressed={value === null} onClick={() => onChange(null)} className={chip(value === null)}>
         Auto
       </button>
@@ -139,7 +157,7 @@ export function NewPage({ newSession = api.newSession, transcribe = api.speech, 
         onDraft={writeDraft}
         blocked={blocked}
       />
-      {spheres.length > 0 && <SpherePicker spheres={spheres} value={sphere?.name ?? null} onChange={setSphere} />}
+      {spheres.length > 0 && <SpherePicker spheres={spheres} value={sphere?.name ?? null} onChange={setSphere} wrap={wide} />}
     </div>
   );
 

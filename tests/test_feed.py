@@ -95,6 +95,45 @@ def test_the_hubs_chips_are_taken_by_the_contract_or_the_push_is_refused():
             feed.clean_chips({"items": [], "chips": bad})
 
 
+TOKEN = "0123456789abcdef0123456789abcdef"
+
+
+def test_a_persons_row_carries_its_token_and_the_digest_its_two_counts():
+    [taken] = feed.clean({"items": [item(1, t=TOKEN)]}, NOW)[0]
+    assert taken["t"] == TOKEN
+    for bad in ("x" * 32, TOKEN.upper(), TOKEN[:-1], 5):
+        with pytest.raises(feed.Refused, match="t"):
+            feed.clean({"items": [item(1, t=bad)]}, NOW)
+    with pytest.raises(feed.Refused, match="wrong fields"):
+        feed.clean({"items": [deadline(t=TOKEN)]}, NOW)
+    assert feed.clean_counts({"items": [], "closed_today": 5, "expired_week": 2}) == \
+        {"closed_today": 5, "expired_week": 2}
+    assert feed.clean_counts({"items": []}) == {"closed_today": 0, "expired_week": 0}, "a router before them"
+    for bad in (-1, 1.5, True, "5", feed.COUNT_MAX + 1):
+        with pytest.raises(feed.Refused, match="closed_today"):
+            feed.clean_counts({"items": [], "closed_today": bad})
+
+
+def test_a_press_on_her_row_goes_to_the_router_as_a_note_checked_by_its_shape_only(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        assert (await world.owner("waiting", {"items": [item(1, t=TOKEN)], "closed_today": 3, "expired_week": 1}))["ok"]
+        answer = await world.get("/api/feed")
+        [row] = answer["groups"][0]["rows"]
+        assert row["t"] == TOKEN and (answer["closed_today"], answer["expired_week"]) == (3, 1)
+        for bad in ({"t": TOKEN, "action": "delete"}, {"t": "../x", "action": "done"}, {"action": "done"}):
+            status, _, _ = await world.call("POST", "/api/waiting/press", bad)
+            assert status == 400, bad
+        status, said, _ = await world.call("POST", "/api/waiting/press", {"t": TOKEN, "action": "later"})
+        assert status == 200 and said == {"ok": True}
+        [note] = [n for n in world.platform.store.look() if n["kind"] == "waiting-press"]
+        assert note["data"] == {"t": TOKEN, "action": "later"}, "the router alone knows what the token names"
+        status, _, _ = await world.call("POST", "/api/waiting/press", {"t": TOKEN, "action": "done"}, cookie="x")
+        assert status == 401, "the owner's login only"
+
+    faced(tmp_path, body)
+
+
 def test_a_deadline_ahead_is_under_srokami_only_until_its_time_comes(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
@@ -156,7 +195,8 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
         assert await world.get("/api/feed") == {"schema": 1, "count": 0, "groups": [], "bot": "",
-                                                 "assistant_at": None, "deadlines": [], "chips": []}
+                                                 "assistant_at": None, "deadlines": [], "chips": [],
+                                                 "closed_today": 0, "expired_week": 0}
         decided, _, card = await deferred_session(world)
         world.clock.now += 60
         question = await asked(world)

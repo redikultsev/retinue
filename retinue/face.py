@@ -44,7 +44,7 @@ from urllib.parse import parse_qsl, quote
 
 from aiohttp import web
 
-from . import changes, inbox, pings, signals, spaces, tobase, topush
+from . import changes, feed, inbox, pings, signals, spaces, tobase, topush
 from .cliengine import UUID4
 from .sessions import PlatformStore
 from .speech import Scribe, SpeechError
@@ -317,6 +317,8 @@ class Face:
             *self.spaces.routes(),
             # «Read» (`library.py`): the hub's pages, what was opened and finished.
             web.get("/api/library", self.library), web.post("/api/library/{id}/{action:open|done}", self.library_act),
+            # «Waiting for you»: a press on the assistant's row, for the router to apply (`feed.PRESSES`).
+            web.post("/api/waiting/press", self.waiting_press),
             # The owner's voice (`speech.py`): a recording in, its text out.
             web.post("/api/speech", self.speech)])
         app.on_startup.append(self._sweep)
@@ -419,6 +421,17 @@ class Face:
         now = self.clock()
         weeks = [signals.tally(self.store, now - (n + 1) * WEEK_S, now - n * WEEK_S) for n in range(STATS_WEEKS)]
         return web.json_response({"schema": SCHEMA, "now": now, "weeks": weeks})
+
+    async def waiting_press(self, request: web.Request) -> web.Response:
+        """«Done», «Not a task», «Tomorrow» or «Undo» (`open`) on a row of «From the assistant» `{t, action}`: only its
+        shape is checked here — the router alone knows what the row's token names — and it goes to the router as a
+        note (`waiting-press`), which the bridge pulls like any other."""
+        body = await _body(request)
+        token, action = body.get("t"), body.get("action")
+        if not isinstance(token, str) or not feed.TOKEN.fullmatch(token) or action not in feed.PRESSES:
+            return _error(400, "Need t — the row's token — and action: done, dismissed, later or open.")
+        self.store.add_note("waiting-press", "", {"t": token, "action": action})
+        return web.json_response({"ok": True})
 
     async def library(self, request: web.Request) -> web.Response:
         """«Read»: the hub's pages as the router last pushed them, with what the owner opened and finished."""

@@ -17,6 +17,7 @@ import type {
   Tally,
 } from "./types";
 import type { Encoded } from "./attach";
+import type { Press } from "./feed";
 import { inputId } from "./utils";
 
 export class ApiError extends Error {
@@ -167,6 +168,8 @@ export const api = {
   pushTitle: (id: string, title: string) => request<PushResponse>(`/api/push/${encodeURIComponent(id)}/title`, { title }),
   pushSend: (id: string) => request<PushResponse>(`/api/push/${encodeURIComponent(id)}/send`, {}),
   pushCancel: (id: string) => request<PushResponse>(`/api/push/${encodeURIComponent(id)}/cancel`, {}),
+  /** A press on her row of «Waiting for you» (`t`, the row's token): the router applies it, and the next digest has it. */
+  waitingPress: (t: string, action: Press) => request<{ ok: boolean }>("/api/waiting/press", { t, action }),
   loginCode: (code: string) => request<{ ok?: boolean }>("/api/auth/code", { code }),
   loginTelegram: (initData: string) => request<{ ok?: boolean }>("/api/auth/telegram", { init_data: initData }),
   logout: () => request<{ ok?: boolean }>("/api/auth/logout", {}),

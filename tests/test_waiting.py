@@ -9,6 +9,8 @@ import json
 from datetime import date
 from types import SimpleNamespace
 
+import pytest
+
 from retinue import feed, waiting
 from retinue.mail import MailStore
 from retinue.outbox import OutboxStore
@@ -181,3 +183,257 @@ def test_ids_are_keyed_by_the_routers_own_salt_and_the_digest_fits_the_platform(
     assert len(ids) == feed.DIGEST_ITEMS, "the most pressing fifty"
     assert len(json.dumps({"items": waiting.digest(first, NOW)}, ensure_ascii=False).encode()) <= feed.DIGEST_BYTES
     assert feed.clean({"items": waiting.digest(first, NOW)}, NOW)
+
+
+# --- what closes an ask: his marks, his answers, its time ----------------------------------------------------------
+
+def put(mail: MailStore, *rows: dict) -> list[int]:
+    """Items as the mailroom leaves them: kept by the collector, then read (`fields`). Returns their numbers."""
+    seqs = []
+    for row in rows:
+        ref = f"r{len(mail.db.execute('SELECT seq FROM mail_items').fetchall()) + 1}"
+        mail.keep([{"seq": 1, "account": row.get("account", "me@example.com"), "source": row.get("source", "mail"),
+                    "ref": ref, "data": row.get("data", {})}], NOW - DAY)
+        seq = mail.db.execute("SELECT MAX(seq) FROM mail_items").fetchone()[0]
+        mail.set(seq, row.get("at", NOW - HOUR), **row["fields"])
+        seqs.append(seq)
+    return seqs
+
+
+def asking(need="reply", sender="anna@example.org", ts=NOW - 2 * HOUR, message_id="<m1@example.org>", **over) -> dict:
+    """A letter of Анна Петрова that asks him something."""
+    return {"data": {"box": "INBOX", "thread": "t1", "head": {"message_id": message_id, "reply_to": ""}}, **over,
+            "fields": {"state": "later", "kind": "person", "sender": sender, "ts": ts, "event_id": f"e{message_id}",
+                       "card": {"who": "Анна Петрова", "text": "Оплатить хостинг до пятницы.", "needs_now": need}}}
+
+
+def his(to, ts, thread="t1", account="me@example.com", in_reply_to="", references=(), cc=()) -> dict:
+    """His own letter, from Sent."""
+    return {"account": account, "data": {"box": "SENT", "thread": thread, "head": {
+        "message_id": f"<own{ts}@example.com>", "in_reply_to": in_reply_to, "references": list(references),
+        "to": list(to), "cc": list(cc), "reply_to": ""}},
+            "fields": {"state": "own", "kind": "own", "sender": account, "ts": ts}}
+
+
+def opened(mail: MailStore, now: float = NOW) -> list[int]:
+    return [item["seq"] for item in mail.asks(now)]
+
+
+def test_his_letter_to_its_sender_answers_a_forward_to_somebody_else_does_not(tmp_path):
+    mail = core(tmp_path).mail.store
+    [ask] = put(mail, asking())
+    put(mail, his(["olga@example.net"], NOW - 90 * 60), his(["olga@example.net"], NOW - 80 * 60, cc=["x@example.net"]))
+    assert opened(mail) == [ask], "forwarded to a third in the same thread: not an answer"
+    put(mail, his(["anna@example.org"], NOW - 3 * HOUR))
+    assert opened(mail) == [ask], "his letter before hers answers nothing"
+    put(mail, his(["anna@example.org"], NOW - HOUR, thread="t9", account="me2@example.net"))
+    assert opened(mail) == [ask], "another mailbox, another thread, no reference: not this one"
+    put(mail, his(["Anna@Example.org"], NOW - 30 * 60, thread="t9", account="me2@example.net",
+                  in_reply_to="<m1@example.org>"))
+    assert opened(mail) == [], "from his second mailbox, by In-Reply-To: the thread id is that mailbox's own"
+    assert mail.ask_counts(NOW, NOW - DAY, NOW - 7 * DAY) == (1, 0)
+
+
+def test_an_answer_to_its_reply_to_in_the_same_thread_closes_and_only_reply(tmp_path):
+    mail = core(tmp_path).mail.store
+    [ask] = put(mail, asking())
+    [pay] = put(mail, asking("pay", message_id="<m2@example.org>"))
+    mail.db.execute("UPDATE mail_items SET data = json_set(data, '$.head.reply_to', 'billing@example.org')")
+    put(mail, his(["billing@example.org"], NOW - 30 * 60, references=["<m0@example.org>"]))
+    assert opened(mail) == [pay] and ask != pay, "to its Reply-To in its thread; paying is not answered by a letter"
+
+
+def test_a_draft_that_went_closes_reply_decide_act_but_not_pay_or_attend(tmp_path):
+    mail = core(tmp_path).mail.store
+    seqs = put(mail, *(asking(need, message_id=f"<{need}@example.org>") for need in ("reply", "decide", "act", "pay",
+                                                                                       "attend")))
+    sent = {f"e<{need}@example.org>": NOW - 10 * 60 for need in ("reply", "decide", "act", "pay", "attend")}
+    assert [i["seq"] for i in mail.asks(NOW, sent)] == seqs[3:]
+
+
+def test_vernut_takes_back_his_last_press_only_and_an_older_answer_stays_an_answer(tmp_path):
+    mail = core(tmp_path).mail.store
+    [ask, other] = put(mail, asking(), asking("decide", message_id="<m2@example.org>"))
+    put(mail, his(["anna@example.org"], NOW - 30 * 60))
+    assert opened(mail) == [other], "he answered the one"
+    mail.mark([ask, other], "done", NOW)
+    assert opened(mail) == []
+    assert mail.mark([ask, other], "open", NOW + 60) == 2
+    assert opened(mail, NOW + 120) == [other], "«Undo» after «Done»: what his letter answered stays answered"
+    assert mail.ask_counts(NOW + 120, NOW - DAY, NOW - 7 * DAY) == (1, 0)
+    mail.mark([other], "later", NOW + 180, until=NOW + 12 * HOUR)
+    assert opened(mail, NOW + HOUR) == [], "put off till the morning"
+    mail.mark([other], "open", NOW + 2 * HOUR)
+    assert opened(mail, NOW + 3 * HOUR) == [other], "«Undo» after «Tomorrow»: back now"
+    assert mail.mark([other], "open", NOW + 4 * HOUR) == 0, "nothing left to take back"
+    mail.mark([other], "done", NOW + 16 * HOUR)
+    assert mail.mark([other], "done", NOW + 17 * HOUR) == 0, "the same press twice is one"
+
+
+def test_an_answer_older_than_zavtra_does_not_close_it_in_the_morning(tmp_path):
+    mail = core(tmp_path).mail.store
+    [ask] = put(mail, asking())
+    mail.mark([ask], "later", NOW - 50 * 60, until=NOW + 12 * HOUR)  # pressed on a list shown before his answer
+    put(mail, his(["anna@example.org"], NOW - 55 * 60))
+    assert opened(mail, NOW + 13 * HOUR) == [ask], "his press is newer than that answer"
+    put(mail, his(["anna@example.org"], NOW + 14 * HOUR))
+    assert opened(mail, NOW + 15 * HOUR) == [], "a new answer closes it"
+
+
+def test_a_chat_message_after_it_answers_a_reply_and_vernut_does_not_undo_it(tmp_path):
+    mail = core(tmp_path).mail.store
+    [ask] = put(mail, {"source": "telegram", "data": {"name": "Анна Петрова"},
+                       "fields": {"state": "later", "kind": "chat", "sender": "tg:7", "ts": NOW - 2 * HOUR,
+                                  "card": {"text": "Скинешь фото?", "needs_now": "reply"}}})
+    put(mail, {"source": "telegram", "fields": {"state": "own", "kind": "chat", "sender": "tg:7", "ts": NOW - HOUR}})
+    assert opened(mail) == []
+    mail.mark([ask], "dismissed", NOW)
+    mail.mark([ask], "open", NOW + 60)
+    assert opened(mail, NOW + 120) == [], "«Not a task» taken back: his message still answered it"
+
+
+def test_an_ask_runs_out_in_7_or_14_days_from_her_judgement_and_a_press_gives_it_7_more(tmp_path):
+    mail = core(tmp_path).mail.store
+    reply, pay, attend, kept = put(mail, asking(), asking("pay", message_id="<m2@example.org>"),
+                                   asking("attend", message_id="<m3@example.org>"),
+                                   asking(message_id="<m4@example.org>"))
+    judged = NOW - HOUR
+    assert opened(mail, judged + 7 * DAY - 1) == [reply, pay, attend, kept]
+    assert opened(mail, judged + 7 * DAY) == [pay, attend], "«reply»: 7 days"
+    assert opened(mail, judged + 14 * DAY) == [], "«pay», «attend»: 14"
+    assert mail.ask_counts(judged + 14 * DAY, judged, judged + 7 * DAY + 1) == (0, 2), "two in the last week"
+
+    mail.mark([kept], "later", judged + 5 * DAY, until=judged + 6 * DAY)
+    assert opened(mail, judged + 13 * DAY - 1) == [pay, attend, kept], "7 days from the end of his «Tomorrow»"
+    assert opened(mail, judged + 13 * DAY) == [pay, attend]
+    mail.mark([reply], "later", NOW, until=NOW + DAY)
+    assert reply not in opened(mail, NOW + DAY - 1)
+    assert reply in opened(mail, NOW + 8 * DAY - 1) and reply not in opened(mail, NOW + 8 * DAY), \
+        "«Tomorrow»: 7 days from its morning"
+
+
+def test_its_time_runs_from_her_judgement_not_from_a_later_state_change(tmp_path):
+    mail = core(tmp_path).mail.store
+    judged = asking()
+    judged["fields"]["card"]["judged"] = NOW - 6 * DAY  # «at» moved since: the morning summary, the hour's glue
+    [ask] = put(mail, judged)
+    assert opened(mail, NOW + DAY - 1) == [ask] and opened(mail, NOW + DAY) == []
+
+
+def test_zavtra_is_tomorrow_at_nine_in_his_zone():
+    from retinue.mail import later_until
+
+    assert later_until(NOW, "UTC") == 1_760_086_800.0, "2025-10-10 09:00 UTC"
+    assert later_until(NOW, "Asia/Tokyo") == 1_760_054_400.0, "17:53 there already: 09:00 of its next day"
+
+
+def test_a_row_is_a_person_and_an_ask_and_a_press_closes_exactly_its_items(tmp_path):
+    c = core(tmp_path)
+    pay, decide, decide2 = put(c.mail.store, asking("pay"), asking("decide", message_id="<m2@example.org>"),
+                               asking("decide", message_id="<m3@example.org>", ts=NOW - 3 * HOUR))
+    rows = waiting.digest(c, NOW)
+    assert [(r["who"], r["title"].split(":")[0]) for r in rows] == [("Анна Петрова", "decide"),
+                                                                     ("Анна Петрова", "pay")]
+    assert len({r["id"] for r in rows}) == 2 and all(len(r["t"]) == 32 for r in rows)
+    assert set(rows[0]) == {"id", "kind", "who", "title", "since", "sphere", "t"}, "no item's number leaves"
+    assert feed.clean({"items": rows}, NOW)[0]
+    assert waiting.press(c, rows[0]["t"], "done", NOW)
+    assert opened(c.mail.store) == [pay], "«decide» closed, both its letters; «pay» stays"
+    assert waiting.counts(c, NOW + 60) == {"closed_today": 1, "expired_week": 0}, "one row closed, of two letters"
+    assert [r["t"] for r in waiting.digest(c, NOW + 60)] == [rows[1]["t"]]
+    assert waiting.press(c, rows[0]["t"], "open", NOW + 120), "«Undo» by the same token, its row gone"
+    assert sorted(opened(c.mail.store, NOW + 180)) == sorted([pay, decide, decide2])
+
+
+def test_a_token_names_the_items_it_was_made_of_across_a_restart_and_a_refused_digest(tmp_path):
+    c = core(tmp_path)
+    [first] = put(c.mail.store, asking())
+    [old] = waiting.digest(c, NOW)  # the platform took this one; the next one it refused
+    [second] = put(c.mail.store, asking(message_id="<m2@example.org>", ts=NOW - 30 * 60))
+    [new] = waiting.digest(c, NOW + 30)
+    assert new["t"] != old["t"] and new["id"] == old["id"], "the same row, other items: another token"
+
+    restarted = core(tmp_path)  # the same database, a new process: nothing kept in memory
+    assert waiting.press(restarted, old["t"], "done", NOW + 60)
+    assert opened(restarted.mail.store, NOW + 60) == [second], "the press names what he saw, not what came after"
+    other = core(tmp_path / "other")
+    put(other.mail.store, asking())
+    assert not waiting.press(other, old["t"], "done", NOW + 60), "another router's token names nothing"
+    assert len(opened(other.mail.store, NOW + 60)) == 1 and first not in opened(restarted.mail.store, NOW + 60)
+
+
+def test_an_unknown_or_outdated_token_applies_nothing(tmp_path):
+    c = core(tmp_path)
+    [ask] = put(c.mail.store, asking())
+    [row] = waiting.digest(c, NOW)
+    assert not waiting.press(c, "0" * 32, "done", NOW)
+    with pytest.raises(ValueError):
+        waiting.press(c, row["t"], "delete", NOW)  # not one of his buttons: a fault, not an old list
+    assert not waiting.press(c, row["t"], "done", NOW + waiting.ROW_S + 1), "a list older than a day"
+    assert opened(c.mail.store) == [ask]
+
+
+def test_the_private_matter_is_one_row_with_no_name_no_ask_and_no_button(tmp_path):
+    c = core(tmp_path)
+    put(c.mail.store, *({**asking(need, message_id=f"<{need}@example.org>"),
+                         "fields": {**asking(need)["fields"], "kind": "private", "event_id": need}}
+                        for need in ("attend", "pay")))
+    [row] = waiting.digest(c, NOW)
+    assert (row["who"], row["title"], row["sphere"]) == ("Private", "2 private letters wait for a reply", "home")
+    assert "t" not in row and "Анна" not in json.dumps(row, ensure_ascii=False)
+    assert "attend" not in row["title"] and "pay" not in row["title"]
+
+
+def test_the_morning_says_what_closed_and_what_ran_out_only_when_something_did(tmp_path):
+    from retinue.mailroom import Mailroom
+
+    c = core(tmp_path)
+    room = Mailroom(None, c.mail.store)
+    room.core = c
+    assert room.asked(NOW) == ""
+    done, _, _ = put(c.mail.store, asking(), asking(message_id="<m2@example.org>", at=NOW - 8 * DAY),
+                     asking(message_id="<m3@example.org>", at=NOW - 30 * DAY))
+    c.mail.store.mark([done], "done", NOW - HOUR)
+    assert room.asked(NOW) == "Ran out unmarked this week: 1; closed in the last day: 1.", "a month old: not counted"
+
+
+def test_in_reply_to_and_references_match_by_id_whatever_is_around_it(tmp_path):
+    mail = core(tmp_path).mail.store
+    [ask, other] = put(mail, asking(message_id="<M1@Example.org>"), asking(message_id="<m2@example.org>"))
+    put(mail, his(["anna@example.org"], NOW - 30 * 60, thread="t9", account="me2@example.net",
+                  in_reply_to="<m1@example.org> (сообщение Анны Петровой)"))
+    put(mail, his(["anna@example.org"], NOW - 20 * 60, thread="t9", account="me2@example.net",
+                  references=["<m0@example.org> <m2@example.org>"]))
+    assert opened(mail) == [] and ask != other
+
+
+def test_a_draft_answers_from_when_it_was_sent_not_from_its_last_state_change(tmp_path):
+    c = core(tmp_path)
+    draft(c.outbox.store, "aaaa0001", reply_to="e7", state="sent", send_after=NOW - 300, at=NOW + HOUR)
+    draft(c.outbox.store, "aaaa0002", reply_to="e8", state="queued", at=NOW)
+    assert c.outbox.store.answered() == {"e7": NOW - 300, "e8": NOW - 600}, "the hold's end; without one, its making"
+
+
+def test_letters_read_before_their_head_was_kept_get_it_from_the_archive(tmp_path):
+    from retinue.archive import MAIL, Archive
+    from retinue.mailroom import Mailroom
+
+    c = core(tmp_path)
+    c.archive = Archive(":memory:")
+    ids = []
+    for meta in ({"direction": "in", "message_id": "<m1@example.org>", "to": ["me@example.com"]},
+                 {"direction": "out", "message_id": "<r1@example.com>", "in_reply_to": "<m1@example.org>",
+                  "to": ["Anna@example.org"]}):
+        event, _ = c.archive.append(MAIL, "письмо", conversation_id="mail:me@example.com", channel="mail",
+                                    native_id=meta["message_id"], meta=meta)
+        ids.append(event.id)
+    [ask] = put(c.mail.store, {**asking(), "data": {"box": "INBOX", "thread": "t1"},
+                               "fields": {**asking()["fields"], "event_id": ids[0]}})
+    put(c.mail.store, {"account": "me2@example.net", "data": {"box": "SENT", "thread": "t9"},
+                       "fields": {"state": "own", "kind": "own", "sender": "me2@example.net", "ts": NOW - 30 * 60,
+                                  "event_id": ids[1]}})
+    assert opened(c.mail.store) == [ask], "no head: his answer from the other mailbox is not seen"
+    room = Mailroom(None, c.mail.store)
+    room.core = c
+    assert room.heads(NOW) == 2 and room.heads(NOW) == 0
+    assert opened(c.mail.store) == [], "now it is"

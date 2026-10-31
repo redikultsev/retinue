@@ -19,6 +19,14 @@ const now = () => Date.now() / 1000;
 
 // --- «Waiting for you» (retinue/feed.py): the shown cards, the idle sessions' last summaries, a fixed digest ----------
 
+/** «From the assistant»: a person's rows, each with its token `t`; a press hides one until «Undo» (`open`). */
+const ASKS = [
+  { key: "assistant:chat:1", source: "chat", sphere: "travel", sphere_title: "travel", title: "Anna Petrova", since: now() - 6 * 3600, essence: "reply: is an airport transfer needed", ref: "chat:1", t: "a".repeat(32) },
+  { key: "assistant:letter:2", source: "letter", sphere: "home", sphere_title: "home", title: "Acme Hosting", since: now() - 2 * 86400, essence: "pay: the hosting invoice for May · deadline Friday", ref: "letter:2", t: "b".repeat(32) },
+];
+const pressed = new Set<string>();
+let closedToday = 1;
+
 function mockFeed() {
   const row = (s: Session, over: Record<string, unknown>) => ({
     session: s.id, track: s.track, sphere: null, sphere_title: null, sphere_icon: null, title: s.title, ref: s.id, ...over,
@@ -33,7 +41,7 @@ function mockFeed() {
     { action: "decide", title: "Decide", rows: decide.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "decide", source: "approval", since: a.created, essence: "", approval: a })) },
     { action: "read", title: "Read", rows: read.map((s) => row(s, { key: `read:${s.id}`, action: "read", source: "session", since: s.at, essence: last(s.id)?.text.split("\n")[0] ?? "" })) },
     { action: "assistant", title: "From the assistant", rows: [
-      { key: "assistant:chat:1", action: "assistant", source: "chat", session: null, track: null, sphere: "travel", sphere_title: "travel", sphere_icon: null, title: "Anna Petrova", since: now() - 6 * 3600, essence: "reply: is an airport transfer needed", ref: "chat:1" },
+      ...ASKS.filter((a) => !pressed.has(a.t)).map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, ...a })),
       { key: "assistant:deadline:1", action: "assistant", source: "deadline", session: null, track: null, sphere: "home", sphere_title: "home", sphere_icon: null, title: "Base", since: now() - 86400, essence: "tomorrow: Pay for the internet — due", ref: "deadline:1" },
     ] },
   ].filter((g) => g.rows.length);
@@ -48,7 +56,7 @@ function mockFeed() {
     { key: "limit", text: "limit 74 %", level: "warn" },
     { key: "build", text: "hub built", level: "ok" },
   ];
-  return { schema: 1, count: groups.reduce((n, g) => n + g.rows.length, 0), groups, bot: "retinue_mock_bot", assistant_at: now() - 600, deadlines, chips };
+  return { schema: 1, count: groups.reduce((n, g) => n + g.rows.length, 0), groups, bot: "retinue_mock_bot", assistant_at: now() - 600, deadlines, chips, closed_today: closedToday, expired_week: 2 };
 }
 
 // --- state and the event log -----------------------------------------------------------------------------------
@@ -281,6 +289,18 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
   if (path === "/api/feed") return json(res, 200, mockFeed());
   if (path === "/api/stats") return json(res, 200, mockStats());
+  if (path === "/api/waiting/press" && method === "POST") {
+    const { t, action } = (await body(req)) as { t?: string; action?: string };
+    if (typeof t !== "string" || !/^[0-9a-f]{32}$/.test(t) || !["done", "dismissed", "later", "open"].includes(action ?? ""))
+      return json(res, 400, { error: "Need t — the row's token — and action: done, dismissed, later or open." });
+    if (action === "open") {
+      if (pressed.delete(t)) closedToday -= 1;
+    } else if (!pressed.has(t)) {
+      pressed.add(t);
+      closedToday += 1;
+    }
+    return json(res, 200, { ok: true });
+  }
 
   const space = method === "GET" ? mockSpaces(path) : null;
   if (space) return json(res, space.status, space.data);

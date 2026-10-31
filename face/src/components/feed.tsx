@@ -2,7 +2,9 @@
 // finished turn, and the assistant's items — not by where it came from. Each row: where it came from (icon), its
 // sphere, its title, how long it waits and its one line; the action itself in place where it is small (a question's
 // buttons, «Allow» / «Deny», the suggested replies), so the home screen is a peek, not a way elsewhere. The
-// assistant's items open the bot's chat: sending and deciding them stays in Telegram, under her cards' buttons.
+// assistant's items open the bot's chat: sending and deciding them stays in Telegram, under her cards' buttons. A
+// person's row of hers closes here too — «Done», «Not a task», «Tomorrow», with «Undo» in the toast — and under her
+// rows a line says how many closed today and how many ran out unmarked in the week.
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
@@ -23,9 +25,10 @@ import {
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { type Feed as FeedData, type FeedRow, feedSource, STALE_DIGEST_S, useFeed, waited } from "@/lib/feed";
+import { type Feed as FeedData, type FeedRow, feedSource, type Press, STALE_DIGEST_S, useFeed, waited } from "@/lib/feed";
 import { inputText, when } from "@/lib/format";
 import { useLiveState } from "@/lib/live";
+import { toast } from "@/lib/toast";
 import type { Approval, Summary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +44,13 @@ const ICONS: Record<string, (props: React.SVGProps<SVGSVGElement>) => React.Reac
   base: Database,
   push: GitBranch,
 };
+const PRESSES: [Press, string][] = [
+  ["done", "Done"],
+  ["dismissed", "Not a task"],
+  ["later", "Tomorrow"],
+];
+const UNDO_MS = 10_000;
+const PRESS_FAILED = "It did not go through — try again.";
 const SMALL_CHARS = 240;
 const SMALL_LINES = 4;
 const SOURCE_WORDS: Record<string, string> = {
@@ -90,6 +100,49 @@ function Replies({ row, reply = api.reply }: { row: FeedRow; reply?: typeof api.
   return <ReplyButtons summary={summary} reply={reply} />;
 }
 
+/** «Done», «Not a task», «Tomorrow» on her row: the row leaves the feed at once (`FeedSource.hide`), the router marks
+ * what the row's token names, and the toast offers «Undo» for ten seconds. */
+export function PressButtons({ t, press = api.waitingPress }: { t: string; press?: typeof api.waitingPress }) {
+  const back = async () => {
+    try {
+      await press(t, "open");
+      feedSource.unhide(t);
+    } catch {
+      toast(PRESS_FAILED, "error");
+    }
+  };
+  const pressed = async (action: Press, label: string) => {
+    feedSource.hide(t);
+    try {
+      await press(t, action);
+    } catch {
+      feedSource.unhide(t);
+      toast(PRESS_FAILED, "error");
+      return;
+    }
+    toast(label, "info", UNDO_MS, undefined, { label: "Undo", run: () => void back() });
+  };
+  return (
+    <div className="flex flex-wrap gap-2">
+      {PRESSES.map(([action, label]) => (
+        <Button key={action} variant="outline" size="sm" onClick={() => void pressed(action, label)}>
+          {label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/** Her queue at work: how many closed today, how many ran out with no mark in the week. */
+function Counts({ feed }: { feed: FeedData }) {
+  if (feed.closed_today === undefined && feed.expired_week === undefined) return null;
+  return (
+    <p className="px-1 text-xs text-muted-foreground tabular-nums">
+      Closed today: {feed.closed_today ?? 0} · Ran out unmarked this week: {feed.expired_week ?? 0}
+    </p>
+  );
+}
+
 function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
   const Icon = ICONS[row.source] ?? ListTodo;
   const where = row.sphere_title || row.track;
@@ -136,6 +189,7 @@ function Row({ row, bot, now }: { row: FeedRow; bot: string; now: number }) {
           Open and answer
         </Link>
       )}
+      {row.action === "assistant" && row.t && <PressButtons t={row.t} />}
       {row.action === "assistant" &&
         (bot ? (
           <a
@@ -198,9 +252,13 @@ export function FeedView({
                 <Row key={row.key} row={row} bot={feed.bot} now={now} />
               ))}
             </ul>
+            {group.action === "assistant" && <Counts feed={feed} />}
           </section>
         ))
       )}
+      {feed && !groups.some((g) => g.action === "assistant") && (feed.closed_today || feed.expired_week) ? (
+        <Counts feed={feed} />
+      ) : null}
     </section>
   );
 }

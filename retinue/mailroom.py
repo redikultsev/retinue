@@ -17,9 +17,9 @@ import time
 from . import clock
 from .archive import CALENDAR, CHAT, MAIL, Event, event_id, exchange_of
 from .attachments import Unreadable, Upload, prepare
-from .mail import (ANSWERS, EVENT_CHARS, EVENT_SCHEMA, KINDS, LATER, NOW, PRIVATE, TRIAGE_SCHEMA, Card, Collector,
-                   MailStore, Private, Unavailable, card_of, decisions, event_record, invitation, letter_record, route,
-                   safe_label, triage_prompt, when)
+from .mail import (ANSWERS, ASKS, ASKS_LOOK_DAYS, EVENT_CHARS, EVENT_SCHEMA, KINDS, LATER, MARKS, NOW, PRIVATE, TRIAGE_SCHEMA, Card,
+                   Collector, MailStore, Private, Unavailable, card_of, decisions, event_record, invitation, later_until,
+                   letter_record, reply_head, route, safe_label, triage_prompt, when)
 from .tgbusiness import OWN_SPEECH
 
 log = logging.getLogger("retinue.mailroom")
@@ -69,6 +69,11 @@ STOP = set("""а без бы был была были было быть в ва�
 привет пока спасибо ок ага угу hi hello thanks ok a an and are as at be but by do for from have he her his i if in is
 it its me my no not of on or our she so that the their them they this to was we were what when where who why will with
 you your""".split())
+# Under a message that asks him something: his mark on its items (`MailStore.mark`), and what each says back.
+ASK_BUTTONS = (("Done", "done"), ("Not a task", "dismissed"), ("Tomorrow", "later"))
+ASK_SAID = {"done": "Done", "dismissed": "Not a task", "later": "Back tomorrow at 09:00",
+            "open": "Press taken back"}
+BACK = "Undo"
 EXTRA_RIGHTS = "telegram.rights"  # the Business bot's rights beyond can_reply the owner was told of
 EVENT_HEAD = (
     "[Mail, calendar and Telegram. A separate run outside the conversation with the owner. Answer by the schema, by the "
@@ -91,12 +96,29 @@ class Mailroom:
         self.looked_chats = 0.0  # when it last looked at the Telegram gateway
         self.backfilled = 0.0    # when the backfill last read a letter
         self.task: asyncio.Task | None = None  # the one piece of mail work in flight
+        self.changed = None      # called after the owner marks an ask: «Waiting for you» is pushed at once (the router's)
 
     def attach(self, core) -> None:
         self.core = core
         Private.of(core.memory)  # a private matter the config names wrongly stops the router here
+        try:
+            self.heads(time.time())
+        except Exception:
+            log.exception("the reply heads of letters read before them were not filled in")
         core.actions.update({"mail_show": self._show, "mail_mute": self._mute, "mail_block": self._block,
-                             "mail_unrule": self._unrule})
+                             "mail_unrule": self._unrule,
+                             **{f"ask_{mark}": (lambda value, mark=mark: self._ask(mark, value)) for mark in MARKS}})
+
+    def heads(self, now: float) -> int:
+        """Letters read before their reply head was kept with them (`mail.reply_head`), in ASKS_LOOK_DAYS: the head
+        taken from the archive's record, so his answers to them close what they ask. How many."""
+        filled = 0
+        for item in self.store.unheaded(now - ASKS_LOOK_DAYS * 86400):
+            event = self.core.archive.get(item["event_id"] or "")
+            if event is not None and event.kind == "mail":
+                self.store.keep_head(item["seq"], reply_head(event.meta))
+                filled += 1
+        return filled
 
     def step(self, now: float) -> None:
         """Called by the router's clock: the next piece of work, unless one is still running."""
@@ -289,7 +311,8 @@ class Mailroom:
             named = [f"\"{str(a.get('name', ''))[:120]}\": an attachment of his own letter, not downloaded"
                      for a in letter.get("attachments") or []]
             event = self._archive(item, letter, Card(kind="own", read=True), [], named, own=True)
-            self.store.set(item["seq"], now, state="own", event_id=event.id, sender=sender, ts=ts, kind="own")
+            self.store.set(item["seq"], now, state="own", event_id=event.id, sender=sender, ts=ts, kind="own",
+                           data=_with_head(item, letter))
             if self.core.outbox:  # a letter the courier sent, back from Sent: a doubtful send is settled
                 await self.core.outbox.settle_mail(str(letter.get("message_id") or ""), item["ref"])
             return
@@ -308,7 +331,7 @@ class Mailroom:
         kept, refused = await self._files(item, letter, sender)
         event = self._archive(item, letter, card, kept, refused, own=False)
         self.store.set(item["seq"], now, state="kept", event_id=event.id, sender=sender, ts=ts, kind=card.kind,
-                       card=card.as_dict())
+                       card=card.as_dict(), data=_with_head(item, letter))
         if self.core.outbox:  # an open card in this thread no longer answers the last word
             await self.core.outbox.supersede([f"mail:{letter.get('thread') or item['data'].get('thread', '')}",
                                               f"from:{sender}"])
@@ -616,7 +639,7 @@ class Mailroom:
                 continue
             self._captions(item, decision.media, context_id, now)
             card = {**(item["card"] or {}), "text": decision.text, "needs_now": decision.needs,
-                    "deadline_now": decision.deadline, "cost": decision.cost, "new": decision.new,
+                    "deadline_now": decision.deadline, "cost": decision.cost, "new": decision.new, "judged": now,
                     PRIVATE: decision.private or item["kind"] == PRIVATE, "to_assistant": decision.to_assistant}
             where = route(decision, bool(item["sender"]) and self.store.muted(item["sender"], item["kind"] or ""))
             if where == NOW:
@@ -670,11 +693,11 @@ class Mailroom:
             count = len(items)
             where = "Telegram" if first["source"] == TELEGRAM else "Mail"
             text = f"{where}: {count} important."
-            buttons = [Button("Show", "mail_show", seqs, alone=True)]
+            buttons = [Button("Show", "mail_show", seqs, alone=True)]  # its marks come with its words
         else:
             lines = [f"{len(items)} more from {first['sender']} within the hour:"] if glued else []
             lines += [("- " if glued else "") + self._said(i) for i in items]
-            text, buttons = "\n".join(lines), []
+            text, buttons = "\n".join(lines), _ask_buttons(items)
         if first["source"] == "mail" and first["sender"]:
             count = self.store.letters_from(first["sender"], now)
             buttons += [Button("Don't notify about this", "mail_mute", str(first["seq"]), alone=True),
@@ -701,10 +724,25 @@ class Mailroom:
         return f"{text}\n_({source})_"
 
     async def _show(self, value: str) -> str:
-        items = [self.store.get(int(seq)) for seq in value.split(",") if seq.isdigit()]
-        text = "\n\n".join(self._said(i) for i in items if i) or "These letters are no longer in the list."
-        asyncio.create_task(self.core.tell_owner(text))
+        items = [i for i in (self.store.get(int(seq)) for seq in value.split(",") if seq.isdigit()) if i]
+        text = "\n\n".join(self._said(i) for i in items) or "These letters are no longer in the list."
+        asyncio.create_task(self.core.tell_owner(text, buttons=_ask_buttons(items)))
         return "Showing"
+
+    async def _ask(self, action: str, value: str):
+        """«Done», «Not a task», «Tomorrow» under a message that asks him something, «Undo» after one: his mark on
+        its items, the last press winning. Each of them puts «Undo» on the message (`Pressed.add`); «Waiting for you» is
+        pushed again at once."""
+        from .core import Button, Pressed
+
+        now = time.time()
+        seqs = [int(seq) for seq in value.split(",") if seq.isdigit()]
+        self.store.mark(seqs, action, now, later_until(now, self.core.tz) if action == "later" else None)
+        if self.changed is not None:
+            self.changed()
+        if action == "open":
+            return ASK_SAID[action]
+        return Pressed(True, ASK_SAID[action], add=[Button(BACK, "ask_open", value, alone=True)])
 
     async def _mute(self, value: str) -> str:
         item = self.store.get(int(value)) if value.isdigit() else None
@@ -804,6 +842,13 @@ class Mailroom:
             said.append(f"{(event.meta.get('name') if event else '') or sender} — {count}")
         return f"Wrote to the assistant rather than to you, in a day: {', '.join(said)}." if said else ""
 
+    def asked(self, now: float) -> str:
+        """For the owner's morning, in code's words: the asks that ran out in the week with no mark, and those closed
+        in the day — by his buttons or by what code saw him do. Nothing when both are none."""
+        sent = self.core.outbox.store.answered() if self.core.outbox else {}
+        closed, expired = self.store.ask_counts(now, now - 86400, now - 7 * 86400, sent)
+        return f"Ran out unmarked this week: {expired}; closed in the last day: {closed}." if closed or expired else ""
+
     def told_in_summary(self, seqs: list[int], now: float) -> None:
         for seq in seqs:
             self.store.set(seq, now, state="done")
@@ -868,3 +913,20 @@ class Mailroom:
         if self.gateway:
             lines.append("- Telegram: only the chats chosen in the Business bot's settings, since it was connected;")
         return lines
+
+
+def _with_head(item: dict, letter: dict) -> dict:
+    """The item's data with its thread and what tells whether one letter answers another (`mail.reply_head`)."""
+    return {**item["data"], "thread": letter.get("thread") or item["data"].get("thread", ""),
+            "head": reply_head(letter)}
+
+
+def _ask_buttons(items: list[dict]) -> list:
+    """«Done», «Not a task», «Tomorrow» for the items of a message, when one of them asks him to act; each spends only
+    itself, so «Don't notify» and «Drop» stay."""
+    from .core import Button
+
+    if not any((i["card"] or {}).get("needs_now") in ASKS for i in items):
+        return []
+    seqs = ",".join(str(i["seq"]) for i in items)
+    return [Button(label, f"ask_{mark}", seqs, alone=True) for label, mark in ASK_BUTTONS]

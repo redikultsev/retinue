@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useToasts } from "@/lib/toast";
+import { dismiss, useToasts } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 export function Toaster() {
@@ -14,6 +14,24 @@ export function Toaster() {
           "pointer-events-auto max-w-md rounded-lg px-4 py-2.5 text-sm shadow-lg",
           t.tone === "error" ? "bg-destructive text-white" : "bg-foreground text-background",
         );
+        if (t.action) {
+          const { label, run } = t.action;
+          return (
+            <div key={t.id} role="status" className={cn(className, "flex items-center gap-3")}>
+              <span>{t.text}</span>
+              <button
+                type="button"
+                className="font-semibold underline-offset-2 hover:underline"
+                onClick={() => {
+                  dismiss(t.id);
+                  run();
+                }}
+              >
+                {label}
+              </button>
+            </div>
+          );
+        }
         return t.href ? (
           <Link key={t.id} to={t.href} role="status" className={cn(className, "underline-offset-2 hover:underline")}>
             {t.text}

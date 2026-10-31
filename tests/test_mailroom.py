@@ -4,6 +4,7 @@ whom, in what order and how fast — no model, no Google."""
 import asyncio
 import dataclasses
 import json
+import time
 
 from retinue.archive import Archive
 from retinue.core import Core, Reply
@@ -413,6 +414,8 @@ def test_her_judgement_is_one_run_with_her_tools_and_code_decides_what_to_say(tm
     assert [label for label, _ in card[1]] == ["Show", "Don't notify about this",
                                               "Always drop desk@clinic.example (1 in 30 d)"]
     assert shown.toast == "Showing" and telegram.cards[-1][0] == f"{said}\n_(letter from desk@clinic.example, «Запись»)_"
+    assert [label for label, _ in telegram.cards[-1][1]] == ["Done", "Not a task", "Tomorrow"], \
+        "the private matter's marks come with its words"
     assert [room.store.get(n)["state"] for n in (1, 2, 3)] == ["told", "later", "silent"]
     assert core.store.db.execute("SELECT kind, status FROM runs WHERE kind = 'mail'").fetchall() == [("mail", "done")]
 
@@ -437,6 +440,35 @@ def test_an_invitation_about_the_private_matter_is_as_private_as_a_letter(tmp_pa
         "no rule buttons under a calendar change: the rules are for letters"
 
 
+def test_an_urgent_ask_closes_from_its_message_and_vernut_takes_it_back(tmp_path):
+    fake, asked = FakeCollector(), []
+    fake.letter_in(1, "m1", "anna@x.example", "Хостинг", "Оплатите хостинг.")
+    judged = [decided(("pay", "high", "Анна Петрова просит оплатить хостинг."))]
+
+    async def run():
+        core, room, _ = judged_room(tmp_path, fake, asked, {"anna@x.example": verdict("person", True)}, judged)
+        telegram, poked = FakeChannel("telegram", False), []
+        room.changed = lambda: poked.append(1)
+        await core.start([telegram])
+        await room.work(NOW)
+        await room.work(NOW + 200)
+        buttons = dict(telegram.cards[0][1])
+        done = await core.press(telegram, buttons["Done"])
+        left = room.store.db.execute("SELECT seq, action FROM ask_marks").fetchall()
+        back = await core.press(telegram, dict(done.keep)["Undo"])
+        return room, telegram, done, left, back, poked
+
+    room, telegram, done, left, back, poked = asyncio.run(run())
+    assert [label for label, _ in telegram.cards[0][1]][:3] == ["Done", "Not a task", "Tomorrow"]
+    assert done.toast == "Done" and done.card.endswith("\n\n✓ Done") and left == [(1, "done")]
+    assert [label for label, _ in done.keep] == ["Not a task", "Tomorrow", "Don't notify about this",
+                                                 "Always drop anna@x.example (1 in 30 d)", "Undo"], \
+        "his rules stay; «Undo» is put on"
+    assert back.toast == "Press taken back" and room.store.db.execute("SELECT * FROM ask_marks").fetchall() == []
+    assert len(poked) == 2, "each mark pushes «Waiting for you» at once"
+    assert room.asked(time.time()) == "", "nothing closed for good, nothing ran out"
+
+
 def test_one_sender_in_an_hour_is_one_message_and_his_buttons_are_rules(tmp_path):
     fake, asked = FakeCollector(), []
     fake.letter_in(1, "m1", "anna@x.example", "Срочно", "Нужен ответ сегодня.")
@@ -455,9 +487,9 @@ def test_one_sender_in_an_hour_is_one_message_and_his_buttons_are_rules(tmp_path
         await room.work(NOW + 3000)
         cards = len(telegram.cards)
         await room.work(NOW + 3900)                      # the hour is over: one message for what was held
-        first = telegram.cards[0]
-        mute = await core.press(telegram, first[1][0][1])
-        block = await core.press(telegram, first[1][1][1])
+        first = dict(telegram.cards[0][1])  # «Done», «Not a task», «Tomorrow» first: her ask, then his rules
+        mute = await core.press(telegram, first["Don't notify about this"])
+        block = await core.press(telegram, first["Always drop anna@x.example (1 in 30 d)"])
         fake.letter_in(3, "m3", "anna@x.example", "Срочно 3", "Ещё раз.")
         fake.letter_in(4, "m4", "ads@x.example", "Реклама", "x")
         for at in (NOW + 4000, NOW + 4001, NOW + 4300):

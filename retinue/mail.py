@@ -20,10 +20,12 @@ import secrets
 import sqlite3
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import timedelta
 
 import httpx
 
 from . import clock
+from .letter import REFERENCE
 
 # The kinds a letter can be, as the assistant names them, and how the summary counts them.
 KINDS = {"person": "letters from people", "private": "private", "money": "money", "travel": "travel",
@@ -42,6 +44,15 @@ EVENT_CHARS = 8000      # what the event run reads of a kept letter
 CATEGORIES = {"CATEGORY_PROMOTIONS": "Promotions", "CATEGORY_SOCIAL": "Social", "CATEGORY_UPDATES": "Updates",
               "CATEGORY_FORUMS": "Forums", "CATEGORY_PERSONAL": "Primary"}
 DROPPED_DAYS = 30       # the technical log of dropped letters: sender and subject, this long, never the text
+# «Waiting for you»: her `needs` that ask the owner to act («read» does not), and what closes them (`MailStore.asks`).
+ASKS = ("reply", "decide", "pay", "attend", "act")
+MARKS = ("done", "dismissed", "later", "open")  # the owner's buttons: «Done», «Not a task», «Tomorrow», «Undo»
+DRAFT_CLOSES = ("reply", "decide", "act")       # a draft that went out closes these; paying or going it does not
+DUE_DAYS = {"pay": 14, "attend": 14}            # an ask waits this long from her judgement, the rest ASK_DAYS…
+ASK_DAYS = 7                                    # …and as long again from his last press («Tomorrow»: from its end)
+ASKS_LOOK_DAYS = 21                             # judged or pressed this far back: the longest wait (14) and the
+                                                # week that counts what ran out
+LATER_AT = 9                                    # «Tomorrow»: until 09:00 tomorrow, in the owner's zone
 
 TRIAGE_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -396,6 +407,7 @@ class MailStore:
                 UNIQUE (account, source, ref)
             );
             CREATE INDEX IF NOT EXISTS mail_items_state ON mail_items (state, retry_at);
+            CREATE INDEX IF NOT EXISTS mail_items_sender ON mail_items (sender, ts);  -- his answer in a chat
             CREATE TABLE IF NOT EXISTS mail_rules (
                 rule TEXT NOT NULL,                 -- block: drop every letter of the sender; mute: never at once
                 sender TEXT NOT NULL,
@@ -409,6 +421,12 @@ class MailStore:
                 account TEXT NOT NULL, source TEXT NOT NULL, since REAL, last_ok REAL, failing_since REAL, error TEXT,
                 told REAL,                          -- when the owner was told of this failure
                 PRIMARY KEY (account, source)
+            );
+            CREATE TABLE IF NOT EXISTS ask_marks (  -- the owner's last press on an item that asks him (`asks`)
+                seq INTEGER PRIMARY KEY,            -- mail_items.seq
+                action TEXT NOT NULL,               -- done | dismissed | later; «Undo» deletes the row
+                until REAL,                         -- later: until when
+                at REAL NOT NULL                    -- when he pressed
             );
             """
         )
@@ -554,16 +572,129 @@ class MailStore:
                               (sender, since)).fetchone()
         return row[0]
 
-    def needing(self, since: float, limit: int = 30) -> list[dict]:
-        """Items she judged since `since` that ask something of the owner, the longest waiting first: the «now» page."""
+    def needing(self, since: float, limit: int = 30, besides: tuple[str, ...] = ()) -> list[dict]:
+        """Items she judged since `since` that ask something of the owner — but `besides` — the longest waiting first:
+        the «now» page."""
         rows = self.db.execute(f"SELECT {self._COLUMNS} FROM mail_items WHERE state IN ('later', 'told', 'held', "
                                "'done') AND at >= ? AND COALESCE(json_extract(card, '$.needs_now'), 'nothing') "
-                               "!= 'nothing' ORDER BY at LIMIT ?", (since, limit)).fetchall()
+                               f"NOT IN ('nothing'{', ?' * len(besides)}) ORDER BY at LIMIT ?",
+                               (since, *besides, limit)).fetchall()
         return [self._item(row) for row in rows]
 
     def urgent_since(self, since: float) -> int:
         return self.db.execute("SELECT COUNT(*) FROM mail_items WHERE state = 'told' AND at >= ?",
                                (since,)).fetchone()[0]
+
+    # --- what asks the owner and what closed it: «Waiting for you» ------------------------------------------------------
+
+    def mark(self, seqs: list[int], action: str, now: float, until: float | None = None) -> int:
+        """The owner's press on these items; his last press wins. «Undo» (`open`) takes his press back — the mark
+        is gone, and what code saw him do before it counts again: an answer he sent stays an answer. The same press
+        again changes nothing — a press applied twice is applied once — but «Tomorrow» once its morning has come is a
+        new one. How many changed."""
+        if action not in MARKS:
+            raise ValueError(f"not a mark: {action}")
+        changed = 0
+        for seq in seqs:
+            if action == "open":
+                changed += self.db.execute("DELETE FROM ask_marks WHERE seq = ?", (seq,)).rowcount
+                continue
+            row = self.db.execute("SELECT action, until FROM ask_marks WHERE seq = ?", (seq,)).fetchone()
+            if row and row[0] == action and (action != "later" or (row[1] or 0) > now):
+                continue
+            self.db.execute("INSERT OR REPLACE INTO ask_marks VALUES (?, ?, ?, ?)",
+                            (seq, action, until if action == "later" else None, now))
+            changed += 1
+        self.db.commit()
+        return changed
+
+    def asks(self, now: float, sent: dict[str, float] | None = None) -> list[dict]:
+        """What asks the owner to act and is still open, the longest waiting first. `sent`: the archive messages a
+        draft answered, and when it went (`OutboxStore.answered`)."""
+        return [item for item, state, _ in self._asks(now, sent or {}) if state == "open"]
+
+    def ask_counts(self, now: float, closed_since: float, expired_since: float,
+                   sent: dict[str, float] | None = None) -> tuple[int, int]:
+        """How many rows of «Waiting for you» (`ask_row`: a person and an ask, the private matter one) had an ask closed since
+        `closed_since` — by his press or by what code saw him do — and how many had one run out with nothing closing
+        it since `expired_since`: the numbers count what he sees, not letters."""
+        closed, expired = set(), set()
+        for item, state, when in self._asks(now, sent or {}):
+            if state == "closed" and when >= closed_since:
+                closed.add(ask_row(item))
+            elif state == "expired" and when >= expired_since:
+                expired.add(ask_row(item))
+        return len(closed), len(expired)
+
+    def unheaded(self, since: float) -> list[dict]:
+        """Letters read since `since` before their reply head was kept with them (`reply_head`)."""
+        rows = self.db.execute(f"SELECT {self._COLUMNS} FROM mail_items WHERE source = 'mail' AND event_id IS NOT NULL"
+                               " AND json_extract(data, '$.head') IS NULL AND COALESCE(ts, at) >= ?", (since,))
+        return [self._item(row) for row in rows]
+
+    def keep_head(self, seq: int, head: dict) -> None:
+        """A letter's reply head, put in after it was read: its state and time stay as they are."""
+        self.db.execute("UPDATE mail_items SET data = json_set(data, '$.head', json(?)) WHERE seq = ?",
+                        (json.dumps(head, ensure_ascii=False), seq))
+        self.db.commit()
+
+    def _asks(self, now: float, sent: dict[str, float]):
+        """Every item that asked the owner, judged or pressed in ASKS_LOOK_DAYS, with its state read now — nothing of
+        it is kept but his last press: (item, state, when). `closed` by «Done» or «Not a task», or by an answer code
+        saw newer than his last press; `later` till his «Tomorrow» ends; `expired` once its time is up — ASK_DAYS
+        (DUE_DAYS) from her judgement, never before ASK_DAYS from his last press or the end of his «Tomorrow»: no word of
+        hers sets it, so none can hide an ask; `open` otherwise. Her judgement's time is `card.judged`, kept once; an
+        item judged before it was kept goes by its last state change (`at`)."""
+        horizon, needs = now - ASKS_LOOK_DAYS * 86400, ", ".join("?" * len(ASKS))
+        rows = self.db.execute(
+            f"SELECT {', '.join(f'i.{c}' for c in self._COLUMNS.split(', '))}, m.action, m.until, m.at FROM "
+            "mail_items i LEFT JOIN ask_marks m ON m.seq = i.seq WHERE i.state IN ('later', 'told', 'held', 'done') "
+            f"AND json_extract(i.card, '$.needs_now') IN ({needs}) AND (COALESCE(json_extract(i.card, '$.judged'), i.at) "
+            ">= ? OR m.at >= ?) ORDER BY COALESCE(json_extract(i.card, '$.judged'), i.at), i.seq",
+            (*ASKS, horizon, horizon)).fetchall()
+        mine = None  # his own letters, read once when one is needed
+        for row in rows:
+            item, (action, until, pressed) = self._item(row[:-3]), row[-3:]
+            need = item["card"].get("needs_now")
+            due = float(item["card"].get("judged") or item["at"]) + DUE_DAYS.get(need, ASK_DAYS) * 86400
+            if action:
+                due = max(due, (until if action == "later" and until else pressed) + ASK_DAYS * 86400)
+            if action in ("done", "dismissed"):
+                yield item, "closed", pressed
+                continue
+            if action == "later" and (until or 0) > now:
+                yield item, "later", until
+                continue
+            if mine is None and need == "reply" and item["source"] == "mail":
+                mine = [self._item(r) for r in self.db.execute(
+                    f"SELECT {self._COLUMNS} FROM mail_items WHERE state = 'own' AND source = 'mail' AND ts >= ?",
+                    (horizon,))]
+            answered = self._answered(item, need, max(float(item["ts"] or item["at"]), pressed or 0), sent, mine or [])
+            if answered is not None:
+                yield item, "closed", answered
+            elif due <= now:
+                yield item, "expired", due
+            else:
+                yield item, "open", due
+
+    def _answered(self, item: dict, need: str, after: float, sent: dict[str, float], mine: list[dict]) -> float | None:
+        """When code saw the owner answer this item after `after` (its time, or his last press: an older sign does
+        not undo «Undo»), or None. A draft of hers that went out answers «reply», «decide», «act» — not
+        paying or going. To «reply» only: his message in the same Telegram chat; his letter in the same thread or
+        naming this one (In-Reply-To, References: a thread has another id in his other mailbox) that goes to its
+        sender or its Reply-To — a letter forwarded to somebody else answers nothing."""
+        times = []
+        went = sent.get(item["event_id"] or "")
+        if need in DRAFT_CLOSES and went is not None and went > after:
+            times.append(went)
+        if need == "reply" and item["source"] == "telegram":
+            row = self.db.execute("SELECT MIN(ts) FROM mail_items WHERE source = 'telegram' AND state = 'own' AND "
+                                  "sender = ? AND ts > ?", (item["sender"] or "", after)).fetchone()
+            times += [row[0]] if row[0] is not None else []
+        if need == "reply" and item["source"] == "mail":
+            times += [float(letter["ts"]) for letter in mine if float(letter["ts"] or 0) > after and
+                      _replies_to(letter, item)]
+        return min(times, default=None)
 
     # --- the owner's rules: changed by his buttons only -------------------------------------------------------
 
@@ -658,6 +789,44 @@ class MailStore:
         rows = self.db.execute("SELECT account, source, since, last_ok, failing_since, error FROM mail_sources "
                                "ORDER BY source DESC, account").fetchall()
         return [dict(zip(("account", "source", "since", "last_ok", "failing_since", "error"), row)) for row in rows]
+
+
+def reply_head(letter: dict) -> dict:
+    """What tells whether a letter answers another (`_replies_to`), kept with its item: the ids and the addresses."""
+    return {"message_id": str(letter.get("message_id") or ""), "in_reply_to": str(letter.get("in_reply_to") or ""),
+            "references": [str(r) for r in letter.get("references") or []],
+            "to": [str(a).lower() for a in letter.get("to") or []], "cc": [str(a).lower() for a in letter.get("cc") or []],
+            "reply_to": str(letter.get("reply_to") or "").lower()}
+
+
+def _replies_to(letter: dict, item: dict) -> bool:
+    """Whether his letter answers this one: in its thread in the same mailbox, or naming it by Message-ID — and to its
+    sender or its Reply-To, in To or Cc."""
+    head, his = item["data"].get("head") or {}, letter["data"].get("head") or {}
+    thread, message_id = item["data"].get("thread"), message_ids(head.get("message_id"))
+    same = (thread and letter["account"] == item["account"] and letter["data"].get("thread") == thread) or \
+        bool(message_id & message_ids(his.get("in_reply_to"), *(his.get("references") or [])))
+    to = {str(a).lower() for a in [*(his.get("to") or []), *(his.get("cc") or [])]}
+    return bool(same) and bool(to & ({str(item["sender"] or ""), str(head.get("reply_to") or "")} - {""}))
+
+
+def message_ids(*headers) -> set[str]:
+    """The Message-IDs named in these headers, `<…>` each, whatever comments or other ids are around them."""
+    return {found.lower() for header in headers for found in REFERENCE.findall(str(header or ""))}
+
+
+def ask_row(item: dict) -> str:
+    """Which row of «Waiting for you» an ask is on: its sender and her ask; the owner's private matter is one row."""
+    card = item["card"] or {}
+    if item["kind"] == PRIVATE or card.get(PRIVATE):
+        return PRIVATE
+    return f"{item['source']}:{item['sender'] or card.get('who') or '?'}:{card.get('needs_now')}"
+
+
+def later_until(now: float, tz: str) -> float:
+    """«Tomorrow»: 09:00 of the owner's next day."""
+    morning = clock.local(now, tz).replace(hour=LATER_AT, minute=0, second=0, microsecond=0)
+    return (morning + timedelta(days=1)).timestamp()
 
 
 def safe_label(text: str, cap: int = 60) -> str:

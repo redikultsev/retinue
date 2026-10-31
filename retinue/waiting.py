@@ -150,15 +150,18 @@ def detail(core, ref: str, token: str, now: float) -> dict | None:
     that request and to nothing else. A person's row by its token — those of the items the router showed under it that
     still ask, newest first; a draft by its id. Her judgement and a draft's text with codes, numbers, links and
     addresses masked as in the digest (`masked`), and where the thing is (`open`: the Gmail thread, the Telegram chat by
-    its @username) — never the letter's text, its verbatim quote or the sender's address. None when the token is not
-    known, nothing under it asks any more, the draft no longer waits, or the row is the owner's private matter."""
+    its @username) — never the letter's text, its verbatim quote or the sender's address. The private matter's row —
+    nameless on the list — opens as its letters one by one (`_private_detail`). None when the token is not known,
+    nothing under it asks any more, or the draft no longer waits or is the private matter's."""
     if match := DRAFT_REF.fullmatch(ref):
         return _draft_detail(core, match[1], now)
     seqs = set(_rows(core, now).get(token) or ()) if token and core.mail else set()
     items = [item for item in core.mail.store.asks(now, _sent(core)) if item["seq"] in seqs] if seqs else []
-    if not items or any(ask_row(item) == PRIVATE for item in items):
+    if not items:
         return None
     items.sort(key=lambda i: -float(i["ts"] or i["at"] or 0))
+    if any(ask_row(item) == PRIVATE for item in items):
+        return _private_detail(core, items, now)
     first = items[0]
     chat = first["source"] == "telegram"
     card, data = first["card"] or {}, first["data"] or {}
@@ -166,6 +169,17 @@ def detail(core, ref: str, token: str, now: float) -> dict | None:
     return {"kind": "chat" if chat else "letter", "who": who, "account": "" if chat else line(first["account"], ADDRESS_CHARS),
             "asks": [_ask(item, now) for item in items[:DETAIL_ASKS]], "more": max(0, len(items) - DETAIL_ASKS),
             **({"open": link} if (link := _open(first)) else {})}
+
+def _private_detail(core, items: list[dict], now: float) -> dict:
+    """The private matter's letters, newest first: each its sender's name, her ask and words, and its own token — so
+    «Done», «Not a task», «Tomorrow» close one letter (`press`), kept as any row's token is."""
+    shown = items[:DETAIL_ASKS]
+    tokens = {item["seq"]: _token(core, [item["seq"]]) for item in shown}
+    _remember(core, {token: [seq] for seq, token in tokens.items()}, now)
+    return {"kind": "letter", "who": PRIVATE_WHO, "account": "",
+            "asks": [{**_ask(item, now), "who": named(str((item["card"] or {}).get("who") or ""),
+                                                      str(item["sender"] or "")), "t": tokens[item["seq"]]}
+                     for item in shown], "more": max(0, len(items) - DETAIL_ASKS)}
 
 def _ask(item: dict, now: float, link: bool = True) -> dict:
     card = item["card"] or {}
@@ -319,8 +333,9 @@ def _people(core, now: float, shown: set[str]) -> list[dict]:
         count = group["count"]
         row = {"id": group["id"], "kind": group["kind"], "who": group["who"], "since": group["since"],
                "sphere": group["sphere"]}
-        if group["private"]:  # no buttons in the app: its words and marks are behind «Show» in Telegram
-            row["title"] = f"{count} {plural(count, 'private letter waits', 'private letters wait')} for a reply"
+        if group["private"]:  # names nothing on the list: who and what only in its sheet, a letter at a time
+            row.update(title=f"{count} {plural(count, 'private letter waits', 'private letters wait')} for a reply",
+                       t=_token(core, group["seqs"]), _seqs=group["seqs"], private=True)
         else:
             title = f"{NEEDS[group['need']]}: {said(group['text'])}"
             title += f" · deadline {said(group['deadline'])}" if group["deadline"] else ""

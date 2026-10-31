@@ -273,6 +273,14 @@ export function ComposerBox({
   // the same: a failed send that did reach the platform must not swallow a different message sent after it.
   const tried = useRef<{ id: string; body: string; files: File[] } | null>(null);
   const coarse = useCoarsePointer();
+  // A text given to start from (a draft, a row's context): the cursor after it, where his own words go.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, on mount
+  useEffect(() => {
+    const el = field.current;
+    if (!autoFocus || !initial || !el) return;
+    el.setSelectionRange(initial.length, initial.length);
+    el.scrollTop = el.scrollHeight;
+  }, []);
   const height = useVisibleHeight();
   const field = useRef<HTMLTextAreaElement>(null);
   const cursor = useRef<{ start: number; end: number } | null>(null); // where the dictation goes, kept at its start

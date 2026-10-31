@@ -375,15 +375,25 @@ def test_an_unknown_or_outdated_token_applies_nothing(tmp_path):
     assert opened(c.mail.store) == [ask]
 
 
-def test_the_private_matter_is_one_row_with_no_name_no_ask_and_no_button(tmp_path):
+def test_the_private_matter_is_one_nameless_row_that_opens_as_its_letters_each_closed_on_its_own(tmp_path):
     c = core(tmp_path)
-    put(c.mail.store, *({**asking(need, message_id=f"<{need}@example.org>"),
-                         "fields": {**asking(need)["fields"], "kind": "private", "event_id": need}}
-                        for need in ("attend", "pay")))
+    attend, pay = put(c.mail.store, *({**asking(need, message_id=f"<{need}@example.org>", ts=NOW - n * HOUR),
+                                       "fields": {**asking(need, ts=NOW - n * HOUR)["fields"], "kind": "private",
+                                                  "event_id": need}}
+                                      for n, need in ((2, "attend"), (1, "pay"))))
     [row] = waiting.digest(c, NOW)
-    assert (row["who"], row["title"], row["sphere"]) == ("Private", "2 private letters wait for a reply", "home")
-    assert "t" not in row and "Анна" not in json.dumps(row, ensure_ascii=False)
+    assert (row["who"], row["title"], row["sphere"], row["private"]) == \
+        ("Private", "2 private letters wait for a reply", "home", True)
+    assert "Анна" not in json.dumps(row, ensure_ascii=False), "the list names no one"
     assert "attend" not in row["title"] and "pay" not in row["title"]
+    assert feed.clean({"items": [row]}, NOW)[0][0]["private"] is True
+    sheet = waiting.detail(c, row["id"], row["t"], NOW)
+    assert sheet["who"] == "Private" and [(a["who"], a["need"]) for a in sheet["asks"]] == \
+        [("Анна Петрова", "pay"), ("Анна Петрова", "attend")], "each letter by its sender, newest first"
+    assert all(len(a["t"]) == 32 for a in sheet["asks"]) and len({a["t"] for a in sheet["asks"]}) == 2
+    assert feed.clean_detail(sheet) == sheet, "the platform takes it as it is"
+    assert waiting.press(c, sheet["asks"][0]["t"], "done", NOW), "a letter's own token is known to the router"
+    assert opened(c.mail.store, NOW + 60) == [attend], "one letter closed, the other still asks"
 
 
 def test_the_morning_says_what_closed_and_what_ran_out_only_when_something_did(tmp_path):

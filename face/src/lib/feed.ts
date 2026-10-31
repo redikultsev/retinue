@@ -92,6 +92,9 @@ export interface DetailAsk {
   deadline: string;
   at: number;
   open?: DetailLink;
+  /** The private matter's letters: each its sender's name and its own token, closed one at a time. */
+  who?: string;
+  t?: string;
 }
 
 /** A row's sheet (`POST /api/waiting/detail`): asked of the router when the row is opened, never kept by the platform. */

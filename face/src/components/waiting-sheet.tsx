@@ -2,8 +2,10 @@
 // the sphere, how long it waits, her one line — shows at once; the rest only the router has (her judgement whole, the
 // deadline, the letter's thread or the chat, a draft's text), so the sheet asks for it (`api.waitingDetail`) and fills
 // in a moment later. Nothing of it is kept: not by the platform, not here once the sheet closes. The actions go where
-// the thing is — the Gmail thread, the person's chat, her card in Telegram, where sending and deciding stay — and
-// «Done», «Not a task», «Tomorrow» close the row as on the row itself.
+// the thing is — the Gmail thread, the person's chat, her card in Telegram for a draft's «Send» — and «Ask the
+// assistant» starts a session of its own about the row, its context written into the new task for the owner to add his
+// question to. «Done», «Not a task», «Tomorrow» close the row as on the row itself.
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AlertCircle, ArrowUpRight, Ban, Check, Clock } from "@/components/icons";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -12,6 +14,7 @@ import { ApiError, api } from "@/lib/api";
 import { type DetailAsk, type DetailLink, type FeedRow, feedSource, linkOk, type Press, type WaitingDetail, waited } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { openOutside } from "@/lib/telegram";
+import { startNew } from "@/pages/new";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -63,7 +66,8 @@ type Loaded = { state: "loading" } | { state: "ok"; detail: WaitingDetail } | { 
 export function useDetail(row: FeedRow | null, load = api.waitingDetail): [Loaded | null, () => void] {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const asks = !!row && !row.private && (!!row.t || row.source === "draft");
+  // a person's row and the private matter's by their token; a draft by its id, unless it is the private matter's
+  const asks = !!row && (!!row.t || (row.source === "draft" && !row.private));
   // biome-ignore lint/correctness/useExhaustiveDependencies: one request per opened row and per «Try again»
   useEffect(() => {
     if (!row || !asks) {
@@ -109,9 +113,23 @@ function Out({ link, primary = false }: { link: DetailLink; primary?: boolean })
   );
 }
 
-function Ask({ ask, now, single, link }: { ask: DetailAsk; now: number; single: boolean; link: boolean }) {
+function Ask({
+  ask,
+  now,
+  single,
+  link,
+  onPress,
+}: {
+  ask: DetailAsk;
+  now: number;
+  single: boolean;
+  link: boolean;
+  /** The private matter's letters: each closes on its own (its `t`). */
+  onPress?: (t: string, action: Press, label: string) => void;
+}) {
   return (
     <li className="flex flex-col gap-1">
+      {ask.who && <p className="text-sm font-medium break-words">{ask.who}</p>}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
         <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">{NEED_WORDS[ask.need] ?? ask.need}</span>
         {ask.deadline && <span className="font-medium text-amber-700 dark:text-warning">deadline {ask.deadline}</span>}
@@ -133,7 +151,46 @@ function Ask({ ask, now, single, link }: { ask: DetailAsk; now: number; single: 
           {ask.open.label === "Open in Gmail" ? "This letter in Gmail" : ask.open.label}
         </a>
       )}
+      {onPress && ask.t && (
+        <div className="-ml-2 flex flex-wrap gap-0.5">
+          {PRESSES.map(([action, label]) => (
+            <Button key={action} variant="ghost" size="sm" onClick={() => ask.t && onPress(ask.t, action, label)}>
+              {action === "done" ? <Check /> : action === "later" ? <Clock /> : <Ban />}
+              {label}
+            </Button>
+          ))}
+        </div>
+      )}
     </li>
+  );
+}
+
+const SOURCE_WORDS: Record<string, string> = { letter: "a letter", chat: "a Telegram chat", draft: "a reply draft" };
+
+/** What a new session about the row starts from: where it came from and what it is — the list's line, her words, the
+ * thread — and an empty line under it for the owner's own question. Only what the app already shows him. */
+export function askContext(row: FeedRow, detail: WaitingDetail | null): string {
+  const lines = [`About ${SOURCE_WORDS[row.source] ?? "an item"} from ${row.title} in «Waiting for you»:`, `> ${row.essence}`];
+  for (const ask of detail?.asks.slice(0, 3) ?? []) if (ask.text) lines.push(`> ${ask.text.replace(/\n+/g, " ")}`);
+  if (linkOk(detail?.open)) lines.push(`> ${detail.open.url}`);
+  return `${lines.join("\n")}\n\n`;
+}
+
+/** «Ask the assistant»: a new session about the row, in its sphere when the platform has one by that name, else «Auto». */
+function AskButton({ row, detail, primary, onClose }: { row: FeedRow; detail: WaitingDetail | null; primary: boolean; onClose: () => void }) {
+  const navigate = useNavigate();
+  return (
+    <Button
+      variant={primary ? "default" : "outline"}
+      className="w-full sm:w-auto"
+      onClick={() => {
+        startNew(askContext(row, detail), row.sphere);
+        onClose();
+        void navigate({ to: "/new" });
+      }}
+    >
+      Ask the assistant
+    </Button>
   );
 }
 
@@ -148,10 +205,16 @@ function Skeleton() {
 }
 
 function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null; retry: () => void; now: number }) {
-  if (row.private)
+  // the private matter's letters closed here, out of the list at once; back when the press did not go through
+  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
+  const close = async (t: string, action: Press, label: string) => {
+    setClosed((s) => new Set(s).add(t));
+    if (!(await pressRow(t, action, label))) setClosed((s) => new Set([...s].filter((x) => x !== t)));
+  };
+  if (row.private && !row.t)
     return (
       <p className="text-sm text-muted-foreground">
-        Private: what it says and its buttons are behind «Show» in Telegram, and the app never asks for them.
+        A draft of your private matter: its text and «Send» are behind «Show» in Telegram.
       </p>
     );
   if (!loaded || loaded.state === "loading")
@@ -182,7 +245,8 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
       </div>
     );
   const { detail } = loaded;
-  const many = detail.asks.length > 1;
+  const asks = detail.asks.filter((a) => !a.t || !closed.has(a.t));
+  const many = asks.length > 1;
   return (
     <div className="flex flex-col gap-4">
       {detail.draft && (
@@ -202,18 +266,26 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
       {detail.asks.length > 0 && (
         <section aria-label={detail.draft ? "What it answers" : "What it asks"} className="flex flex-col gap-2">
           <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-            {detail.draft ? "What it answers" : many ? `What they ask (${detail.asks.length + detail.more})` : "What they ask"}
+            {detail.draft ? "What it answers" : many ? `What they ask (${asks.length + detail.more})` : "What they ask"}
           </h3>
-          <ul className="flex flex-col gap-3">
-            {detail.asks.map((ask, n) => (
-              <Ask key={n} ask={ask} now={now} single={!many} link={many && ask.open?.url !== detail.open?.url} />
+          <ul className={cn("flex flex-col", row.private ? "divide-y [&>li]:py-3 [&>li:first-child]:pt-0" : "gap-3")}>
+            {asks.map((ask) => (
+              <Ask
+                key={ask.t ?? `${ask.at}:${ask.need}`}
+                ask={ask}
+                now={now}
+                single={!many}
+                link={row.private ? true : many && ask.open?.url !== detail.open?.url}
+                onPress={row.private ? (t, action, label) => void close(t, action, label) : undefined}
+              />
             ))}
           </ul>
+          {row.private && asks.length === 0 && <p className="text-sm text-muted-foreground">All closed.</p>}
           {detail.more > 0 && <p className="text-xs text-muted-foreground">And {detail.more} older — in Telegram.</p>}
         </section>
       )}
-      {!detail.draft && detail.asks[0] && NEXT[detail.asks[0].need] && (
-        <p className="text-sm text-muted-foreground">{NEXT[detail.asks[0].need]}</p>
+      {!detail.draft && !row.private && asks[0] && NEXT[asks[0].need] && (
+        <p className="text-sm text-muted-foreground">{NEXT[asks[0].need]}</p>
       )}
       {!linkOk(detail.open) && detail.kind === "chat" && (
         <p className="text-xs text-muted-foreground">They have no @username: open the chat with them in Telegram yourself.</p>
@@ -237,9 +309,9 @@ export function WaitingSheet({
 }) {
   const [loaded, retry] = useDetail(row, load);
   const detail = loaded?.state === "ok" ? loaded.detail : null;
-  // her chat with the owner: where a draft's «Send» is, and where he asks her for one
-  const botLabel = row?.source === "draft" ? "Send in Telegram" : row?.private ? "Open in Telegram" : "Ask the assistant";
-  const botLink: DetailLink | null = bot ? { url: `https://t.me/${bot}`, label: botLabel } : null;
+  // her chat with the owner, only where the thing itself is there: a draft's «Send», the private matter's «Show»
+  const botLabel = row?.source === "draft" ? "Send in Telegram" : "Open in Telegram";
+  const botLink: DetailLink | null = bot && (row?.source === "draft" || row?.private) ? { url: `https://t.me/${bot}`, label: botLabel } : null;
   const open = linkOk(detail?.open) ? detail.open : null;
   const press = async (action: Press, label: string) => {
     if (!row?.t) return;
@@ -285,10 +357,11 @@ export function WaitingSheet({
                 <>
                   {open && <Out link={open} primary />}
                   {botLink && <Out link={botLink} primary={!open} />}
+                  {!row.private && <AskButton row={row} detail={detail} primary={!open} onClose={onClose} />}
                 </>
               )}
             </div>
-            {row.t && !(loaded?.state === "error" && loaded.status === 410) && (
+            {row.t && !row.private && !(loaded?.state === "error" && loaded.status === 410) && (
               <div className="flex flex-wrap gap-1">
                 {PRESSES.map(([action, label]) => (
                   <Button key={action} variant="ghost" size="sm" onClick={() => void press(action, label)}>

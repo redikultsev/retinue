@@ -140,7 +140,7 @@ function Way({ row, bot, record, onOpen }: { row: FeedRow; bot: string; record: 
         <ArrowUpRight />
       </button>
     ) : null;
-  if (row.private)
+  if (row.private && !row.t)
     return bot ? (
       <a href={`https://t.me/${bot}`} target="_blank" rel="noopener noreferrer" aria-label="Open in Telegram" title="Open in Telegram" className={ROW_ICON}>
         <ArrowUpRight />
@@ -161,7 +161,7 @@ function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: 
   const path = row.source === "deadline" ? feed.deadlines?.find((d) => d.id === row.ref)?.path : null;
   const split = path ? splitRecord(path) : null;
   const record = split ? () => openRecord(split.space, split.path) : null;
-  const tap = row.action !== "assistant" ? null : row.source === "deadline" ? record : row.private ? null : () => onOpen(row);
+  const tap = row.action !== "assistant" ? null : row.source === "deadline" ? record : row.private && !row.t ? null : () => onOpen(row);
   const title = row.session ? (
     <Link to="/s/$id" params={{ id: row.session }} className="min-w-0 truncate font-medium hover:underline">
       {row.title}
@@ -173,7 +173,7 @@ function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: 
   const actions =
     row.action === "assistant" ? (
       <div className="flex shrink-0 items-center gap-0.5 self-end sm:self-center">
-        {row.t && <PressButtons t={row.t} />}
+        {row.t && !row.private && <PressButtons t={row.t} />}
         <Way row={row} bot={bot} record={record} onOpen={() => onOpen(row)} />
       </div>
     ) : null;

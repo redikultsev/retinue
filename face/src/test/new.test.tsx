@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { feedSource } from "@/lib/feed";
 import { live } from "@/lib/live";
 import type { Session } from "@/lib/types";
-import { generalTrack, greeting, NO_TRACK, statusLine } from "@/pages/new";
+import { generalTrack, greeting, NO_TRACK, startNew, statusLine } from "@/pages/new";
 import { makeRouter } from "@/router";
 import { mountNew } from "./mount-new";
 
@@ -84,6 +84,25 @@ describe("/new, the empty new task", () => {
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("alert")).toBeNull();
     expect(newSession).not.toHaveBeenCalled();
+  });
+
+  it("opens with a task begun elsewhere — its text, its sphere — and sends it there, the cursor after its text", async () => {
+    const newSession = vi.fn().mockResolvedValue({ session: "n2" });
+    startNew("About a letter from Acme:\n> pay: the invoice\n\n", "travel");
+    const { router } = await mountNew({ newSession });
+    const field = screen.getByRole("textbox", { name: "What should I do?" }) as HTMLTextAreaElement;
+    expect(field.value).toBe("About a letter from Acme:\n> pay: the invoice\n\n");
+    expect(field.selectionStart).toBe(field.value.length);
+    expect(screen.getByRole("button", { name: "✈️ Travel" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(field, { target: { value: `${field.value}why is it due?` } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/s/n2"));
+    expect(newSession.mock.calls[0]?.[3]).toBe("travel");
+    expect([sessionStorage.getItem("retinue-new-draft"), sessionStorage.getItem("retinue-new-sphere")]).toEqual([null, null]);
+    cleanup();
+    startNew("x", "no-such-sphere");
+    await mountNew();
+    expect(screen.getByRole("button", { name: "Auto" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("keeps what was typed and not sent for the next visit", async () => {

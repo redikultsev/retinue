@@ -3,7 +3,8 @@
 // phone the composer stays at the bottom, under the thumb and above the keyboard. Under the composer, the sphere
 // picker: «Auto» — a general session in the root of the Base (`meta.general`), which finds its context and its sphere
 // itself — or one sphere, whose track and sphere the session starts with. Sent, the session opens. What was typed and
-// not sent waits here for the next visit (this tab's sessionStorage).
+// not sent waits here for the next visit (this tab's sessionStorage), with the sphere chosen; another screen may leave
+// both for it (`startNew`: «Ask the assistant» on a row of «Waiting for you»).
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-header";
@@ -20,22 +21,31 @@ import type { Meta, Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const DRAFT_KEY = "retinue-new-draft";
+const SPHERE_KEY = "retinue-new-sphere";
 
-function readDraft(): string {
+function read(key: string): string {
   try {
-    return sessionStorage.getItem(DRAFT_KEY) ?? "";
+    return sessionStorage.getItem(key) ?? "";
   } catch {
     return "";
   }
 }
 
-function writeDraft(text: string) {
+function write(key: string, value: string) {
   try {
-    if (text) sessionStorage.setItem(DRAFT_KEY, text);
-    else sessionStorage.removeItem(DRAFT_KEY);
+    if (value) sessionStorage.setItem(key, value);
+    else sessionStorage.removeItem(key);
   } catch {
     // storage unavailable: the draft lasts while the screen is open
   }
+}
+
+const writeDraft = (text: string) => write(DRAFT_KEY, text);
+
+/** A new task begun elsewhere: its text and its sphere (null: «Auto») wait for `/new`, which opens with them. */
+export function startNew(text: string, sphere: string | null): void {
+  write(DRAFT_KEY, text);
+  write(SPHERE_KEY, sphere ?? "");
 }
 
 /** «Good morning» from 5, «Good afternoon» from 12, «Good evening» from 18, «Good night» from 23 — the device's clock. */
@@ -126,7 +136,7 @@ export function NewPage({ newSession = api.newSession, transcribe = api.speech, 
   const deadline = nearest(feed?.deadlines);
   const meta = live.meta; // read again on every change of the live state, the first snapshot's included
   const spheres = meta?.spheres ?? [];
-  const [sphereName, setSphere] = useState<string | null>(null);
+  const [sphereName, setSphere] = useState<string | null>(() => read(SPHERE_KEY) || null);
   const sphere = spheres.find((s) => s.name === sphereName) ?? null;
   const track = sphere ? sphere.track : generalTrack(meta);
   const blocked = track ? null : meta ? NO_TRACK : "Connecting…";
@@ -135,6 +145,7 @@ export function NewPage({ newSession = api.newSession, transcribe = api.speech, 
     if (!track) throw new Error(NO_TRACK);
     const { session } = await newSession(track, text, id, sphere?.name ?? null, files);
     writeDraft("");
+    write(SPHERE_KEY, "");
     await navigate({ to: "/s/$id", params: { id: session } });
     return undefined;
   }
@@ -153,7 +164,7 @@ export function NewPage({ newSession = api.newSession, transcribe = api.speech, 
         send={send}
         transcribe={transcribe}
         autoFocus={!coarse}
-        initial={readDraft()}
+        initial={read(DRAFT_KEY)}
         onDraft={writeDraft}
         blocked={blocked}
       />

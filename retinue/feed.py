@@ -120,7 +120,7 @@ def clean(body: object, now: float) -> tuple[list[dict], str]:
     for n, item in enumerate(body["items"]):
         kind = item.get("kind") if isinstance(item, dict) else None
         allowed = DIGEST_KEYS | DEADLINE_KEYS if kind == "deadline" else \
-            DIGEST_KEYS | {"t"} if kind in ("letter", "chat") else DIGEST_KEYS
+            DIGEST_KEYS | {"t", "private"} if kind in ("letter", "chat") else DIGEST_KEYS
         if not isinstance(item, dict) or not allowed >= set(item) or not DIGEST_KEYS - {"sphere"} <= set(item):
             raise Refused(f"items[{n}]: wrong fields")
         if not isinstance(item["id"], str) or not DIGEST_ID.fullmatch(item["id"]) or item["id"] in seen:
@@ -137,10 +137,13 @@ def clean(body: object, now: float) -> tuple[list[dict], str]:
             raise Refused(f"items[{n}]: who and title must be strings")
         if "t" in item and (not isinstance(item["t"], str) or not TOKEN.fullmatch(item["t"])):
             raise Refused(f"items[{n}].t: not a token")
+        if "private" in item and item["private"] is not True:
+            raise Refused(f"items[{n}].private: only true")
         seen.add(item["id"])
         items.append({"id": item["id"], "kind": item["kind"], "who": _text(item["who"], WHO_CHARS),
                       "title": _text(item["title"], TITLE_CHARS), "since": float(since), "sphere": sphere,
-                      **({"t": item["t"]} if "t" in item else {}), **_deadline(item, n)})
+                      **({"t": item["t"]} if "t" in item else {}), **({"private": True} if "private" in item else {}),
+                      **_deadline(item, n)})
     return items, bot
 
 
@@ -195,6 +198,12 @@ def _link(value: object) -> dict | None:
     return {"url": value["url"], "label": value["label"]}
 
 
+def _token_of(value: object, field: str) -> str:
+    if not isinstance(value, str) or not TOKEN.fullmatch(value):
+        raise Refused(f"{field}: not a token")
+    return value
+
+
 def _time(value: object, field: str) -> float:
     if type(value) not in (int, float) or not 0 < value < 1e12 or not math.isfinite(value):
         raise Refused(f"{field}: not a time")
@@ -212,14 +221,17 @@ def clean_detail(body: object) -> dict:
         raise Refused("asks: not a list")
     out_asks = []
     for n, ask in enumerate(asks):
-        if not isinstance(ask, dict) or set(ask) - {"need", "text", "deadline", "at", "open"} or \
+        if not isinstance(ask, dict) or set(ask) - {"need", "text", "deadline", "at", "open", "who", "t"} or \
                 not {"need", "text", "at"} <= set(ask) or ask["need"] not in DETAIL_NEEDS:
             raise Refused(f"asks[{n}]: wrong fields")
         out_asks.append({"need": ask["need"], "text": _words(ask["text"], DETAIL_JUDGED, f"asks[{n}].text"),
                          "deadline": line(_words(ask.get("deadline", ""), 4 * DETAIL_DEADLINE, f"asks[{n}].deadline"),
                                           DETAIL_DEADLINE),
                          "at": _time(ask["at"], f"asks[{n}].at"),
-                         **({"open": link} if (link := _link(ask.get("open"))) else {})})
+                         **({"open": link} if (link := _link(ask.get("open"))) else {}),
+                         **({"who": _text(_words(ask["who"], 4 * WHO_CHARS, f"asks[{n}].who"), WHO_CHARS)}
+                            if "who" in ask else {}),
+                         **({"t": _token_of(ask["t"], f"asks[{n}].t")} if "t" in ask else {})})
     more = body.get("more", 0)
     if type(more) is not int or not 0 <= more <= COUNT_MAX:
         raise Refused("more: not a number")
@@ -367,10 +379,9 @@ def spheres(cfg) -> dict[str, dict]:
 
 
 def _private(item: dict) -> bool:
-    """The owner's private matter in her digest: a letter's row with no token, or a draft that names no one. Its
-    words and buttons wait behind «Show» in Telegram; the app never asks for its sheet."""
-    return (item["kind"] in ("letter", "chat") and not item.get("t")) or \
-        (item["kind"] == "draft" and item["who"] == PRIVATE_WHO)
+    """The owner's private matter in her digest: its letters' row (`private`), which names no one on the list and opens
+    as its letters one by one, or a draft that names no one, whose text waits behind «Show» in Telegram."""
+    return item.get("private") is True or (item["kind"] == "draft" and item["who"] == PRIVATE_WHO)
 
 
 class Feed:

@@ -29,7 +29,7 @@ const ASKS = [
 /** The others of hers: a draft waiting for «Send», and the private matter's row (no token, no sheet). */
 const OTHERS = [
   { key: "assistant:draft:0000000c", source: "draft", sphere: null, sphere_title: null, title: "Anna Petrova", since: now() - 1800, essence: "a reply draft waits for «Send»", ref: "draft:0000000c" },
-  { key: "assistant:letter:5", source: "letter", sphere: "home", sphere_title: "home", title: "Private", since: now() - 5 * 86400, essence: "2 private letters wait for a reply", ref: "letter:5", private: true },
+  { key: "assistant:letter:5", source: "letter", sphere: "home", sphere_title: "home", title: "Private", since: now() - 5 * 86400, essence: "2 private letters wait for a reply", ref: "letter:5", private: true, t: "e".repeat(32) },
 ];
 const GMAIL = (thread: string) => ({ url: `https://mail.google.com/mail/?authuser=me@example.com#all/${thread}`, label: "Open in Gmail" });
 /** A row's sheet (`/api/waiting/detail`), as the router would say it: a moment later, invented. Ivan's router is
@@ -42,6 +42,11 @@ const DETAILS: Record<string, unknown> = {
       { need: "pay", text: "The last reminder before suspension.", deadline: "", at: now() - 3600, open: GMAIL("18c2f0a1b2c3d4e7") },
       { need: "pay", text: "A reminder of the same invoice.", deadline: "Friday", at: now() - 86400, open: GMAIL("18c2f0a1b2c3d4e6") },
       { need: "pay", text: "The invoice for May: ‹number›. Pay by card in the account's billing page.\nThe server is suspended if it is not paid by Friday.", deadline: "Friday", at: now() - 2 * 86400, open: GMAIL("18c2f0a1b2c3d4e5") },
+    ] },
+  "letter:5": { kind: "letter", who: "Private", account: "", more: 0,
+    asks: [
+      { need: "reply", who: "Example Studio", text: "They invite you to a second call next week and ask which two slots suit you.", deadline: "Monday", at: now() - 86400, open: GMAIL("18c2f0a1b2c3d4f1"), t: "1".repeat(32) },
+      { need: "decide", who: "Acme Talent", text: "An offer of a call about a new role; they ask whether to send the details.", deadline: "", at: now() - 5 * 86400, open: GMAIL("18c2f0a1b2c3d4f2"), t: "2".repeat(32) },
     ] },
   "draft:0000000c": { kind: "draft", who: "Anna Petrova", account: "", more: 0, open: { url: "https://t.me/anna_example", label: "Open the chat" },
     asks: [{ need: "reply", text: "Anna asks about the flight time.", deadline: "", at: now() - 7200 }],
@@ -331,7 +336,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const { ref, t } = (await body(req)) as { ref?: string; t?: string };
     const row = [...ASKS, ...OTHERS].find((r) => r.ref === ref);
     if (typeof ref !== "string") return json(res, 400, { error: "Need ref — the row's id — and t, its token, on a person's row." });
-    if (!row || ("private" in row && row.private) || ("t" in row && row.t !== t) || ref === "letter:4")
+    if (!row || ("t" in row && row.t !== t) || (!("t" in row) && "private" in row) || ref === "letter:4")
       return json(res, 410, { error: "The assistant no longer has this row: the list is out of date." });
     if (ref === "chat:3") {
       await new Promise((done) => setTimeout(done, 3000));

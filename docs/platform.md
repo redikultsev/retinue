@@ -116,7 +116,8 @@ What the router counts (`retinue/waiting.py`), each by a rule it already had:
   only to know) and is still open (`MailStore.asks`, [mail.md](mail.md#closing-what-waits)): not closed by your
   «Done» or «Not a task», not put off by «Tomorrow», not answered as code sees it, not run out. One row per person
   and ask — «pay» and «decide» of one sender are two rows, so a press closes exactly what its row says; the
-  letters you keep private are one row with a count, no name and no ask.
+  letters you keep private are one row with a count, no name and no ask, marked `private: true` — it opens as its
+  letters one by one in the app's sheet.
 - **draft** — a reply card whose «Send» still means something (`outbox.LIVE`, not expired); its letter is not
   counted again.
 - **deadline** — a `deadline` of any Record or an `until` of a profile Record at most 7 days away (the face's «Deadlines»),
@@ -137,13 +138,13 @@ e-mail address written as ‹address›, then cut to 60 and 160 characters; `whe
 date; a Space, at most two folders and a `*.md` name, no dot-led part; one item off the contract refuses the whole
 push (400) and the last one stays.
 
-A person's row (`letter`, `chat`; not the private matter's) also carries **`t`**, 32 hex characters: an HMAC under the
+A person's row (`letter`, `chat`; the private matter's too) also carries **`t`**, 32 hex characters: an HMAC under the
 same salt of its items' numbers, which never leave the router. The router keeps `t → numbers` in its kv
 (`waiting.rows`) for 24 hours after it last sent the row; the same items give the same token, so neither a restart
 of the router nor a digest the platform refused can make a press name items you did not see. Beside the items go two
 counts, `closed_today` (rows with an ask closed since your midnight, by your press or by your answer) and
-`expired_week` (rows with an ask that ran out with no mark in the last 7 days) — numbers only, no list. The platform takes `t` only on a `letter` or a
-`chat`, and each count as a whole number from 0 to 100 000 (0 when absent).
+`expired_week` (rows with an ask that ran out with no mark in the last 7 days) — numbers only, no list. The platform takes `t` and `private` (only `true`) only on a
+`letter` or a `chat`, and each count as a whole number from 0 to 100 000 (0 when absent).
 
 **A press in the app** — «Done», «Not a task», «Tomorrow», «Undo» — comes back the way every answer to the router does:
 the face takes `POST /api/waiting/press {t, action}` (`done`, `dismissed`, `later`, `open`), checks only its shape and
@@ -156,8 +157,8 @@ the cards behind it.
 **A row's sheet** ([face.md](face.md#her-rows-sheet)) needs what only the router has — her judgement whole, the
 deadline, where the letter or the chat is, a draft's text — and the digest stays minimal, so the router is asked for
 it one row at a time, when the owner opens it, and the platform relays the answer without keeping it. The face takes
-`POST /api/waiting/detail {ref, t?}` — a row of the digest on record: a person's with its own token, or a draft that
-is not the private matter's — and queues `{r, ref, t?}` in memory, `r` a fresh number. The router keeps its own long
+`POST /api/waiting/detail {ref, t?}` — a row of the digest on record: a person's or the private matter's with its own
+token, or a draft that is not the private matter's — and queues `{r, ref, t?}` in memory, `r` a fresh number. The router keeps its own long
 call open beside the notes' pump (`bridge.detail_loop`): `POST /owner/waiting/asked` answers `{asked: [...]}` as soon
 as anything is asked, or empty after 25 s. So a sheet never waits behind a card Telegram is slow to take, and nothing
 of it enters the notes' journal. The router builds each sheet from its own tables (`waiting.detail`) — a token's

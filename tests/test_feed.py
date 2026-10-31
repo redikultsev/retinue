@@ -178,7 +178,7 @@ def test_a_sheet_is_asked_of_the_router_by_its_long_call_and_relayed_never_kept(
     async def body(world: FaceWorld):
         await world.login()
         private_draft = item(4, id="draft:0000000d", kind="draft", who=feed.PRIVATE_WHO, sphere="home")
-        rows = [item(1, t=TOKEN), item(2, id="letter:000000000002", kind="letter"),
+        rows = [item(1, t=TOKEN), item(2, id="letter:000000000002", kind="letter", who=feed.PRIVATE_WHO, private=True),
                 item(3, id="draft:0000000c", kind="draft"), private_draft, deadline(5)]
         assert (await world.owner("waiting", {"items": rows}))["ok"]
         feed_rows = {r["ref"]: r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]}

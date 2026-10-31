@@ -1,7 +1,8 @@
 // «To the Base» (retinue/tobase.py): a session's commit card — the Base files its runs changed, each a toggle, the commit's
 // subject, «Commit», the diff, «Cancel», and — here only, asked once — «Discard», which puts the files turned on back
 // as the Base has them. It is the same card as its Telegram copies: a change here rewrites them, and one there comes
-// here on the stream. Nothing commits without a press; a press is taken once in either place.
+// here on the stream. Nothing commits without a press; a press is taken once in either place — but for the platform's
+// own commit after a turn (`auto`): what the assistant's rules allow, committed by itself, with «Undo» instead.
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,7 @@ import { cn } from "@/lib/utils";
 const BaseDiff = lazy(() => import("@/components/base-diff").then((m) => ({ default: m.BaseDiff })));
 
 type Calls = Pick<typeof api, "baseToggle" | "baseSubject" | "baseCommit" | "baseCancel" | "baseOpen"> &
-  Partial<Pick<typeof api, "baseDiscard">>;
+  Partial<Pick<typeof api, "baseDiscard" | "baseUndo">>;
 
 const STATE_WORDS: Record<string, string> = {
   committing: "Committing…",
@@ -27,7 +28,14 @@ const STATE_WORDS: Record<string, string> = {
   discarded: "Discarded",
   stale: "Stale",
   expired: "Expired",
+  undone: "Undone",
 };
+
+/** The card's state as its badge says it: the platform's own commit is «Committed by itself». */
+function stateWord(card: Card): string {
+  if (card.auto && card.state === "committed") return "Committed by itself";
+  return STATE_WORDS[card.state] ?? card.state;
+}
 
 /** «3 files» */
 export function filesWord(n: number): string {
@@ -51,6 +59,7 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
   const [diff, setDiff] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const discard = calls.baseDiscard ?? api.baseDiscard;
+  const undo = calls.baseUndo ?? api.baseUndo;
   useEffect(() => setSubject(card.subject), [card.subject]);
   const shown = card.state === "shown";
   const chosen = card.files.filter((f) => f.on).length;
@@ -81,8 +90,11 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
     <section data-testid="base-card" aria-label={card.view.head[0] ?? "To the Base"} className={cn("flex flex-col gap-3", className)}>
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{card.view.head[0]}</span>
-        {!shown && <Badge variant={card.state === "committing" ? "warning" : "secondary"}>{STATE_WORDS[card.state] ?? card.state}</Badge>}
+        {!shown && <Badge variant={card.state === "committing" ? "warning" : "secondary"}>{stateWord(card)}</Badge>}
       </div>
+      {card.auto ? (
+        <p className="text-sm">{card.subject}</p>
+      ) : (
       <form
         className="flex gap-2"
         onSubmit={(e) => {
@@ -97,18 +109,19 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
           </Button>
         )}
       </form>
+      )}
       <ul className="flex flex-col gap-1" aria-label="Files">
         {card.files.map((f) => (
           <li key={f.path}>
             <label className={cn("flex min-h-9 items-center gap-2 rounded-md px-1 text-sm", shown && "hover:bg-accent")}>
-              <input
+              {!card.auto && <input
                 type="checkbox"
                 className="size-4 shrink-0"
                 checked={f.on}
                 disabled={!shown || busy}
                 aria-label={f.path}
                 onChange={(e) => void act(() => calls.baseToggle(card.id, f.path, e.target.checked), "Did not switch.")}
-              />
+              />}
               <span className="w-4 shrink-0 font-mono text-xs text-muted-foreground">{f.status}</span>
               <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={f.path}>
                 {f.path}
@@ -176,6 +189,11 @@ export function BaseCardView({ card, calls = api, live = defaultLive, className 
             Commit · {chosen}
           </Button>
         )}
+        {card.auto && card.undo && (
+          <Button variant="outline" disabled={busy} onClick={() => void act(() => undo(card.id), "Did not undo.")}>
+            Undo
+          </Button>
+        )}
         <Button variant="outline" aria-expanded={diff} onClick={() => setDiff(!diff)}>
           {diff ? "Hide diff" : "Show diff"}
         </Button>
@@ -224,7 +242,7 @@ export function BaseDialog({ id, onClose }: { id: string | null; onClose: () => 
   const { bases } = useLiveState();
   const card = id ? bases[id] : undefined;
   return (
-    <Dialog open={id !== null} onClose={onClose} title="To the Base" className="max-w-2xl">
+    <Dialog open={id !== null} onClose={onClose} title={card?.auto ? "In the Base" : "To the Base"} className="max-w-2xl">
       {card && <BaseCardView card={card} />}
       <div className="flex justify-end">
         <Button variant="ghost" onClick={onClose}>
@@ -255,6 +273,37 @@ export function BaseButton({ session, count, calls = api, className }: { session
         To the Base · {count}
       </Button>
       <BaseDialog id={id} onClose={() => setId(null)} />
+    </>
+  );
+}
+
+/** «In the Base · N» under a turn's summary: the platform's own commit after that turn, opened as its card — the
+ * files, the commit's diff, «Undo». */
+export function AutoButton({ id, calls = api, live = defaultLive }: { id: string; calls?: Pick<typeof api, "baseCard">; live?: Live }) {
+  const { bases } = useLiveState();
+  const card = bases[id];
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-fit"
+        onClick={async () => {
+          if (!card) {
+            try {
+              put(live, (await calls.baseCard(id)).card);
+            } catch (e) {
+              toast(e instanceof ApiError ? e.message : "The card did not open.", "error");
+              return;
+            }
+          }
+          setOpen(true);
+        }}
+      >
+        {card ? `In the Base · ${card.files.length}${card.state === "undone" ? " · undone" : ""}` : "In the Base"}
+      </Button>
+      <BaseDialog id={open ? id : null} onClose={() => setOpen(false)} />
     </>
   );
 }

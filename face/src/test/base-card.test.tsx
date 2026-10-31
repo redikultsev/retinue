@@ -25,6 +25,9 @@ const card = (over: Partial<BaseCard> = {}): BaseCard => ({
   others: { files: 2, sessions: 1 },
   sha: null,
   said: "",
+  auto: false,
+  undo: false,
+  undone: null,
   refused: [],
   committed: [],
   created: 10,
@@ -153,6 +156,18 @@ describe("BaseCardView", () => {
     expect((screen.getByRole("button", { name: "Commit · 0" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("the platform's own commit says so and offers «Undo», never «Commit»", async () => {
+    const auto = card({ state: "committed", auto: true, undo: true, sha: "abc1234def", said: "Committed by itself after the turn: abc1234 · 2 files." });
+    const c = { ...calls(), baseUndo: vi.fn().mockResolvedValue({ toast: "Undone: def5678 puts back 2 files.", card: { ...auto, state: "undone", undo: false } }) };
+    const store = fakeLive();
+    render(<BaseCardView card={auto} calls={c} live={store} />);
+    expect(screen.getByText("Committed by itself")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Commit/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(c.baseUndo).toHaveBeenCalledWith("c0ffee00"));
+    await waitFor(() => expect(store.getState().bases.c0ffee00?.state).toBe("undone"));
+  });
+
   it("says English plurals of files", () => {
     expect([0, 1, 2, 5, 11, 21].map(filesWord)).toEqual(["0 files", "1 file", "2 files", "5 files", "11 files", "21 files"]);
   });
@@ -191,6 +206,12 @@ describe("where the button is", () => {
     expect(within(notes[0]!).getByRole("button", { name: "To the Base · 2" })).toBeTruthy();
     rerender(<Transcript items={[]} approvals={[]} running={false} summaries={[summary(1), summary(2)]} base={{ session: "a1b2c3d4", count: 0 }} />);
     expect(screen.queryByRole("button", { name: /To the Base/ })).toBeNull();
+  });
+
+  it("«In the Base · N» under each summary whose turn the platform committed by itself", () => {
+    live.dispatch({ type: "event", id: null, event: { kind: "base", data: card({ id: "a070a070", state: "committed", auto: true, undo: true }) } });
+    render(<Transcript items={[]} approvals={[]} running={false} summaries={[{ ...summary(1), auto: "a070a070" }]} />);
+    expect(within(screen.getByTestId("summary")).getByRole("button", { name: "In the Base · 2" })).toBeTruthy();
   });
 
   it("in the feed's «Decide» row, and a press opens the card", async () => {

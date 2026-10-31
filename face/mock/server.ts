@@ -93,6 +93,7 @@ const sessions = new Map<string, Session>(fx.sessions.map((s) => [s.id, { ...s }
 const items = new Map<string, Item>(fx.items().map((it) => [`${it.session}/${it.turn}/${it.n}`, it]));
 const approvals = new Map<string, Approval>(fx.approvals.map((a) => [a.id, { ...a }]));
 // keyed `<session>/<note seq>`, as the platform keys summary events
+const baseCards = new Map(fx.baseCards.map((c) => [c.id, c]));
 const summaries = new Map<string, Summary>(fx.summaries.map((s) => [`${s.session}/${s.seq}`, s]));
 let noteSeq = 100;
 const MOCK_PAGES = "https://pages.in.example.test";
@@ -268,6 +269,7 @@ function sessionSnapshot(id: string) {
     inputs: [...inputs.values()].filter((x) => x.session === id).sort((a, b) => a.at - b.at),
     files: fx.files.filter((f) => f.file.session === id).map((f) => f.file),
     push_cards: fx.pushCards.filter((p) => p.session === id),
+    base_cards: [...baseCards.values()].filter((b) => b.session === id),
     about: fx.about(session),
   };
 }
@@ -393,6 +395,23 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       streams.delete(res);
     });
     return;
+  }
+
+  const b = /^\/api\/base\/([0-9a-f]{8})(\/[a-z]+)?$/.exec(path);
+  if (b) {
+    const card = baseCards.get(b[1]!);
+    if (!card) return json(res, 404, { error: "No such card." });
+    if (!b[2] && method === "GET") return json(res, 200, { card });
+    if (b[2] === "/diff" && method === "GET") return json(res, 200, { diff: fx.BASE_DIFF, truncated: false });
+    if (b[2] === "/undo" && method === "POST") {
+      if (!card.undo) return json(res, 200, { toast: "Already undone.", card });
+      const done = { ...card, state: "undone" as const, undo: false, undone: "9e8d7c6b5a41", at: now(),
+        said: `Undone: 9e8d7c6 puts back ${card.files.length} files.` };
+      baseCards.set(card.id, done);
+      emit("base", card.id, done);
+      return json(res, 200, { toast: done.said, card: done });
+    }
+    return json(res, 405, { error: "Not here." });
   }
 
   let m = /^\/api\/sessions\/([0-9a-f]{8})(\/[a-z]+)?$/.exec(path);

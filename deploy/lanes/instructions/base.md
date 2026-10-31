@@ -7,9 +7,12 @@ and fixed lines in Russian, as its rules say; answer the owner in English.
 
 - Before a turn the platform pulls the fresh Base from the hub into the folder, if nobody on this lane is working right
   now. It does not touch your uncommitted changes.
-- The commit and the push are done by the platform, on the owner's «To the Base» button after the turn.
-  Do not run `git` in `/work/base` — there is no repository there — do not create one, and do not offer
-  "commit and push?" or `git pull`: on the server, rule 6 of the Base's `CLAUDE.md` is carried out by the platform.
+- The commit and the push are the platform's. When your run ends it commits by itself what the assistant may write —
+  Records in the folders open to her, Showcase lines below the marker — and the owner can undo it from the ping. A
+  Record he wrote himself, a deleted file, rules above a marker and a file another session changed too wait for his
+  «To the Base» button. Do not run `git` in `/work/base` — there is no repository there — do not create one, and do
+  not offer "commit and push?" or `git pull`: on the server, rule 6 of the Base's `CLAUDE.md` is carried out by the
+  platform.
 - If the turn changed files of the Base, name them in the summary in one line:
   `In the Base: travel/journal/…, travel/AGENTS.md`.
 - The Base's check is `python3 scripts/lint.py` in `/work/base` (that is `just check`; there is no `just` here).

@@ -936,9 +936,11 @@ what follows from it in a line; the one it recommends first, marked «(Recommend
 one. You can always answer in your own words. So a decision is a question card — its options described, an answer of
 your own always open, alive 7 days and through restarts — and the run stops on it, holding no room on its lane.
 
-A session in the Base with files not committed yet has a button on its latest ping:
-**«To the Base · N»** ([base.md](base.md#the-button)). It comes a poll after the ping (the message is rewritten
-with it), moves to the next ping, is relabelled when N changes and goes when nothing is left.
+After a run in the Base the platform commits by itself what the assistant may write, and the ping gets **«Undo · N in
+the Base»** ([base.md](base.md#the-platforms-own-commit)) — gone once undone. What is left — files only the owner
+commits — has a button on the session's latest ping: **«To the Base · N»** ([base.md](base.md#the-button)). It comes a
+poll after the ping (the message is rewritten with it), moves to the next ping, is relabelled when N changes and goes
+when nothing is left.
 
 **Loudness.** A ✅ ping less than 2 minutes (`pings.QUIET_S`) after you last acted on the session, of a run your own
 message or decision started, goes out without a sound (`disable_notification`): you are looking. A longer one, a ❓

@@ -50,6 +50,8 @@ class FakeBase:
         self.broken = False
         self.unreadable = False
         self.expected: list[dict] = []
+        self.assistant: set[str] = set()   # what the assistant's rules let the platform commit by itself
+        self.reverted: list[tuple[str, list[str]]] = []
 
     def changed(self) -> list[Change]:
         if self.unreadable:
@@ -80,9 +82,14 @@ class FakeBase:
         return None
 
     async def commit(self, paths: list[str], subject: str, body: str, expect: dict | None = None,
-                     session: str = "") -> Committed:
+                     session: str = "", role: str = "owner") -> Committed:
         if self.hold is not None:
             await self.hold.wait()
+        if role == "assistant":
+            refused = [f"{p}: the assistant may not write here" for p in paths if p not in self.assistant]
+            paths = [p for p in paths if p in self.assistant]
+            if not paths:
+                return Committed(None, [], [], refused, [])
         self.expected.append(dict(expect or {}))
         now = {p: hashlib.sha256(t.encode()).hexdigest() for p, t in self.tree.items()}
         moved = [p for p in paths if expect is not None and now.get(p, "") != (expect.get(p) or "")]
@@ -97,6 +104,16 @@ class FakeBase:
         sha = hashlib.sha1(repr(self.commits).encode()).hexdigest() if going else None
         return Committed(sha, files, [f"{p}: the hub already has another edit" for p in paths if p in self.conflicts],
                          [f"{p}: the file changed after the card" for p in moved], [])
+
+    async def revert(self, sha: str, paths: list[str], subject: str, session: str = "") -> Committed:
+        self.reverted.append((sha, list(paths)))
+        for p in paths:
+            self.tree.pop(p, None)
+            self.head.pop(p, None)
+        return Committed("u" + sha[:39], [Change(p, "D") for p in paths], [], [], [])
+
+    def shown(self, sha: str, limit: int) -> str:
+        return f"commit {sha}\n"[:limit]
 
     async def discard(self, expect: dict, wait: bool = False):
         now = {p: hashlib.sha256(t.encode()).hexdigest() for p, t in self.tree.items()}
@@ -148,6 +165,7 @@ class BaseWorld(FaceWorld):
         if exit_:
             self.lanes["private"].exited(session, run["run"])
         await self.poll()
+        await self.platform.tobase.idle()  # the platform's own commit after the run, if any
 
     def files(self, session: str) -> list[str]:
         return self.platform.tobase.paths(session)
@@ -790,3 +808,101 @@ def test_with_the_real_base_a_press_commits_to_the_hub_and_a_file_moved_after_th
             await world.platform.tobase.idle()
             await world.stop()
     asyncio.run(go())
+
+
+# --- the platform's own commit after a turn, and its «Undo» ----------------------------------------------------------
+
+def test_after_a_run_what_the_assistant_may_write_is_committed_and_undo_puts_it_back(tmp_path):
+    async def body(world: BaseWorld):
+        world.fake.assistant = {"travel/journal/hotel.md"}
+        a = await world.new("добавь отель", "tg:1")
+        world.fake.tree["travel/journal/hotel.md"] = "отель"
+        world.fake.tree["travel/AGENTS.md"] = "правило выше маркера"
+        await world.end(a)
+        assert world.fake.commits[-1][0] == ["travel/journal/hotel.md"]
+        assert world.files(a) == ["travel/AGENTS.md"], "what the assistant's rules refuse waits for the button"
+        ping = world.notes("ping")[-1]["data"]
+        assert ping["undo"][0] == "Undo · 1 in the Base" and ping["base"][0] == "To the Base · 1"
+        assert [label for row in ping_keyboard(ping)["inline_keyboard"] for label, *_ in
+                [(b["text"],) for b in row]] == ["Undo · 1 in the Base", "To the Base · 1"]
+        [card] = [c for c in world.platform.tobase.cards(a) if c["auto"]]
+        assert card["state"] == "committed" and world.platform.tobase.face(card)["undo"] is True
+        assert (await world.platform.tobase.diff(card)).startswith("commit "), "the diff is the commit's own"
+
+        said = await world.owner("press", {"button": ping["undo"][1]})
+        assert said["toast"].startswith("Undone:")
+        assert world.fake.reverted == [(card["result"]["sha"], ["travel/journal/hotel.md"])]
+        assert world.platform.tobase.card(card["id"])["state"] == "undone"
+        assert world.notes("ping")[-1]["data"]["undo"] is None, "the ping loses «Undo»"
+        again = await world.owner("press", {"button": ping["undo"][1]})
+        assert again["toast"] == "Already undone."
+    based(tmp_path, body)
+
+
+def test_the_platform_never_commits_a_shared_file_nor_one_nobody_claims(tmp_path):
+    async def body(world: BaseWorld):
+        world.fake.assistant = {"travel/journal/a.md", "travel/journal/both.md", "MAP.md"}
+        world.fake.tree["MAP.md"] = "before any run"  # nobody's
+        a = await world.new("одно", "tg:1")
+        b = await world.new("другое", "tg:2")
+        world.fake.tree["travel/journal/both.md"] = "обе"
+        await world.end(b)
+        assert world.fake.commits == [], "a run is still open on the lane: whose a file is, is not known yet"
+        world.fake.tree["travel/journal/a.md"] = "только a"
+        await world.end(a, exit_=False)  # a turn ended, the run still open: nothing is committed yet
+        assert world.fake.commits == []
+        world.lanes["private"].exited(a, world.run_of(a)["run"])
+        await world.poll()
+        await world.platform.tobase.idle()
+        assert world.fake.commits[-1][0] == ["travel/journal/a.md"]
+        assert sorted(world.platform.tobase.nobodys()) == ["MAP.md"]
+    based(tmp_path, body)
+
+
+def test_with_the_real_base_the_platform_commits_a_new_record_and_undo_reverts_it_on_the_hub(tmp_path, base):
+    hub = install_hub(tmp_path, base)
+
+    async def body(world: RealWorld):
+        tree = world.platform.base.tree
+        a = await world.new("запиши факт", "tg:1")
+        (tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Claude Code (Opus 5.5)", body="Б."))
+        await world.end(a)
+        assert "Pushed-by: retinue-platform (the platform's own commit after a turn" in \
+            git(hub, "log", "-1", "--format=%B", "main")
+        assert world.files(a) == []
+        ping = world.notes("ping")[-1]["data"]
+        assert ping["undo"][0] == "Undo · 1 in the Base"
+        await world.owner("press", {"button": ping["undo"][1]})
+        assert git(hub, "log", "-1", "--format=%s", "main").startswith("Undo: ")
+        assert "notes/knowledge/b.md" not in git(hub, "ls-tree", "-r", "--name-only", "main")
+        assert not (tree / "notes/knowledge/b.md").exists()
+
+    async def go():
+        world = RealWorld(tmp_path)
+        world.hub = hub
+        await world.start()
+        try:
+            await body(world)
+        finally:
+            await world.platform.tobase.idle()
+            await world.stop()
+    asyncio.run(go())
+
+
+def test_files_the_owner_cancelled_are_not_committed_by_the_platform_until_edited_again(tmp_path):
+    async def body(world: BaseWorld):
+        a = await world.new("добавь отель", "tg:1")
+        world.fake.tree["travel/journal/hotel.md"] = "отель"
+        await world.end(a)  # nothing the assistant may write yet: the file waits for the button
+        await world.owner("press", {"button": world.notes("ping")[-1]["data"]["base"][1]})
+        card = world.notes("card")[-1]
+        await world.owner("press", {"button": dict((label, b) for label, b in card["data"]["buttons"])["Cancel"]})
+        world.fake.assistant = {"travel/journal/hotel.md"}
+        await world.owner("input", {"input_id": "tg:2", "session": a, "text": "ещё"})
+        await world.end(a)
+        assert world.fake.commits == [], "held back by «Cancel»"
+        await world.owner("input", {"input_id": "tg:3", "session": a, "text": "поправь"})
+        world.fake.tree["travel/journal/hotel.md"] = "отель, поправлен"
+        await world.end(a)
+        assert world.fake.commits[-1][0] == ["travel/journal/hotel.md"]
+    based(tmp_path, body)

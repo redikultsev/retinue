@@ -5,7 +5,7 @@
 // once it moved on. A call with a card is never folded — the card is the owner's to answer.
 import { type ReactNode, useMemo } from "react";
 import { ApprovalCard } from "@/components/approval-card";
-import { BaseButton } from "@/components/base-card";
+import { AutoButton, BaseButton } from "@/components/base-card";
 import { PushButton } from "@/components/push-card";
 import { hideSphereLines } from "@/lib/sphere-line";
 import type { Approval, Input, Item, Summary } from "@/lib/types";
@@ -177,11 +177,12 @@ export function Transcript({ items: given, approvals, delta, running, summaries 
       summary={s}
       repeats={s.text.trim() === turnText(items, index)}
       base={
-        s === latest ? (
+        s === latest || s.auto ? (
           <>
-            {base && base.count > 0 && <BaseButton session={base.session} count={base.count} />}
-            {push && push.count > 0 && <PushButton session={push.session} count={push.count} />}
-            {push?.why && <p className="text-xs text-muted-foreground">Cannot push — {push.why}</p>}
+            {s.auto && <AutoButton id={s.auto} />}
+            {s === latest && base && base.count > 0 && <BaseButton session={base.session} count={base.count} />}
+            {s === latest && push && push.count > 0 && <PushButton session={push.session} count={push.count} />}
+            {s === latest && push?.why && <p className="text-xs text-muted-foreground">Cannot push — {push.why}</p>}
           </>
         ) : null
       }

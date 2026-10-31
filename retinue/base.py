@@ -263,6 +263,14 @@ class BaseRepo:
             used += len(text)
         return "".join(out)
 
+    def shown(self, sha: str, limit: int) -> str:
+        """What the commit `sha` changed, as a unified diff of at most `limit` characters: «Open diff» of the
+        platform's own commit. Git reads only its own objects here, with no external diff or text conversion."""
+        self._ensure()
+        text = self._run("diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames",
+                         f"{sha}^", sha).stdout.decode("utf-8", "replace")
+        return text if len(text) <= limit else text[:limit] + "\n… diff cut\n"
+
     async def refresh(self, wait: bool = True) -> Refresh | None:
         """Bring the clone up to the hub's `main`: a file clean here takes the hub's, a dirty one is merged with it
         (`git merge-file`) when that is clean and left as it is otherwise — its base remembered, so a later commit
@@ -271,13 +279,21 @@ class BaseRepo:
         return await asyncio.to_thread(self._locked, self._refresh, wait=wait)
 
     async def commit(self, paths: list[str], subject: str, body: str, expect: dict[str, str] | None = None,
-                     session: str = "") -> Committed:
+                     session: str = "", role: str = kbcheck.OWNER) -> Committed:
         """`paths` of the tree, as they are now, in one commit on top of the hub's `main`, pushed with the owner's
         rights; nothing else of the tree is touched. `expect`: path → the digest `snapshot()` gave when the owner saw
         the card (None or '' : no file there); a path that is not that any more is refused, the rest goes. `session`: named in
-        the commit's trailer."""
+        the commit's trailer. `role`: whose rules the commit is checked by before the push — the owner's (his press),
+        or the assistant's (the platform's own commit after a turn: only what the hub lets the assistant write, and
+        never a Record the owner wrote)."""
         expect = {path: digest or "" for path, digest in (expect or {}).items()}  # None or '' : no file there
-        return await asyncio.to_thread(self._locked, self._commit, paths, subject, body, session, expect)
+        return await asyncio.to_thread(self._locked, self._commit, paths, subject, body, session, expect, role)
+
+    async def revert(self, sha: str, paths: list[str], subject: str, session: str = "") -> Committed:
+        """The owner's «Undo» of the platform's own commit `sha`: each of `paths` put back as it was before that
+        commit, in a new commit on top of the hub's `main` — history is never rewritten. Only a path the hub and the
+        clone both still have as `sha` left it goes; one changed since is refused («changed since»), never merged."""
+        return await asyncio.to_thread(self._locked, self._revert, sha, paths, subject, session)
 
     async def discard(self, expect: dict[str, str | None], wait: bool = False) -> Discarded | None:
         """The owner's «Discard»: each path of `expect` put back as the clone's HEAD has it, only if it is still the
@@ -592,7 +608,8 @@ class BaseRepo:
 
     # --- commit -------------------------------------------------------------------------------------------------
 
-    def _commit(self, paths: list[str], subject: str, body: str, session: str, expect: dict[str, str]) -> Committed:
+    def _commit(self, paths: list[str], subject: str, body: str, session: str, expect: dict[str, str],
+                role: str = kbcheck.OWNER) -> Committed:
         done = Committed(None)
         subject = " ".join(str(subject).split())[:200]
         if not subject:
@@ -608,17 +625,80 @@ class BaseRepo:
                 done.refused.append(f"{path}: {why.format(mb=self.cfg.max_file_mb)}")
                 del states[path]
         held, admitted, refused = self._held(), list(done.left_out), list(done.refused)
+        by = "the platform's own commit after a turn" if role == kbcheck.ASSISTANT else "the owner's button"
         message = (f"{subject}\n\n{body.strip()}\n\n" if body.strip() else f"{subject}\n\n") + \
-            f"Pushed-by: retinue-platform (the owner's button{f', session {session}' if session else ''})\n"
+            f"Pushed-by: retinue-platform ({by}{f', session {session}' if session else ''})\n"
         try:
-            upstream, results = self._fetch(), {}
+            upstream = self._fetch()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             raise Unavailable(f"the hub {self.hub} did not answer a fetch") from None
+
+        def plan(upstream: str) -> dict:  # each try against the hub as it is now: what it said before is said again
+            results, done.conflicts, idle, misfit = self._resolve(states, held, upstream)
+            done.left_out, done.refused = admitted + idle, refused + misfit
+            return results
+
+        results, upstream = self._land(plan, upstream, message, done, role)
+        if done.sha:
+            for path, result in results.items():  # a merged file: the tree gets what the Base now has
+                if result is not None and result[1] != states[path].data:
+                    try:
+                        self._put(path, result[1], result[0], states[path])
+                    except (Blocked, OSError):
+                        pass  # changed meanwhile: the move below merges it
+        return self._follow(done, results, upstream, "commit")
+
+    def _revert(self, sha: str, paths: list[str], subject: str, session: str) -> Committed:
+        done = Committed(None)
         try:
-            for _ in range(PUSH_TRIES):  # each try against the hub as it is now: what it said before is said again
-                results, done.conflicts, idle, misfit = self._resolve(states, held, upstream)
-                done.left_out, done.refused = admitted + idle, refused + misfit
-                commit, files = self._build(results, upstream, message, done)
+            parent = self._out("rev-parse", "--verify", "-q", f"{sha}^{{commit}}^")
+            after, _ = self._listing(sha)
+            before, _ = self._listing(parent)
+        except subprocess.CalledProcessError:
+            done.refused.append("the commit is not in the Base's history")
+            return done
+        wanted = [p for p in dict.fromkeys(map(clean_path, paths)) if p]
+        states = {}
+        for path in wanted:
+            state, left = self._read(path), after.get(path, (None, None))[1]
+            if (state.sha if state.kind == "file" else None if state.kind == "absent" else "") != left:
+                done.refused.append(f"{path}: changed here since — not undone")
+            else:
+                states[path] = state
+        if not states:
+            return done
+        message = f"Undo: {' '.join(str(subject).split())[:190]}\n\nReverts {sha[:12]} for its files.\n\n" \
+            f"Pushed-by: retinue-platform (the owner's «Undo»{f', session {session}' if session else ''})\n"
+        refused = list(done.refused)
+        try:
+            upstream = self._fetch()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            raise Unavailable(f"the hub {self.hub} did not answer a fetch") from None
+
+        def plan(upstream: str) -> dict:
+            theirs, _ = self._listing(upstream)
+            results, done.refused = {}, list(refused)
+            for path in states:
+                if theirs.get(path, (None, None))[1] != after.get(path, (None, None))[1]:
+                    done.refused.append(f"{path}: changed in the Base since — not undone")
+                elif path in before:
+                    results[path] = (before[path][0], self._blob(before[path][1]))
+                else:
+                    results[path] = None
+            return results
+
+        results, upstream = self._land(plan, upstream, message, done, kbcheck.OWNER)
+        return self._follow(done, results, upstream, "undo")
+
+    def _land(self, plan: Callable[[str], dict], upstream: str, message: str, done: Committed,
+              role: str) -> tuple[dict, str]:
+        """`plan(upstream)` — {path: (mode, bytes) or None} — built and pushed on top of the hub's `main`, tried again
+        on top of a hub that moved meanwhile. The paths that went, and the hub's head the last try was against."""
+        results: dict = {}
+        try:
+            for _ in range(PUSH_TRIES):
+                results = plan(upstream)
+                commit, files = self._build(results, upstream, message, done, role)
                 if commit is None:
                     break
                 push = self._run("push", "--porcelain", "-q", "origin", f"{commit}:{BRANCH_REF}", check=False)
@@ -647,19 +727,17 @@ class BaseRepo:
             log.error("base: git %s timed out after %s s", exc.cmd[1:2] if isinstance(exc.cmd, list) else "?",
                       exc.timeout)
             done.refused.append("the hub did not answer — check and press again")
-        if done.sha:
-            for path, result in results.items():  # a merged file: the tree gets what the Base now has
-                if result is not None and result[1] != states[path].data:
-                    try:
-                        self._put(path, result[1], result[0], states[path])
-                    except (Blocked, OSError):
-                        pass  # changed meanwhile: the move below merges it
+        went = {c.path for c in done.files}
+        return {path: result for path, result in results.items() if path in went}, upstream
+
+    def _follow(self, done: Committed, results: dict, upstream: str, kind: str) -> Committed:
+        """The clone moved to what was pushed (its own paths written even beside a run), and the commit journaled."""
         try:
             updated, kept = self._advance(done.sha or upstream, frozenset(results) if done.sha else frozenset())
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             log.error("base: the clone did not follow %s: %s", (done.sha or upstream)[:12], type(exc).__name__)
             updated, kept = [], []
-        self._journal("commit", done.sha or upstream, {
+        self._journal(kind, done.sha or upstream, {
             "commit": done.sha, "files": [[c.status, c.path] for c in done.files], "conflicts": done.conflicts,
             "refused": done.refused, "updated": updated, "held": kept})
         return done
@@ -732,9 +810,11 @@ class BaseRepo:
                 files[path] = (mode, sha)
         return files, dirs
 
-    def _build(self, results: dict, upstream: str, message: str, done: Committed) -> tuple[str | None, list[Change]]:
-        """The commit of `results` on top of `upstream`, checked the hub's way with the owner's role (the lint is the
-        hub's to run): a path it refuses goes to `refused` and the rest is built again."""
+    def _build(self, results: dict, upstream: str, message: str, done: Committed,
+               role: str = kbcheck.OWNER) -> tuple[str | None, list[Change]]:
+        """The commit of `results` on top of `upstream`, checked the hub's way with `role`'s rules (the lint is the
+        hub's to run): a path it refuses goes to `refused` and the rest is built again. With the assistant's role, a
+        Record the owner wrote is refused too: the owner commits a change to his own words with his button."""
         while results:
             index = self.git_dir / f"commit-{secrets.token_hex(4)}.index"
             env = {"GIT_INDEX_FILE": str(index)}
@@ -760,8 +840,10 @@ class BaseRepo:
                                     (f" and {len(stray) - 5} more" if len(stray) > 5 else "") + " — not built")
                 return None, []
             commit = self._run("commit-tree", tree, "-p", upstream, data=message.encode()).stdout.decode().strip()
-            verdict = kbcheck.check(self.repo, upstream, commit, dataclasses.replace(self._policy, check=[]),
-                                    kbcheck.OWNER)
+            verdict = kbcheck.check(self.repo, upstream, commit, dataclasses.replace(self._policy, check=[]), role)
+            if role == kbcheck.ASSISTANT:
+                verdict.refusals += [f"{path}: a Record you wrote — it waits for «To the Base»"
+                                     for path in verdict.owner_records]
             if not verdict.refusals:
                 return commit, [Change(path, "A" if old is None else "D" if new is None else "M")
                                 for path, old, new, _ in self._moved(upstream, commit)]

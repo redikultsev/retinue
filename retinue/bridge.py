@@ -822,10 +822,8 @@ def ping_parts(data: dict) -> list[str]:
 
 
 def ping_keyboard(data: dict) -> dict | None:
-    """A ping's buttons: «To the Base · N» and «Push · N» while it carries them."""
-    buttons = []
-    if isinstance(base := data.get("base"), list) and len(base) == 2:
-        buttons.append(base)
+    """A ping's buttons: «Undo» of the platform's own commit, «To the Base · N» and «Push · N» while it carries them."""
+    buttons = [b for b in (data.get("undo"), data.get("base")) if isinstance(b, list) and len(b) == 2]
     buttons += [b for b in data.get("push") or [] if isinstance(b, list) and len(b) == 2]
     return rows_of(buttons)
 

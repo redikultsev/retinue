@@ -1,9 +1,10 @@
 # Your Base in the server's sessions
 
 Sessions on the server can work in your knowledge base (the Base) as on your Mac: they see all of it, read and edit
-its records, and you commit what they changed with a button. What the Mac's agent did by hand — `git pull` at the
-start, "commit and push?" at the end — is the platform's job here: it pulls the hub before each run and
-commits by your button, with your name, and pushes to the hub itself. That lane is the room, which also reads the
+its records, and what they changed is committed — by the platform itself after a run, for what the assistant may
+write, with «Undo»; by your button for the rest. What the Mac's agent did by hand — `git pull` at the start, "commit
+and push?" at the end — is the platform's job here: it pulls the hub before each run, commits with your name, and
+pushes to the hub itself. That lane is the room, which also reads the
 web ([platform.md](platform.md#the-room): what that gives up and what stands in the way).
 
 ```
@@ -141,7 +142,8 @@ waits on the Base.
 
 ## Commit
 
-`commit(paths, subject, body, expect=…, session=…)` — only on your press ([the button](#the-button)):
+`commit(paths, subject, body, expect=…, session=…, role=…)` — on your press ([the button](#the-button)), or the
+platform's own after a run with the assistant's `role` ([below](#the-platforms-own-commit)):
 
 1. **Which paths may go at all.** Outside the Base (`..`, absolute, control characters) and what never goes to it
    (`out/`, `inbox/`, the policy's `excluded`, untracked files under the Base's `.gitignore`) → `left_out`. Hidden,
@@ -200,8 +202,8 @@ could write the hub's objects and refs past the hook: it is code you trust; the 
 ## The button
 
 The clone, its refresh and the commit are above (`retinue/base.py`). The button adds **who changed what** and
-**your press**, «To the Base» (`retinue/tobase.py`). Nothing is committed without your press,
-and the press is yours only: through the bridge (the router's token) or the app (its login) — never from a lane.
+**your press**, «To the Base» (`retinue/tobase.py`). Nothing the assistant may not write is committed without your
+press, and the press is yours only: through the bridge (the router's token) or the app (its login) — never from a lane.
 
 - **Who changed what.** Each run on the Base's lane is watched — a session in the clone, and one that is not (a
   notes session at `/work` can Edit `/work/base/…` as well); never a side question, which only reads — in windows: the tree's snapshot (path → digest) when the run starts, and again
@@ -252,6 +254,31 @@ and the press is yours only: through the bridge (the router's token) or the app 
 
 The feed has a «Decide» row per session with Base files uncommitted («To the Base: N files»), in the app with the button
 in place ([face.md](face.md#the-feed)); `/wait` words it as [platform.md](platform.md) says.
+
+## The platform's own commit
+
+Your rule for the Mac's agent is "commit and push yourself when it is safe"; on the server the platform does that
+(`tobase.ToBase._autocommit`), within the rights the hub already gives the assistant, who pushes by herself:
+
+- **When.** A session whose run ended waits until no run is open on the Base's lane and every ended run's last window
+  is marked — until then a file's owner is not known: another run may claim it too. Then, one session after another, while runs on the lane wait for it
+  (`before_start`, as for a press). A restart in between leaves those files to the button.
+- **What.** The session's files no other session claims (no ⇄, no «nobody's»), added or edited (never a deletion),
+  and not held back by your «Cancel» on one of its cards (until the file is edited again), as the snapshot has them — committed by `BaseRepo.commit(…, role="assistant")`: `kbcheck` with the assistant's rules
+  (her `writable` folders, a Showcase only below its marker), and never a Record whose `written_by` is yours. A path
+  those refuse stays uncommitted; the hub's own lint runs as for any push.
+- **What you see.** A card (`auto`) kept only when something went: «Committed by itself after the turn: <sha7> · N
+  files», the commit's own diff, and **«Undo · N in the Base»** on the turn's ping and «In the Base · N» under its
+  summary in the app. The trailer says `Pushed-by: retinue-platform (the platform's own commit after a turn, session
+  <id>)`. What it left keeps «To the Base · N».
+- **«Undo»** (`BaseRepo.revert`): for 7 days, while the session is not running, a new commit on top of the hub's
+  `main` — history is never rewritten — puts each file back as it was before that commit, only if neither the hub nor
+  the clone changed it since («changed here since», «changed in the Base since»: left as it is, never merged). The card
+  ends «Undone»; the ping loses its button.
+
+Why the assistant's rights and not yours: a session in the room reads the web, so what it writes is committed no wider
+than what the assistant — the other agent that reads the outside world — may push unasked; anything wider is your
+press.
 
 ## Reading the Base in the app
 

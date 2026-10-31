@@ -542,3 +542,53 @@ def test_a_push_that_times_out_is_said_and_the_next_press_commits_nothing_twice(
     again = run(repo.commit(["notes/knowledge/b.md"], "notes: б", ""))
     assert again.sha is None and again.left_out == ["notes/knowledge/b.md: already so in the Base"]
     assert git(hub, "log", "-2", "--format=%s", "main").split("\n")[0] == "notes: б" and repo.changed() == []
+
+
+# --- the platform's own commit after a turn, and its «Undo» ---------------------------------------------------------
+
+def test_the_platforms_own_commit_takes_only_what_the_assistant_may_write(kb):
+    repo, hub, _ = kb
+    (repo.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Claude Code (Opus 5.5)", body="Б."))
+    (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Правка сессии."))
+    (repo.tree / "notes/AGENTS.md").write_text(showcase("- [b](knowledge/b.md)").replace("- правило\n", "- новое\n"))
+    done = run(repo.commit(["notes/knowledge/b.md", "notes/knowledge/a.md", "notes/AGENTS.md"], "notes: b", "",
+                           session="ab12cd34", role="assistant"))
+    assert done.sha == git(hub, "rev-parse", "main")
+    assert [(c.status, c.path) for c in done.files] == [("A", "notes/knowledge/b.md")]
+    assert any(r.startswith("notes/knowledge/a.md: a Record you wrote") for r in done.refused)
+    assert any(r.startswith("notes/AGENTS.md: ") for r in done.refused), "a Showcase above its marker is the owner's"
+    assert "Pushed-by: retinue-platform (the platform's own commit after a turn, session ab12cd34)" in \
+        git(hub, "log", "-1", "--format=%B", "main")
+    assert sorted(c.path for c in repo.changed()) == ["notes/AGENTS.md", "notes/knowledge/a.md"], "they wait for the button"
+
+
+def test_undo_puts_back_what_the_commit_changed_in_a_new_commit(kb):
+    repo, hub, _ = kb
+    old = (repo.tree / "notes/journal/2026-10-01-x.md").read_text()
+    (repo.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Claude Code (Opus 5.5)", body="Б."))
+    (repo.tree / "notes/journal/2026-10-01-x.md").write_text(old + "\nДописано.\n")
+    done = run(repo.commit(["notes/knowledge/b.md", "notes/journal/2026-10-01-x.md"], "notes: b", "", role="assistant"))
+    assert len(done.files) == 2
+    undone = run(repo.revert(done.sha, ["notes/knowledge/b.md", "notes/journal/2026-10-01-x.md"], "notes: b", "ab12cd34"))
+    assert undone.sha == git(hub, "rev-parse", "main") and undone.refused == []
+    assert git(hub, "rev-parse", "main~1") == done.sha, "history is never rewritten: the undo is a commit on top"
+    assert git(hub, "log", "-1", "--format=%s", "main") == "Undo: notes: b"
+    assert not (repo.tree / "notes/knowledge/b.md").exists() and \
+        (repo.tree / "notes/journal/2026-10-01-x.md").read_text() == old
+    assert repo.changed() == []
+
+
+def test_undo_never_touches_a_file_changed_since(kb):
+    repo, hub, mac = kb
+    (repo.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Claude Code (Opus 5.5)", body="Б."))
+    (repo.tree / "notes/knowledge/c.md").write_text(RECORD.format(id="c", who="Claude Code (Opus 5.5)", body="В."))
+    done = run(repo.commit(["notes/knowledge/b.md", "notes/knowledge/c.md"], "notes: b, c", "", role="assistant"))
+    git(mac, "pull", "-q")
+    mac_push(mac, {"notes/knowledge/b.md": RECORD.format(id="b", who="Владелец", body="Б с Mac.")})
+    run(repo.refresh())
+    (repo.tree / "notes/knowledge/c.md").write_text(RECORD.format(id="c", who="Claude Code (Opus 5.5)", body="В2."))
+    undone = run(repo.revert(done.sha, ["notes/knowledge/b.md", "notes/knowledge/c.md"], "notes: b, c"))
+    assert undone.sha is None
+    assert sorted(undone.refused) == ["notes/knowledge/b.md: changed here since — not undone",
+                                      "notes/knowledge/c.md: changed here since — not undone"]
+    assert "Б с Mac." in (repo.tree / "notes/knowledge/b.md").read_text()

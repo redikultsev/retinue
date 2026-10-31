@@ -144,6 +144,8 @@ export interface Summary {
   kind?: PingKind | null;
   /** Seconds since the owner last acted on the session when the turn ended. */
   took_s?: number | null;
+  /** The card of the platform's own commit after this turn (retinue/tobase.py), while it can be undone from here. */
+  auto?: string | null;
   /** The sphere line exactly as the model wrote it at the end of the turn's last message: the face hides it there. */
   line?: string | null;
 }
@@ -163,7 +165,16 @@ export interface BaseFile {
   nobody?: boolean;
 }
 
-export type BaseCardState = "shown" | "committing" | "committed" | "failed" | "cancelled" | "discarded" | "stale" | "expired";
+export type BaseCardState =
+  | "shown"
+  | "committing"
+  | "committed"
+  | "failed"
+  | "cancelled"
+  | "discarded"
+  | "stale"
+  | "expired"
+  | "undone";
 
 /** «To the Base»: a session's commit card (retinue/tobase.py), the same object as its Telegram copies. */
 export interface BaseCard {
@@ -181,6 +192,12 @@ export interface BaseCard {
   sha: string | null;
   /** The result in words: committed, what was refused and why, stale, expired. */
   said: string;
+  /** The platform's own commit after a turn: «Undo», not «Commit». */
+  auto: boolean;
+  /** «Undo» can be pressed now (an `auto` card committed less than seven days ago). */
+  undo: boolean;
+  /** The commit that undid it. */
+  undone: string | null;
   refused: string[];
   committed: string[];
   created: number;

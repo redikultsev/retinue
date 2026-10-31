@@ -1,7 +1,7 @@
 // What the mock face API starts with: tracks, sessions, transcripts with an item of every kind, a shown approval
 // card, a courier card, a long input, and a realistic `git diff HEAD`. Shapes follow docs/face.md «API» and
 // retinue/transcript.py, retinue/approvals.py `card`, retinue/courier.py `CardView`.
-import type { About, Approval, CardView, Input, Item, ItemData, OutFile, PushCard, Session, Sphere, Summary, Track } from "../src/lib/types.ts";
+import type { About, BaseCard, Approval, CardView, Input, Item, ItemData, OutFile, PushCard, Session, Sphere, Summary, Track } from "../src/lib/types.ts";
 
 export const T0 = Math.floor(Date.now() / 1000);
 
@@ -284,7 +284,7 @@ export function items(): Item[] {
 
 export const summaries: Summary[] = [
   { session: "a1b2c3d4", seq: 1, head: "Result · retinue · session a1b2c3d4", text: "The gate did not change this week; the failure reproduces. Two open issues about the restart (#41, #38) — that is it. Fixing next.", at: T0 - 3000, turn: 0, kind: "decision" },
-  { session: "e5f6a7b8", seq: 5, head: "Result · notes · session e5f6a7b8", text: "Good, **Centre**. Putting together a plan by day:\n\n| Day | What |\n|---|---|\n| 7 May | arrival, check-in, dinner |\n| 8 May | the old town, a museum |\n| 9 May | the azulejo museum |", at: T0 - 25, turn: 0, kind: "decision" },
+  { session: "e5f6a7b8", seq: 5, auto: "a070a070", head: "Result · notes · session e5f6a7b8", text: "Good, **Centre**. Putting together a plan by day:\n\n| Day | What |\n|---|---|\n| 7 May | arrival, check-in, dinner |\n| 8 May | the old town, a museum |\n| 9 May | the azulejo museum |", at: T0 - 25, turn: 0, kind: "decision" },
   { session: "c9d0e1f2", seq: 3, head: "Result · retinue · session c9d0e1f2", text: "Done: changelog and tag `v0.4.0`. Do the push (`git push`) yourself — the command is in the courier card.", at: T0 - 80000 },
   { session: "0a1b2c3d", seq: 4, head: "Result · notes · session 0a1b2c3d", text: "The turn ended without text.", at: T0 - 5400 },
 ];
@@ -316,6 +316,30 @@ export function about(s: Session): About {
 }
 
 // A push that went out and opened a PR (retinue/topush.py): the closed release session's.
+// The platform's own commit after a turn (retinue/tobase.py `_autocommit`): «In the Base · N» under its summary.
+export const baseCards: BaseCard[] = [
+  {
+    id: "a070a070", session: "e5f6a7b8", state: "committed", place: "notes", subject: "travel: Lisbon in May", custom: false,
+    files: [
+      { path: "travel/journal/2026-05-07-lisbon.md", status: "A", add: 18, del: 0, on: true, shared: false },
+      { path: "travel/AGENTS.md", status: "M", add: 1, del: 0, on: true, shared: false },
+    ],
+    others: { files: 0, sessions: 0 }, sha: "4f2a9c1e0b7d", auto: true, undo: true, undone: null,
+    said: "Committed by itself after the turn: 4f2a9c1 · 2 files.", refused: [],
+    committed: ["A travel/journal/2026-05-07-lisbon.md", "M travel/AGENTS.md"], created: T0 - 20, at: T0 - 20,
+    view: { head: ["In the Base · notes · session e5f6a7b8", "Subject: travel: Lisbon in May"], body: "", status: "" },
+  },
+];
+
+export const BASE_DIFF = `diff --git a/travel/AGENTS.md b/travel/AGENTS.md
+--- a/travel/AGENTS.md
++++ b/travel/AGENTS.md
+@@ -12,3 +12,4 @@
+ ## Records
+ - [Porto in March](journal/2026-03-02-porto.md)
++- [Lisbon in May](journal/2026-05-07-lisbon.md)
+`;
+
 export const pushCards: PushCard[] = [
   {
     id: "p0a1b2c3", session: "c9d0e1f2", repo: "retinue", state: "pushed", place: "retinue", branch: "room/c9d0e1f2",

@@ -45,8 +45,16 @@ list. A Telegram copy lists what fits in one message, and its «Commit» commits
 removed, an edited or deleted one brought back — each only if it is as the card showed it, and only while the session
 is not running (`base.discard`). Nothing is committed; the card ends `discarded` with what went and what was left.
 
-Nothing commits or is discarded without the owner's press: the button is reachable only through the router's token (the
-bridge) and the face's login, never from a lane.
+**The platform's own commit.** When a run of a session ends, the platform commits by itself what that session
+alone changed (no ⇄, no nobody's file, no deletion), checked by the assistant's rules of the hub (`kbcheck`: Records in
+the folders she may write, a Showcase only below its marker) and never a Record the owner wrote — what he would
+let the assistant push without asking. It is a card too (`auto`): never shown while it commits, kept only when
+something went, «Committed» in the app with the commit's own diff, and «Undo» on it and on the turn's ping: a new
+commit on top that puts those files back, each only if neither the hub nor the clone changed it since
+(`base.revert`). What it leaves — refused by those rules, ⇄, nobody's, deleted — waits for «To the Base» as before.
+
+Nothing else commits or is discarded without the owner's press: the buttons are reachable only through the router's
+token (the bridge) and the face's login, never from a lane.
 """
 
 from __future__ import annotations
@@ -60,6 +68,7 @@ import secrets
 from typing import TYPE_CHECKING
 
 from . import changes
+from .kbcheck import ASSISTANT
 from .spoken import unmarked
 from .courier import line
 from .sessions import parsed
@@ -71,7 +80,8 @@ log = logging.getLogger("retinue.tobase")
 
 KEY = "base/"                 # a card's buttons and notes: base/<card id>
 OPEN = "base/open"            # the ping's «To the Base · N»: its digest is the session
-TOGGLE, COMMIT, DIFF, CANCEL, DISCARD = "t:", "commit", "diff", "cancel", "discard"
+TOGGLE, COMMIT, DIFF, CANCEL, DISCARD, UNDO = "t:", "commit", "diff", "cancel", "discard", "undo"
+AUTO = "auto"                 # the platform's own commits running (`_commits`)
 LABELS = {COMMIT: "Commit", DIFF: "Open diff", CANCEL: "Cancel"}
 TTL_S = 7 * 86400             # a card and its buttons live as long as an approval's
 MAX_TOGGLES = 12              # a file toggle per Telegram button; past this the rest are toggled in the app
@@ -131,6 +141,7 @@ class ToBase:
         self._lock = asyncio.Lock()          # one mark, prune or open at a time: they read and write the same rows
         self._pruned = 0.0
         self._commits: dict[str, asyncio.Task] = {}  # the commits running now, by card
+        self._pending: set[str] = set()      # sessions whose run ended: their own commit waits for an idle lane
         self.store.db.executescript(
             """
             CREATE TABLE IF NOT EXISTS base_runs (
@@ -148,9 +159,10 @@ class ToBase:
                 subject TEXT NOT NULL DEFAULT '', -- the owner's; '' = `fallback`
                 fallback TEXT NOT NULL,           -- `<Space>: <title>`
                 ping INTEGER,                     -- the session's latest ping when it was opened
-                result TEXT NOT NULL DEFAULT '{}', -- {sha, files, refused, said}
+                result TEXT NOT NULL DEFAULT '{}', -- {sha, files, refused, said, undone}
                 created REAL NOT NULL,
-                at REAL NOT NULL
+                at REAL NOT NULL,
+                auto INTEGER NOT NULL DEFAULT 0   -- the platform's own commit after a turn: «Undo», not «Commit»
             );
             CREATE INDEX IF NOT EXISTS base_cards_session ON base_cards (session, state);
             CREATE TABLE IF NOT EXISTS base_dirty (
@@ -163,6 +175,8 @@ class ToBase:
                 n INTEGER NOT NULL
             );
             """)
+        if "auto" not in {r[1] for r in self.store.db.execute("PRAGMA table_info(base_cards)")}:
+            self.store.db.execute("ALTER TABLE base_cards ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
         self.store.db.commit()
         self._recovering: asyncio.Task | None = None
         # The app's «To the Base · N» counts only while a Base is configured: rows left from before are never shown.
@@ -204,7 +218,7 @@ class ToBase:
         if self._commits:
             return False
         await self.settle()
-        return True
+        return not self._commits  # a run that just ended has its own commit now: this one waits for it
 
     async def run_started(self, session: dict, run: str) -> None:
         """A run of a session in the clone is about to start: its first window opens on the tree as it is now."""
@@ -230,7 +244,8 @@ class ToBase:
             self._unping()
             return
         async with self._lock:
-            await self._settle()
+            self._pending |= await self._settle()
+        self._auto()
 
     def _unping(self) -> None:
         """No Base configured: a ping still carrying «To the Base · N» from before loses it."""
@@ -239,9 +254,10 @@ class ToBase:
             self.store.db.execute("DELETE FROM base_pings WHERE session = ?", (session,))
         self.store.db.commit()
 
-    async def _settle(self) -> None:
+    async def _settle(self) -> set[str]:
+        """The marks owed, taken; the sessions one of whose runs ended (their own commit is owed next)."""
         db, now = self.store.db, self.platform.clock()
-        owed = []
+        owed, ended_now = [], set()
         for run, session, last_raw in db.execute("SELECT run, session, last_raw FROM base_runs").fetchall():
             ended = db.execute("SELECT ended FROM runs WHERE id = ?", (run,)).fetchone()
             ended = ended is None or ended[0] is not None
@@ -250,7 +266,7 @@ class ToBase:
                                    "'result'", (last_raw, run)).fetchone():
                 owed.append((run, session, ended))
         if not owed and not (now - self._pruned >= PRUNE_S and db.execute("SELECT 1 FROM base_files").fetchone()):
-            return
+            return ended_now
         touched: set[str] = set()
         if owed:
             try:
@@ -258,7 +274,7 @@ class ToBase:
                 dirty = await self._dirty()
             except Exception as exc:
                 log.error("the Base's snapshot failed (%s); the marks wait for the next poll", type(exc).__name__)
-                return
+                return ended_now
             for run, session, ended in owed:
                 if ended and db.execute("SELECT 1 FROM raw WHERE run = ? AND session = ?", (run, session)).fetchone() \
                         is None:
@@ -266,16 +282,19 @@ class ToBase:
                     continue
                 touched.add(session)
                 self._mark(run, session, after, dirty, ended, now)
+                if ended:
+                    ended_now.add(session)
             db.commit()
         else:
             try:
                 dirty = await self._dirty()
             except Exception as exc:
                 log.error("the Base's state was not read (%s)", type(exc).__name__)
-                return
+                return ended_now
         touched |= self._prune(dirty)
         for session in touched:
             self.ping(session)
+        return ended_now
 
     def _mark(self, run: str, session: str, after: dict, dirty: dict[str, str], ended: bool, now: float) -> None:
         db = self.store.db
@@ -368,19 +387,20 @@ class ToBase:
             db.execute("INSERT OR REPLACE INTO base_pings (session, seq, n) VALUES (?, ?, ?)", (session, latest, n))
         db.commit()
 
-    def _ping_button(self, seq: int, button: list | None) -> None:
-        """The ping's summary note with `base` set (or taken off), and a `ping` note that rewrites its message."""
+    def _ping_button(self, seq: int, button: list | None, field: str = "base", **more) -> None:
+        """The ping's summary note with `field` set (or taken off) — `base`, «To the Base · N», or `undo`, the
+        platform's own commit's «Undo» — and a `ping` note that rewrites its message."""
         row = self.store.db.execute("SELECT session, data FROM notes WHERE seq = ? AND kind = 'summary'",
                                     (seq,)).fetchone()
         if row is None:
             return
-        data = {**json.loads(row[1]), "base": button}
+        data = {**json.loads(row[1]), field: button, **more}
         self.store.db.execute("UPDATE notes SET data = ? WHERE seq = ?", (json.dumps(data, ensure_ascii=False), seq))
         self.store._note("ping", row[0], {**data, "seq": seq})
 
     # --- the card -------------------------------------------------------------------------------------------------
 
-    CARD = ("id", "session", "state", "files", "subject", "fallback", "ping", "result", "created", "at")
+    CARD = ("id", "session", "state", "files", "subject", "fallback", "ping", "result", "created", "at", "auto")
 
     def card(self, card_id: str) -> dict | None:
         row = self.store.db.execute(f"SELECT {', '.join(self.CARD)} FROM base_cards WHERE id = ?",
@@ -451,7 +471,7 @@ class ToBase:
                         "digest": snapshot.get(path)})
         return out
 
-    def _new(self, session: dict, files: list[dict], now: float) -> dict:
+    def _new(self, session: dict, files: list[dict], now: float, *, auto: bool = False) -> dict:
         title = line((self.store.face_session(session["id"]) or {}).get("title") or session["track"], TITLE_CHARS)
         first = next((f for f in files if not f.get("nobody")), files[0])["path"]
         space = first.split("/", 1)[0] if "/" in first else ""
@@ -459,16 +479,18 @@ class ToBase:
                                        (session["id"],)).fetchone()[0]
         card = {"id": secrets.token_hex(4), "session": session["id"], "state": "shown", "files": files, "subject": "",
                 "fallback": line(f"{space}: {title}" if space else title, SUBJECT_CHARS), "ping": latest,
-                "result": {}, "created": now, "at": now}
-        self.store.db.execute(f"INSERT INTO base_cards ({', '.join(self.CARD)}) VALUES ({', '.join('?' * 10)})",
-                              self._row(card))
+                "result": {}, "created": now, "at": now, "auto": int(auto)}
+        if auto:
+            card["state"] = "committing"
+        self.store.db.execute(f"INSERT INTO base_cards ({', '.join(self.CARD)}) VALUES "
+                              f"({', '.join('?' * len(self.CARD))})", self._row(card))
         return card
 
     @staticmethod
     def _row(card: dict) -> tuple:
         return (card["id"], card["session"], card["state"], json.dumps(card["files"], ensure_ascii=False),
                 card["subject"], card["fallback"], card["ping"], json.dumps(card["result"], ensure_ascii=False),
-                card["created"], card["at"])
+                card["created"], card["at"], card["auto"])
 
     def _save(self, card: dict, now: float, states: tuple[str, ...] = ("shown",)) -> bool:
         """The card written back while it is still in one of `states`; True when it was."""
@@ -531,6 +553,8 @@ class ToBase:
                 "others": {"files": others[0], "sessions": others[1]}, "sha": result.get("sha"),
                 "said": result.get("said") or "", "refused": result.get("refused") or [],
                 "committed": result.get("files") or [], "created": card["created"], "at": card["at"],
+                "auto": bool(card["auto"]), "undone": result.get("undone"),
+                "undo": self._undoable(card) is None,
                 "view": self._view(card, place, files, others)}
 
     @staticmethod
@@ -548,7 +572,8 @@ class ToBase:
         return rows
 
     def _view(self, card: dict, place: str, files: list[dict], others: tuple[int, int]) -> dict:
-        head = [f"To the Base · {place} · session {card['session']}", f"Subject: {self.subject(card)}"]
+        head = [f"{'In' if card['auto'] else 'To'} the Base · {place} · session {card['session']}",
+                f"Subject: {self.subject(card)}"]
         rows = self._rows(files)
         if len(rows) < len(files):
             rows.append(f"…and {plural(len(files) - len(rows), 'more file', 'more files')}: not committed from "
@@ -598,6 +623,9 @@ class ToBase:
         if card is None:
             return {"toast": GONE}
         action = bound["action"]
+        if action == UNDO:
+            toast, _ = await self.undo(card)
+            return {"toast": toast}
         if action == DIFF:
             text = await self.diff(card)
             return {"toast": "The diff is attached as a file.", "document": {"name": f"base-{card['id']}.diff", "text": text}}
@@ -684,9 +712,12 @@ class ToBase:
         return said.split("\n")[0], self.card(card["id"])
 
     async def diff(self, card: dict) -> str:
-        """The bounded diff of the files turned on (all of them when none is), as the clone has them now."""
+        """The bounded diff of the files turned on (all of them when none is), as the clone has them now; of the
+        platform's own commit, what that commit changed."""
         paths = [f["path"] for f in card["files"] if f["on"]] or [f["path"] for f in card["files"]]
         try:
+            if self.base is not None and card["auto"] and card["result"].get("sha"):
+                return await asyncio.to_thread(self.base.shown, card["result"]["sha"], DIFF_LIMIT)
             return await asyncio.to_thread(self.base.diff, paths, DIFF_LIMIT) if self.base is not None else ""
         except Exception as exc:
             return f"{UNAVAILABLE}\n" if isinstance(exc, OSError) else f"The diff failed: {type(exc).__name__}\n"
@@ -757,6 +788,151 @@ class ToBase:
         finally:
             self._commits.pop(card["id"], None)
 
+    # --- the platform's own commit after a turn, and its «Undo» ------------------------------------------------------
+
+    def _lane_open(self) -> bool:
+        """A run is open on the Base's lane, or one has ended and its last window is not marked yet: until then, whose
+        a changed file is is not known."""
+        return self.store.db.execute("SELECT 1 FROM runs r JOIN sessions s ON s.id = r.session WHERE r.ended IS NULL "
+                                     "AND s.lane = ? UNION ALL SELECT 1 FROM base_runs LIMIT 1",
+                                     (self.lane(),)).fetchone() is not None
+
+    def _auto(self) -> None:
+        """The sessions whose run ended get their own commits, one by one in the background — once no run is open on
+        the lane, so every window is marked and a file two runs touched is known as both's (never committed by
+        itself). A restart in between leaves their files to the button."""
+        if self.base is None or not self._pending or AUTO in self._commits or self._lane_open():
+            return
+        self._commits[AUTO] = asyncio.create_task(self._autocommits())
+
+    async def _autocommits(self) -> None:
+        try:
+            while self._pending and not self._lane_open():
+                await self._autocommit(self._pending.pop())
+        finally:
+            self._commits.pop(AUTO, None)
+        await self.settle_lists()
+        await self.platform.drain()  # a run the commits held back goes now
+
+    async def _autocommit(self, session_id: str) -> None:
+        """What the session alone changed, committed by the assistant's rules; a card only when something went, with
+        «Undo» on it and on the session's latest ping. Runs on the lane wait for it (`before_start`)."""
+        card = None
+        try:
+            async with self._lock:
+                session = self.store.session(session_id)
+                if session is None:
+                    return
+                dirty = await self._dirty()
+                snapshot = await asyncio.to_thread(self.base.snapshot)
+                for touched in self._prune(dirty):
+                    self.ping(touched)
+                others = {p for (p,) in self.store.db.execute("SELECT path FROM base_files WHERE session != ?",
+                                                              (session_id,))}
+                kept = self._kept(session_id, snapshot)
+                paths = [p for p in self.paths(session_id)
+                         if p not in others and p not in kept and dirty.get(p) in ("A", "M")]
+                if not paths:
+                    return
+                card = self._new(session, await self._files(paths, dirty, snapshot), self.platform.clock(), auto=True)
+                self.store.db.commit()
+                self._commits[card["id"]] = self._commits[AUTO]  # `tick` sees it is running
+            done = await self.base.commit(paths, card["fallback"], f"Retinue: session {session_id}, after its turn.",
+                                          expect={f["path"]: f["digest"] for f in card["files"]}, session=session_id,
+                                          role=ASSISTANT)
+            self._committed(card, done)
+        except Exception as exc:  # the type only: a path or a hook's line may say anything
+            log.error("session %s: the platform's own commit failed: %s", session_id, type(exc).__name__)
+            if card is not None:
+                self.store.db.execute("DELETE FROM base_cards WHERE id = ? AND state = 'committing'", (card["id"],))
+                self.store.db.commit()
+        finally:
+            if card is not None:
+                self._commits.pop(card["id"], None)
+
+    def _committed(self, card: dict, done) -> None:
+        """The platform's own commit's answer: nothing went — the card is forgotten (the files wait for the owner's
+        button, which says why when pressed); something went — the card is kept, and «Undo» goes on the ping."""
+        db = self.store.db
+        if not done.sha:
+            db.execute("DELETE FROM base_cards WHERE id = ?", (card["id"],))
+            db.commit()
+            return
+        went = {c.path for c in done.files}
+        card = {**card, "files": [f for f in card["files"] if f["path"] in went]}
+        latest = db.execute("SELECT MAX(seq) FROM notes WHERE kind = 'summary' AND session = ?",
+                            (card["session"],)).fetchone()[0]
+        result = {**self._result(done), "ping": latest,
+                  "said": f"Committed by itself after the turn: {str(done.sha)[:7]} · {files_word(len(went))}."}
+        self._finish(card, "committed", result, self.platform.clock(), ("committing",))
+        if latest is not None:
+            button = self.store.add_button(KEY + card["id"], UNDO, card["id"], card["created"] + TTL_S)
+            self._ping_button(latest, [f"Undo · {len(went)} in the Base", button], "undo", auto=card["id"])
+        db.commit()
+
+    def _kept(self, session: str, snapshot: dict) -> set[str]:
+        """The files the owner held back with «Cancel» on a card of the session, unchanged since: never committed by
+        the platform itself. Edited again, they go."""
+        kept = set()
+        for card in self.cards(session, ("cancelled",)):
+            kept |= {f["path"] for f in card["files"] if f["on"] and snapshot.get(f["path"]) == f["digest"]}
+        return kept
+
+    def _undoable(self, card: dict) -> str | None:
+        """Why the card's «Undo» cannot be pressed now; None when it can."""
+        if not card["auto"] or not card["result"].get("sha"):
+            return GONE
+        if card["state"] == "undone":
+            return "Already undone."
+        if card["state"] != "committed":
+            return GONE
+        if self.platform.clock() > card["created"] + TTL_S:
+            return "Too old to undo here — undo it from the Mac."
+        return None
+
+    async def undo(self, card: dict) -> tuple[str, dict | None]:
+        """«Undo» of the platform's own commit: its files put back as they were before it, in a new commit — each
+        only if neither the hub nor the clone changed it since — while the session is not running."""
+        if (why := self._undoable(card)) is not None:
+            return why, None
+        if self.base is None:
+            return NO_BASE, None
+        if any(r["session"] == card["session"] for r in self.store.open_runs()):
+            return RUNNING, None
+        if card["id"] in self._commits:
+            return "Undoing — wait.", None
+        task = asyncio.create_task(self._undo(card))
+        self._commits[card["id"]] = task  # no run on the lane starts meanwhile
+        return await asyncio.shield(task)  # a request cut off midway never cuts the undo off
+
+    async def _undo(self, card: dict) -> tuple[str, dict | None]:
+        try:
+            try:
+                done = await self.base.revert(card["result"]["sha"], [f["path"] for f in card["files"]],
+                                              self.subject(card), card["session"])
+            except Exception as exc:
+                log.error("card %s: the undo failed: %s", card["id"], type(exc).__name__)
+                return (UNAVAILABLE if isinstance(exc, OSError) else f"The undo failed ({type(exc).__name__})."), None
+            return await self._undone(card, done)
+        finally:
+            self._commits.pop(card["id"], None)
+            await self.platform.drain()
+
+    async def _undone(self, card: dict, done) -> tuple[str, dict | None]:
+        refused = [line(r, 200) for r in done.refused]
+        if not done.sha:
+            return "Nothing undone" + (f": {refused[0]}" if refused else "."), None
+        said = f"Undone: {str(done.sha)[:7]} puts back {files_word(len(done.files))}."
+        if refused:
+            said += " Left as they are:\n" + "\n".join(f"• {r}" for r in refused)
+        self._finish(card, "undone", {**card["result"], "undone": done.sha, "said": said, "refused": refused},
+                     self.platform.clock(), ("committed",))
+        if (seq := card["result"].get("ping")) is not None:
+            self._ping_button(seq, None, "undo")
+            self.store.db.commit()
+        await self.settle_lists()
+        return said.split("\n")[0], self.card(card["id"])
+
     @staticmethod
     def _result(done) -> dict:
         """The commit's answer (`base.Committed`) as the card says it."""
@@ -823,6 +999,15 @@ class ToBase:
         for card in left:
             chosen = [f["path"] for f in card["files"] if f["on"]]
             went = [p for p in chosen if p not in dirty]
+            if card["auto"]:  # the platform's own: no press to ask for; what did not go waits for the button
+                if went:
+                    self._finish(card, "committed", {"sha": None, "files": went,
+                                                     "said": "Committed by itself before the platform restarted: "
+                                                             f"{files_word(len(went))}."}, now, ("committing",))
+                else:
+                    self.store.db.execute("DELETE FROM base_cards WHERE id = ?", (card["id"],))
+                    self.store.db.commit()
+                continue
             if not went:
                 self._finish({**card, "state": "shown"}, "shown", {"said": RESTARTED}, now, ("committing",))
                 continue

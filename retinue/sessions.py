@@ -1003,10 +1003,11 @@ def _face_input(row: tuple) -> dict:
 def _face_summary(session: str, seq: int, data: dict) -> dict:
     """A summary as the face shows it; its event's key is `<session>/<seq>`. `turn`: the turn it ends (it is said
     when that turn's last line comes). A ping's fields (`pings`): `kind`, `took_s`, and `line`, the sphere line exactly
-    as the model wrote it at the end of its message (the face hides it there)."""
+    as the model wrote it at the end of its message (the face hides it there); `auto`, the card of the platform's own
+    commit after that turn (`tobase`)."""
     return {"session": session, "seq": seq, "head": data.get("head", ""), "text": data.get("text", ""),
             "at": data.get("at"), "turn": data.get("turn"), "kind": data.get("kind"), "took_s": data.get("took_s"),
-            "line": data.get("line")}
+            "line": data.get("line"), "auto": data.get("auto")}
 
 
 def parsed(line: str) -> dict:

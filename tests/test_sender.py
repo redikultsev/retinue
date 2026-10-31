@@ -72,8 +72,8 @@ def test_a_letter_goes_once_and_only_as_the_owner_confirmed_it():
         (ask(LETTER), SIGNED),                                       # pressed twice, the router restarted
     ])
     assert out[0] == (401, {"error": "unauthorized"})
-    assert out[1] == (400, {"status": "refused", "error": "конверт не совпал с подтверждённым"})
-    assert out[2][1]["error"] == "ключ: не тот" and out[3][1]["status"] == "refused"
+    assert out[1] == (400, {"status": "refused", "error": "the envelope does not match the confirmed one"})
+    assert out[2][1]["error"] == "key: wrong" and out[3][1]["status"] == "refused"
     assert out[4] == (200, {"status": "sent", "id": "g1", "thread": "18c2f0a1b2c3d4e5"})
     assert out[5] == (200, {"status": "sent", "id": "g1", "thread": "18c2f0a1b2c3d4e5", "repeat": True})
     (letter,) = sent
@@ -95,7 +95,7 @@ def test_a_doubtful_send_is_unknown_forever_and_a_dead_token_is_named():
     ])
     assert [o[1]["status"] for o in out] == ["unknown", "unknown", "failed", "failed"]
     assert out[1][1]["repeat"] is True and len(sent) == 1, "a timeout after the request left: never sent again"
-    assert out[2][1]["error"] == "invalid_grant" and out[3][1]["error"] == "нет ключа отправки для old@example.org"
+    assert out[2][1]["error"] == "invalid_grant" and out[3][1]["error"] == "no sending key for old@example.org"
     assert status["dead"] == {"work@example.org": "invalid_grant"}
 
 

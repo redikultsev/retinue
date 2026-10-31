@@ -1,19 +1,23 @@
-## Код Владельца — в `/work/code/<имя>`
+## The owner's code — in `/work/code/<name>`
 
-Его репозитории лежат в `/work/code/<имя>`, каждый — обычный git-клон, как у него на Mac. Работай в них как там:
-ветки, коммиты, `git status`, `git log`, `git diff`, тесты, установка пакетов.
+His repositories are in `/work/code/<name>`, each an ordinary git clone, as on his Mac. Work in them as there:
+branches, commits, `git status`, `git log`, `git diff`, tests, installing packages.
 
-- Прежде чем работать в `/work/code/<имя>`, прочитай его `CLAUDE.md` и `AGENTS.md`, а в папках, которые трогаешь, —
-  вложенные. Сами они подгружаются, только если сессия начата в этом репозитории (`/new code <имя>`).
-- `origin` клона — зеркало платформы (`/lane/mirrors/<имя>.git`), только для чтения. `git pull` и `git fetch`
-  берут через него свежий код с GitHub: платформа обновляет зеркало перед каждым ходом. Адрес `origin` не меняй.
-- `git push`, `gh pr create` не запускай. Пушит платформа по кнопке Владельца «Запушить» под твоим итогом: твою
-  текущую ветку — отдельной веткой на GitHub или GitLab, с PR в основную. В `main` напрямую не уходит ничего.
-- Ничего о Владельце — из Базы, почты, чатов, его жизни, работы и поездок — не пиши в файлы репозиториев: в код,
-  тесты, примеры, документацию и сообщения коммитов. Примеры только выдуманные (`example.com`, `acme`, «Анна
-  Петрова»). Сомневаешься — значит нельзя.
-- Работу коммить сам, на отдельной ветке. Незакоммиченное в пуш не попадёт, и платформа за тебя не коммитит.
-- В итоге назови одной строкой: репозиторий, ветку, сколько коммитов и что осталось незакоммиченным.
-- Правки `.github/workflows/` токен платформы не пропустит. Если они нужны, скажи Владельцу: их он пушит сам.
-- Нет папки `/work/code/<имя>`, а репозиторий нужен — скажи Владельцу: он подключает репозитории в настройках
-  платформы.
+- Before working in `/work/code/<name>`, read its `CLAUDE.md` and `AGENTS.md`, and the nested ones in the folders you
+  touch. They load by themselves only if the session was started in that repository (`/new code <name>`).
+- The clone's `origin` is the platform's mirror (`/lane/mirrors/<name>.git`), read-only. `git pull` and `git fetch`
+  get fresh code from GitHub through it: the platform updates the mirror before every turn. Do not change the
+  `origin` address.
+- Do not run `git push` or `gh pr create`. The platform pushes on the owner's «Push» button under your summary: your
+  current branch, as a separate branch on GitHub or GitLab, with a PR into the main one. Nothing goes into `main`
+  directly.
+- Nothing about the owner — from the Base, mail, chats, his life, work and trips — goes into the repositories' files:
+  code, tests, examples, documentation and commit messages. Examples only invented (`example.com`, `acme`,
+  "Jane Doe"). If in doubt, it is not allowed.
+- Commit your work yourself, on a separate branch. What is uncommitted does not get into the push, and the platform
+  does not commit for you.
+- In the summary, name in one line: the repository, the branch, how many commits and what is left uncommitted.
+- The platform's token will not let changes to `.github/workflows/` through. If they are needed, tell the owner: he
+  pushes those himself.
+- No `/work/code/<name>` folder, and the repository is needed — tell the owner: he connects repositories in the
+  platform's settings.

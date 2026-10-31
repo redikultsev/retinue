@@ -1,5 +1,5 @@
 """What waits for the owner in the assistant's world, as the digest the router pushes to the platform for the one queue
-«Ждут тебя» (`feed` on the platform's side; the bridge pushes it).
+«Waiting for you» (`feed` on the platform's side; the bridge pushes it).
 
 Read from the router's own tables, by the rules they already have — nothing new is judged here:
 
@@ -8,12 +8,12 @@ Read from the router's own tables, by the rules they already have — nothing ne
   is seen, unless she asked him to do or decide something, which a reply does not prove done (the morning summary's
   rule, `mailroom.STILL_OPEN`). One row per person; the owner's private matter (`mail.Private`) is one row that
   names nothing but a count, in the sphere his config gives it.
-- **draft**: a reply card whose «Отправить» still means something (`outbox.LIVE`, not expired). Its letter is not
+- **draft**: a reply card whose «Send» still means something (`outbox.LIVE`, not expired). Its letter is not
   counted again, nor a letter a draft already answered (queued, sending or sent).
 - **deadline**: a `deadline` of any Record, or an `until` of a profile Record, at most SOON_DAYS away (the face's
-  «Сроки» on «Сегодня»), from the heartbeat's last reading of the base; overdue `deadline`s up to PUSH_DAYS. Each
+  «Deadlines» on «Today»), from the heartbeat's last reading of the base; overdue `deadline`s up to PUSH_DAYS. Each
   carries its day (`when`) and the Record's path in the base (`path`), never its text; it waits for the owner
-  («Ждут тебя») only from PUSH_DAYS before the day — the heartbeat's own push rule (`proactive.Proactive.pushes`) —
+  («Waiting for you») only from PUSH_DAYS before the day — the heartbeat's own push rule (`proactive.Proactive.pushes`) —
   so its `since` may lie ahead, and the platform leaves it out of the queue until then.
 
 The digest is minimal by contract: an id keyed by the router's own salt (it names no one), the kind, a display name
@@ -44,9 +44,10 @@ from .proactive import FIELDS, PUSH_DAYS
 DAY = 86400
 ASKS = ("reply", "decide", "pay", "attend", "act")  # her `needs` that ask him to act; «read» does not
 URGENCY = {need: n for n, need in enumerate(ASKS)}
-PRIVATE_WHO = "Личное"       # the private matter's one row: no name, no sender
+PRIVATE_WHO = "Private"      # the private matter's one row: no name, no sender
+BASE_WHO = "The Base"        # a deadline's row: a Record's date, no person
 TEXT_CHARS = 120             # a Record's title
-SOON_DAYS = 7                # «Сроки» on the face's «Сегодня»: a Record's date this many days ahead at most
+SOON_DAYS = 7                # «Deadlines» on the face's «Today»: a Record's date this many days ahead at most
 SAID_CHARS = 80              # her words about somebody's message: a hint of what it is, not what it says
 SENT = ("queued", "sending", "sent")  # a draft that answered its letter: the letter waits no more
 SALT_KEY = "waiting.salt"    # the router's kv: the key the digest's ids are made with; never leaves the router
@@ -54,8 +55,8 @@ BYTES_ROOM = 1024            # the digest is cut this far below the platform's l
 URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:/\S*)?")
 PHONE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
 DIGITS = re.compile(r"\d{4,}")
-LINK_DRAFT = "черновик: отправить самому по ссылке"
-DRAFT = "черновик ответа ждёт «Отправить»"
+LINK_DRAFT = "draft: send it yourself by the link"
+DRAFT = "a reply draft waits for «Send»"
 
 
 def _salt(core) -> bytes:
@@ -78,9 +79,9 @@ def said(text: str) -> str:
     phone number and run of four digits or more masked — a code, an amount, an account never cross to the
     platform."""
     text = unicodedata.normalize("NFKC", line(text, 2000))
-    text = EMAIL.sub("‹адрес›", text)
-    text = URL.sub("‹ссылка›", text)
-    text = PHONE.sub("‹номер›", text)
+    text = EMAIL.sub("‹address›", text)
+    text = URL.sub("‹link›", text)
+    text = PHONE.sub("‹number›", text)
     return line(DIGITS.sub("••••", text), SAID_CHARS)
 
 
@@ -154,10 +155,10 @@ def _people(core, now: float, answered: set[str]) -> list[dict]:
     for group in sorted(groups.values(), key=lambda g: (URGENCY[g["need"]], g["since"])):
         count = group["count"]
         if group["private"]:
-            title = f"{count} {plural(count, 'письмо', 'письма', 'писем')} о личном ждут ответа"
+            title = f"{count} {plural(count, 'private letter waits', 'private letters wait')} for a reply"
         else:
             title = f"{NEEDS[group['need']]}: {said(group['text'])}"
-            title += f" · срок {said(group['deadline'])}" if group["deadline"] else ""
+            title += f" · deadline {said(group['deadline'])}" if group["deadline"] else ""
             title += f" (+{count - 1})" if count > 1 else ""
         rows.append({"id": group["id"], "kind": group["kind"], "who": group["who"], "title": title,
                      "since": group["since"], "sphere": group["sphere"]})
@@ -176,12 +177,12 @@ def _deadlines(core, now: float) -> list[dict]:
             (item.field == "until" and item.nature == "profile" and 0 <= days <= SOON_DAYS)
         if not due:
             continue
-        when = ("сегодня" if days == 0 else "завтра" if days == 1 else
-                f"через {days} {plural(days, 'день', 'дня', 'дней')}" if days > 0 else
-                f"просрочено {-days} {plural(-days, 'день', 'дня', 'дней')}")
+        when = ("today" if days == 0 else "tomorrow" if days == 1 else
+                f"in {days} {plural(days, 'day', 'days')}" if days > 0 else
+                f"overdue by {-days} {plural(-days, 'day', 'days')}")
         sphere = item.path.split("/")[0]
         rows.append({"id": _id(core, "deadline", f"{item.path}:{item.field}:{item.day.isoformat()}"), "kind": "deadline",
-                     "who": "База", "title": f"{when}: {line(item.title, TEXT_CHARS)} — {FIELDS[item.field]}",
+                     "who": BASE_WHO, "title": f"{when}: {line(item.title, TEXT_CHARS)} — {FIELDS[item.field]}",
                      "since": midnight(item.day - timedelta(days=PUSH_DAYS), core.tz),
                      "sphere": sphere if SPHERE.fullmatch(sphere) else None, "when": item.day.isoformat(),
                      **({"path": item.path} if RECORD.fullmatch(item.path) else {})})
@@ -190,14 +191,14 @@ def _deadlines(core, now: float) -> list[dict]:
 
 def chips(core, now: float) -> list[dict]:
     """The hub's status chips (`Lifehub.chips`: anything broken, the backup, the limit, the hub's build) for the
-    face's «Сегодня», each `{key, text, level}`. The build's age is left out of its words — «хаб собран» or not —
+    face's «Today», each `{key, text, level}`. The build's age is left out of its words — «hub built» or not —
     so the digest does not change every minute. No hub here: none."""
     if not getattr(core, "lifehub", None):
         return []
     out = []
     for chip in core.lifehub.chips(now):
         if chip.get("key") == "build":
-            chip = {**chip, "text": "хаб собран" if chip.get("level") == "ok" else "хаб не собран"}
+            chip = {**chip, "text": "hub built" if chip.get("level") == "ok" else "hub not built"}
         out.append({"key": str(chip.get("key")), "text": line(str(chip.get("text") or ""), CHIP_CHARS),
                     "level": str(chip.get("level"))})
     return out

@@ -4,9 +4,11 @@ part of what he said."""
 
 from __future__ import annotations
 
-SPOKEN_MARK = "(голосом) "                  # a voice note through the router (`bridge`)
-VERBATIM_MARK = "(голосом, дословно) "      # English dictated in the app, word for word (`face.Face.speech`)
-MARKS = (VERBATIM_MARK, SPOKEN_MARK)
+SPOKEN_MARK = "(by voice) "                 # a voice note through the router (`bridge`)
+VERBATIM_MARK = "(by voice, verbatim) "     # English dictated in the app, word for word (`face.Face.speech`)
+# The marks before the switch to English: inputs and transcripts persisted then still carry them.
+OLD_MARKS = ("(голосом, дословно) ", "(голосом) ")
+MARKS = (VERBATIM_MARK, SPOKEN_MARK, *OLD_MARKS)
 
 
 def unmarked(text: str) -> str:

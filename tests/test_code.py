@@ -203,7 +203,7 @@ def test_a_repository_without_its_token_is_off_and_the_config_names_the_variable
     cfg = PlatformConfig.load(path)
     retinue, app = cfg.code.repos
     assert (retinue.secret, retinue.off, retinue.path, retinue.host) == (TOKEN, "", "you/retinue", "github.com")
-    assert app.off == "нет токена RETINUE_GIT_TOKEN_EXAMPLE_GITLAB" and app.path == "example-group/example-app"
+    assert app.off == "no token RETINUE_GIT_TOKEN_EXAMPLE_GITLAB" and app.path == "example-group/example-app"
     assert TOKEN not in repr(cfg.code) or retinue.secret == TOKEN  # held, and only in the field the push reads
 
     for bad in ("http://github.com/a/b", "https://github.com.evil.example/a/b", "https://evil.example/a/b",
@@ -299,14 +299,14 @@ def test_never_the_default_branch_never_forced_never_a_tag(tmp_path, remote):
     c.look("r", "refs/retinue/cards/x")
     for branch in ("main", "MAIN", "master", "HEAD", "-f", "a..b", "refs/heads/x", "x.lock", "a b", "@{1}"):
         done = c.push("r", "refs/retinue/cards/x", sha, branch)
-        assert not done.ok and done.said.startswith("Не пушу"), branch
+        assert not done.ok and done.said.startswith("Not pushing"), branch
     assert remote.sha("main") != sha
 
     # The remote's branch moved elsewhere: a push is refused, never forced over it.
     other = commit_on_remote(tmp_path, remote, "b.txt", "b\n", "B")
     git(f"--git-dir={remote.bare}", "update-ref", "refs/heads/taken", other)
     done = c.push("r", "refs/retinue/cards/x", sha, "taken")
-    assert not done.ok and "уже другая" in done.said and remote.sha("taken") == other
+    assert not done.ok and "already different" in done.said and remote.sha("taken") == other
     assert not subprocess.run(["git", f"--git-dir={remote.bare}", "rev-parse", "--verify", "--quiet", "refs/tags/v9"],
                               capture_output=True).stdout
 
@@ -475,7 +475,7 @@ def test_the_token_script_reads_it_without_echo_and_prints_only_its_name_and_len
         done = subprocess.run(["bash", str(script), "you"], input=token + "\n", capture_output=True, text=True,
                               env=env)
         assert done.returncode == 0 and token not in done.stdout + done.stderr
-        assert "RETINUE_GIT_TOKEN_YOU" in done.stdout and f"({len(token)} знаков)" in done.stdout
+        assert "RETINUE_GIT_TOKEN_YOU" in done.stdout and f"({len(token)} characters)" in done.stdout
     tokens = tmp_path / "code" / "tokens.env"
     assert tokens.read_text() == f"RETINUE_GIT_TOKEN_YOU={TOKEN}\n", "one line, replaced"
     assert oct(tokens.stat().st_mode & 0o777) == "0o600"
@@ -583,7 +583,7 @@ def test_a_new_root_or_an_unrelated_history_merged_in_is_refused(tmp_path, remot
     committed(clone, "elsewhere.txt", "another history\n", "Orphan")
     git("checkout", "-qb", "merged", "main", cwd=clone)
     git("merge", "-q", "-s", "ours", "--allow-unrelated-histories", "-m", "Merge", "other", cwd=clone)
-    with pytest.raises(Refused, match="корневой"):
+    with pytest.raises(Refused, match="root commit"):
         c.look("r", "refs/retinue/cards/o")
     # A merge of the remote's own branch is ordinary: shown, with both parents.
     git("checkout", "-qb", "ok", "main", cwd=clone)
@@ -611,7 +611,7 @@ def test_an_object_no_shown_change_accounts_for_is_refused(tmp_path, remote, mon
         return done
 
     monkeypatch.setattr(CodeRepos, "_git", blind)
-    with pytest.raises(Refused, match="объектов, которых нет"):
+    with pytest.raises(Refused, match="objects that are not in the changes"):
         c.look("r", "refs/retinue/cards/f")
 
 
@@ -636,7 +636,7 @@ def test_the_rooms_objects_are_copied_checked_never_read_in_place(tmp_path, remo
     for p in (store / "objects" / "pack").glob("pack-*"):
         p.unlink()
     (store / "packs.json").unlink()
-    with pytest.raises(Refused, match="больше"):
+    with pytest.raises(Refused, match="over"):
         c.look("r", "refs/retinue/cards/g")
 
 
@@ -652,7 +652,7 @@ def test_a_loose_object_whose_bytes_do_not_match_its_name_is_refused(tmp_path, r
     data = next(p for p in (clone / ".git" / "objects").glob("??/*") if p.name != sha[2:]).read_bytes()
     loose.chmod(0o644)
     loose.write_bytes(data)
-    with pytest.raises(Refused, match="не сходится с именем"):
+    with pytest.raises(Refused, match="does not match the name"):
         c.look("r", "refs/retinue/cards/h")
 
 
@@ -679,7 +679,7 @@ def test_gits_output_is_bounded_and_a_card_shows_names_as_they_are(tmp_path, rem
 
     c = repos(tmp_path, remote.url)
     c.fetch("r")
-    with pytest.raises(code.Unavailable, match="больше"):
+    with pytest.raises(code.Unavailable, match="over"):
         c._git(f"--git-dir={c.mirror('r')}", "cat-file", "-p", "HEAD", cap=10)
     assert shown("evil\nline‮exe.txt", 200) == "evil⟦U+000A⟧line⟦U+202E⟧exe.txt"
     assert shown("a" * 500, 50).endswith("…") and len(shown("a" * 500, 50)) == 50
@@ -728,7 +728,7 @@ def test_a_commit_header_the_card_cannot_show_is_refused(tmp_path, remote, extra
     git("checkout", "-qb", "hdr", cwd=clone)
     committed(clone, "a.txt", "a\n", "A")
     crafted(clone, extra)
-    with pytest.raises(Refused, match="заголовок|кодировка"):
+    with pytest.raises(Refused, match="header|encoding"):
         c.look("r", "refs/retinue/cards/x")
 
 
@@ -745,7 +745,7 @@ def test_messages_are_read_from_the_object_whole_and_a_separator_in_one_spoofs_n
     text = c.diff("r", look.sha, 100_000)
     assert "Safe⟦U+001E⟧⟦U+001F⟧sha: fake" in text and "тайный хвост⟦U+2066⟧" in text and "Author: A <a@e.x>" in text
     crafted(clone, b"", b"x" * (code.MAX_MESSAGE + 10))
-    with pytest.raises(Refused, match="сообщение больше"):
+    with pytest.raises(Refused, match="message over"):
         c.look("r", "refs/retinue/cards/m")
 
 
@@ -788,17 +788,17 @@ def test_a_pack_copy_is_retried_after_a_crash_once_and_refused_for_good_only_for
         if ok:
             assert c.look("r", "refs/retinue/cards/p").commits[0]["subject"] == "P"
         else:
-            with pytest.raises(Refused, match="не скопировался 2 раза подряд"):
+            with pytest.raises(Refused, match="failed to copy 2 times in a row"):
                 c.look("r", "refs/retinue/cards/p")
 
     # The room's fault (the pack moved while read): refused for good, with its reason.
     state.write_text(json.dumps({k: v for k, v in json.loads(state.read_text()).items() if k != stem}))
-    monkeypatch.setattr(code, "_copy", broken(Refused(".git/objects/pack/pack-…: изменился, пока читался")))
-    with pytest.raises(Refused, match="изменился"):
+    monkeypatch.setattr(code, "_copy", broken(Refused(".git/objects/pack/pack-…: changed while being read")))
+    with pytest.raises(Refused, match="changed"):
         c.look("r", "refs/retinue/cards/p")
     monkeypatch.setattr(code, "_copy", real)
     assert ours()[stem]["state"] == "failed"
-    with pytest.raises(Refused, match="изменился, пока читался"):
+    with pytest.raises(Refused, match="changed while being read"):
         c.look("r", "refs/retinue/cards/p")
 
 
@@ -818,7 +818,7 @@ def test_a_second_author_and_committer_after_the_first_pair_is_refused(tmp_path,
     assert subprocess.run(["git", "fsck", "--strict"], cwd=clone, capture_output=True).returncode == 0, \
         "git's own check lets it through"
     git("update-ref", "HEAD", sha, cwd=clone)
-    with pytest.raises(Refused, match="повторён"):
+    with pytest.raises(Refused, match="repeated"):
         c.look("r", "refs/retinue/cards/two")
     # The order itself: a parent after the author, two trees, no author, two encodings — refused the same way.
     from retinue.code import _commit
@@ -901,6 +901,6 @@ def test_an_author_longer_than_the_card_shows_is_refused():
         lines = {"author": "A <a@e.x> 1 +0000", "committer": "A <a@e.x> 1 +0000"}
         lines[who] = f"{long} <a@e.x> 1 +0000"
         raw = f"tree {one}\nauthor {lines['author']}\ncommitter {lines['committer']}\n\nm".encode()
-        with pytest.raises(Refused, match="длиннее"):
+        with pytest.raises(Refused, match="longer than"):
             _commit("b" * 40, raw)
     assert _commit("b" * 40, f"tree {one}\nauthor A <a@e.x> 1 +0000\ncommitter A <a@e.x> 1 +0000\n\nm".encode())

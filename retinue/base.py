@@ -18,7 +18,7 @@ turns the files the owner picked into one commit on top of the hub's `main`, che
 - **Bounded.** Files over `max_file_mb` are not read (their digest is their size and time); the walk stops at
   `MAX_ENTRIES` entries, folders counted, and `MAX_DEPTH` folders; a diff side over `DIFF_MAX` is not diffed.
 
-The platform's uid is not the router's, so the hub's pre-receive takes its push for the owner's (Р-Б): the author is
+The platform's uid is not the router's, so the hub's pre-receive takes its push for the owner's: the author is
 the owner from `platform.yaml`, and a trailer says the platform pushed it on his button.
 """
 
@@ -56,7 +56,8 @@ RACY_S = 2.0                  # a file changed this recently is hashed again nex
 TEMP_PREFIX = ".retinue-"     # the platform's own temporary files in the tree, renamed over the real name
 GIT_TIMEOUT_S = 300           # a push waits for the hub's lint (its own timeout is 120 s)
 IGNORED_DIRS = ("out", "inbox")   # step 1: files for the owner and his attachments land in the session's cwd
-OTHER_SIDE = "менялся и здесь, и в Базе — правки не сливаются сами"
+REJECTED = kbcheck.REJECTED   # the hub's pre-receive line after its refusals, in either language
+OTHER_SIDE = "changed both here and in the Base — the edits do not merge by themselves"
 
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC | getattr(os, "O_NOCTTY", 0)
@@ -72,7 +73,7 @@ class Change:
 class Committed:
     """What became of the owner's press. `files`: what the commit `sha` changed in the Base (None: no commit).
     `conflicts`: paths changed both here and in the hub that do not merge — they stay uncommitted. `refused` and
-    `left_out`: one line per path, «<path>: <why>», in Russian; `refused` may also hold a line about the whole change
+    `left_out`: one line per path, «<path>: <why>», in English; `refused` may also hold a line about the whole change
     (the Base's own check: «just check: …»). Left out is what never goes to the Base by design (ignored, outside it,
     already so in the hub); refused is a change the platform will not commit from the server."""
     sha: str | None
@@ -226,7 +227,7 @@ class BaseRepo:
 
     def diff(self, paths: list[str], limit: int) -> str:
         """A unified diff of `paths` against what the clone's edit started from (HEAD, or the base remembered for a
-        held file), at most `limit` characters: the owner's «Открыть»."""
+        held file), at most `limit` characters: the owner's «Open»."""
         self._ensure()
         held = self._held()
         out, used = [], 0
@@ -236,11 +237,11 @@ class BaseRepo:
             state = self._read(path)
             new = state.data if state.kind == "file" else None
             if state.kind not in ("file", "absent"):
-                text = f"diff {path}\n{_what(state.kind)}: не показывается\n"
+                text = f"diff {path}\n{_what(state.kind)}: not shown\n"
             elif old == new:
                 continue
             elif max(len(old or b""), len(new or b"")) > DIFF_MAX:
-                text = f"diff {path}\nфайл большой ({max(len(old or b''), len(new or b'')) // 1024} КБ): дифф не показан\n"
+                text = f"diff {path}\nlarge file ({max(len(old or b''), len(new or b'')) // 1024} KB): diff not shown\n"
             elif (old and b"\0" in old[:8000]) or (new and b"\0" in new[:8000]):
                 text = f"Binary files a/{path} and b/{path} differ\n"
             else:
@@ -248,7 +249,7 @@ class BaseRepo:
                     _lines(old), _lines(new), f"a/{path}" if old is not None else "/dev/null",
                     f"b/{path}" if new is not None else "/dev/null"))
             if used + len(text) > limit:
-                out.append(text[:max(0, limit - used)] + "\n… дифф обрезан\n")
+                out.append(text[:max(0, limit - used)] + "\n… diff cut\n")
                 break
             out.append(text)
             used += len(text)
@@ -546,12 +547,12 @@ class BaseRepo:
         done = Committed(None)
         subject = " ".join(str(subject).split())[:200]
         if not subject:
-            done.refused.append("коммит: пустая тема")
+            done.refused.append("commit: empty subject")
             return done
         states = {path: self._read(path) for path in self._admit(paths, done)}
         for path, state in list(states.items()):  # what the owner saw on the card is what goes, or nothing of it
             if path in expect and expect[path] != self._digest_now(path, state):
-                done.refused.append(f"{path}: файл изменился после карточки — открой её заново")
+                done.refused.append(f"{path}: the file changed after the card — open it again")
                 del states[path]
         for path, state in list(states.items()):
             if why := UNFIT.get(state.kind):
@@ -559,7 +560,7 @@ class BaseRepo:
                 del states[path]
         held, admitted, refused = self._held(), list(done.left_out), list(done.refused)
         message = (f"{subject}\n\n{body.strip()}\n\n" if body.strip() else f"{subject}\n\n") + \
-            f"Pushed-by: retinue-platform (кнопка Владельца{f', сессия {session}' if session else ''})\n"
+            f"Pushed-by: retinue-platform (the owner's button{f', session {session}' if session else ''})\n"
         try:
             upstream, results = self._fetch(), {}
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -576,27 +577,27 @@ class BaseRepo:
                     done.sha, done.files = commit, files
                     break
                 said = push.stderr.decode("utf-8", "replace")
-                if "push не принят" in said:  # the hub's checks: their words are the reasons
+                if any(mark in said for mark in REJECTED):  # the hub's checks: their words are the reasons
                     lines = [line.removeprefix("remote: ").strip() for line in said.splitlines()
-                             if line.startswith("remote: ") and "push не принят" not in line]
-                    done.refused += [line for line in lines if line] or ["хаб не принял push"]
+                             if line.startswith("remote: ") and not any(mark in line for mark in REJECTED)]
+                    done.refused += [line for line in lines if line] or ["the hub did not accept the push"]
                     break
                 if "[rejected]" not in push.stdout.decode("utf-8", "replace") and "lock" not in said:
                     last = next((line for line in reversed(said.splitlines()) if line.strip()), "")
                     log.error("base: the hub refused the push: %s", last[:300])
-                    done.refused.append(f"хаб не принял push: {last.strip()[:200] or 'без объяснений'}")
+                    done.refused.append(f"the hub did not accept the push: {last.strip()[:200] or 'no reason given'}")
                     break
                 upstream = self._fetch()  # the hub moved meanwhile (the router pushes after the assistant's turns)
             else:
-                done.refused.append("хаб менялся быстрее, чем успевал коммит — нажми ещё раз")
+                done.refused.append("the hub changed faster than the commit could follow — press again")
         except subprocess.CalledProcessError as exc:
             log.error("base: the commit was not built: git %s exited %s", exc.cmd[1:2], exc.returncode)
-            done.refused.append("коммит не собрался: ошибка git на платформе")
+            done.refused.append("the commit was not built: a git error on the platform")
         except subprocess.TimeoutExpired as exc:
-            # The push may have landed: the next press finds these files «уже так в Базе» and commits nothing twice.
+            # The push may have landed: the next press finds these files «already so in the Base» and commits nothing twice.
             log.error("base: git %s timed out after %s s", exc.cmd[1:2] if isinstance(exc.cmd, list) else "?",
                       exc.timeout)
-            done.refused.append("хаб не ответил, проверь и нажми ещё раз")
+            done.refused.append("the hub did not answer — check and press again")
         if done.sha:
             for path, result in results.items():  # a merged file: the tree gets what the Base now has
                 if result is not None and result[1] != states[path].data:
@@ -620,20 +621,20 @@ class BaseRepo:
         for given in dict.fromkeys(paths):
             path = clean_path(given)
             if path is None:
-                done.left_out.append(f"{str(given)[:200]}: не путь внутри Базы")
+                done.left_out.append(f"{str(given)[:200]}: not a path inside the Base")
             elif not _utf8(path):
-                done.refused.append(f"{path.encode('utf-8', 'replace').decode()}: имя не в UTF-8")
+                done.refused.append(f"{path.encode('utf-8', 'replace').decode()}: the name is not UTF-8")
             elif "\\" in path or any(_git_dir_name(p) for p in path.split("/")):
-                done.refused.append(f"{path}: служебное имя git — в Базу не идёт")
+                done.refused.append(f"{path}: a git internal name — does not go to the Base")
             elif self._ignore.hard(path):
-                done.left_out.append(f"{path}: исключено — в Базу не идёт (out/, inbox/ или политика хаба)")
+                done.left_out.append(f"{path}: excluded — does not go to the Base (out/, inbox/ or the hub's policy)")
             elif kbcheck.hidden(path):
-                done.refused.append(f"{path}: скрытый путь — правится только с Mac")
+                done.refused.append(f"{path}: a hidden path — edited only from the Mac")
             elif kbcheck.any_match(path, self.cfg.protect) or kbcheck.norm(path) in {
                     kbcheck.norm(arg) for arg in self._policy.check}:  # what the hub's check names, whatever `protect` says
-                done.refused.append(f"{path}: этот файл исполняется при проверке Базы — правится только с Mac")
+                done.refused.append(f"{path}: this file runs in the Base's check — edited only from the Mac")
             elif path not in self._head_files and self._ignore.soft(path):
-                done.left_out.append(f"{path}: в .gitignore Базы")
+                done.left_out.append(f"{path}: in the Base's .gitignore")
             else:
                 wanted.append(path)
         return wanted
@@ -648,18 +649,18 @@ class BaseRepo:
             parts = path.split("/")
             above = next(("/".join(parts[:i]) for i in range(1, len(parts)) if "/".join(parts[:i]) in theirs_files), None)
             if path in theirs_dirs:
-                misfit.append(f"{path}: на этом месте в Базе папка — в Базу не идёт")
+                misfit.append(f"{path}: the Base has a folder in this place — does not go to the Base")
                 continue
             if above is not None:
-                misfit.append(f"{path}: на месте папки {above} в Базе файл — в Базу не идёт")
+                misfit.append(f"{path}: the Base has a file where the folder {above} would be — does not go to the Base")
                 continue
             base = held.get(path, self._head_files.get(path, ("", ""))[1]) or None
             mode, theirs = theirs_files.get(path, ("100644", None))
             ours = state.sha if state.kind == "file" else None
             if ours == theirs:
-                idle.append(f"{path}: уже так в Базе")
+                idle.append(f"{path}: already so in the Base")
             elif ours == base:
-                idle.append(f"{path}: здесь не менялся")
+                idle.append(f"{path}: not changed here")
             elif theirs == base:
                 results[path] = (mode, state.data) if ours else None
             elif ours and base and theirs and (merged := self._merge(state.data, self._blob(base),
@@ -706,8 +707,8 @@ class BaseRepo:
             stray = sorted({path for path, *_ in self._moved(upstream, tree)} - set(results))
             if stray:  # the index changed something no one chose: nothing goes
                 log.error("base: a commit would also change %s", ", ".join(stray)[:500])
-                done.refused.append("коммит задел бы и другие файлы Базы: " + ", ".join(stray[:5]) +
-                                    (f" и ещё {len(stray) - 5}" if len(stray) > 5 else "") + " — не собран")
+                done.refused.append("the commit would also touch other files of the Base: " + ", ".join(stray[:5]) +
+                                    (f" and {len(stray) - 5} more" if len(stray) > 5 else "") + " — not built")
                 return None, []
             commit = self._run("commit-tree", tree, "-p", upstream, data=message.encode()).stdout.decode().strip()
             verdict = kbcheck.check(self.repo, upstream, commit, dataclasses.replace(self._policy, check=[]),
@@ -982,8 +983,8 @@ class BaseRepo:
                 os.close(fd)
 
 
-UNFIT = {"link": "симлинк — в Базе только обычные файлы", "other": "не обычный файл (FIFO, сокет, устройство)",
-         "dir": "папка, а не файл", "blocked": "путь проходит через симлинк или файл", "big": "больше {mb} МБ"}
+UNFIT = {"link": "a symlink — the Base holds only plain files", "other": "not a plain file (FIFO, socket, device)",
+         "dir": "a folder, not a file", "blocked": "the path goes through a symlink or a file", "big": "over {mb} MB"}
 
 
 def _utf8(path: str) -> bool:
@@ -1005,8 +1006,8 @@ def _lines(data: bytes | None) -> list[str]:
 
 
 def _what(kind: str) -> str:
-    return {"link": "симлинк", "other": "не обычный файл", "dir": "папка", "big": "большой файл",
-            "blocked": "путь через симлинк"}.get(kind, kind)
+    return {"link": "symlink", "other": "not a plain file", "dir": "folder", "big": "large file",
+            "blocked": "path through a symlink"}.get(kind, kind)
 
 
 def under(cwd: str | None, tree: str) -> bool:

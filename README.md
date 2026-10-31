@@ -23,7 +23,7 @@ morning summary, trip search, read-only pages for your devices, backups and heal
 - [Quick start](#quick-start)
 - [Documentation](#documentation)
 - [Repository layout](#repository-layout)
-- [Language: English code, Russian product](#language-english-code-russian-product)
+- [Language: English throughout](#language-english-throughout)
 - [Model access](#model-access)
 - [Limits and known gaps](#limits-and-known-gaps)
 - [Contributing, security, license](#contributing-security-license)
@@ -69,7 +69,7 @@ flowchart LR
   `WebSearch`. Bash is sandboxed and reaches only GitHub and the package registries (with one documented gap,
   see [Limits and known gaps](#limits-and-known-gaps)).
 - **face** (`face/`) is a React PWA, also opened from Telegram as a Mini App, reachable only over WireGuard from your
-  devices: tabs **Сегодня · Сессии · ＋ · Пространства · Читать** (＋ is `/new`, a new task), a live transcript,
+  devices: tabs **Today · Sessions · ＋ · Spaces · Read** (＋ is `/new`, a new task), a live transcript,
   approval cards, a session's diff, the Spaces of the Base, pages to read, and voice input.
 
 Each optional part has its own `setup.sh` switch and its own guide (see [Documentation](#documentation)).
@@ -97,7 +97,7 @@ path of a leak:
 | The SNI guard | Bash's TLS must name the host it asked the proxy for, so an allowed CDN cannot front another site | `retinue/sniguard.py` |
 | Egress allow lists | Bash reaches GitHub, PyPI and npm only; the open proxy refuses private ranges | `deploy/egress/`, `deploy/lanes/managed-settings-private.json` |
 | Tokens out of reach | the subscription token reaches the CLI through a pipe; no git or registry credential and no bot token enters the room | [docs/platform.md](docs/platform.md#the-token-out-of-reach) |
-| Writes by your button | a commit to the Base («В Базу») or a pushed branch with its pull request («Запушить») is made by the platform after you press, with your rights | [docs/base.md](docs/base.md), [docs/code.md](docs/code.md) |
+| Writes by your button | a commit to the Base («To the Base») or a pushed branch with its pull request («Push») is made by the platform after you press, with your rights | [docs/base.md](docs/base.md), [docs/code.md](docs/code.md) |
 | The container | non-root user, read-only root, AppArmor and seccomp profiles, no capabilities | `deploy/lanes/`, `deploy/compose.yml` |
 
 None of these is a wall on its own, and the docs say where each one stops: see
@@ -150,8 +150,8 @@ which needs a WireGuard VPN.
 | [install.md](docs/install.md) | the server, the bot, the stack, the egress allow list, tests |
 | [platform.md](docs/platform.md) | Claude Code sessions: tracks, spheres, sub-sessions, the room, the gate, approvals, questions, the courier card |
 | [face.md](docs/face.md) | the phone app: WireGuard, login, the shell and its tabs, voice, the face API |
-| [base.md](docs/base.md) | the knowledge base as a clone in the room, Spaces, «В Базу» commits |
-| [code.md](docs/code.md) | your repositories in the room, mirrors, tokens, the «Запушить» push-to-PR card |
+| [base.md](docs/base.md) | the knowledge base as a clone in the room, Spaces, «To the Base» commits |
+| [code.md](docs/code.md) | your repositories in the room, mirrors, tokens, the «Push» push-to-PR card |
 | [instructions.md](docs/instructions.md) | what a session follows: lane rules, the repository's `CLAUDE.md`, your skills, the owner-memory snapshot |
 | [memory.md](docs/memory.md) | the knowledge base the assistant writes, and its hub |
 | [mail.md](docs/mail.md) | Gmail and Google Calendar, read-only, and their triage |
@@ -172,13 +172,15 @@ tests/              the pytest suite; tests/e2e has a compose smoke test
 docs/               one guide per part
 ```
 
-## Language: English code, Russian product
+## Language: English throughout
 
-The code, the comments, the docs and the commit messages are in English. Everything the owner reads in the product
-is in Russian: the bot's messages, the buttons («Разрешить», «В Базу», «Запушить»), the app's tabs, the assistant's
-and the lanes' instructions (`agents/assistant/CLAUDE.md`, `deploy/lanes/instructions/`). The docs quote those
-strings as they are, in «guillemets», so you can find them in the code and in the app. There is no translation
-layer: the product has one user, and that user reads Russian.
+The code, the comments, the docs, the commit messages and everything the owner reads in the product are in English:
+the bot's messages, the buttons («Allow», «To the Base», «Push»), the app's tabs, the assistant's and the lanes'
+instructions (`agents/assistant/CLAUDE.md`, `deploy/lanes/instructions/`). The docs quote those strings as they are,
+in «guillemets», so you can find them in the code and in the app. There is no translation layer: the product has one
+user. Where the owner types a command or a reply the code parses (a time zone, `/initiative`, a card's reply), the
+Russian form still works alongside the English one. The owner's knowledge base is data and stays in whatever language
+it is written in.
 
 ## Model access
 

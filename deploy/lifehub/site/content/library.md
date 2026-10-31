@@ -1,4 +1,4 @@
 ---
-title: Библиотека
+title: Library
 layout: library
 ---

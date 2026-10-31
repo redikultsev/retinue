@@ -132,8 +132,8 @@ class Memory:
         parent = self._out("rev-parse", "HEAD")
         self._run("add", "-A", "--sparse")
         files = [line.split("\t")[-1] for line in self._out("diff", "--cached", "--name-only", "-M", "HEAD").split("\n")]
-        subject = "Ассистентка: " + ", ".join(files[:SUBJECT_FILES]) + (
-            f" и ещё {len(files) - SUBJECT_FILES}" if len(files) > SUBJECT_FILES else "")
+        subject = "Assistant: " + ", ".join(files[:SUBJECT_FILES]) + (
+            f" and {len(files) - SUBJECT_FILES} more" if len(files) > SUBJECT_FILES else "")
         trailers = [f"Retinue-Turn: {turn}", f"Retinue-Run: {kind}"]
         if foreign:
             trailers.append(f"Foreign-Input: {', '.join(foreign)}")
@@ -158,7 +158,7 @@ class Memory:
         or HEAD when the hub has these bytes already; the refusals). The caller holds the router's queue. Git only."""
         parts = Path(path).parts
         if not parts or Path(path).is_absolute() or any(p in ("", ".", "..") or p.startswith(".") for p in parts):
-            return None, [f"{path}: не путь внутри базы"]
+            return None, [f"{path}: not a path inside the Base"]
         self.sync()
         target = self.tree.joinpath(*parts)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -186,7 +186,7 @@ class Memory:
             self.db.commit()
 
     def revert(self, sha: str) -> tuple[bool, str]:
-        """The owner pressed «Откатить» (everything in one thread: the router splits it, see `Core._revert`)."""
+        """The owner pressed «Revert» (everything in one thread: the router splits it, see `Core._revert`)."""
         subject, refusal = self.lookup(sha)
         if refusal:
             return False, refusal
@@ -199,8 +199,8 @@ class Memory:
         """(subject, "") of her commit `sha`, to take it back; or ("", why it cannot be)."""
         row = self.db.execute("SELECT subject, reverted FROM memory_commits WHERE sha = ?", (sha,)).fetchone()
         if row is None:
-            return "", "Не откатилось: такого коммита ассистентки нет."
-        return ("", "Этот коммит уже откачен.") if row[1] else (row[0], "")
+            return "", "Not reverted: the assistant has no such commit."
+        return ("", "This commit is already reverted.") if row[1] else (row[0], "")
 
     def reverted(self, sha: str, commit: str) -> None:
         self.db.execute("UPDATE memory_commits SET reverted = ? WHERE sha = ?", (commit, sha))
@@ -215,16 +215,16 @@ class Memory:
         if merged.returncode != 0:
             clashing = [line for line in merged.stdout.split("\n")[1:] if line and not line.startswith("Auto-merging")
                         and not line.startswith("CONFLICT")]
-            return False, (f"Не откатилось: {', '.join(dict.fromkeys(clashing)) or 'файл'} менялся после этого "
-                           f"коммита. Откати на Mac: git revert {sha[:12]}"), ""
-        message = f"Откат: {subject}\n\nReverts: {sha}\n"
+            return False, (f"Not reverted: {', '.join(dict.fromkeys(clashing)) or 'a file'} changed after this "
+                           f"commit. Revert it on the Mac: git revert {sha[:12]}"), ""
+        message = f"Revert: {subject}\n\nReverts: {sha}\n"
         commit = self._commit(merged.stdout.split("\n")[0], parent, message)
         try:
             commit, _ = self._deliver(commit, parent, message)
         except Refused as refused:
             self._drop()
-            return False, "Не откатилось: " + "; ".join(refused.args[0]), ""
-        return True, f"Откачено: {subject}.", commit
+            return False, "Not reverted: " + "; ".join(refused.args[0]), ""
+        return True, f"Reverted: {subject}.", commit
 
     def since(self, ts: float) -> list[dict]:
         """Her commits since `ts`, oldest first: what the evening list names."""
@@ -304,8 +304,8 @@ class Memory:
                 return commit, verdict
             if "[rejected]" not in push.stdout:  # the hub's own checks said no: their words are the reasons
                 said = [line.removeprefix("remote: ").strip() for line in push.stderr.splitlines()
-                        if line.startswith("remote: ") and "push не принят" not in line]
-                raise Refused([line for line in said if line] or ["хаб не принял push"])
+                        if line.startswith("remote: ") and not any(mark in line for mark in kbcheck.REJECTED)]
+                raise Refused([line for line in said if line] or ["the hub did not accept the push"])
             self._run("fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
             upstream = self._out("rev-parse", f"origin/{branch}")
             merged = self._run("merge-tree", "--write-tree", "--name-only", f"--merge-base={parent}", upstream, commit,
@@ -313,10 +313,10 @@ class Memory:
             if merged.returncode != 0:
                 clashing = [line for line in merged.stdout.split("\n")[1:] if line and not line.startswith(
                     ("Auto-merging", "CONFLICT"))]
-                raise Refused(["конфликт с правкой, которая пришла в хаб во время хода: "
+                raise Refused(["a conflict with an edit that reached the hub during the turn: "
                                + ", ".join(dict.fromkeys(clashing))])
             parent, commit = upstream, self._commit(merged.stdout.split("\n")[0], upstream, message)
-        raise Refused(["хаб менялся быстрее, чем она успевала записать"])
+        raise Refused(["the hub changed faster than she could write"])
 
     def _push(self, commit: str) -> subprocess.CompletedProcess:
         return self._run("push", "-q", "--porcelain", "origin", f"{commit}:refs/heads/{self.policy.branch}",

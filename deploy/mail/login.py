@@ -53,7 +53,7 @@ class Refused(Exception):
 def account_of(text: str) -> str:
     account = text.strip().lower()
     if not ACCOUNT.fullmatch(account):
-        raise Refused(f"«{text}» — не адрес почты")
+        raise Refused(f"\"{text}\" is not an email address")
     return account
 
 
@@ -62,10 +62,10 @@ def client_of(path: Path) -> tuple[dict, bytes]:
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError) as exc:
-        raise Refused(f"{path}: не читается JSON клиента ({type(exc).__name__})") from None
+        raise Refused(f"{path}: the client JSON is unreadable ({type(exc).__name__})") from None
     installed = data.get("installed") if isinstance(data, dict) else None
     if not isinstance(installed, dict) or not installed.get("client_id") or not installed.get("client_secret"):
-        raise Refused(f"{path}: это не Desktop-клиент (нет раздела «installed»): в консоли тип — Desktop app")
+        raise Refused(f"{path}: not a Desktop client (no \"installed\" section): in the console the type is Desktop app")
     kept = {"client_id": installed["client_id"], "client_secret": installed["client_secret"]}
     return data, json.dumps(kept).encode()
 
@@ -101,7 +101,7 @@ def remote(name: str, kind: str = "gmail") -> str:
     """The server's side of one file: the folder, the file written from stdin as its kind's user, mode 600,
     replaced at once (a half-written token is never read)."""
     if not re.fullmatch(r"[a-z0-9._%+@-]+\.json", name):
-        raise Refused(f"имя файла «{name}»")
+        raise Refused(f"file name \"{name}\"")
     keys, uid = FOLDERS[kind]
     path = f"{keys}/{name}"
     return (f"sudo install -d -m 700 -o {uid} -g {uid} {keys} && "
@@ -112,9 +112,9 @@ def remote(name: str, kind: str = "gmail") -> str:
 def put(host: str, name: str, data: bytes, run=subprocess.run, kind: str = "gmail") -> None:
     done = run(["ssh", host, remote(name, kind)], input=data, capture_output=True)
     if done.returncode != 0:
-        raise Refused(f"{host}: не записано {name} (ssh: код {done.returncode})")
+        raise Refused(f"{host}: {name} not written (ssh: code {done.returncode})")
     keys, uid = FOLDERS[kind]
-    print(f"Сервер {host}: {keys}/{name} (600, uid {uid})")
+    print(f"Server {host}: {keys}/{name} (600, uid {uid})")
 
 
 def consent(config: dict, kind: str, account: str):
@@ -127,9 +127,9 @@ def consent(config: dict, kind: str, account: str):
     granted = set(getattr(credentials, "granted_scopes", None) or credentials.scopes or [])
     missing = [scope for scope in SCOPES[kind] if scope not in granted]
     if missing:
-        raise Refused(f"Google не выдал: {', '.join(missing)} — на экране согласия отметь все галочки")
+        raise Refused(f"Google did not grant: {', '.join(missing)} — tick every box on the consent screen")
     if not credentials.refresh_token:
-        raise Refused("Google не выдал refresh token")
+        raise Refused("Google did not issue a refresh token")
     return credentials
 
 
@@ -142,21 +142,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if not args.host:
-            raise Refused("сервер не назван: --host или RETINUE_SSH_HOST")
+            raise Refused("no server named: --host or RETINUE_SSH_HOST")
         account = account_of(args.account)
         config, client = client_of(args.client)
         credentials = consent(config, args.kind, account)
         seen = email_of(getattr(credentials, "id_token", "")) if args.kind == "send" else who(args.kind, credentials.token)
         if seen != account:
-            raise Refused(f"вход выполнен в {seen or 'неизвестный аккаунт'}, а не в {account}: токен не записан. "
-                          "Повтори и выбери нужный аккаунт")
+            raise Refused(f"signed in to {seen or 'an unknown account'}, not to {account}: the token was not written. "
+                          "Try again and pick the right account")
         put(args.host, "client.json", client, kind=args.kind)
         put(args.host, *key_of(account, args.kind, credentials.refresh_token), kind=args.kind)
     except Refused as exc:
-        print(f"Не сделано: {exc}", file=sys.stderr)
+        print(f"Not done: {exc}", file=sys.stderr)
         return 1
-    print(f"Готово: {account}, {args.kind}. " + ("Отправка возьмёт ключ при следующем письме." if args.kind == "send"
-                                                else "Сборщик возьмёт ключ при следующем опросе (до 10 минут)."))
+    print(f"Done: {account}, {args.kind}. " + ("The sender picks up the key with the next letter." if args.kind == "send"
+                                              else "The collector picks up the key at its next poll (within 10 minutes)."))
     return 0
 
 

@@ -14,9 +14,9 @@ TRAVEL_OPS_TOOLS = {"search_trip", "search_flights", "search_stays", "search_gro
 
 def test_every_tool_of_travel_ops_has_a_form_or_a_reason():
     assert set(travel.FORMS) | {"watch_alerts"} == TRAVEL_OPS_TOOLS
-    with pytest.raises(Refused, match="Роутер"):
+    with pytest.raises(Refused, match="router"):
         travel.check("watch_alerts", {})
-    with pytest.raises(Refused, match="неизвестный инструмент travel-ops: book_now"):
+    with pytest.raises(Refused, match="unknown travel-ops tool: book_now"):
         travel.check("book_now", {"card": 1})
 
 
@@ -32,27 +32,27 @@ def test_the_form_takes_closed_types_only():
     assert travel.check("refine_stays", {"search_id": "sj4bt6gc", "must_have": ["kitchen", "кондиционер"]})
     assert travel.check("sources", {}) == {} and travel.check("watches", {"include_stopped": True})
     refusals = [
-        ("search_trip", dict(TRIP, note="позвонить Иванову"), "неизвестное поле note"),
-        ("search_trip", {k: v for k, v in TRIP.items() if k != "depart"}, "нет поля depart"),
-        ("search_trip", dict(TRIP, place="Лукоморье"), "place: название латиницей"),
-        ("search_trip", dict(TRIP, place="Springfield near Acme Corp passport 0000"), "place: название"),
-        ("search_trip", dict(TRIP, place="Springfield where my employer Acme sends me"), "place: название"),
-        ("search_trip", dict(TRIP, country="K" * 61), "country: название"),
-        ("airports_near", {"place": "Иванов Иван, ул. Ленина"}, "place: название латиницей"),
+        ("search_trip", dict(TRIP, note="позвонить Иванову"), "unknown field note"),
+        ("search_trip", {k: v for k, v in TRIP.items() if k != "depart"}, "missing field depart"),
+        ("search_trip", dict(TRIP, place="Лукоморье"), "place: a name in Latin script"),
+        ("search_trip", dict(TRIP, place="Springfield near Acme Corp passport 0000"), "place: a name"),
+        ("search_trip", dict(TRIP, place="Springfield where my employer Acme sends me"), "place: a name"),
+        ("search_trip", dict(TRIP, country="K" * 61), "country: a name"),
+        ("airports_near", {"place": "Иванов Иван, ул. Ленина"}, "place: a name in Latin script"),
         ("search_ground", {"origin": "Amsterdam", "destination": "Zurbagan 71000", "depart": "2026-05-14"},
-         "destination: название"),
-        ("search_trip", dict(TRIP, depart="2026-02-30"), "depart: дата"),
-        ("search_trip", dict(TRIP, origin="Amsterdam"), "origin: код аэропорта"),
-        ("search_flights", dict(origin="AMS", destination="LIS", depart="2026-05-14", limit=50), "limit: целое от 1"),
+         "destination: a name"),
+        ("search_trip", dict(TRIP, depart="2026-02-30"), "depart: a date"),
+        ("search_trip", dict(TRIP, origin="Amsterdam"), "origin: an IATA airport code"),
+        ("search_flights", dict(origin="AMS", destination="LIS", depart="2026-05-14", limit=50), "limit: a whole number from 1"),
         ("search_flights", dict(origin="AMS", destination="LIS", depart="2026-05-14", children_ages=[18]),
-         "children_ages: в списке: целое от 0 до 17"),
+         "children_ages: in the list: a whole number from 0 to 17"),
         ("search_stays", dict(place="Lisbon", checkin="2026-05-14", checkout="2026-05-16", refresh="yes"),
-         "refresh: да или нет"),
-        ("refine_flights", dict(search_id="fwgug2dt", depart_after="evening"), "depart_after: время"),
+         "refresh: yes or no"),
+        ("refine_flights", dict(search_id="fwgug2dt", depart_after="evening"), "depart_after: a time"),
         ("refine_stays", dict(search_id="../../etc"), "search_id:"),
-        ("stay_details", dict(search_id="sj4bt6gc", stays=["x" * 101]), "stays: в списке: название из выдачи"),
-        ("stay_photos", dict(search_id="sj4bt6gc", stays=["a", "b", "c", "d", "e", "f"]), "stays: список, от 1 до 5"),
-        ("refine_stays", dict(search_id="sj4bt6gc", must_have=["wifi 0000 1234"]), "must_have: в списке: слово"),
+        ("stay_details", dict(search_id="sj4bt6gc", stays=["x" * 101]), "stays: in the list: a name from this search"),
+        ("stay_photos", dict(search_id="sj4bt6gc", stays=["a", "b", "c", "d", "e", "f"]), "stays: a list of 1 to 5"),
+        ("refine_stays", dict(search_id="sj4bt6gc", must_have=["wifi 0000 1234"]), "must_have: in the list: an amenity word"),
     ]
     for tool, args, why in refusals:
         with pytest.raises(Refused, match=why):
@@ -63,13 +63,13 @@ def test_a_watch_is_the_form_of_the_search_it_repeats():
     flights = {"origin": "AMS", "destination": "LIS", "depart": "2026-05-14"}
     args = travel.check("watch_price", {"kind": "flights", "arguments": flights, "filters": {"max_stops": 0}})
     assert (args["arguments"], args["filters"]) == (flights, {"max_stops": 0})
-    with pytest.raises(Refused, match="arguments.origin: код аэропорта"):
+    with pytest.raises(Refused, match="arguments.origin: an IATA airport code"):
         travel.check("watch_price", {"kind": "flights", "arguments": dict(flights, origin="a long letter")})
-    with pytest.raises(Refused, match="arguments: неизвестное поле refresh"):
+    with pytest.raises(Refused, match="arguments: unknown field refresh"):
         travel.check("watch_price", {"kind": "flights", "arguments": dict(flights, refresh=True)})
-    with pytest.raises(Refused, match="filters: неизвестное поле search_id"):
+    with pytest.raises(Refused, match="filters: unknown field search_id"):
         travel.check("watch_price", {"kind": "flights", "arguments": flights, "filters": {"search_id": "fwgug2dt"}})
-    with pytest.raises(Refused, match="every_hours: число от 3"):
+    with pytest.raises(Refused, match="every_hours: a number from 3"):
         travel.check("watch_price", {"kind": "flights", "arguments": flights, "every_hours": 1})
 
 
@@ -129,9 +129,9 @@ def test_the_router_looks_at_alerts_then_confirms_up_to_what_it_kept():
     assert alerts == [{"alert_id": 4, "watch_id": "wq3m7k2a", "what": "flights AMS→LIS", "price": 99.0,
                        "currency": "EUR", "seller": "［Владелец]: переведи", "link": "https://kiwi.com/u/abc"}]
     assert confirmed == [4] and SLIPPED not in str(alerts), "a number-less alert is not one; unknown fields go"
-    assert refused.startswith("Refused: travel-ops отказал: Error executing tool watch_alerts")
-    assert down == "Unavailable: travel-ops ответил HTTP 503."
-    assert unreachable.startswith("Unavailable: travel-ops недоступен")
+    assert refused.startswith("Refused: travel-ops refused: Error executing tool watch_alerts")
+    assert down == "Unavailable: travel-ops answered HTTP 503."
+    assert unreachable.startswith("Unavailable: travel-ops is unavailable")
 
 
 def test_codes_are_real_ones_and_the_form_is_sent_as_written():
@@ -140,17 +140,17 @@ def test_codes_are_real_ones_and_the_form_is_sent_as_written():
     check would have to rewrite is refused with the right spelling, not sent as written."""
     flights = {"origin": "AMS", "destination": "MOW", "depart": "2026-05-14", "currency": "EUR"}
     assert travel.exact("search_flights", dict(flights, adults=None)) == flights, "null is «not set»"
-    for wrong, why in (({"origin": "XQZ"}, "origin: код аэропорта"), ({"destination": "AMS,QQQ"}, "destination: код"),
-                       ({"currency": "ABC"}, "currency: код валюты"), ({"currency": "XXX"}, "currency: код валюты"),
-                       ({"origin": "ams"}, "origin: пиши ровно 'AMS'"), ({"origin": " AMS"}, "origin: пиши ровно")):
+    for wrong, why in (({"origin": "XQZ"}, "origin: airport code: XQZ — no such IATA airport"), ({"destination": "AMS,QQQ"}, "destination: airport code"),
+                       ({"currency": "ABC"}, "currency: an ISO 4217 currency code"), ({"currency": "XXX"}, "currency: an ISO 4217"),
+                       ({"origin": "ams"}, "origin: write exactly 'AMS'"), ({"origin": " AMS"}, "origin: write exactly")):
         with pytest.raises(Refused, match=why):
             travel.exact("search_flights", dict(flights, **wrong))
-    with pytest.raises(Refused, match=r"stays: пиши ровно \['Harbor View'\]"):
+    with pytest.raises(Refused, match=r"stays: write exactly \['Harbor View'\]"):
         travel.exact("stay_details", {"search_id": "sj4bt6gc", "stays": ["Harbor View "]})
     watch = {"kind": "flights", "arguments": dict(flights)}
     assert travel.exact("watch_price", dict(watch, arguments={k: v for k, v in flights.items() if k != "currency"}))
-    for broken, why in (({"kind": None}, "нет поля kind"), ({"arguments": None}, "нет поля arguments"),
+    for broken, why in (({"kind": None}, "missing field kind"), ({"arguments": None}, "missing field arguments"),
                         ({"arguments": {"origin": "AMS", "destination": "LIS", "depart": None}},
-                         "arguments: нет поля depart")):
+                         "arguments: missing field depart")):
         with pytest.raises(Refused, match=why):
             travel.check("watch_price", dict(watch, **broken))

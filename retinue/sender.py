@@ -1,5 +1,5 @@
 """The mail sender: code, no model, the only holder of the owner's `gmail.send` tokens. It sends one letter when the
-router asks with a key, the envelope and its digest — the envelope the owner pressed «Отправить» under — and nothing
+router asks with a key, the envelope and its digest — the envelope the owner pressed «Send» under — and nothing
 else: no listing, no reading (the scope reads nothing), no second send of a key (`courier.send_once`).
 
 Its own container, its own user, its own keys folder: the collector, which parses strangers' letters, never holds a
@@ -48,7 +48,7 @@ class Service:
     async def _gmail(self, envelope: courier.Envelope, key: str) -> tuple[str, dict]:
         mailbox = next((a for a in self.accounts() if a.key.account == envelope.account), None)
         if mailbox is None:
-            return "failed", {"error": f"нет ключа отправки для {envelope.account}"}
+            return "failed", {"error": f"no sending key for {envelope.account}"}
         try:
             answer = await mailbox.send(courier.mail_bytes(envelope, key), envelope.thread)
         except google.InvalidGrant:

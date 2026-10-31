@@ -7,12 +7,12 @@
 <div class="shelf">
 {{- range sort . "updated" "desc" }}
 <article class="card">
-<div class="meta">{{ with .topic }}<span class="chip accent">{{ . }}</span>{{ end }}{{ with .updated }}<span>{{ . }}</span>{{ end }}{{ with .reading_min }}<span>{{ partial "icon.html" "clock" }} {{ int . }} мин</span>{{ end }}</div>
+<div class="meta">{{ with .topic }}<span class="chip accent">{{ . }}</span>{{ end }}{{ with .updated }}<span>{{ . }}</span>{{ end }}{{ with .reading_min }}<span>{{ partial "icon.html" "clock" }} {{ int . }} min</span>{{ end }}</div>
 <div class="big">{{ .title }}</div>
 {{- with .description }}<p>{{ . }}</p>{{ end }}
-<div class="links">{{ partial "link.html" (dict "url" .url "ok" true "kind" "local" "text" "читать" "icon" "arrow-right" "class" "quiet") }}</div>
+<div class="links">{{ partial "link.html" (dict "url" .url "ok" true "kind" "local" "text" "read" "icon" "arrow-right" "class" "quiet") }}</div>
 </article>
 {{- end }}
 </div>
-{{- else }}<p class="empty">Опубликованных страниц пока нет: они появятся здесь, когда ассистентка их соберёт.</p>{{ end }}
+{{- else }}<p class="empty">No published pages yet: they show up here once the assistant makes them.</p>{{ end }}
 {{ end }}

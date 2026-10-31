@@ -1,5 +1,5 @@
 ---
-title: Финансы
+title: Finance
 soon: true
 ---
-Деньги по месяцам — когда будет решено, откуда брать данные.
+Money by month — once it is decided where the data comes from.

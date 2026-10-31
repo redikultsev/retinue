@@ -160,8 +160,8 @@ class Budget:
         spent = self._spent.setdefault(run, {})
         if spent.get(where, 0) + size > SITE_BUDGET:
             spent[where] = 0
-            return (f"Похоже на вынос данных: сайт {where} за этот ход получил больше {SITE_BUDGET} знаков в адресах "
-                    "(путь и запрос). Прочитай адрес целиком")
+            return (f"Looks like data leaving: the site {where} got over {SITE_BUDGET} characters in addresses this turn "
+                    "(path and query). Read the whole address")
         spent[where] = spent.get(where, 0) + size
         return ""
 
@@ -174,29 +174,29 @@ def _url_why(url: str) -> str:
         parts = urlsplit(url.strip())
         host = parts.hostname or ""
     except ValueError:
-        return "адрес не разобрать"
+        return "the address cannot be parsed"
     if parts.username is not None or parts.password is not None:
-        return "в адресе логин или пароль — они уходят на сайт заголовком"
+        return "the address has a login or password — they go to the site as a header"
     if len(host) > HOST_MAX:
-        return f"имя сайта — {len(host)} знаков (порог {HOST_MAX})"
+        return f"the host name is {len(host)} characters (limit {HOST_MAX})"
     if label := next((label for label in host.split(".") if len(label) > LABEL_MAX), None):
-        return f"в имени сайта часть из {len(label)} знаков (порог {LABEL_MAX})"
+        return f"the host name has a part of {len(label)} characters (limit {LABEL_MAX})"
     exempt = _structured(host, parts.path)
     params = [pair.partition("=")[::2] for pair in re.split(r"[&;]", parts.query) if pair]  # raw: escapes kept
     params = [(name, value) for name, value in params if name not in exempt]
     query = unquote("&".join(f"{n}={v}" for n, v in params), errors="replace")  # in characters
     path = unquote(parts.path, errors="replace")
     if len(query) > QUERY_MAX:
-        return f"строка запроса — {len(query)} знаков (порог {QUERY_MAX})"
+        return f"the query string is {len(query)} characters (limit {QUERY_MAX})"
     if len(params) > PARAMS_MAX:
-        return f"параметров — {len(params)} (порог {PARAMS_MAX})"
+        return f"{len(params)} parameters (limit {PARAMS_MAX})"
     if len(path) > PATH_MAX:
-        return f"путь — {len(path)} знаков (порог {PATH_MAX})"
+        return f"the path is {len(path)} characters (limit {PATH_MAX})"
     pieces = [*host.split("."), *parts.path.split("/"), *(text for pair in params for text in pair)]
     if size := max((blob(piece) for piece in pieces), default=0):
-        return f"в адресе закодированный блок из {size} знаков"
+        return f"the address has an encoded block of {size} characters"
     if size := joined(parts.path + "?" + "&".join(f"{n}={v}" for n, v in params)):
-        return f"в адресе закодированный блок из {size} знаков, разбитый на части"
+        return f"the address has an encoded block of {size} characters, split into pieces"
     return ""
 
 
@@ -205,19 +205,19 @@ def why(tool: str, tool_input: dict) -> str:
     if tool == "WebFetch":
         url = tool_input.get("url")
         try:
-            reason = _url_why(url) if isinstance(url, str) else "адрес не строка"
+            reason = _url_why(url) if isinstance(url, str) else "the address is not a string"
         except Exception:  # noqa: BLE001 — a hook that fails lets the call run: an address not read is a card
-            reason = "адрес не разобрать"
-        return f"Похоже на вынос данных: {reason}. Прочитай адрес целиком" if reason else ""
+            reason = "the address cannot be parsed"
+        return f"Looks like data leaving: {reason}. Read the whole address" if reason else ""
     if tool == "WebSearch":
         query = tool_input.get("query")
         if not isinstance(query, str):
             return ""
         if len(query) > SEARCH_MAX:
-            reason = f"запрос — {len(query)} знаков (порог {SEARCH_MAX})"
+            reason = f"the query is {len(query)} characters (limit {SEARCH_MAX})"
         elif size := blob(query) or joined(query):
-            reason = f"в запросе закодированный блок из {size} знаков"
+            reason = f"the query has an encoded block of {size} characters"
         else:
             return ""
-        return f"Похоже на вынос данных: {reason}. Прочитай запрос целиком"
+        return f"Looks like data leaving: {reason}. Read the whole query"
     return ""

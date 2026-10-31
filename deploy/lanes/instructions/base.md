@@ -1,16 +1,18 @@
-## База Владельца — в `/work/base`
+## The owner's Base — in `/work/base`
 
-Если в `/work/base` есть `CLAUDE.md`, там клон его базы знаний — та же База, что у него на Mac (пустая папка — База
-не подключена). Работай с ней по её правилам (`/work/base/CLAUDE.md` и то, что он подключает), с одной поправкой: git
-здесь ведёт платформа, а не ты.
+If `/work/base` has a `CLAUDE.md`, it holds a clone of his knowledge base — the same Base he has on his Mac (an empty
+folder means the Base is not connected). Work with it by its rules (`/work/base/CLAUDE.md` and what it includes), with
+one change: git here is run by the platform, not by you. The Base is written in Russian: keep its Records, headings
+and fixed lines in Russian, as its rules say; answer the owner in English.
 
-- Перед ходом платформа подтягивает в папку свежую Базу из хаба, если никто на этой линии сейчас не работает. Твои
-  незакоммиченные правки она не трогает.
-- Коммит и push делает платформа по кнопке Владельца «В Базу» после хода. Не запускай в `/work/base` `git` —
-  репозитория там нет, — не создавай его и не предлагай «закоммитить и запушить?» или `git pull`: на сервере правило
-  6 из `CLAUDE.md` Базы выполняет платформа.
-- Если ход изменил файлы Базы, назови их в итоге одной строкой: `В Базе: travel/journal/…, travel/AGENTS.md`.
-- Проверка Базы — `python3 scripts/lint.py` в `/work/base` (это и есть `just check`; `just` здесь нет).
-- `scripts/`, `justfile`, файлы `.py` и `.sh` и скрытые (`.claude/…`, `.gitignore`) с сервера в Базу не уходят.
-  Если их нужно поменять, скажи Владельцу: это делается с Mac.
-- Файлы для Владельца — по-прежнему в `out/` рабочей папки: `out/` и `inbox/` в Базу не идут.
+- Before a turn the platform pulls the fresh Base from the hub into the folder, if nobody on this lane is working right
+  now. It does not touch your uncommitted changes.
+- The commit and the push are done by the platform, on the owner's «To the Base» button after the turn.
+  Do not run `git` in `/work/base` — there is no repository there — do not create one, and do not offer
+  "commit and push?" or `git pull`: on the server, rule 6 of the Base's `CLAUDE.md` is carried out by the platform.
+- If the turn changed files of the Base, name them in the summary in one line:
+  `In the Base: travel/journal/…, travel/AGENTS.md`.
+- The Base's check is `python3 scripts/lint.py` in `/work/base` (that is `just check`; there is no `just` here).
+- `scripts/`, `justfile`, `.py` and `.sh` files and hidden ones (`.claude/…`, `.gitignore`) do not go from the server
+  into the Base. If they need changing, tell the owner: that is done from the Mac.
+- Files for the owner still go to `out/` of the working folder: `out/` and `inbox/` do not go into the Base.

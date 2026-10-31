@@ -4,7 +4,7 @@
   {{- $r := . | transform.Unmarshal -}}
   {{- range $r.views -}}
     {{- if and (ne .path "all") (findRE "^[a-z0-9-]{1,40}$" .path) -}}
-      {{- $.AddPage (dict "path" .path "title" (printf "Разбор: %s" .title) "kind" "page"
+      {{- $.AddPage (dict "path" .path "title" (printf "Review: %s" .title) "kind" "page"
           "params" (dict "review" .path) "content" (dict "mediaType" "text/markdown" "value" "")) -}}
     {{- end -}}
   {{- end -}}

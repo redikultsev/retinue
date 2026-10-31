@@ -1,4 +1,4 @@
-"""«Читать»: the life hub's library of pages in the face — the owner's own HTML pages that the hub serves under
+"""«Read»: the life hub's library of pages in the face — the owner's own HTML pages that the hub serves under
 `/pages/` (`lifehub.Lifehub.pages`), listed by section with what he has opened and finished.
 
 The router knows the list and pushes it here (`POST /owner/library`) whole each time it changes and at least hourly;
@@ -10,8 +10,8 @@ to the page's address on the hub, `<hub_origin>/pages/<id>.html`, the hub's orig
 config, not the push. A page off the contract is dropped and named; the rest of the list stands.
 
 What the owner did with a page — opened it, said he finished it — is the platform's own row (`library_reads`), so a
-phone and a desktop agree. The hub's page cannot report its scroll position across origins, so «где остановился» is
-when it was last opened plus his own «Дочитал».
+phone and a desktop agree. The hub's page cannot report its scroll position across origins, so «where he stopped» is
+when it was last opened plus his own «Finished».
 """
 
 from __future__ import annotations
@@ -66,13 +66,13 @@ def clean(body: object, hub: str) -> tuple[list[dict], list[dict]]:
     not hide the rest. Returns the pages kept, each `url` written canonically, and the dropped `[{id, why}]`."""
     home = origin(hub)
     if not home:
-        raise Refused("hub_origin не задан в platform.yaml: адрес страниц не с чем сверить")
+        raise Refused("hub_origin is not set in platform.yaml: nothing to check the pages' addresses against")
     if not isinstance(body, dict) or set(body) != {"pages"} or not isinstance(body["pages"], list):
-        raise Refused("pages: не список")
+        raise Refused("pages: not a list")
     if len(body["pages"]) > PAGES_MAX:
-        raise Refused(f"pages: больше {PAGES_MAX}")
+        raise Refused(f"pages: more than {PAGES_MAX}")
     if not all(isinstance(page, dict) for page in body["pages"]):
-        raise Refused("pages: не список объектов")
+        raise Refused("pages: not a list of objects")
     pages, dropped, seen = [], [], set()
     for page in body["pages"]:
         page_id = page.get("id")
@@ -90,29 +90,29 @@ def clean(body: object, hub: str) -> tuple[list[dict], list[dict]]:
 def _wrong(page: dict, home: str, seen: set) -> str:
     """Why one page is off the contract, or ''."""
     if not KEYS >= set(page) or not REQUIRED <= set(page):
-        return "поля не те"
+        return "wrong fields"
     page_id = page["id"]
     if not isinstance(page_id, str) or not PAGE_ID.fullmatch(page_id):
-        return "id не по форме"
+        return "id malformed"
     if page_id in seen:
-        return "id повторяется"
+        return "id repeated"
     url = page["url"]
     if not isinstance(url, str):
-        return "url не строка"
+        return "url not a string"
     parts = urlsplit(url)
     if origin(url) != home or parts.path != f"/pages/{page_id}.html" or parts.query or parts.fragment or "?" in url \
             or "#" in url:
-        return f"url не страница хаба {home}/pages/{page_id}.html"
+        return f"url is not the hub's page {home}/pages/{page_id}.html"
     if not isinstance(page["title"], str) or not line(page["title"], TITLE_CHARS):
-        return "title пустой или не строка"
+        return "title empty or not a string"
     if not isinstance(page["updated"], str) or not DAY.fullmatch(page["updated"]) or not _day(page["updated"]):
-        return "updated не дата ГГГГ-ММ-ДД"
+        return "updated is not a date YYYY-MM-DD"
     section = page.get("section")
     if section is not None and (not isinstance(section, str) or not SECTION.fullmatch(section)):
-        return "section не имя Пространства"
+        return "section is not a Space's name"
     minutes = page.get("minutes")
     if minutes is not None and (type(minutes) is not int or not 0 < minutes <= MINUTES_MAX):
-        return "minutes не число минут"
+        return "minutes is not a number of minutes"
     return ""
 
 
@@ -170,7 +170,7 @@ class Library:
         return self._shown(found, {page_id: row} if row else {})
 
     def opened(self, page_id: str, now: float) -> dict | None:
-        """He opened the page: it goes to «Продолжить» until he finishes it."""
+        """He opened the page: it goes to «Continue» until he finishes it."""
         if self.page(page_id) is None:
             return None
         self.store.db.execute("INSERT INTO library_reads (page, opened) VALUES (?, ?) "
@@ -179,7 +179,7 @@ class Library:
         return self.page(page_id)
 
     def finished(self, page_id: str, done: bool, now: float) -> dict | None:
-        """«Дочитал», or taken back."""
+        """«Finished», or taken back."""
         if self.page(page_id) is None:
             return None
         self.store.db.execute("INSERT INTO library_reads (page, done) VALUES (?, ?) "

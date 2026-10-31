@@ -21,7 +21,7 @@ the backup's own keys — and the Matrix appservice registration, which carries 
 `setup.sh` writes new generated secrets, and you fill in the rest again.
 
 The result of every run, good or bad, goes to `/srv/retinue/status/backup.json`. The router reads it through a
-read-only mount, and the health line of the morning summary says `бэкап — 5 ч назад`, or `бэкапа нет 2 сут:
+read-only mount, and the health line of the morning brief says `backup — 5 h ago`, or `no backup for 2 d:
 <error>` when the last good snapshot is older than 26 hours. No summary at all means the server is down. The
 containers' health comes the same way, from `status/health.json` ([health.md](health.md)).
 

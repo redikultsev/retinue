@@ -3,8 +3,8 @@
 # code, reads the environment or fetches anything. The page policy has no 'unsafe-inline': no style="" and no
 # inline script anywhere — classes of /css/lifehub.css only.
 baseURL = "/"
-locale = "ru"
-title = "Хаб жизни"
+locale = "en"
+title = "Life hub"
 disableHugoGeneratorInject = true
 disableKinds = ["taxonomy", "term", "rss", "sitemap", "robotstxt", "404"]
 enableRobotsTXT = false

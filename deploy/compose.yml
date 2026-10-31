@@ -215,7 +215,7 @@ services:
     networks: [mail-out, send-out, outside]
 
   # The mail sender: code, no model, the only holder of the owner's `gmail.send` tokens. It sends one letter when
-  # the router asks with the key, the envelope and the digest of a card the owner pressed «Отправить» under — each
+  # the router asks with the key, the envelope and the digest of a card the owner pressed «Send» under — each
   # key once — and reads nothing. Its own user and keys, apart from the collector, which parses strangers' letters.
   # Off until the owner turns it on (setup.sh SEND=1, which needs MAIL=1); the keys come from his Mac (--kind send).
   mail-send:
@@ -378,7 +378,7 @@ services:
       RETINUE_FACE_ORIGIN: ${RETINUE_FACE_ORIGIN:-}
       RETINUE_WEBAPP_KEY: ${RETINUE_WEBAPP_KEY:-}   # derived from the bot token by setup.sh; never the token itself
       TELEGRAM_OWNER_ID: ${TELEGRAM_OWNER_ID:-}
-      # The owner's voice in the app (docs/face.md «Голос»): the platform calls ElevenLabs through platform-egress and
+      # The owner's voice in the app (docs/face.md «Voice»): the platform calls ElevenLabs through platform-egress and
       # takes the key out of its environment at start; no lane is given it.
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
     # The git tokens, RETINUE_GIT_TOKEN_<KEY> (docs/code.md): root's file, written by deploy/code/set-git-token.sh;

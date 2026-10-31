@@ -29,8 +29,8 @@ LABEL_CHARS = 60                  # a button's words
 BODY_CHARS = 3000                 # one question as its Telegram card shows it; the face shows it whole
 DONE = "done"
 TICK, UNTICK = "☑ ", "☐ "
-OPEN_SINGLE = "Выбери вариант кнопкой — или ответь на это сообщение своим текстом."
-OPEN_MULTI = "Отметь варианты и нажми «Готово» — или ответь на это сообщение своим текстом."
+OPEN_SINGLE = "Pick an option with a button — or reply to this message in your own words."
+OPEN_MULTI = "Tick the options and press «Done» — or reply to this message in your own words."
 
 
 def of(tool_input: dict) -> list[dict]:
@@ -107,8 +107,8 @@ def card(approval: dict, n: int, session: str, track: str, status: str = "") -> 
     to do — or its answer, or `status` once it no longer asks."""
     questions = of(approval["input"])
     q = questions[n]
-    count = f" · {n + 1} из {len(questions)}" if len(questions) > 1 else ""
-    head = [f"Вопрос · {courier.line(track)} · сессия {session}{count}"]
+    count = f" · {n + 1} of {len(questions)}" if len(questions) > 1 else ""
+    head = [f"Question · {courier.line(track)} · session {session}{count}"]
     if q["header"]:
         head.append(courier.line(q["header"], 120))
     lines = [q["question"], ""] if q["options"] else [q["question"]]
@@ -120,8 +120,8 @@ def card(approval: dict, n: int, session: str, track: str, status: str = "") -> 
     view = approval.get("view") or {}
     answer = (view.get("answers") or {}).get(str(n))
     if answer:
-        words = "свой ответ" if answer.get("other") else "ответ"
-        status = f"{words[0].upper()}{words[1:]}: {courier.line(answer['value'], 1000)}"
+        words = "Your answer" if answer.get("other") else "Answer"
+        status = f"{words}: {courier.line(answer['value'], 1000)}"
     elif not status:
         status = OPEN_MULTI if q["multiSelect"] else OPEN_SINGLE
     return courier.CardView(head=head, body=body, status=status)
@@ -129,7 +129,7 @@ def card(approval: dict, n: int, session: str, track: str, status: str = "") -> 
 
 def buttons(approval: dict, n: int) -> list[tuple[str, str]]:
     """Question `n`'s buttons while it asks, (words, action): one per option; a multi-select's options as ticks, and
-    «Готово» last. None once it has its answer."""
+    «Done» last. None once it has its answer."""
     view = approval.get("view") or {}
     if str(n) in (view.get("answers") or {}):
         return []
@@ -142,7 +142,7 @@ def buttons(approval: dict, n: int) -> list[tuple[str, str]]:
             label = (TICK if option["label"] in picks else UNTICK) + label
         out.append((label, action(n, i)))
     if q["multiSelect"]:
-        out.append(("Готово", action(n, DONE)))
+        out.append(("Done", action(n, DONE)))
     return out
 
 

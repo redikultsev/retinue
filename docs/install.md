@@ -23,7 +23,7 @@ sudo TELEGRAM_OWNER_ID=123456789 bash /opt/retinue/deploy/setup.sh
 Your time zone is UTC unless you say otherwise: add `OWNER_TZ=Europe/Berlin` (any IANA name) to the command; a
 later run without it keeps the zone you gave. Every time the assistant sees, every reminder, the 09:00 morning
 summary and the nightly backup follow it. Later you change
-it in words («я в Энске»): the router keeps your word over this setting ([proactive.md](proactive.md)).
+it in words («I'm in Springfield»): the router keeps your word over this setting ([proactive.md](proactive.md)).
 
 The script creates `/srv/retinue`: `router.yaml`, the assistant's config and instructions
 (`agents/assistant/`, mounted read-only), the proxy config (`egress/`), `secrets.env` with generated tokens, and
@@ -50,7 +50,7 @@ Optional parts, each turned on by `setup.sh` with its own switch and its own gui
 price watches; `MEMORY=1` — the knowledge base she writes ([memory.md](memory.md)); `MAIL=1` — your Gmail and
 Google Calendar, read-only ([mail.md](mail.md)); `LIFEHUB=1` — pages for your devices only: now, trips, status
 ([lifehub.md](lifehub.md)); `TGBUSINESS=1` and `SEND=1` — your chosen Telegram chats and replies to people, each
-sent only by your «Отправить» under the exact text ([courier.md](courier.md)); `PLATFORM=1` — Claude Code sessions
+sent only by your «Send» under the exact text ([courier.md](courier.md)); `PLATFORM=1` — Claude Code sessions
 in lane containers, driven from the same chat, in auto mode: what its classifier blocks approved by you
 ([platform.md](platform.md)); `FACE=1 FACE_HOST=app.in.<your domain>` — the platform's app on your phone, over WireGuard only ([face.md](face.md)).
 

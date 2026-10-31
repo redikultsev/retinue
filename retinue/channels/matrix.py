@@ -1,4 +1,4 @@
-"""Matrix channel: an appservice. Agents are its virtual users, one room per agent, plus a «Протокол» room.
+"""Matrix channel: an appservice. Agents are its virtual users, one room per agent, plus a «Protocol» room.
 
 The router holds the only Matrix token; agents never see Matrix. Matrix is the record channel: what the
 owner writes through other channels is mirrored into the agent's room.
@@ -77,7 +77,7 @@ class MatrixChannel:
         if self.store.room(PROTOCOL):
             return
         room_id = await self.az.intent.create_room(
-            name="Протокол", topic="Все обмены через Роутер", invitees=[UserID(self.cfg.owner)],
+            name="Protocol", topic="Every exchange through the router", invitees=[UserID(self.cfg.owner)],
         )
         self.store.save_room(PROTOCOL, room_id)
 
@@ -107,7 +107,7 @@ class MatrixChannel:
             await self.intent(agent_id).set_typing(room_id, timeout=int(self.typing_refresh_s * 2000) if active else 0)
 
     async def draft(self, agent_id: str, text: str) -> None:
-        pass  # Element X shows no live edits well; «печатает…» stays until the answer
+        pass  # Element X shows no live edits well; «typing…» stays until the answer
 
     async def send(self, agent_id: str, text: str, files: list[AgentFile], ref: str | None = None) -> None:
         room_id = self._room(agent_id)
@@ -126,7 +126,7 @@ class MatrixChannel:
         # The router cannot post as the owner (and should not), so the owner's words arrive as a quote.
         if room_id := self._room(agent_id):
             label = ORIGIN_LABELS.get(origin, origin)
-            body, html = render(f"**Владелец, {label}:**\n\n" + "\n".join(f"> {line}" for line in text.splitlines()))
+            body, html = render(f"**You, {label}:**\n\n" + "\n".join(f"> {line}" for line in text.splitlines()))
             await self.intent(agent_id).send_text(room_id, text=body, html=html, msgtype=MessageType.NOTICE)
 
     async def notice(self, agent_id: str, text: str, buttons: list[tuple[str, str]] | None = None,
@@ -147,7 +147,7 @@ class MatrixChannel:
             return
         intent = self.intent(agent_id)
         if tree_id not in self.threads:
-            root = TextMessageEventContent(msgtype=MessageType.NOTICE, body="🔀 Переписка агентов")
+            root = TextMessageEventContent(msgtype=MessageType.NOTICE, body="🔀 Agents talking")
             self.threads[tree_id] = await intent.send_message(room_id, root)
         body, html = render(text)
         content = TextMessageEventContent(msgtype=MessageType.NOTICE, body=body, format=Format.HTML,

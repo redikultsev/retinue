@@ -188,7 +188,7 @@ def test_a_repositorys_rules_reach_the_model_only_through_the_lane_hosts_file(la
     assert run.rc == 0, run.stderr
     system = json.dumps(api.requests[0]["system"], ensure_ascii=False)
     assert "PROBE-CLAUDE-MD" in system and "PROBE-AGENTS-MD" in system
-    assert f"Правила репозитория {lane.cwd} — текст из репозитория" in system and "<<<end repo-file probe>>>" in system
+    assert f"Rules of the repository {lane.cwd} — text from the repository" in system and "<<<end repo-file probe>>>" in system
 
 
 def test_auto_memory_is_off_with_the_variable_the_lane_sets(lane, api):
@@ -423,7 +423,7 @@ def _said(body: dict) -> list[str]:
 
 
 def test_a_fork_starts_from_the_parents_context_and_leaves_the_parent_as_it_was(lane, api):
-    """`--resume <parent> --fork-session` (the face's «Ответвить», `cliengine.FORK_SESSION`): with our whole argv the
+    """`--resume <parent> --fork-session` (the face's «Fork», `cliengine.FORK_SESSION`): with our whole argv the
     fork gets a new session id, its first request carries the parent's conversation, its stream holds only its own
     turn, and the parent's transcript is not touched — the parent's next turn never sees the fork's words."""
     parent = lane.run("запомни 4711")
@@ -642,7 +642,7 @@ def test_e4_a_deferred_call_granted_after_both_processes_restarted_runs_exactly_
         await stack.settled()
         [card] = stack.notes("card")
         assert stack.store.session(session)["state"] == "waiting" and not marker.exists()
-        assert any(line.startswith("Классификатор остановил: Auto mode could not evaluate")
+        assert any(line.startswith("Stopped by the classifier: Auto mode could not evaluate")
                    for line in card["data"]["view"]["head"])
         [blocked] = [line for line in stack.lines() if line.get("subtype") == "permission_denied"]
         assert stack.store.approval(card["approval"])["tool_use_id"] != blocked["tool_use_id"], "the repeat is the card"
@@ -653,7 +653,7 @@ def test_e4_a_deferred_call_granted_after_both_processes_restarted_runs_exactly_
         stack.platform_object()
         await stack.platform_listening()
         pressed = await stack.owner("press", {"button": card["data"]["buttons"][0][1]})
-        assert pressed["toast"] == "Разрешено."
+        assert pressed["toast"] == "Allowed."
         await stack.settled()
         assert marker.read_text() == "ran\n"
         assert stack.store.approval(card["approval"])["state"] == "executed"
@@ -667,7 +667,7 @@ def test_e4_a_deferred_call_granted_after_both_processes_restarted_runs_exactly_
 
 def test_e_question_answered_by_buttons_after_both_restarts_reaches_the_model_once(stack, api):
     """AskUserQuestion end to end: the gate defers it, one card per question; a press, both processes restarted, a
-    tick and «Готово» — the resume hands the CLI the answers and the model is told them."""
+    tick and «Done» — the resume hands the CLI the answers and the model is told them."""
     api.tools = [("AskUserQuestion", ASK)]
 
     async def go():
@@ -680,7 +680,7 @@ def test_e_question_answered_by_buttons_after_both_restarts_reaches_the_model_on
         assert stack.store.session(session)["state"] == "waiting"
         assert [w for w, _ in first["data"]["buttons"]] == ["Центр", "Окраина"]
         assert (await stack.owner("press", {"button": first["data"]["buttons"][1][1]}))["toast"] == \
-            "Принято. Осталось ответить: 1."
+            "Accepted. Still to answer: 1."
 
         await stack.platform_down()
         await stack.lane_down()
@@ -690,7 +690,7 @@ def test_e_question_answered_by_buttons_after_both_restarts_reaches_the_model_on
         keep = (await stack.owner("press", {"button": second["data"]["buttons"][0][1]}))["keep"]
         keep = (await stack.owner("press", {"button": keep[1][1]}))["keep"]
         done = await stack.owner("press", {"button": keep[2][1]})
-        assert done["toast"] == "Ответ передан в сессию."
+        assert done["toast"] == "Answer passed to the session."
         await stack.settled()
         [approval] = stack.store.approvals(session=session, kind="question")
         assert approval["state"] == "executed"
@@ -726,7 +726,7 @@ def test_an_ask_no_hook_decides_is_denied_by_the_lane_host_and_the_run_ends(stac
         lines = [json.loads(i["line"]) for i in stack.host.journal.look(200)]
         [ask] = [line for line in lines if line.get("type") == "control_request"]
         assert ask["request"]["subtype"] == "can_use_tool" and ask["request"]["tool_name"] == "AskUserQuestion"
-        assert api.tool_results()[-1]["content"].startswith("Этот вызов спрашивает разрешения")
+        assert api.tool_results()[-1]["content"].startswith("This call asks for permission")
         await stack.lane_down()
 
     asyncio.run(go())

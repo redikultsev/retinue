@@ -65,9 +65,9 @@ def test_no_template_writes_markup_style_or_an_address_from_data():
 
 
 def test_every_page_of_the_first_version_is_there():
-    """«Сейчас», trips, status, the tracker; finance and health are «скоро». A tab bar of five on a phone —
-    Сейчас, Поездки, the tracker (its title from the data), Библиотека, Ещё — and the review and the status in the
-    sidebar from 900 px; «Ещё» lists the review, the status, finance and health."""
+    """«Now», trips, status, the tracker; finance and health are «soon». A tab bar of five on a phone —
+    Now, Trips, the tracker (its title from the data), Library, More — and the review and the status in the
+    sidebar from 900 px; «More» lists the review, the status, finance and health."""
     base = (SITE / "layouts" / "baseof.html").read_text()
     assert re.findall(r'<a href="(/[a-z/]*)"', base) == ["/", "/trips/", "/tracker/", "/library/", "/review/", "/status/",
                                                           "/more/"]
@@ -87,7 +87,7 @@ def test_every_page_of_the_first_version_is_there():
     assert "layout: status" in (SITE / "content" / "status.md").read_text()
     home = (SITE / "layouts" / "home.html").read_text()
     for part in ("$now.next", "$now.trips", "$now.today", "$now.evening", "$now.tomorrow", "$now.blocks",
-                 "$now.reminders", "$now.mail", "$now.deadlines", "$now.chips", "без срока"):
+                 "$now.reminders", "$now.mail", "$now.deadlines", "$now.chips", "no deadlines"):
         assert part in home, part
     assert "layout: review" in (SITE / "content" / "review" / "_index.md").read_text()
     review = (SITE / "layouts" / "_partials" / "review-view.html").read_text()
@@ -97,5 +97,5 @@ def test_every_page_of_the_first_version_is_there():
     adapter = (SITE / "content" / "review" / "_content.gotmpl").read_text()
     assert 'findRE "^[a-z0-9-]{1,40}$" .path' in adapter, "a page's path is the router's slice name and nothing else"
     status = (SITE / "layouts" / "status.html").read_text()
-    for part in ("$s.limit", "$s.tokens", "$s.connectors", "$s.mail", ".rules", "$s.charts", "оценка CLI"):
+    for part in ("$s.limit", "$s.tokens", "$s.connectors", "$s.mail", ".rules", "$s.charts", "the CLI's estimate"):
         assert part in status, part

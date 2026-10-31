@@ -27,7 +27,7 @@ ASSISTANT, OWNER = "assistant", "owner"
 ZERO = "0" * 40
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git's empty tree: the parent of a first commit
 POLICY_FILE = "kb-policy.json"
-ERROR_WORDS = ("ОШИБКА", "ERROR", "Error")  # a lint line that names an error; the rest of its output is noise
+ERROR_WORDS = ("ОШИБКА", "ERROR", "Error")  # a lint line that names an error (the base's lint may speak Russian)
 MAX_REASONS = 10
 
 
@@ -67,6 +67,10 @@ class Verdict:
     @property
     def ok(self) -> bool:
         return not self.refusals
+
+
+# The hub says this line after its refusals; the readers skip it, and still know the older hook's Russian.
+REJECTED = ("push rejected", "push не принят")
 
 
 def norm(path: str) -> str:
@@ -141,23 +145,23 @@ def _paths(policy: Policy, status: str, old_path: str, new_path: str, mode: str)
     refusals = []
     for path in dict.fromkeys(p for p in (old_path, new_path) if p):
         if hidden(path):
-            refusals.append(f"{path}: имя с точки — скрытое, ассистентке сюда нельзя")
+            refusals.append(f"{path}: a name starting with a dot is hidden — the assistant may not write here")
         elif any_match(path, policy.lines_below):
             if status != "M":
-                refusals.append(f"{path}: Витрину нельзя удалить или создать, только дописать строки ниже маркера")
+                refusals.append(f"{path}: a Showcase cannot be deleted or created, only lines added below the marker")
         elif any_match(path, policy.never) or not any_match(path, policy.writable):
-            refusals.append(f"{path}: сюда ассистентке писать нельзя")
+            refusals.append(f"{path}: the assistant may not write here")
     if not refusals and mode == "100755":
-        refusals.append(f"{new_path}: исполняемый файл — в базе только обычные файлы")
+        refusals.append(f"{new_path}: executable file — the Base holds only plain files")
     return refusals
 
 
 def _showcase(policy: Policy, path: str, before: str, after: str) -> list[str]:
     marker = policy.marker
     if not marker or before.count(marker) != 1 or after.count(marker) != 1:
-        return [f"{path}: маркер Витрины должен стоять ровно один раз — без него правка не принимается"]
+        return [f"{path}: the Showcase marker must appear exactly once — without it the edit is not accepted"]
     if before[:before.index(marker)] != after[:after.index(marker)]:
-        return [f"{path}: выше маркера Витрины — правила; ниже можно только строки"]
+        return [f"{path}: above the Showcase marker are the rules; below it, only lines"]
     return []
 
 
@@ -186,11 +190,11 @@ def lint(git: list[str], rev: str, policy: Policy) -> list[str]:
             run = subprocess.run(policy.check, cwd=dest, env=env, capture_output=True, text=True,
                                  timeout=policy.check_timeout)
         except subprocess.TimeoutExpired:
-            return [f"just check: не уложился в {policy.check_timeout} с"]
+            return [f"just check: did not finish in {policy.check_timeout} s"]
         if run.returncode == 0:
             return []
         lines = [line.strip() for line in (run.stdout + "\n" + run.stderr).splitlines() if line.strip()]
-        errors = [line for line in lines if any(word in line for word in ERROR_WORDS)] or lines[-1:] or ["упал"]
+        errors = [line for line in lines if any(word in line for word in ERROR_WORDS)] or lines[-1:] or ["failed"]
         return [f"just check: {line}" for line in errors[:MAX_REASONS]]
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -204,11 +208,11 @@ def check(git: list[str], old: str, new: str, policy: Policy, role: str) -> Verd
     for status, old_path, new_path, mode in changes(git, old, new):
         verdict.files.append((status, new_path))
         if any_match(new_path, policy.excluded) and status != "D":
-            verdict.refusals.append(f"{new_path}: этого в базе не бывает — путь исключён политикой")
+            verdict.refusals.append(f"{new_path}: this never goes in the Base — the path is excluded by the policy")
             continue
         if mode == "120000" or mode == "160000":
-            verdict.refusals.append(f"{new_path}: {'симлинк' if mode == '120000' else 'подмодуль'} — в базе "
-                                    "только обычные файлы")
+            verdict.refusals.append(f"{new_path}: {'symlink' if mode == '120000' else 'submodule'} — the Base holds "
+                                    "only plain files")
             continue
         if role == ASSISTANT:
             refused = _paths(policy, status, old_path, new_path, mode)
@@ -227,9 +231,9 @@ def check(git: list[str], old: str, new: str, policy: Policy, role: str) -> Verd
         # deleted and another made — allowed.
         kept = header(before)[0].get(policy.keep) if policy.keep and status == "M" else None
         if kept and header(after)[0].get(policy.keep) != kept:
-            verdict.refusals.append(f"{new_path}: {policy.keep} изменён: {kept} → "
-                                    f"{header(after)[0].get(policy.keep) or 'нет'}; {policy.keep} — имя Записи, на "
-                                    "него ссылаются: он не меняется, пока Запись есть")
+            verdict.refusals.append(f"{new_path}: {policy.keep} changed: {kept} → "
+                                    f"{header(after)[0].get(policy.keep) or 'none'}; {policy.keep} is the Record's "
+                                    "name, links point to it: it does not change while the Record exists")
     verdict.refusals += collisions(git, new, {path for status, path in verdict.files if status != "D"})
     if not verdict.refusals:
         verdict.refusals += lint(git, new, policy)
@@ -254,8 +258,8 @@ def collisions(git: list[str], rev: str, changed: set[str]) -> list[str]:
         for name in sorted(group):
             if any(path == name or path.startswith(name + "/") for path in changed):
                 other = sorted(group - {name})[0]
-                out.append(f"{name}: на Mac совпадёт с {other} — имена отличаются только регистром или нормализацией "
-                           "Unicode")
+                out.append(f"{name}: on a Mac it is the same as {other} — the names differ only in case or Unicode "
+                           "normalization")
     return out
 
 
@@ -269,20 +273,20 @@ def main() -> int:
     for line in sys.stdin.read().splitlines():
         old, new, ref = line.split()
         if ref != f"refs/heads/{policy.branch}":
-            refusals.append(f"отказ: только ветка {policy.branch}, а не {ref}")
+            refusals.append(f"refused: only the branch {policy.branch}, not {ref}")
             continue
         if new == ZERO:
-            refusals.append(f"отказ: {policy.branch} не удаляется")
+            refusals.append(f"refused: {policy.branch} is not deleted")
             continue
         if old != ZERO and subprocess.run(["git", "merge-base", "--is-ancestor", old, new]).returncode != 0:
-            refusals.append(f"отказ: история {policy.branch} не переписывается — сначала pull")
+            refusals.append(f"refused: the history of {policy.branch} is not rewritten — pull first")
             continue
         refusals += check(["git"], old, new, policy, role).refusals
     for refusal in refusals:
         print(refusal, file=sys.stderr)
     if refusals:
-        print(f"push не принят ({'ассистентка' if role == ASSISTANT else 'Владелец'}); правила — kb-policy.json "
-              "в хабе", file=sys.stderr)
+        print(f"{REJECTED[0]} ({'assistant' if role == ASSISTANT else 'owner'}); the rules are kb-policy.json in the "
+              "hub", file=sys.stderr)
     return 1 if refusals else 0
 
 

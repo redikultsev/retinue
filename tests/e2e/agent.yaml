@@ -1,5 +1,5 @@
 id: echo
-name: Эхо
+name: Echo
 description: smoke test agent
 trust_class: web
 skills: [{id: echo, name: Echo, description: echoes}]

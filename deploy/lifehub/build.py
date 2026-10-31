@@ -85,7 +85,7 @@ class Gate(HTMLParser):
 
     def handle_data(self, data):
         if self.inside and data.strip():
-            self.bad.append("<script> с текстом")
+            self.bad.append("<script> with text")
 
     def shipped(self, attrs) -> bool:
         """`src` of a shipped script and `defer`, nothing more: no type, no inline code, no other address."""
@@ -108,14 +108,14 @@ def gate(folder: Path, scripts: dict[str, bytes] | None = None) -> list[str]:
     for path in sorted(p for p in folder.rglob("*") if p.is_file()):
         where = path.relative_to(folder).as_posix()
         if path.suffix not in SUFFIXES:
-            problems.append(f"{where}: такого файла в хабе быть не должно")
+            problems.append(f"{where}: no such file belongs in the hub")
         elif path.suffix == ".js":
             found = SCRIPT.fullmatch("/" + where)
             if not found or scripts.get(found.group(1)) != path.read_bytes():
-                problems.append(f"{where}: чужой скрипт")
+                problems.append(f"{where}: a script not the site's own")
         elif path.suffix == ".jpg":
             if not path.read_bytes().startswith(b"\xff\xd8\xff"):
-                problems.append(f"{where}: не JPEG")
+                problems.append(f"{where}: not a JPEG")
         elif path.suffix in (".html", ".svg"):
             check = Gate(frozenset(scripts))
             check.feed(path.read_text(errors="replace"))
@@ -146,10 +146,10 @@ CSS_OUT = re.compile(r"@import|url\(\s*['\"]?\s*(?!data:)(?:[a-z][a-z0-9+.-]*:|/
 TRIPWIRES = {
     "WebSocket": r"\bWebSocket\b", "EventSource": r"\bEventSource\b",
     "RTCPeerConnection": r"\b(?:webkit)?RTCPeerConnection\b|\bRTCDataChannel\b", "sendBeacon": r"\bsendBeacon\b",
-    "window.open": r"\bwindow\s*\.\s*open\b", "переход": r"\blocation\s*(?:\.\s*href\s*)?=(?!=)|"
+    "window.open": r"\bwindow\s*\.\s*open\b", "navigation": r"\blocation\s*(?:\.\s*href\s*)?=(?!=)|"
     r"\blocation\s*\.\s*(?:assign|replace)\s*\(", "document.cookie": r"\bdocument\s*\.\s*cookie\b",
     "import()": r"\bimport\s*\(", "Worker": r"\b(?:Shared)?Worker\s*\(|\bserviceWorker\b",
-    "адрес снаружи": r"\bhttps?://|[\"'`]//[a-z0-9-]+\.",
+    "outside address": r"\bhttps?://|[\"'`]//[a-z0-9-]+\.",
 }
 
 
@@ -271,7 +271,7 @@ def rewrite_page(text: str, rules: dict, scripts: bool) -> tuple[str, list[str]]
                 families = [family.split(":")[0].strip() for family in parse_qs(urlsplit(href).query).get("family", [])]
                 if not (families and fonts.get("css") and set(families) <= set(fonts.get("families") or [])):
                     edits.append((start, end, ""))
-                    notes.append("шрифты не из набора хаба — системный шрифт")
+                    notes.append("fonts not in the hub's set — a system font")
                     continue
                 kept = [(n, fonts["css"] if n == "href" else v) for n, v in attrs if n != "crossorigin"]
         if not scripts:
@@ -293,13 +293,13 @@ def page_gate(text: str, scripts: bool) -> tuple[list[str], list[str]]:
     silently: a frame, a <base>, a refresh to elsewhere, anything loaded from another host."""
     bad: list[str] = []
     if any(trap in text for trap in TRAPS):
-        return ["комментарий или CDATA, которые браузер читает иначе (<!-->, <!--->, --!>, <![)"], []
+        return ["a comment or CDATA a browser reads another way (<!-->, <!--->, --!>, <![)"], []
     scan = Scan(text)
     if not any(tag == "meta" and (dict(attrs).get("name") or "").lower() == OPT_IN[0]
                and (dict(attrs).get("content") or "").strip().lower() == OPT_IN[1] for tag, attrs, *_ in scan.tags):
-        bad.append(f'нет <meta name="{OPT_IN[0]}" content="{OPT_IN[1]}">')
+        bad.append(f'no <meta name="{OPT_IN[0]}" content="{OPT_IN[1]}">')
     if not scan.title.strip():
-        bad.append("нет <title>")
+        bad.append("no <title>")
     for tag, attrs, *_ in scan.tags:
         named = {name: value or "" for name, value in attrs}
         if tag in NEVER_PAGE:
@@ -309,13 +309,13 @@ def page_gate(text: str, scripts: bool) -> tuple[list[str], list[str]]:
             bad.append(f"<meta http-equiv={named['http-equiv'].strip().lower()}>")
         for name, value in attrs:
             if name == "style" and CSS_OUT.search(value or ""):
-                bad.append("style=\"…\": загрузка снаружи")
+                bad.append("style=\"…\": loads from outside")
             if name in FETCHES and not (tag in LINKS and name == "href"):
                 if any(outside(a) and not a.strip().lower().startswith("javascript:") for a in addresses(name, value)):
-                    bad.append(f"{name}=: загрузка снаружи")  # the name is one of FETCHES: nothing of the page's
+                    bad.append(f"{name}=: loads from outside")  # the name is one of FETCHES: nothing of the page's
     for style in scan.styles:
         if CSS_OUT.search(style):
-            bad.append("<style>: загрузка снаружи")
+            bad.append("<style>: loads from outside")
     wires: list[str] = []
     if scripts:
         code = [content for *_, content in scan.scripts]
@@ -349,34 +349,34 @@ def publish_pages(data: Path, out: Path, rules: dict) -> tuple[list[dict], list[
         try:
             if not PAGE_ID.fullmatch(page_id):
                 page_id = "?"
-                raise Refused("id не по форме")
+                raise Refused("id malformed")
             if page_id in seen:
-                raise Refused("повтор id")
+                raise Refused("id repeated")
             seen.add(page_id)
             if number >= PAGES_MAX:
-                raise Refused(f"страниц больше {PAGES_MAX}")
+                raise Refused(f"more than {PAGES_MAX} pages")
             source = data / "pages" / f"{page_id}.html"
             if not source.is_file():
-                raise Refused("файла нет")
+                raise Refused("no file")
             raw = source.read_bytes()
             if len(raw) > PAGE_MAX:
-                raise Refused(f"больше {PAGE_MAX // 1024 // 1024} МБ")
+                raise Refused(f"over {PAGE_MAX // 1024 // 1024} MB")
             if hashlib.sha256(raw).hexdigest() != entry.get("sha256"):  # the router is between two writes
-                raise Refused("файл не тот, что в pages.json")
+                raise Refused("the file is not the one in pages.json")
             try:
                 original = raw.decode("utf-8")
             except UnicodeDecodeError:
-                raise Refused("не UTF-8") from None
+                raise Refused("not UTF-8") from None
             scripts = entry.get("scripts") == "on"
             text, notes = rewrite_page(original, rules, scripts)
             bad, wires = page_gate(text, scripts)
             if wires and not bad:  # a signal, not a verdict: the page goes up, its scripts do not run
                 scripts = False
-                notes.append(f"скрипты выключены: {', '.join(wires)}")
+                notes.append(f"scripts off: {', '.join(wires)}")
                 text, _ = rewrite_page(original, rules, scripts)
                 bad, _ = page_gate(text, scripts)
             if bad:
-                raise Refused("; ".join(bad[:5]) + (f" и ещё {len(bad) - 5}" if len(bad) > 5 else ""))
+                raise Refused("; ".join(bad[:5]) + (f" and {len(bad) - 5} more" if len(bad) > 5 else ""))
         except Refused as exc:
             refused.append({"id": page_id, "why": str(exc)})
             continue
@@ -446,14 +446,14 @@ def build(now: float, data_hash: str) -> tuple[str, list[dict], list[dict]]:
                              timeout=HUGO_TIMEOUT_S, env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(WORK)})
         if run.returncode != 0:
             said = (run.stderr or run.stdout).strip().splitlines()
-            raise Failure(f"Hugo: {said[-1][:300] if said else f'код {run.returncode}'}")
+            raise Failure(f"Hugo: {said[-1][:300] if said else f'code {run.returncode}'}")
         problems = gate(target / "hub")
         if problems:
-            raise Failure(f"проверка страниц: {'; '.join(problems[:5])}" + (f" и ещё {len(problems) - 5}"
+            raise Failure(f"page check: {'; '.join(problems[:5])}" + (f" and {len(problems) - 5} more"
                                                                             if len(problems) > 5 else ""))
         os.rename(target, releases / name)
     except subprocess.TimeoutExpired:
-        raise Failure(f"Hugo не уложился в {HUGO_TIMEOUT_S} с") from None
+        raise Failure(f"Hugo did not finish in {HUGO_TIMEOUT_S} s") from None
     finally:
         shutil.rmtree(target, ignore_errors=True)
     link = SITE / "current.tmp"

@@ -1,6 +1,6 @@
 """AskUserQuestion end to end on the platform of `test_platformd` (fake lanes, hooks and the owner's calls over HTTP)
 and its face: the gate defers the question, each question comes as a Telegram card with its options as buttons, a
-multi-select ticks and «Готово», a reply to the card is the owner's own answer, the face answers by the same rules,
+multi-select ticks and «Done», a reply to the card is the owner's own answer, the face answers by the same rules,
 and the resume hands the CLI `updatedInput.answers` once — after a restart too. The shapes are the pinned CLI's
 (`tests/test_probes.py::test_a_question_is_deferred_and_answered_on_resume`)."""
 
@@ -57,11 +57,11 @@ def test_a_question_is_one_card_per_question_with_its_options_as_buttons(tmp_pat
         assert approval["state"] == "shown" and world.store.session(session)["state"] == "waiting"
         assert [c["approval"] for c in cards] == [questions.key(approval["id"], 0), questions.key(approval["id"], 1)]
         first, second = cards
-        assert first["data"]["view"]["head"] == ["Вопрос · notes · сессия " + session + " · 1 из 2", "Жильё"]
+        assert first["data"]["view"]["head"] == ["Question · notes · session " + session + " · 1 of 2", "Жильё"]
         assert first["data"]["view"]["body"] == "Где жить?\n\n1. Центр — старый город\n2. Окраина — тихо"
         assert first["data"]["view"]["status"] == questions.OPEN_SINGLE
         assert labels(first) == ["Центр", "Окраина"]
-        assert labels(second) == ["☐ Зонт", "☐ Ноутбук", "Готово"] and second["data"]["view"]["status"] == \
+        assert labels(second) == ["☐ Зонт", "☐ Ноутбук", "Done"] and second["data"]["view"]["status"] == \
             questions.OPEN_MULTI
         assert world.store.face_session(session)["waiting"] == 1, "a question waits on the owner like a card"
         # The model's call stays deferred while it asks: never left to the classifier, never run unanswered — asked
@@ -75,27 +75,27 @@ def test_buttons_answer_each_question_and_the_resume_after_a_restart_hands_the_c
     async def body(world: World):
         session, run, (first, second) = await asked(world)
         pressed = await world.owner("press", {"button": button(first, "Окраина")})
-        assert pressed["toast"] == "Принято. Осталось ответить: 1."
-        assert pressed["view"]["status"] == "Ответ: Окраина" and pressed["keep"] == []
+        assert pressed["toast"] == "Accepted. Still to answer: 1."
+        assert pressed["view"]["status"] == "Answer: Окраина" and pressed["keep"] == []
         again = await world.owner("press", {"button": button(first, "Центр")})
-        assert again == {"toast": "Кнопка больше не действует."}, "the question's other buttons die with the answer"
+        assert again == {"toast": "The button no longer works."}, "the question's other buttons die with the answer"
         assert world.lanes["private"].runs() == [run], "no resume while a question has no answer"
 
         await world.down()  # a press an hour later, after a restart
         world.clock.now += HOUR
         await world.up()
         ticked = await world.owner("press", {"button": button(second, "☐ Зонт")})
-        assert [w for w, _ in ticked["keep"]] == ["☑ Зонт", "☐ Ноутбук", "Готово"] and ticked["toast"] == ""
+        assert [w for w, _ in ticked["keep"]] == ["☑ Зонт", "☐ Ноутбук", "Done"] and ticked["toast"] == ""
         assert [b for _, b in ticked["keep"]] == [b for _, b in second["data"]["buttons"]], "the same buttons"
         # Two fast taps on the message as first shown — before its rewrite reached the phone — both count.
         ticked = await world.owner("press", {"button": button(second, "☐ Ноутбук")})
-        assert [w for w, _ in ticked["keep"]] == ["☑ Зонт", "☑ Ноутбук", "Готово"]
+        assert [w for w, _ in ticked["keep"]] == ["☑ Зонт", "☑ Ноутбук", "Done"]
         untick = await world.owner("press", {"button": button(second, "☐ Ноутбук")})
         retick = await world.owner("press", {"button": button(second, "☐ Ноутбук")})
         assert [w for w, _ in untick["keep"]][1] == "☐ Ноутбук" and [w for w, _ in retick["keep"]][1] == "☑ Ноутбук"
         keep = dict((w, b) for w, b in retick["keep"])
-        done = await world.owner("press", {"button": keep["Готово"]})
-        assert done["toast"] == "Ответ передан в сессию." and done["view"]["status"] == "Ответ: Зонт, Ноутбук"
+        done = await world.owner("press", {"button": keep["Done"]})
+        assert done["toast"] == "Answer passed to the session." and done["view"]["status"] == "Answer: Зонт, Ноутбук"
         [approval] = world.store.approvals(session=session, kind="question")
         assert approval["state"] == "answered"
         updates = [n for n in world.notes("update") if n["approval"] == questions.key(approval["id"], 1)]
@@ -111,9 +111,9 @@ def test_buttons_answer_each_question_and_the_resume_after_a_restart_hands_the_c
         await world.hook("PostToolUse", resume, {**pre_tool_use(), "hook_event_name": "PostToolUse"})
         assert world.store.approval(approval["id"])["state"] == "executed"
         late = await world.owner("press", {"button": keep["☑ Зонт"]})
-        assert late == {"toast": "Кнопка больше не действует."}, "an answer voids the ticks too"
-        again = await world.owner("press", {"button": keep["Готово"]})
-        assert again == {"toast": "Кнопка больше не действует."}, "«Готово» acts once"
+        assert late == {"toast": "The button no longer works."}, "an answer voids the ticks too"
+        again = await world.owner("press", {"button": keep["Done"]})
+        assert again == {"toast": "The button no longer works."}, "«Done» acts once"
     scenario(tmp_path, body)
 
 
@@ -123,20 +123,20 @@ def test_a_reply_to_a_question_card_is_the_owners_own_answer_and_elsewhere_a_mes
         [approval] = world.store.approvals(session=session, kind="question")
         typed = await world.owner("input", {"input_id": "tg:5", "session": session, "text": "  У моря  ",
                                             "card": questions.key(approval["id"], 1)})
-        assert typed == {"say": "Принято. Осталось ответить: 1."}
+        assert typed == {"say": "Accepted. Still to answer: 1."}
         assert world.store.approval(approval["id"])["view"]["answers"]["1"] == {"value": "У моря", "other": True}
         update = [n for n in world.notes("update") if n["approval"] == questions.key(approval["id"], 1)][-1]
-        assert update["data"]["view"]["status"] == "Свой ответ: У моря" and update["data"]["buttons"] == []
+        assert update["data"]["view"]["status"] == "Your answer: У моря" and update["data"]["buttons"] == []
         assert world.store.first_input(session) == "куда поехать", "an answer is not a message into the session"
         twice = await world.owner("input", {"input_id": "tg:6", "session": session, "text": "в горы",
                                             "card": questions.key(approval["id"], 1)})
-        assert twice["say"].startswith("На этот вопрос уже есть ответ")
+        assert twice["say"].startswith("This question is already answered")
         done = await world.owner("input", {"input_id": "tg:7", "session": session, "text": "Окраина",
                                            "card": questions.key(approval["id"], 0)})
-        assert done == {"say": "Ответ передан в сессию."}
+        assert done == {"say": "Answer passed to the session."}
         redelivered = await world.owner("input", {"input_id": "tg:7", "session": session, "text": "Окраина",
                                                   "card": questions.key(approval["id"], 0)})
-        assert redelivered == {"say": "Это сообщение сессия уже получила."}, "the router sending it again"
+        assert redelivered == {"say": "The session already has this message."}, "the router sending it again"
         assert world.store.input_session("tg:7") is None and len(world.lanes["private"].runs()) == 2
         assert [c for c in world.lanes["private"].commands if c[0] == "/answer"] == [], "not a message too"
         [_, resume] = world.lanes["private"].runs()
@@ -152,20 +152,20 @@ def test_a_new_message_makes_the_question_stale_and_the_model_is_told_so(tmp_pat
         [approval] = world.store.approvals(session=session, kind="question")
         await world.owner("press", {"button": button(first, "Окраина")})
         said = await world.owner("input", {"input_id": "tg:9", "session": session, "text": "лучше Батуми"})
-        assert said["say"] == "Принято."
+        assert said["say"] == "Accepted."
         assert world.store.approval(approval["id"])["state"] == "stale"
         retired = [n for n in world.notes("update") if n["approval"] == questions.key(approval["id"], 1)][-1]
-        assert retired["data"]["view"]["status"] == "Устарела: ты написал новое сообщение"
+        assert retired["data"]["view"]["status"] == "Expired: you wrote a new message"
         assert retired["data"]["buttons"] == []
         assert (await world.owner("press", {"button": button(second, "☐ Зонт")}))["toast"] == \
-            "Кнопка больше не действует."
+            "The button no longer works."
         [_, resume] = world.lanes["private"].runs()
         assert resume["prompt"] == "лучше Батуми"
         denied = await world.hook("PreToolUse", resume, pre_tool_use())
         assert decision(denied) == "deny" and denied["hookSpecificOutput"]["permissionDecisionReason"] == gate.STALE
         late = await world.owner("input", {"input_id": "tg:10", "session": session, "text": "и ещё",
                                            "card": questions.key(approval["id"], 1)})
-        assert late["say"] != "Ответ передан в сессию.", "a reply to a stale question is a message into the session"
+        assert late["say"] != "Answer passed to the session.", "a reply to a stale question is a message into the session"
         assert world.store.first_input(session) == "куда поехать" and world.store.input_session("tg:10") == session
     scenario(tmp_path, body)
 
@@ -180,7 +180,7 @@ def test_an_unanswered_question_expires_in_seven_days_and_is_denied(tmp_path):
         assert world.store.session(session)["state"] == "idle"
         for n in (0, 1):
             note = [x for x in world.notes("update") if x["approval"] == questions.key(approval["id"], n)][-1]
-            assert note["data"]["view"]["status"] == "Истекла: решения не было семь дней"
+            assert note["data"]["view"]["status"] == "Expired: no decision for seven days"
         await world.owner("input", {"input_id": "tg:3", "session": session, "text": "ну что"})
         [_, resume] = world.lanes["private"].runs()
         denied = await world.hook("PreToolUse", resume, pre_tool_use())
@@ -206,16 +206,16 @@ def test_the_face_answers_by_the_same_rules_and_the_telegram_card_follows(tmp_pa
 
         status, said, _ = await world.call("POST", url, {"digest": approval["digest"], "question": 0,
                                                          "labels": ["Окраина"]})
-        assert status == 200 and said["toast"] == "Принято. Осталось ответить: 1."
+        assert status == 200 and said["toast"] == "Accepted. Still to answer: 1."
         assert said["approval"]["view"]["answers"] == {"0": {"value": "Окраина", "other": False}}
         update = [n for n in world.notes("update") if n["approval"] == questions.key(approval["id"], 0)][-1]
-        assert update["data"]["view"]["status"] == "Ответ: Окраина" and update["data"]["buttons"] == []
+        assert update["data"]["view"]["status"] == "Answer: Окраина" and update["data"]["buttons"] == []
         assert (await world.owner("press", {"button": button(first, "Центр")}))["toast"] == \
-            "Кнопка больше не действует.", "an answer in the face retires the Telegram buttons"
+            "The button no longer works.", "an answer in the face retires the Telegram buttons"
 
         status, said, _ = await world.call("POST", url, {"digest": approval["digest"], "question": 1,
                                                          "labels": ["Ноутбук", "Зонт", "Зонт"]})
-        assert said["toast"] == "Ответ передан в сессию." and said["approval"]["state"] == "answered"
+        assert said["toast"] == "Answer passed to the session." and said["approval"]["state"] == "answered"
         assert said["approval"]["view"]["answers"]["1"]["value"] == "Зонт, Ноутбук", "in the options' order, once"
         status, said, _ = await world.call("POST", url, {"digest": approval["digest"], "question": 1, "text": "x"})
         assert said["toast"] == platformd.STALE
@@ -242,7 +242,7 @@ def test_a_reply_with_files_to_a_question_card_is_a_message_with_its_files_never
         said = await world.owner("input", {"input_id": "tg:5", "session": session, "text": "вот план",
                                            "card": questions.key(approval["id"], 1),
                                            "attachments": [_wire("plan.txt", b"plan")]})
-        assert said["say"].startswith("Принято")
+        assert said["say"].startswith("Accepted")
         assert "1" not in (world.store.approval(approval["id"])["view"].get("answers") or {}), "not its answer"
         assert world.store.input_session("tg:5") == session
         last = world.lanes["private"].runs()[-1]

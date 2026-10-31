@@ -195,7 +195,7 @@ def test_a_deferred_call_is_granted_after_a_restart_and_runs_exactly_once(tmp_pa
     async def body(world: World):
         session, first, card = await deferred_session(world)
         assert world.store.session(session)["state"] == "waiting"
-        assert [label for label, _ in card["data"]["buttons"]] == ["Разрешить", "Отказать"]
+        assert [label for label, _ in card["data"]["buttons"]] == ["Allow", "Deny"]
         assert card["data"]["view"]["body"] == CALL["input"]["command"]
 
         await world.down()
@@ -203,7 +203,7 @@ def test_a_deferred_call_is_granted_after_a_restart_and_runs_exactly_once(tmp_pa
         await world.up()
         approve = card["data"]["buttons"][0][1]
         pressed = await world.owner("press", {"button": approve})
-        assert pressed["toast"] == "Разрешено." and pressed["keep"] == []
+        assert pressed["toast"] == "Allowed." and pressed["keep"] == []
         runs = world.lanes["code"].runs()
         assert len(runs) == 2
         resume = runs[1]
@@ -213,7 +213,7 @@ def test_a_deferred_call_is_granted_after_a_restart_and_runs_exactly_once(tmp_pa
 
         assert decision(await world.hook("PreToolUse", resume, pre_tool_use())) == "allow"
         assert decision(await world.hook("PreToolUse", resume, pre_tool_use())) != "allow"
-        assert (await world.owner("press", {"button": approve}))["toast"] == "Кнопка больше не действует."
+        assert (await world.owner("press", {"button": approve}))["toast"] == "The button no longer works."
 
         for line in world.lanes["code"].journal:
             line["given"] = False
@@ -238,7 +238,7 @@ def test_a_never_list_call_becomes_a_courier_card_and_is_denied(tmp_path):
         assert marked == {} and decision(answer) == "deny"
         assert answer["hookSpecificOutput"]["permissionDecisionReason"] == gate.NEVER
         [card] = world.notes("card")
-        assert card["data"]["view"]["head"][0].startswith("Курьер · retinue") and card["data"]["buttons"] == []
+        assert card["data"]["view"]["head"][0].startswith("Courier · retinue") and card["data"]["buttons"] == []
         assert world.store.approvals(session=session, states=("pending", "shown", "granted")) == []
 
     scenario(tmp_path, body)
@@ -259,7 +259,7 @@ def test_a_card_rule_is_neither_allowed_nor_disallowed_and_its_call_comes_as_a_c
         _, answer = await asyncio.gather(world.hook(f"mark/{n}", run, commit), world.hook("PreToolUse", run, commit))
         assert decision(answer) == "defer"
         [approval] = world.store.approvals(session=session)
-        assert approval["why"] == "Всегда спрашивать: правило Bash(git commit:*)"
+        assert approval["why"] == "Always ask: rule Bash(git commit:*)"
         assert await world.hook("PreToolUse", run, {**pre_tool_use(), "permission_mode": "auto"}) == {}
         assert len(world.store.approvals(session=session)) == 1
 
@@ -279,8 +279,8 @@ def test_a_block_the_model_went_past_reaches_the_owner_when_the_run_ends(tmp_pat
         world.lanes["private"].exited(session, run["run"])
         await world.poll()
         [card] = world.notes("card")
-        assert card["data"]["view"]["head"][0] == f"Заблокировано · notes · сессия {session}"
-        assert "Классификатор остановил: [Remote Repoint]" in card["data"]["view"]["head"]
+        assert card["data"]["view"]["head"][0] == f"Blocked · notes · session {session}"
+        assert "Stopped by the classifier: [Remote Repoint]" in card["data"]["view"]["head"]
         assert card["data"]["buttons"] == [] and card["data"]["view"]["body"] == CALL["input"]["command"]
 
     scenario(tmp_path, body)
@@ -296,9 +296,9 @@ def test_a_run_that_did_not_start_in_auto_is_told_once(tmp_path):
         [run] = world.lanes["code"].runs()
         world.lanes["code"].add(session, run["run"], *manual)
         await world.poll()  # its process has not exited yet: a token of an ended run opens no hook
-        told = [n for n in world.notes("summary") if "Режим auto" in n["data"]["text"]]
-        assert len(told) == 1 and "режиме default" in told[0]["data"]["text"]
-        assert "claude-opus-5-5" in told[0]["data"]["text"] and "карточкой" in told[0]["data"]["text"]
+        told = [n for n in world.notes("summary") if "Auto mode is off" in n["data"]["text"]]
+        assert len(told) == 1 and "in default mode" in told[0]["data"]["text"]
+        assert "claude-opus-5-5" in told[0]["data"]["text"] and "as a card" in told[0]["data"]["text"]
         assert world.store.run_of(world.platform.gate.token_hash(run["hook_token"]))["mode"] == "default"
         assert decision(await world.hook("PreToolUse", run, {**pre_tool_use(), "permission_mode": "auto"})) == \
             "defer", "the run's init said manual: its calls fall back to cards"
@@ -313,7 +313,7 @@ def test_a_run_that_did_not_start_in_auto_is_told_once(tmp_path):
         assert later["run"] != first["run"]
         world.lanes["code"].add(session, later["run"], manual[0])
         await world.poll()
-        assert len([n for n in world.notes("summary") if "Режим auto" in n["data"]["text"]]) == 1
+        assert len([n for n in world.notes("summary") if "Auto mode is off" in n["data"]["text"]]) == 1
 
     scenario(tmp_path, body)
 
@@ -348,7 +348,7 @@ def test_the_owners_message_is_taken_once(tmp_path):
         session, _, _ = await deferred_session(world)
         first = await world.owner("input", {"input_id": "tg:2", "session": session, "text": "лучше так"})
         again = await world.owner("input", {"input_id": "tg:2", "session": session, "text": "лучше так"})
-        assert first["say"] == "Принято." and again["say"] == "Это сообщение сессия уже получила."
+        assert first["say"] == "Accepted." and again["say"] == "The session already has this message."
         resumes = world.lanes["code"].runs()[1:]
         assert [(r["prompt"], r["cli_session"]) for r in resumes] == [("лучше так", CLI_SESSION)]
 
@@ -361,12 +361,12 @@ def test_a_new_message_makes_the_card_stale_and_its_call_is_denied(tmp_path):
         await world.owner("input", {"input_id": "tg:2", "session": session, "text": "не надо, сделай иначе"})
         [update] = world.notes("update")
         assert update["approval"] == card["approval"] and update["data"]["buttons"] == []
-        assert update["data"]["view"]["status"] == "Устарела: ты написал новое сообщение"
+        assert update["data"]["view"]["status"] == "Expired: you wrote a new message"
         resume = world.lanes["code"].runs()[-1]
         answer = await world.hook("PreToolUse", resume, pre_tool_use())
         assert decision(answer) == "deny" and answer["hookSpecificOutput"]["permissionDecisionReason"] == gate.STALE
         pressed = await world.owner("press", {"button": card["data"]["buttons"][0][1]})
-        assert pressed == {"toast": "Карточка устарела — решение не принято."}
+        assert pressed == {"toast": "The card has expired — no decision taken."}
         assert len(world.lanes["code"].runs()) == 2
 
     scenario(tmp_path, body)
@@ -376,7 +376,7 @@ def test_a_rejection_resumes_the_cli_and_its_call_is_denied(tmp_path):
     async def body(world: World):
         session, _, card = await deferred_session(world)
         pressed = await world.owner("press", {"button": card["data"]["buttons"][1][1]})
-        assert pressed["view"]["status"] == "Отказано."
+        assert pressed["view"]["status"] == "Denied."
         resume = world.lanes["code"].runs()[-1]
         assert resume["prompt"] is None
         answer = await world.hook("PreToolUse", resume, pre_tool_use())
@@ -438,9 +438,9 @@ def test_an_unpressed_card_expires_after_seven_days(tmp_path):
         world.platform.tick()
         assert world.store.approval(card["approval"])["state"] == "expired"
         assert world.store.session(session)["state"] == "idle"
-        assert world.notes("update")[0]["data"]["view"]["status"].startswith("Истекла")
+        assert world.notes("update")[0]["data"]["view"]["status"].startswith("Expired: no decision for seven days")
         assert (await world.owner("press", {"button": card["data"]["buttons"][0][1]}))["toast"] == \
-            "Кнопка больше не действует."
+            "The button no longer works."
 
     scenario(tmp_path, body)
 
@@ -457,11 +457,11 @@ def test_a_long_input_is_opened_as_a_document_with_its_own_buttons(tmp_path):
         [card] = world.notes("card")
         [(label, button)] = card["data"]["buttons"]
         opened = await world.owner("press", {"button": button})
-        assert label == "Открыть" and opened["document"]["text"] == long["input"]["command"]
-        assert [k[0] for k in opened["keep"]] == ["Разрешить", "Отказать"]
+        assert label == "Open" and opened["document"]["text"] == long["input"]["command"]
+        assert [k[0] for k in opened["keep"]] == ["Allow", "Deny"]
         [kept] = world.notes("update")
-        assert kept["data"]["buttons"] == opened["keep"], "a note journaled before cannot bring «Открыть» back"
-        assert (await world.owner("press", {"button": opened["keep"][0][1]}))["toast"] == "Разрешено."
+        assert kept["data"]["buttons"] == opened["keep"], "a note journaled before cannot bring «Open» back"
+        assert (await world.owner("press", {"button": opened["keep"][0][1]}))["toast"] == "Allowed."
 
     scenario(tmp_path, body)
 
@@ -527,8 +527,8 @@ def test_a_turn_cut_by_a_platform_restart_is_continued_once_and_the_owner_is_tol
         [resume] = continued(world)
         assert (resume["session"], resume["cli_session"]) == (session, CLI_SESSION)
         [summary] = world.notes("summary")
-        assert summary["data"]["text"] == "Ход прервался: платформа перезапускалась. Продолжаю с того места, где " \
-                                          "сессия остановилась."
+        assert summary["data"]["text"] == "Turn cut off: the platform restarted. Continuing from where the " \
+                                          "session stopped."
         assert world.store.session(session)["state"] == "active"
         for line in world.lanes["code"].journal:  # a replay, and a lane that comes up again and names the run too
             line["given"] = False
@@ -563,7 +563,7 @@ def test_the_error_a_shutdowns_interrupt_ends_the_turn_with_is_not_told_as_a_fai
         await world.poll()
         assert len(continued(world)) == 1
         assert [n["data"]["text"] for n in world.notes("summary")] == [
-            "Ход прервался: платформа перезапускалась. Продолжаю с того места, где сессия остановилась."]
+            "Turn cut off: the platform restarted. Continuing from where the session stopped."]
 
     scenario(tmp_path, body)
 
@@ -575,7 +575,7 @@ def test_a_session_the_cli_never_named_is_not_continued_but_told(tmp_path):
         await world.poll()
         assert continued(world) == [] and world.store.session(session)["state"] == "idle"
         assert [n["data"]["text"] for n in world.notes("summary")] == [
-            "Ход прервался: платформа перезапускалась, а сессия ещё не началась. Напиши задачу ещё раз."]
+            "Turn cut off: the platform restarted before the session began. Write the task again."]
 
     scenario(tmp_path, body)
 
@@ -648,7 +648,7 @@ def test_each_side_holds_only_its_own_key(tmp_path):
 def test_an_unknown_track_is_named_and_none_is_started(tmp_path):
     async def body(world: World):
         answer = await world.owner("new", {"input_id": "tg:1", "track": "nope", "text": "x"})
-        assert answer == {"ok": False, "say": "Нет такого трека: nope. Есть: retinue, notes"}
+        assert answer == {"ok": False, "say": "No such track: nope. There are: retinue, notes"}
         assert world.lanes["code"].commands == world.lanes["private"].commands == []
 
     scenario(tmp_path, body)
@@ -730,11 +730,11 @@ def lose_run_answer(world: World, reached: str | None, *, pulled: bool = False, 
             for _ in range(unrelated):
                 world.lanes["code"].add("other", "other", json.dumps({"type": "lane", "event": "exited"}))
             event = {"type": "lane", "event": reached, "pid": 7} if reached == "started" else \
-                {"type": "lane", "event": reached, "error": "CLI не запустился"}
+                {"type": "lane", "event": reached, "error": "the CLI did not start"}
             world.lanes["code"].add(body["session"], body["run"], json.dumps(event))
         if pulled:
             await pull(world)
-        raise loss or platformd.Unavailable("линия code: ReadTimeout")
+        raise loss or platformd.Unavailable("lane code: ReadTimeout")
     client.run = losing
 
 
@@ -777,7 +777,7 @@ def test_a_lost_answer_the_lane_journaled_as_refused_is_told_and_not_sent_again(
         await world.poll()
         assert len(world.lanes["code"].runs()) == 1 and world.store.queued() == []
         [summary] = world.notes("summary")
-        assert summary["data"]["text"] == "Линия не запустила сессию: CLI не запустился"
+        assert summary["data"]["text"] == "The lane did not start the session: the CLI did not start"
 
     scenario(tmp_path, body)
 
@@ -819,13 +819,13 @@ def test_a_refusal_pulled_before_its_answer_is_told_once(tmp_path):
         async def refusing(body: dict) -> dict:
             answer = await run(body)
             world.lanes["code"].add(body["session"], body["run"], json.dumps({"type": "lane", "event": "refused",
-                                                                              "error": "CLI не запустился"}))
+                                                                              "error": "the CLI did not start"}))
             await pull(world)
             return answer
         client.run = refusing
         world.lanes["code"].answers["/run"] = "refused"
         await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"})
-        assert [n["data"]["text"] for n in world.notes("summary")] == ["Линия не запустила сессию: CLI не запустился"]
+        assert [n["data"]["text"] for n in world.notes("summary")] == ["The lane did not start the session: the CLI did not start"]
         assert world.store.queued() == [] and world.store.open_runs() == []
 
     scenario(tmp_path, body)
@@ -900,7 +900,7 @@ def test_a_failed_turn_is_told_as_a_failure_and_the_code_session_stays_open(tmp_
         world.lanes["code"].add(session, run["run"], DEFERRED[0], json.dumps(failed))
         await world.poll()
         [summary] = world.notes("summary")
-        assert summary["data"]["text"] == "Ход оборвался ошибкой: error_max_turns"
+        assert summary["data"]["text"] == "Turn ended with an error: error_max_turns"
         assert world.store.session(session)["state"] == "idle"
 
     scenario(tmp_path, body)
@@ -939,7 +939,7 @@ def test_a_card_is_pressable_only_while_its_call_is_what_the_session_waits_on(tm
         since(world, session, run["run"])
         await world.poll()
         pressed = await world.owner("press", {"button": card["data"]["buttons"][0][1]})
-        assert pressed == {"toast": "Карточка устарела — решение не принято."}
+        assert pressed == {"toast": "The card has expired — no decision taken."}
         assert len(world.lanes["code"].runs()) == 1
         assert world.store.approval(card["approval"])["state"] == "shown"
 
@@ -953,7 +953,7 @@ def test_a_run_stopped_after_its_deferral_keeps_the_card_pressable(tmp_path, eve
         world.lanes["code"].add(session, run["run"], json.dumps({"type": "lane", "event": event}))
         await world.poll()
         assert world.store.session(session)["state"] == "waiting"
-        assert (await world.owner("press", {"button": card["data"]["buttons"][0][1]}))["toast"] == "Разрешено."
+        assert (await world.owner("press", {"button": card["data"]["buttons"][0][1]}))["toast"] == "Allowed."
         assert world.store.approval(card["approval"])["state"] == "granted"
         assert len(world.lanes["code"].runs()) == 2
 
@@ -987,7 +987,7 @@ def test_a_session_whose_lane_left_the_config_is_refused_and_blocks_no_one(tmp_p
         assert await world.owner("input", {"input_id": "tg:4", "session": running, "text": "z"}) == \
             {"say": platformd.RETIRED}, "a retired lane's session takes nothing in"
         assert [n["data"]["text"] for n in world.notes("summary")] == \
-            ["Линия не запустила сессию: линии private больше нет в настройках"]
+            ["The lane did not start the session: lane private is no longer in the settings"]
         await world.platform.shutdown()
         assert world.lanes["code"].commands[-1] == ("/stop", {"session": fix})
         assert len(world.lanes["private"].commands) == 1
@@ -997,7 +997,7 @@ def test_a_session_whose_lane_left_the_config_is_refused_and_blocks_no_one(tmp_p
 
 def test_a_retired_lane_is_never_run_its_stuck_run_holds_no_room_and_its_cards_go_stale_at_start(tmp_path):
     """A lane still named in platform.yaml with `retired: true`: no client, no poller; a run it never answered holds
-    no room; its waiting session's card goes stale at start, so it leaves «Решить»."""
+    no room; its waiting session's card goes stale at start, so it leaves «Decide»."""
     async def body(world: World):
         session, _, card = await deferred_session(world)
         world.lanes["code"].answers["/run"] = "busy"  # never mind: the lane goes away
@@ -1010,7 +1010,7 @@ def test_a_retired_lane_is_never_run_its_stuck_run_holds_no_room_and_its_cards_g
         world.platform.retire_cards()
         approval = world.store.approval(card["approval"])
         assert approval["state"] == "stale" and world.store.session(session)["state"] == "idle"
-        assert world.notes("update")[-1]["data"]["view"]["status"] == "Устарела: полоса выключена"
+        assert world.notes("update")[-1]["data"]["view"]["status"] == "Expired: the lane is retired"
         assert (await world.owner("input", {"input_id": "tg:9", "session": session, "text": "ау"})) == \
             {"say": platformd.RETIRED}
         world.store.add_run(session, "stuck", [], world.clock.now)  # a run the lane never answered
@@ -1019,7 +1019,7 @@ def test_a_retired_lane_is_never_run_its_stuck_run_holds_no_room_and_its_cards_g
         late = await world.owner("new", {"input_id": "tg:3", "track": "retinue", "text": "z"})
         assert world.store.session(late["session"])["state"] == "idle"
         assert world.notes("summary")[-1]["data"]["text"] == \
-            "Линия не запустила сессию: полоса code выключена"
+            "The lane did not start the session: lane code is retired"
 
     scenario(tmp_path, body)
 
@@ -1053,7 +1053,7 @@ def test_a_deferred_call_whose_tool_is_gone_expires_its_grant(tmp_path):
         assert world.store.approval(card["approval"])["state"] == "expired"
         assert world.store.session(session)["state"] == "idle"
         [summary] = world.notes("summary")
-        assert summary["data"]["text"].startswith("Отложенный вызов продолжить нельзя")
+        assert summary["data"]["text"].startswith("The deferred call cannot go on")
 
     scenario(tmp_path, body)
 
@@ -1062,7 +1062,7 @@ def test_a_message_to_a_running_session_goes_into_its_run(tmp_path):
     async def body(world: World):
         session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
         answer = await world.owner("input", {"input_id": "tg:2", "session": session, "text": "и тесты"})
-        assert answer == {"say": "Передал в сессию."}
+        assert answer == {"say": "Passed to the session."}
         assert world.lanes["code"].commands[-1] == ("/answer", {"session": session, "prompt": "и тесты"})
         assert len(world.lanes["code"].runs()) == 1 and world.store.queued() == []
 
@@ -1108,13 +1108,13 @@ def test_a_message_the_owner_wrote_while_the_platform_was_down_goes_first_and_al
         session, run = await cut_by_a_restart(world, DEFERRED[0])
         world.lanes["code"].answers["/answer"] = "not_running"
         said = await world.owner("input", {"input_id": "tg:2", "session": session, "text": "лучше сделай иначе"})
-        assert said["say"] == "Принято — сессия ждёт места на линии."
+        assert said["say"] == "Accepted — the session is waiting for room on the lane."
         world.lanes["code"].exited(session, run["run"])
         await world.poll()
         assert continued(world) == [] and world.lanes["code"].runs()[-1]["prompt"] == "лучше сделай иначе"
         assert world.store.queued() == []
         assert [n["data"]["text"] for n in world.notes("summary")] == [
-            "Ход прервался: платформа перезапускалась. Сессия продолжит с твоего нового сообщения."]
+            "Turn cut off: the platform restarted. The session goes on from your new message."]
 
     scenario(tmp_path, body)
 
@@ -1166,9 +1166,9 @@ def test_a_card_left_past_the_prompt_cache_says_what_pressing_it_costs_and_keeps
         world.platform.tick()
         [update] = world.notes("update")
         head = update["data"]["view"]["head"]
-        assert head[-2] == "Сессия простаивает 55 мин — продолжение перечитает контекст без кэша", \
+        assert head[-2] == "The session is idle 55 min — resuming re-reads the context uncached", \
             "10 tokens: no number"
-        assert head[-1].startswith("Ввод") and update["approval"] == card["approval"]
+        assert head[-1].startswith("Input") and update["approval"] == card["approval"]
         assert update["data"]["buttons"] == card["data"]["buttons"], "the card still asks"
         now = world.store.approval(card["approval"])
         assert now["view"]["head"] == head and (now["state"], now["at"]) == ("shown", shown["at"])
@@ -1177,13 +1177,13 @@ def test_a_card_left_past_the_prompt_cache_says_what_pressing_it_costs_and_keeps
         world.clock.now += HOUR + 5 * 60
         world.platform.tick()
         assert world.notes("update")[-1]["data"]["view"]["head"][-2] == \
-            "Сессия простаивает 2 ч — продолжение перечитает контекст (~183 тыс. токенов) без кэша"
+            "The session is idle 2 h — resuming re-reads the context (~183k tokens) uncached"
         assert len(world.notes("update")) == 2
         approve = card["data"]["buttons"][0][1]
-        assert (await world.owner("press", {"button": approve}))["toast"] == "Разрешено."
+        assert (await world.owner("press", {"button": approve}))["toast"] == "Allowed."
         decided = world.notes("update")[-1]["data"]
-        assert decided["buttons"] == [] and decided["view"]["status"] == "Разрешено — выполняю."
-        assert not any(h.startswith("Сессия простаивает") for h in decided["view"]["head"]), "moot once decided"
+        assert decided["buttons"] == [] and decided["view"]["status"] == "Allowed — running."
+        assert not any(h.startswith("The session is idle") for h in decided["view"]["head"]), "moot once decided"
         world.clock.now += HOUR
         world.platform.tick()
         assert len(world.notes("update")) == 3, "a decided card is not rewritten"
@@ -1207,7 +1207,7 @@ def test_a_run_waiting_for_the_limits_reset_tells_the_owner_once_in_his_time(tmp
         await world.poll()
         [said] = world.notes("summary")
         # 1_000_000 s is 1970-01-12 13:46:40 UTC; the reset 2 h 30 min later, in Berlin (UTC+1 in January)
-        assert said["data"]["text"] == "Лимит подписки — жду сброса до 17:16"
+        assert said["data"]["text"] == "Subscription limit — waiting for the reset at 17:16"
         assert world.store.session(session)["state"] == "active", "the run goes on waiting"
 
     scenario(tmp_path, body)
@@ -1226,10 +1226,10 @@ def test_a_side_question_is_a_session_of_its_own_that_only_reads_the_main_one(tm
         runs = world.lanes["code"].runs()
         prompt = runs[-1]["prompt"]
         assert runs[-1]["session"] == side and runs[-1]["cli_session"] is None, "a new conversation, not a resume"
-        assert prompt.startswith(f"Это побочный вопрос к сессии {session} (трек retinue). Вопрос: что ты сейчас "
-                                 "делаешь?")
-        assert "\nЗадача сессии: почини\nВызов Bash: echo ran ›› ran.txt\nХод остановлен: вызов ждёт решения " \
-            "владельца." in prompt and prompt.endswith("Вопрос ещё раз: что ты сейчас делаешь?")
+        assert prompt.startswith(f"This is a side question about session {session} (track retinue). Question: что ты "
+                                 "сейчас делаешь?")
+        assert "\nThe session's task: почини\nCall Bash: echo ran ›› ran.txt\nTurn stopped: a call is waiting for the " \
+            "owner's decision." in prompt and prompt.endswith("The question again: что ты сейчас делаешь?")
         side_run = runs[-1]
         assert {"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"} <= set(side_run["disallowed"]), "read-only"
         assert not {"Edit", "Bash"} & set(runs[0]["disallowed"]), "the main session keeps its tools"
@@ -1248,7 +1248,7 @@ def test_a_side_question_is_a_session_of_its_own_that_only_reads_the_main_one(tm
         world.lanes["code"].add(side, runs[-1]["run"], *fixture("reads"))
         await world.poll()
         [*_, summary] = world.notes("summary")
-        assert summary["data"]["head"] == f"Итог · retinue · сессия {side} · вопрос к {session}"
+        assert summary["data"]["head"] == f"Result · retinue · session {side} · question about {session}"
         assert summary["data"]["turn"] == 0
 
     scenario(tmp_path, body)
@@ -1265,12 +1265,12 @@ def test_an_idle_rewrite_still_on_its_way_never_outlives_a_telegram_press(tmp_pa
         _, pending = await world.post("/items", {"limit": 10})  # the router has not delivered it yet
         assert [n["kind"] for n in pending["items"]] == ["card", "update"]
         assert pending["items"][1]["data"]["buttons"] == card["data"]["buttons"]
-        assert (await world.owner("press", {"button": card["data"]["buttons"][1][1]}))["toast"] == "Отказано."
+        assert (await world.owner("press", {"button": card["data"]["buttons"][1][1]}))["toast"] == "Denied."
         _, pending = await world.post("/items", {"limit": 10})
         last = [n for n in pending["items"] if n["approval"] == card["approval"]][-1]
         assert last["kind"] == "update" and last["data"]["buttons"] == []
-        assert last["data"]["view"]["status"] == "Отказано." and \
-            not any(h.startswith("Сессия простаивает") for h in last["data"]["view"]["head"])
+        assert last["data"]["view"]["status"] == "Denied." and \
+            not any(h.startswith("The session is idle") for h in last["data"]["view"]["head"])
 
     scenario(tmp_path, body)
 
@@ -1285,7 +1285,7 @@ def test_a_malformed_retry_line_never_breaks_the_ingest(tmp_path):
                                    base + "1e308}", *fixture("reads"))
         await world.poll()
         [limit, done] = world.notes("summary")
-        assert limit["data"]["text"].startswith("Лимит подписки — жду сброса до ")
+        assert limit["data"]["text"].startswith("Subscription limit — waiting for the reset at ")
         assert limit["data"]["limit_until"] == world.clock.now + 6 * HOUR, "the huge one, clamped"
         assert world.store.session(session)["state"] == "idle", "every line after them still ingested"
 
@@ -1311,8 +1311,8 @@ def test_a_message_with_a_photo_and_a_file_goes_to_the_lane_as_blocks_and_inbox_
                                              "attachments": [_wire("", _png(), "image/jpeg"),
                                                              _wire("logs.txt", b"boom")]}))["session"]
         [run] = world.lanes["private"].runs()
-        assert run["prompt"][0] == {"type": "text", "text": "Приложено: фото 40×20; файл «logs.txt» (в папке "
-                                                            "inbox/, путь ниже)."}
+        assert run["prompt"][0] == {"type": "text", "text": "Attached: photo 40×20; file \"logs.txt\" (in the "
+                                                            "inbox/ folder, path below)."}
         assert run["prompt"][1]["type"] == "image"
         assert run["files"] == [{"name": "logs.txt", "data": base64.b64encode(b"boom").decode(),
                                  "sha256": hashlib.sha256(b"boom").hexdigest()}]
@@ -1325,7 +1325,7 @@ def test_a_message_with_a_photo_and_a_file_goes_to_the_lane_as_blocks_and_inbox_
         world.lanes["private"].answers["/run"] = "busy"
         said = await world.owner("input", {"input_id": "tg:2", "session": session, "text": "и это",
                                            "attachments": [_wire("b.md", b"# b")]})
-        assert said == {"say": "Принято — сессия ждёт места на линии."}
+        assert said == {"say": "Accepted — the session is waiting for room on the lane."}
         [queued] = world.store.queued()
         assert queued["prompt"] == "и это" and "content" not in queued
         assert world.store.queued_content(queued["seq"])["files"][0]["name"] == "b.md"
@@ -1334,7 +1334,7 @@ def test_a_message_with_a_photo_and_a_file_goes_to_the_lane_as_blocks_and_inbox_
         world.lanes["private"].answers["/run"] = "started"
         await world.platform.drain()
         last = world.lanes["private"].runs()[-1]
-        assert last["prompt"][0]["text"].startswith("и это\n\nПриложено: файл «b.md»") and last["files"]
+        assert last["prompt"][0]["text"].startswith("и это\n\nAttached: file \"b.md\"") and last["files"]
 
         [first, second] = world.store.face_inputs(session)
         assert [a["kind"] for a in first["attachments"]] == ["image", "file"] and first["attachments"][0]["thumb"]
@@ -1350,10 +1350,10 @@ def test_attachments_to_a_live_run_go_with_its_answer(tmp_path):
         session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
         said = await world.owner("input", {"input_id": "tg:2", "session": session, "text": "вот лог",
                                            "attachments": [_wire("ci.log", b"FAIL")]})
-        assert said == {"say": "Передал в сессию."}
+        assert said == {"say": "Passed to the session."}
         path, sent = world.lanes["code"].commands[-1]
         assert path == "/answer" and set(sent) == {"session", "prompt", "files", "date"}
-        assert sent["prompt"][0]["text"] == "вот лог\n\nПриложено: файл «ci.log» (в папке inbox/, путь ниже)."
+        assert sent["prompt"][0]["text"] == "вот лог\n\nAttached: file \"ci.log\" (in the inbox/ folder, path below)."
 
     scenario(tmp_path, body)
 
@@ -1363,17 +1363,17 @@ def test_what_cannot_be_read_is_said_and_nothing_or_the_rest_goes_in(tmp_path):
         session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": ""}))["session"]
         broken = _wire("x.png", b"\x89PNG broken", "image/png")
         said = await world.owner("input", {"input_id": "tg:2", "session": session, "attachments": [broken]})
-        assert said == {"say": "Не передано в сессию: картинка «x.png»: картинку не удалось открыть."}
+        assert said == {"say": 'Not passed to the session: picture "x.png": the picture could not be opened.'}
         assert world.lanes["private"].runs() == [] and world.store.input_session("tg:2") is None
         said = await world.owner("input", {"input_id": "tg:3", "session": session, "text": "всё равно",
                                            "attachments": [broken]})
-        assert said == {"say": "Принято.\nНе передано в сессию: картинка «x.png»: картинку не удалось открыть."}
+        assert said == {"say": 'Accepted.\nNot passed to the session: picture "x.png": the picture could not be opened.'}
         assert world.lanes["private"].runs()[-1]["prompt"] == "всё равно", "text alone, as before"
         torn = {**_wire("a.txt", b"a"), "sha256": "0" * 64}
         said = await world.owner("input", {"input_id": "tg:4", "session": session, "attachments": [torn]})
-        assert said == {"say": "Не передано в сессию: «a.txt»: пришло не целым — sha256 не сходится."}
+        assert said == {"say": 'Not passed to the session: "a.txt": arrived incomplete — sha256 does not match.'}
         again = await world.owner("input", {"input_id": "tg:3", "session": session, "attachments": [_wire("b", b"b")]})
-        assert again == {"say": "Это сообщение сессия уже получила."}
+        assert again == {"say": "The session already has this message."}
         status, _ = await world.post("/owner/input", {"input_id": "tg:5", "session": session, "text": ""})
         assert status == 400, "neither text nor attachments"
 
@@ -1393,7 +1393,7 @@ def test_a_hook_body_is_held_to_its_old_limit_while_the_owner_may_send_files(tmp
         assert decision(await world.hook("PreToolUse", run, pre_tool_use())) == "defer", "a hook in size still works"
         said = await world.owner("input", {"input_id": "tg:2", "session": session, "text": "лог",
                                            "attachments": [_wire("big.log", b"y" * 5000)]})
-        assert said == {"say": "Передал в сессию."}
+        assert said == {"say": "Passed to the session."}
 
     scenario(tmp_path, body)
 

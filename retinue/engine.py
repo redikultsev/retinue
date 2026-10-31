@@ -25,23 +25,23 @@ from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
 
-SESSION_LOST = "_Прошлый разговор не сохранился, начинаю заново._\n\n"
-UNREADABLE = "_Файл не прочитался, поэтому разговор начат заново._\n\n"
-TOO_LARGE = "_Разговор с файлами стал больше, чем принимает модель, поэтому начат заново._\n\n"
-UNREADABLE_NOTE = ("[Справка от Роутера: файлы из этой реплики модель прочитать не смогла — API их отклонил, и "
-                   "разговор начат заново. Скажи Владельцу об этом одной фразой и ответь на то, на что можно "
-                   "ответить без файлов. Понадобится вложение — достань его инструментом get_attachment по номеру "
-                   "из метки.]")
-TOO_LARGE_NOTE = ("[Справка от Роутера: с файлами разговор стал больше, чем принимает API, и начат заново. Скажи "
-                  "Владельцу об этом одной фразой и ответь. Понадобится вложение — достань его инструментом "
-                  "get_attachment по номеру из метки.]")
+SESSION_LOST = "_The previous conversation was not kept, starting over._\n\n"
+UNREADABLE = "_A file could not be read, so the conversation started over._\n\n"
+TOO_LARGE = "_With the files the conversation grew larger than the model accepts, so it started over._\n\n"
+UNREADABLE_NOTE = ("[Note from the router: the model could not read the files of this message — the API refused them, "
+                   "and the conversation started over. Tell the owner so in one sentence and answer what can be "
+                   "answered without the files. If you need an attachment, get it with the get_attachment tool by the "
+                   "number in its mark.]")
+TOO_LARGE_NOTE = ("[Note from the router: with the files the conversation grew larger than the API accepts, and it "
+                  "started over. Tell the owner so in one sentence and answer. If you need an attachment, get it with "
+                  "the get_attachment tool by the number in its mark.]")
 # A 400 is about the files only when it names them; any other 400 is an ordinary failure.
 ABOUT_FILES = re.compile(r"image|document|pdf|media", re.IGNORECASE)
 FILE_SESSIONS = "retinue-file-sessions.json"  # in the config dir: sessions that hold files, across restarts
 COMPACT = "/compact"  # Claude Code's own command; the only prompt that is not delivered verbatim
 STRUCTURED = "StructuredOutput"  # the CLI's own tool that carries an answer by a JSON schema (`--json-schema`)
 BARE_TURNS = 4  # a bare run answers by the schema at once; a few steps leave room for one retry on a mismatch
-LIMIT = "Лимит подписки исчерпан."  # the router words it for the owner; this text is for logs
+LIMIT = "Subscription limit reached."  # the router words it for the owner; this text is for logs
 # Tokens of a run as the API reports them -> the names the router keeps.
 USAGE = {"input_tokens": "input_tokens", "output_tokens": "output_tokens",
          "cache_read_input_tokens": "cache_read_tokens", "cache_creation_input_tokens": "cache_write_tokens"}
@@ -108,12 +108,13 @@ SEARCH_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["query"],
     "properties": {
         "query": {"type": "string", "maxLength": 200,
-                  "description": "одно-три ключевых слова, лучше существительные: окончания подбираются сами"},
+                  "description": "one to three keywords, nouns are best: word endings are matched by themselves"},
         "scope": {"type": "string", "enum": ["chat", "owner", "mail", "all"],
-                  "description": "где искать: chat — эта переписка (в суждении о чужом сообщении — по умолчанию), "
-                                 "owner — разговоры с Владельцем, mail — его письма и календарь, all — всё"},
-        "since": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "с этого дня, 2026-10-09"},
-        "until": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "по этот день включительно"},
+                  "description": "where to look: chat — this conversation (the default when judging somebody "
+                                 "else's message), owner — conversations with the owner, mail — his letters and "
+                                 "calendar, all — everything"},
+        "since": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "from this day, 2026-10-09"},
+        "until": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "up to and including this day"},
     },
 }
 
@@ -128,9 +129,9 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return httpx.AsyncClient(timeout=timeout, trust_env=False)
 
     @tool("ask_agent",
-          "Спросить другого агента Retinue через Роутер и дождаться ответа. Роутер решает, разрешено ли; "
-          "отказ приходит с причиной. agent — id агента, text — самодостаточный вопрос: агент не видит этот "
-          "разговор. Список агентов — инструмент list_agents.",
+          "Ask another Retinue agent through the router and wait for the answer. The router decides whether it "
+          "is allowed; a refusal comes with the reason. agent — the agent's id, text — a self-contained question: "
+          "the agent does not see this conversation. The list of agents is the list_agents tool.",
           {"agent": str, "text": str})
     async def ask_agent(args):
         async with client(900) as http:
@@ -139,18 +140,18 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         data = response.json()
         return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
-    @tool("list_agents", "Агенты Retinue, к которым тебе можно обращаться: id, имя, описание.", {})
+    @tool("list_agents", "The Retinue agents you may ask: id, name, description.", {})
     async def list_agents(args):
         async with client(30) as http:
             agents = (await http.get(f"{bus_url}/agents", headers=headers)).json()
         return {"content": [{"type": "text", "text": json.dumps(agents, ensure_ascii=False)}]}
 
     @tool("search_archive",
-          "Найти в архиве то, что говорилось раньше: реплики Владельца, твои прошлые ответы, письма, календарь, "
-          "переписки Telegram и твои подписи к чужим фото. query — одно-три ключевых слова, лучше существительные: "
-          "окончания подбираются сами. scope — где искать; since и until — дни. Возвращает находки с id, датой, "
-          "автором и пометкой, откуда они. Если пусто — назовёт, где искала и что архив покрывает; попробуй другие "
-          "слова или шире.",
+          "Find in the archive what was said before: the owner's messages, your past answers, letters, the "
+          "calendar, Telegram chats and your captions of other people's photos. query — one to three keywords, "
+          "nouns are best: word endings are matched by themselves. scope — where to look; since and until — days. "
+          "Returns the finds with id, date, author and a note on where they come from. If nothing is found, it "
+          "names where it looked and what the archive covers; try other words or a wider search.",
           SEARCH_SCHEMA)
     async def search_archive(args):
         async with client(30) as http:
@@ -167,37 +168,38 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
     @tool("set_reminder",
-          "Поставить Владельцу напоминание. В срок Роутер разбудит тебя, и ты напишешь его своими словами; если не "
-          "сможешь — пришлёт text дословно. Поэтому пиши text так, чтобы Владелец понял через несколько дней — что "
-          "сделать, кому, зачем. when — местное время Владельца, в его "
-          "поясе из справки «Сейчас», вида 2026-10-09T18:00. weekday — день недели, который ты имеешь в виду "
-          "(«пятница»): Роутер сверит его с датой и откажет, если не совпало или время уже прошло. Тот же текст на "
-          "то же время вернёт «Уже стоит». repeat — повтор: пусто (один раз), daily, weekdays, weekly или "
-          "monthly; when тогда — первый раз. Владельцу назови день и время из ответа Роутера, id — нет.",
+          "Set a reminder for the owner. When it is due, the router wakes you and you write it in your own words; "
+          "if you cannot, it sends text word for word. So write text the owner will understand in a few days: "
+          "what to do, for whom, why. when — the owner's local time, in his zone from the «Now» note, like "
+          "2026-10-09T18:00. weekday — the day of the week you mean («Friday»): the router checks it against the "
+          "date and refuses if it does not match or the time has passed. The same text at the same time returns "
+          "«Already set». repeat — empty (once), daily, weekdays, weekly or monthly; when is then the first time. "
+          "Tell the owner the day and time from the router's answer, not the id.",
           {"text": str, "when": str, "weekday": str, "repeat": str})
     async def set_reminder(args):
         return await reminders("add", {"text": args["text"], "when": args["when"], "weekday": args["weekday"],
                                        "repeat": args.get("repeat", "")})
 
-    @tool("list_reminders", "Активные напоминания Владельца, ближайшие первыми: когда, текст, [id].", {})
+    @tool("list_reminders", "The owner's active reminders, nearest first: when, text, [id].", {})
     async def list_reminders(args):
         return await reminders("list", {})
 
-    @tool("cancel_reminder", "Отменить напоминание по id из list_reminders.", {"id": int})
+    @tool("cancel_reminder", "Cancel a reminder by its id from list_reminders.", {"id": int})
     async def cancel_reminder(args):
         return await reminders("cancel", {"id": args["id"]})
 
     @tool("move_reminder",
-          "Перенести напоминание по id из list_reminders на другое время. when и weekday — как в set_reminder.",
+          "Move a reminder by its id from list_reminders to another time. when and weekday — as in set_reminder.",
           {"id": int, "when": str, "weekday": str})
     async def move_reminder(args):
         return await reminders("move", {"id": args["id"], "when": args["when"], "weekday": args["weekday"]})
 
     @tool("set_timezone",
-          "Сменить пояс Владельца, когда он говорит, что он в другом городе или просит поменять пояс («я в "
-          "Токио», «поменяй пояс на Манилу»). zone — имя IANA (Asia/Tokyo) или город, как его пишет IANA "
-          "(Tokyo). Повторяющиеся напоминания и сводка пойдут по новому поясу, разовые сохранят свой момент. "
-          "Если Владелец только собирается ехать — не меняй, поставь напоминание на день прилёта.",
+          "Change the owner's time zone when he says he is in another city or asks to change the zone («I'm in "
+          "Tokyo», «switch my zone to Manila», or in Russian «я в Токио»). zone — an IANA name (Asia/Tokyo) or a "
+          "city as IANA writes it (Tokyo). Repeating reminders and the summary follow the new zone, one-off ones "
+          "keep their moment. If the owner is only about to travel, do not change it: set a reminder for the day "
+          "he arrives.",
           {"zone": str})
     async def set_timezone(args):
         async with client(30) as http:
@@ -206,9 +208,9 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
     @tool("get_attachment",
-          "Достать снова то, что прислал Владелец, по номеру из метки [вложение #N: …]. После сжатия картинок и "
-          "PDF в разговоре нет — этот инструмент вернёт картинку и текст: расшифровку, текст "
-          "документа; у PDF — только его текстовый слой.",
+          "Get again what the owner sent, by the number from the mark [attachment #N: …]. After compaction the "
+          "pictures and PDFs are gone from the conversation — this tool returns the picture and the text: the "
+          "transcript, the document's text; for a PDF, only its text layer.",
           {"id": int})
     async def get_attachment(args):
         async with client(60) as http:
@@ -220,10 +222,10 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return {"content": [*images, {"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
     @tool("publish_trip",
-          "Опубликовать страницу поездки в хабе Владельца: все варианты, которые ты нашла, с ценами, временем, "
-          "отзывами и фото. Варианты называй ссылкой (link.url) и search_id из ответов travel-ops: цены, продавца и "
-          "время Роутер возьмёт из travel-ops сам. Ответ — адрес страницы; дай его Владельцу в конце ответа ссылкой "
-          "«подробнее». Отказ называет поле — исправь и повтори.",
+          "Publish a trip page in the owner's hub: all the options you found, with prices, times, reviews and "
+          "photos. Name each option by its link (link.url) and search_id from travel-ops' answers: the router takes "
+          "prices, seller and times from travel-ops itself. The answer is the page's address; give it to the owner "
+          "at the end of your answer as a «details» link. A refusal names the field — fix it and try again.",
           lifehub.TRIP_SCHEMA)
     async def publish_trip(args):
         async with client(120) as http:
@@ -233,11 +235,12 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
     @tool("draft_reply",
-          "Предложить Владельцу ответ человеку — на письмо или сообщение в Telegram, — когда ответа правда ждут. "
-          "reply_to — id входящего из архива (mail:… или tgb:…): адрес, тему и тред Роутер возьмёт оттуда. Новое "
-          "письмо — to и subject, только на адрес, с которым Владелец уже переписывался. text — весь текст, как он "
-          "уйдёт. Роутер покажет Владельцу карточку; уйдёт, только если он нажмёт «Отправить». Отказ называет, что "
-          "исправить; «поправь» от Владельца — новый вызов с replaces.",
+          "Propose to the owner a reply to a person — to a letter or a Telegram message — when a reply is really "
+          "expected. reply_to — the id of the incoming item from the archive (mail:… or tgb:…): the router takes "
+          "the address, subject and thread from there. A new letter — to and subject, only to an address the owner "
+          "has already written with. text — the whole text as it will go out. The router shows the owner a card; "
+          "it goes out only if he presses «Send». A refusal names what to fix; an «edit» from the owner is a new "
+          "call with replaces.",
           courier.DRAFT_SCHEMA)
     async def draft_reply(args):
         async with client(120) as http:
@@ -301,21 +304,21 @@ def travel_guard(bus_url: str, bus_token: str, turn_id: str):
         try:
             name = str(hook_input.get("tool_name", ""))
         except Exception:
-            return _deny("Не отправлено: вызов не прочитан.")
+            return _deny("Not sent: the call could not be read.")
         if not name.startswith(travel.PREFIX):
             return {}
         tool, args = name[len(travel.PREFIX):], None
         try:
             args = hook_input.get("tool_input")
             if allowed >= TRAVEL_CALLS:
-                raise travel.Refused(f"не больше {TRAVEL_CALLS} вызовов travel-ops за один ход: ответь тем, что "
-                                     "уже нашлось, и предложи продолжить следующей репликой")
+                raise travel.Refused(f"at most {TRAVEL_CALLS} travel-ops calls in one turn: answer with what has "
+                                     "been found and offer to go on in the next message")
             travel.exact(tool, args)
             decision, reason = "allow", ""
         except travel.Refused as exc:
-            decision, reason = "deny", f"Не отправлено на сайты: {exc}"
+            decision, reason = "deny", f"Not sent to the sites: {exc}"
         except Exception as exc:
-            decision, reason = "deny", f"Не отправлено на сайты: проверка аргументов не удалась ({type(exc).__name__})."
+            decision, reason = "deny", f"Not sent to the sites: the check of the arguments failed ({type(exc).__name__})."
         if decision == "allow":
             allowed += 1
         out = {} if decision == "allow" else _deny(reason)
@@ -328,11 +331,12 @@ def travel_guard(bus_url: str, bus_token: str, turn_id: str):
 MEMORY_TOOLS = ["Read", "Grep", "Glob", "Edit", "Write"]
 PATH_FIELD = {"Read": "file_path", "Edit": "file_path", "Write": "file_path", "Grep": "path", "Glob": "path"}
 WRITES = {"Edit", "Write"}
-MEMORY_HINT = ("Записи — только *.md в <Пространство>/{knowledge,profile,journal,artifacts}/; строки Витрины — в "
-               "<Пространство>/AGENTS.md ниже маркера.")
+MEMORY_HINT = ("Records — only *.md in <Space>/{knowledge,profile,journal,artifacts}/; Showcase lines — in "
+               "<Space>/AGENTS.md below the marker.")
 
 
-NO_WORD = "Не записано: Роутер не подтвердил, что этот ход ещё идёт и пишет он один — правка не сохранилась бы."
+NO_WORD = ("Not written: the router did not confirm that this turn is still running and the only one writing — "
+           "the edit would not be kept.")
 
 
 async def _ack(bus_url: str, bus_token: str, turn_id: str | None, tool: str, path: str) -> bool:
@@ -390,39 +394,39 @@ def memory_guard(root: str, policy: kbcheck.Policy, writable: bool, bus_url: str
                 return {}
             args = hook_input.get("tool_input")
             if not isinstance(args, dict):
-                return _deny("Не выполнено: вызов не прочитан.")
+                return _deny("Not done: the call could not be read.")
             raw = args.get(PATH_FIELD[name])
             if not raw:
-                return _deny(f"Не выполнено: укажи {PATH_FIELD[name]} — абсолютный путь в базе, от {root}/.")
+                return _deny(f"Not done: give {PATH_FIELD[name]} — an absolute path in the Base, from {root}/.")
             raw = str(raw)
             if not raw.startswith("/"):
-                return _deny(f"Не выполнено: путь — абсолютный, от {root}/.")
+                return _deny(f"Not done: the path is absolute, from {root}/.")
             path = os.path.realpath(raw)
             if path != base and not path.startswith(base + "/"):
-                return _deny(f"Не выполнено: вне базы. Читать и писать можно только в {root}/.")
+                return _deny(f"Not done: outside the Base. You may read and write only in {root}/.")
             rel = os.path.relpath(path, base)
             if kbcheck.hidden(rel) or kbcheck.hidden(os.path.relpath(os.path.normpath(raw), root)):
                 # .git/ inside the base is storage git never sees or cleans; .claude/ is settings: not notes.
-                return _deny(f"Не выполнено: {rel} — имя с точки, скрытое; в базе таких нет.")
+                return _deny(f"Not done: {rel} — a name starting with a dot is hidden; the Base has none.")
             for field_name in ("pattern", "glob") if name in ("Glob", "Grep") else ():
                 pattern = str(args.get(field_name) or "")
                 if name == "Glob" or field_name == "glob":
                     if pattern.startswith("/") or ".." in pattern.split("/") or kbcheck.hidden(pattern):
-                        return _deny(f"Не выполнено: {field_name} — относительный, без «..» и скрытых имён; папку "
-                                     "задаёт path.")
+                        return _deny(f"Not done: {field_name} is relative, without «..» and hidden names; the folder "
+                                     "is set by path.")
             if name not in WRITES:
                 return {}
             if not writable:
-                return _deny("Не записано: вне хода разговора база только для чтения.")
+                return _deny("Not written: outside a conversation turn the Base is read-only.")
             if os.path.islink(raw) or os.path.isdir(path):
-                return _deny(f"Не записано: {rel} — не файл.")
+                return _deny(f"Not written: {rel} is not a file.")
             if kbcheck.any_match(rel, policy.lines_below):
                 return _showcase_edit(name, args, path, rel, policy.marker)
             if kbcheck.any_match(rel, policy.never) or not kbcheck.any_match(rel, policy.writable):
-                return _deny(f"Не записано: {rel} — сюда писать нельзя. {MEMORY_HINT}")
+                return _deny(f"Not written: {rel} — you may not write here. {MEMORY_HINT}")
             return {}
         except Exception as exc:
-            return _deny(f"Не выполнено: проверка пути не удалась ({type(exc).__name__}).")
+            return _deny(f"Not done: the check of the path failed ({type(exc).__name__}).")
     return guard
 
 
@@ -430,17 +434,17 @@ def _showcase_edit(name: str, args: dict, path: str, rel: str, marker: str) -> d
     """A showcase changes only below its marker: above it are the Space's rules."""
     text = Path(path).read_text() if os.path.isfile(path) else ""
     if not marker or text.count(marker) != 1:
-        return _deny(f"Не записано: в {rel} нет маркера Витрины — такую Витрину правит только Владелец.")
+        return _deny(f"Not written: {rel} has no Showcase marker — only the owner edits such a Showcase.")
     lines_start = text.index(marker) + len(marker)
     if name == "Write":
         content = str(args.get("content", ""))
         if not content.startswith(text[:lines_start]) or content.count(marker) != 1:
-            return _deny(f"Не записано: {rel} — выше маркера Витрины правила; меняй только строки ниже него.")
+            return _deny(f"Not written: {rel} — above the Showcase marker are the rules; change only the lines below it.")
         return {}
     old, new = str(args.get("old_string", "")), str(args.get("new_string", ""))
     first = text.find(old) if old else -1
     if first < lines_start or marker in new:
-        return _deny(f"Не записано: {rel} — выше маркера Витрины правила; меняй только строки ниже него.")
+        return _deny(f"Not written: {rel} — above the Showcase marker are the rules; change only the lines below it.")
     return {}
 
 
@@ -598,12 +602,12 @@ class ClaudeEngine:
     async def compact(self, session_id: str | None) -> EngineResult:
         """Squeeze the session on the owner's request. The prompt is our constant, so the slash command may run."""
         if not session_id:
-            return EngineResult(text="Сжимать нечего: разговор ещё не начат.", is_error=False)
+            return EngineResult(text="Nothing to compact: the conversation has not started yet.", is_error=False)
         options = dataclasses.replace(self.options(None, False, session_id), verbatim_prompts=False)
         result = await self._run(COMPACT, options, None)
         result.session_id = result.session_id or session_id
         if not result.is_error:
-            result.text = "Контекст сжат."
+            result.text = "Context compacted."
         return result
 
     async def _run(self, prompt: Prompt, options: ClaudeAgentOptions, on_text: OnText | None) -> EngineResult:
@@ -651,9 +655,9 @@ class ClaudeEngine:
         if result is not None and not result.is_error and has_files(prompt):
             self._took_files(result.session_id)
         if result is None:
-            return EngineResult(text="Агент не вернул результат.", is_error=True, session_id=options.resume,
+            return EngineResult(text="The agent returned no result.", is_error=True, session_id=options.resume,
                                 compacted=compacted)
-        text = result.result or ("; ".join(result.errors or []) or "Пустой ответ.")
+        text = result.result or ("; ".join(result.errors or []) or "Empty answer.")
         if isinstance(result.structured_output, dict) and not result.is_error:
             # The answer by the schema, as the text the router reads: one JSON object.
             text = json.dumps(result.structured_output, ensure_ascii=False)
@@ -711,11 +715,11 @@ class EchoEngine:
             await on_text("echo: ")
         if isinstance(prompt, list):  # the text, and how many files came with it
             files = sum(block.get("type") in ("image", "document") for block in prompt)
-            prompt = "\n".join(b["text"] for b in prompt if b.get("type") == "text") + f"\n(файлов: {files})"
+            prompt = "\n".join(b["text"] for b in prompt if b.get("type") == "text") + f"\n(files: {files})"
         return EngineResult(text=f"echo: {prompt}", is_error=False, session_id=session_id or "echo-session")
 
     async def compact(self, session_id: str | None) -> EngineResult:
-        return EngineResult(text="Контекст сжат.", is_error=False, session_id=session_id)
+        return EngineResult(text="Context compacted.", is_error=False, session_id=session_id)
 
 
 def make_engine(cfg: EngineConfig, workspace: str, bus_url: str = "", bus_token: str = "",

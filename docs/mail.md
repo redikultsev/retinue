@@ -78,14 +78,14 @@ it as for live mail.
 ## Every day
 
 - **A message now** — when she judged that something is asked of you and waiting costs much. About your private
-  matter (kind `private`, below) it says only «Почта: 1 важное»; the words come on «Показать». Several urgent letters of one sender within an hour
+  matter (kind `private`, below) it says only «Mail: 1 important»; the words come on «Show». Several urgent letters of one sender within an hour
   are one message.
-- Under each: **«Не уведомлять о таком»** — this sender's letters of this kind go to the summary from then on;
-  **«Всегда отсеивать …»** — the address and how many letters it sent in 30 days; its letters are dropped by code,
+- Under each: **«Don't notify about this»** — this sender's letters of this kind go to the summary from then on;
+  **«Always drop …»** — the address and how many letters it sent in 30 days; its letters are dropped by code,
   unread. Only these buttons change the rules; the assistant has no tool for them. `!mail` lists the mailboxes
   and your rules, with a button to take each rule back.
 - **The morning summary** names today's meetings (with what the base knows for the important ones) and the mail
-  that could wait. Its health line says «почта N из N» with each mailbox's last sync, the calendar, what the day
+  that could wait. Its health line says «mail N of N» with each mailbox's last sync, the calendar, what the day
   kept and dropped by kind, your blocks' counts, and what is still waiting.
 - **A login Google refused** (`invalid_grant`, usually after a password change) is told at once, with the command
   to log in again.
@@ -95,7 +95,7 @@ it as for live mail.
   looks up the new message's words in that chat alone, no model run. A chat is judged on its own: no other person's
   words in that run. She answers each photo of the other person with a caption (`media`); code keeps it as a record
   tied to the file, found by the search, never rewritten. A message written to her rather than to you
-  (`to_assistant`) is counted in your morning summary: «Писали ассистентке, а не тебе, за сутки: …».
+  (`to_assistant`) is counted in your morning summary: «Wrote to the assistant rather than to you, in a day: …».
 - Dropped letters leave their sender and subject in a technical log for 30 days (the router's database, not the
   archive, not the base; the assistant never sees it), so a drop can be checked:
 
@@ -106,15 +106,15 @@ sudo docker exec "$(sudo docker ps -qf name=router)" python -c "import sqlite3; 
 ## Your private matter
 
 Letters of kind `private` are about a matter you keep to yourself: a notification names nothing but a count, a
-draft's card waits behind «Показать», no draft carries it, and a run somebody else's message started never finds it
+draft's card waits behind «Show», no draft carries it, and a run somebody else's message started never finds it
 outside that exchange. Which matter that is, you say in your own words in the server's config — `memory.private`
 in router.yaml — and code puts the line into her triage and judgement runs; without it she goes by the general rule
-(a doctor, a lawyer, a private negotiation). `sphere` names the sphere its one row of «Ждут тебя» belongs to:
+(a doctor, a lawyer, a private negotiation). `sphere` names the sphere its one row of «Waiting for you» belongs to:
 
 ```yaml
 memory:
   private:
-    about: переписка с юристом по договору аренды   # what «private» means for you
+    about: letters with my lawyer about the lease    # what «private» means for you
     sphere: home                                  # optional
 ```
 
@@ -122,4 +122,4 @@ memory:
 
 The judgement run has her tools: she may write a Record to the knowledge base from a letter (a meeting that was
 set, a document's deadline) and move a row of your tracker (docs/proactive.md, «The tracker»). Its commit carries `Foreign-Input: mail` and shows in the evening list with
-«Откатить».
+«Revert».

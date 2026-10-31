@@ -30,7 +30,7 @@ BACKOFF_S = 2.0
 MAX_WAIT_S = 30.0
 NO_CREDITS = ("insufficient_credits", "quota_exceeded")
 class SpeechError(Exception):
-    """The text finishes «Не удалось расшифровать: …» to the owner."""
+    """The text finishes «Could not transcribe: …» to the owner."""
 
 
 class Scribe:
@@ -70,7 +70,7 @@ class Scribe:
         `language` ('' : Scribe guesses), `no_verbatim` (None : Scribe's default, which keeps fillers and false
         starts) and `keyterms` are sent only when given: the router's request stays as it was."""
         if not self.key:
-            raise SpeechError("расшифровка не настроена — нет ключа ElevenLabs (ELEVENLABS_API_KEY)")
+            raise SpeechError("transcription is not set up — no ElevenLabs key (ELEVENLABS_API_KEY)")
         fields: dict[str, str | list[str]] = {"model_id": MODEL, "tag_audio_events": "false",
                                               "timestamps_granularity": "none"}
         if language:
@@ -85,9 +85,9 @@ class Scribe:
             try:
                 body = response.json()
             except ValueError:
-                raise SpeechError("ElevenLabs ответил не JSON") from None
+                raise SpeechError("ElevenLabs answered with no JSON") from None
             if not isinstance(body, dict):
-                raise SpeechError("ElevenLabs ответил не тем")
+                raise SpeechError("ElevenLabs answered with something else")
             text = str(body.get("text") or "").strip()
             # Never the text itself: the log is not the archive.
             log.info("transcribed %s s, language %s (%s)", body.get("audio_duration_secs"), body.get("language_code"),
@@ -109,7 +109,7 @@ class Scribe:
                 response = await http.post(API, headers={"xi-api-key": self.key}, data=fields,
                                            files={"file": (filename, data, media_type)}, timeout=TIMEOUT)
             except httpx.HTTPError as exc:
-                raise SpeechError(f"ElevenLabs недоступен ({type(exc).__name__})") from exc
+                raise SpeechError(f"ElevenLabs is unavailable ({type(exc).__name__})") from exc
             if response.status_code != 429 or attempt == RETRIES:
                 break
             retry_after = response.headers.get("Retry-After", "")
@@ -124,14 +124,14 @@ class Scribe:
         status = detail.get("status", "") if isinstance(detail, dict) else ""
         log.warning("speech to text failed: %s %s", response.status_code, status)
         if response.status_code == 402 or status in NO_CREDITS:
-            raise SpeechError("кончились кредиты ElevenLabs — пополни баланс")
+            raise SpeechError("ElevenLabs is out of credits — top up the balance")
         if response.status_code == 429:
-            raise SpeechError("ElevenLabs перегружен — пришли ещё раз чуть позже")
+            raise SpeechError("ElevenLabs is overloaded — send it again a bit later")
         if response.status_code == 401:
-            raise SpeechError("ElevenLabs не принял ключ")
+            raise SpeechError("ElevenLabs did not accept the key")
         if response.status_code == 422:
-            raise SpeechError("ElevenLabs не принял файл")
-        raise SpeechError(f"ElevenLabs ответил {response.status_code}")
+            raise SpeechError("ElevenLabs did not accept the file")
+        raise SpeechError(f"ElevenLabs answered {response.status_code}")
 
     async def _forget(self, http: httpx.AsyncClient, transcription_id: str) -> None:
         """Delete the transcript at ElevenLabs. A failure costs privacy, not the answer: logged, kept for the next

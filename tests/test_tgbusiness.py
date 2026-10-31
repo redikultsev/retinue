@@ -99,7 +99,7 @@ def test_a_reply_goes_only_in_the_window_as_plain_text_and_once():
         "business_connection_id": "c1", "chat_id": ANNA, "text": "В 7, до встречи.",
         "link_preview_options": {"is_disabled": True},
         "reply_parameters": {"message_id": 10, "allow_sending_without_reply": False}}, "no parse_mode: the text as is"
-    assert send(envelope(account="5"), "00000004", NOW)["error"] == "бот не подключён к аккаунту Владельца"
+    assert send(envelope(account="5"), "00000004", NOW)["error"] == "the bot is not connected to the owner's account"
 
     async def boom(method, **params):
         raise tgbusiness.TelegramError(502, "Bad Gateway")
@@ -191,8 +191,8 @@ def test_the_other_persons_file_is_served_by_the_id_an_item_carried_and_nothing_
     assert voice["file"]["kind"] == "voice" and voice["file"]["duration"] == 7 and "file" not in own, "his own: no"
     assert said["file"]["id"] == "said" and "file" not in passed, "his own voice: yes; a voice he forwarded: no"
     assert base64.b64decode(got["data"]) == b"JPG"
-    assert mine_status == 400 and mine == {"error": "такого файла не было в сообщениях"}
-    assert gone["error"].startswith("Telegram не отдал файл (404"), "the reason, never the address with the token"
+    assert mine_status == 400 and mine == {"error": "no such file was in the messages"}
+    assert gone["error"].startswith("Telegram did not give the file (404"), "the reason, never the address with the token"
     assert all(method == "getFile" for method, _ in calls[-2:])
 
 

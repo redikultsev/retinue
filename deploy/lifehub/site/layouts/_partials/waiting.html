@@ -2,9 +2,9 @@
      matter's letters are one row that names nothing and points at the tracker page. */ -}}
 {{- $icon := cond .private "circle-check" (cond (eq .source "telegram") "message-circle" "mail") -}}
 <details class="row">
-<summary>{{ partial "icon.html" $icon }}<span class="body"><span class="title">{{ .who }}{{ if gt (int .count) 1 }} <span class="faint">· {{ int .count }}</span>{{ end }}</span><span class="sub">{{ .text | default "—" }}</span><span class="sub faint">{{ .where }} · ждёт {{ .age }}{{ with .deadline }} · срок: {{ . }}{{ end }}</span></span><span class="side">{{ with .needs }}<span class="chip{{ if ne $.action "read" }} accent{{ end }}">{{ . }}</span>{{ end }}</span></summary>
+<summary>{{ partial "icon.html" $icon }}<span class="body"><span class="title">{{ .who }}{{ if gt (int .count) 1 }} <span class="faint">· {{ int .count }}</span>{{ end }}</span><span class="sub">{{ .text | default "—" }}</span><span class="sub faint">{{ .where }} · waiting {{ .age }}{{ with .deadline }} · due: {{ . }}{{ end }}</span></span><span class="side">{{ with .needs }}<span class="chip{{ if ne $.action "read" }} accent{{ end }}">{{ . }}</span>{{ end }}</span></summary>
 <div class="more">
-{{- if .private }}<p><a href="/tracker/">Письма о личном — на странице трекера</a></p>{{ end }}
-{{- range .items }}<p>{{ .text | default "—" }} <span class="faint">· {{ .age }} назад{{ with .needs }} · {{ . }}{{ end }}{{ with .deadline }} · срок: {{ . }}{{ end }}</span></p>{{ end }}
+{{- if .private }}<p><a href="/tracker/">Letters about the private matter are on the tracker page</a></p>{{ end }}
+{{- range .items }}<p>{{ .text | default "—" }} <span class="faint">· {{ .age }} ago{{ with .needs }} · {{ . }}{{ end }}{{ with .deadline }} · due: {{ . }}{{ end }}</span></p>{{ end }}
 </div>
 </details>

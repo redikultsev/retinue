@@ -23,8 +23,9 @@ pnpm -C face typecheck && pnpm -C face lint && pnpm -C face test
 
 ## How the code is written
 
-- **English for code, comments, docs and commit messages; Russian for every string the owner reads** in the bot, the
-  app and the agents' instructions. Keep both: a new button gets a Russian label, its doc quotes it in «guillemets».
+- **English for everything: code, comments, docs, commit messages and every string the owner reads** in the bot, the
+  app and the agents' instructions. A new button gets an English label, its doc quotes it in «guillemets». A parser
+  of what the owner types keeps accepting the Russian forms it accepted before.
 - **A change to behaviour changes its doc in the same pull request.** Each part has one guide in `docs/`; the README
   links them.
 - **Security code comes with a test that shows the refusal.** The gate (`retinue/gate.py`, `retinue/approvals.py`),

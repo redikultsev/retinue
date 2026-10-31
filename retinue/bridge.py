@@ -10,7 +10,7 @@ message the bridge sends is mapped in the router's `sent` table under its own ch
 (`platform`: message → session, `platform-card`: message → approval), never under `telegram`: a reply to it goes to
 its session, and nothing of the platform enters the assistant's archive or her context.
 
-With the face's address (`face_url`), an approval card also offers «Открыть в приложении»: a Mini App button that opens
+With the face's address (`face_url`), an approval card also offers «Open in the app»: a Mini App button that opens
 that card in the face, where the owner logs in by Telegram's own signature. `/app` gets him a one-time code for the
 face and the link that carries it — the one link the bridge ever makes clickable, to the face's own host.
 """
@@ -51,23 +51,23 @@ SESSION, CARD = "platform", "platform-card"  # the router's `sent` channels: mes
 # `/wait`'s line of a question: message → `<approval>/<n>`. Not CARD: a card's update rewrites every CARD message.
 QUESTION = "platform-question"
 PING = "platform-ping"       # and: a ping's message with its reply buttons → the ping's note number
-UNAVAILABLE = "Платформа недоступна — попробуй позже."
+UNAVAILABLE = "The platform is unavailable — try again later."
 # Telegram's answers to an edit that has nothing left to do: the card already reads so, or the owner deleted it.
 SETTLED_EDITS = ("message is not modified", "message to edit not found")
-NOT_SHOWN = "Сообщение платформы не показано: Telegram его не принял или оно испорчено. Подробности — в журнале Роутера."
+NOT_SHOWN = "A platform message was not shown: Telegram did not take it, or it is broken. Details are in the router's log."
 # What a note can fail with for good: Telegram's 400 (too long, say) or data not shaped as a note of its kind.
 NOT_SHOWABLE = (TelegramError, KeyError, TypeError, ValueError, AttributeError)
-IN_APP = "Открыть в приложении"
-OPEN_APP = "Открыть"         # `/app`'s button: the face as a Mini App
-NOT_PASSED = "Не передано в сессию"
+IN_APP = "Open in the app"
+OPEN_APP = "Open"            # `/app`'s button: the face as a Mini App
+NOT_PASSED = "Not passed to the session"
 ECHO_CHARS = 3000            # what was heard, said back, escaped: room is left for the platform's answer
 ALBUMS = "platform.albums"   # the router's kv: the albums being gathered or sent into sessions, as JSON
 ALBUM_KEYS = ("message_id", "caption", "media_group_id", "photo", "document")  # what is kept of a part
 FILES_TIMEOUT_S = 300        # the platform reads every picture and PDF of the message before it answers
-WAITING_LOOK_S = 30.0        # the assistant's digest («Ждут тебя») is built this often…
+WAITING_LOOK_S = 30.0        # the assistant's digest («Waiting for you») is built this often…
 WAITING_PUSH_S = 3600.0      # …pushed when it changed, and at least this often anyway
 WAITING_TIMEOUT_S = 10.0     # a push waits no longer: it runs beside the notes' pump, never in its way
-DECIDE_HINT = "Реши кнопками её карточки или в приложении."
+DECIDE_HINT = "Decide with its card's buttons or in the app."
 # `/wait`: what each row's icon is, by where it came from.
 ICONS = {"question": "❓", "approval": "⚠️", "courier": "📦", "session": "💬", "letter": "✉️", "chat": "💬",
          "draft": "📝", "deadline": "⏳", "base": "🗂", "push": "⬆️"}
@@ -88,9 +88,9 @@ class PlatformClient(Neighbour):
             response = await self.http.post(f"{self.url}/owner/file", json={"id": file_id}, timeout=120,
                                             headers={"Authorization": f"Bearer {self.token}"})
         except httpx.HTTPError as exc:
-            raise Unavailable(f"недоступно: {self.name} ({type(exc).__name__})") from None
+            raise Unavailable(f"unavailable: {self.name} ({type(exc).__name__})") from None
         if response.status_code not in (200, 400):
-            raise Unavailable(f"{self.name}: ответ HTTP {response.status_code}")
+            raise Unavailable(f"{self.name}: HTTP {response.status_code}")
         return await asyncio.to_thread(_file_answer, response.content)
 
 
@@ -100,7 +100,7 @@ class PlatformClient(Neighbour):
         return await self._digest("/owner/waiting", body)
 
     async def library(self, body: dict) -> dict:
-        """The hub's list of pages for «Читать» (`/owner/library`), the same way as the digest."""
+        """The hub's list of pages for «Read» (`/owner/library`), the same way as the digest."""
         return await self._digest("/owner/library", body)
 
     async def _digest(self, path: str, body: dict) -> dict:
@@ -108,15 +108,15 @@ class PlatformClient(Neighbour):
             response = await self.http.post(f"{self.url}{path}", json=body, timeout=WAITING_TIMEOUT_S,
                                             headers={"Authorization": f"Bearer {self.token}"})
         except httpx.HTTPError as exc:
-            raise Unavailable(f"недоступно: {self.name} ({type(exc).__name__})") from None
+            raise Unavailable(f"unavailable: {self.name} ({type(exc).__name__})") from None
         if response.status_code == 413:
-            return {"error": "дайджест больше, чем платформа принимает (413)"}
+            return {"error": "the digest is bigger than the platform takes (413)"}
         try:
             data = response.json()
         except ValueError:
             data = None
         if response.status_code not in (200, 400) or not isinstance(data, dict):
-            raise Unavailable(f"{self.name}: ответ HTTP {response.status_code}")
+            raise Unavailable(f"{self.name}: HTTP {response.status_code}")
         return data
 
 
@@ -130,7 +130,7 @@ class PlatformBridge:
         self.chips: Callable[[float], list[dict]] | None = None  # the hub's status chips, pushed with it
         self._looked, self._pushed, self._pushed_mark = 0.0, 0.0, ""
         self._pushing: asyncio.Task | None = None
-        # The hub's pages for the face's «Читать» (`Lifehub.library`): None until the hub has read them.
+        # The hub's pages for the face's «Read» (`Lifehub.library`): None until the hub has read them.
         self.library: Callable[[], list[dict] | None] | None = None
         self._library_looked, self._library_pushed, self._library_mark = 0.0, 0.0, ""
         self.spheres_at = 0.0  # when the platform last named its spheres (`refresh_spheres`)
@@ -295,7 +295,7 @@ class PlatformBridge:
 
     async def _ping_closed(self, data: dict) -> None:
         """A ping's replies closed: its last message rewritten without its buttons, with «→ <reply>» when one went in;
-        or its «В Базу · N» put on, relabelled or taken off (`tobase`), the replies kept while they are open."""
+        or its «To the Base · N» put on, relabelled or taken off (`tobase`), the replies kept while they are open."""
         html = ping_parts(data)[-1]
         for native_id in self.store.sent_native(PING, str(data["seq"])):
             await self._edit(html, int(native_id), ping_keyboard(data))
@@ -305,14 +305,14 @@ class PlatformBridge:
         document, under the session's last message, and mapped to the session so a reply to it goes there. No
         caption: the platform's words reach the owner only through `_message`. An HTML page or an SVG — what a
         browser runs — never goes as itself: opened in Telegram it could run its script and reach anywhere, which
-        would make out/ a way out of a lane without the web. It comes as a message with «Открыть», the face's Mini
+        would make out/ a way out of a lane without the web. It comes as a message with «Open», the face's Mini
         App, where it opens sandboxed; without the face, as `<name>.txt`."""
         if str(note.get("mime") or "").split(";")[0] in ACTIVE and self.face_url:
             await self._page(session, file_id, str(note.get("path") or ""))
             return
         answer = await self.neighbour.out_file(file_id)
         if not isinstance(answer.get("body"), bytes):
-            await self.say(str(answer.get("error") or "Файла нет."), session)
+            await self.say(str(answer.get("error") or "No such file."), session)
             return
         body = answer["body"]
         name, mime = str(answer.get("name") or "file"), str(answer.get("mime") or "application/octet-stream")
@@ -337,10 +337,10 @@ class PlatformBridge:
 
     async def _page(self, session: str, file_id: str, path: str) -> None:
         name = path.rsplit("/", 1)[-1] or "page"
-        keyboard = {"inline_keyboard": [[{"text": "Открыть", "web_app": {"url": f"{self.face_url}/f/{file_id}"}}]]}
+        keyboard = {"inline_keyboard": [[{"text": OPEN_APP, "web_app": {"url": f"{self.face_url}/f/{file_id}"}}]]}
         native_id = await self.channel._message(
-            f"Страница из сессии: <code>{_tg_escape(name)}</code>\nОткроется в приложении, в песочнице: без скриптов "
-            "и без загрузок извне.", keyboard=keyboard)
+            f"A page from the session: <code>{_tg_escape(name)}</code>\nIt opens in the app, sandboxed: no scripts and "
+            "nothing loaded from outside.", keyboard=keyboard)
         if native_id:
             self.store.save_sent(SESSION, native_id, session)
 
@@ -398,7 +398,7 @@ class PlatformBridge:
                 raise
 
     def menu(self) -> list[dict]:
-        """The spheres as the bot's commands: «/travel — ✈️ Путешествия»."""
+        """The spheres as the bot's commands: «/travel — ✈️ Travel»."""
         return [{"command": s["name"], "description": f"{s['icon']} {s['title']}".strip()}
                 for s in self.spheres().values()]
 
@@ -454,7 +454,7 @@ class PlatformBridge:
         path (`attachments.prepare` — her size limits, her scribe) turns it into text, which goes in like a typed
         reply, marked as spoken so the agent reads a misheard word as such. The owner sees what was heard with the
         platform's answer. Speech that cannot be read is said with the reason, and nothing goes into the session.
-        Awaited like the assistant's own voice path, with «печатает…» meanwhile."""
+        Awaited like the assistant's own voice path, with «typing…» meanwhile."""
         typing = asyncio.create_task(self._keep_typing())
         try:
             heard = await prepare(upload, scribe)
@@ -463,12 +463,12 @@ class PlatformBridge:
             return
         except Exception as exc:  # a bug in reading costs this message, said aloud, never the channel
             log.exception("reading %s for session %s failed", upload.label(), session)
-            await self.say(f"{NOT_PASSED}: {upload.label()}: ошибка ({type(exc).__name__}).", session)
+            await self.say(f"{NOT_PASSED}: {upload.label()}: error ({type(exc).__name__}).", session)
             return
         finally:
             typing.cancel()
         if heard.text == NO_SPEECH:
-            await self.say(f"{NOT_PASSED}: {heard.what}: речи не разобрать.", session)
+            await self.say(f"{NOT_PASSED}: {heard.what}: no speech to make out.", session)
             return
         # One line, marked whole: a line break in the transcript cannot start something that reads as not spoken.
         spoken = SPOKEN_MARK + defuse(" ".join(heard.text.split()))
@@ -528,8 +528,8 @@ class PlatformBridge:
                               "\n".join(c for p in parts if (c := (p.get("caption") or "")).strip()))
         except Exception:  # the update loop has moved on already: the owner hears of it instead of silence
             log.exception("album %s for session %s failed", key, session)
-            await self.say(f"{NOT_PASSED}: альбом из {len(parts)} файлов не собран — ошибка на стороне Роутера. "
-                           "Пришли его ещё раз.", session)
+            await self.say(f"{NOT_PASSED}: an album of {len(parts)} files was not put together — an error on the router's side. "
+                           "Send it again.", session)
         finally:
             albums = self._albums()
             albums.pop(key, None)
@@ -544,12 +544,12 @@ class PlatformBridge:
                     refused.append(upload.refused)
                     continue
                 if total + upload.size > inbox.MAX_TOTAL:  # the size Telegram announced: not downloaded for nothing
-                    refused.append(f"{upload.label()}: вместе с остальными больше {inbox.MAX_TOTAL // 2**20} МБ")
+                    refused.append(f"{upload.label()}: over {inbox.MAX_TOTAL // 2**20} MB together with the rest")
                     continue
                 try:
                     data = upload.data or await upload.fetch()
                 except Exception as exc:  # the channel words its errors without addresses: they carry the token
-                    refused.append(f"{upload.label()}: Telegram не отдал его ({exc})")
+                    refused.append(f"{upload.label()}: Telegram did not hand it over ({exc})")
                     continue
                 total += max(len(data), upload.size)
                 given.append({"name": upload.name, "media_type": upload.media_type or
@@ -574,13 +574,13 @@ class PlatformBridge:
         while True:
             try:
                 await self.channel.typing("", True)
-            except Exception as exc:  # «печатает…» is a courtesy: its failure stops nothing
+            except Exception as exc:  # «typing…» is a courtesy: its failure stops nothing
                 log.warning("typing: %s", exc)
             await asyncio.sleep(self.channel.typing_refresh_s)
 
     async def press(self, query_id: str, button: str, native_id: int | None) -> None:
         """A press on a platform card's button, answered as the platform decides: a toast, maybe the card rewritten
-        with the buttons it keeps, maybe the whole input as a file («Открыть»)."""
+        with the buttons it keeps, maybe the whole input as a file («Open»)."""
         try:
             pressed = await self.neighbour.owner("press", {"button": button})
         except Unavailable as exc:
@@ -600,7 +600,7 @@ class PlatformBridge:
 
 
     async def wait(self) -> None:
-        """`/wait`: «Ждут тебя» as text — a head with the count, then one message per row, grouped by action. A reply to
+        """`/wait`: «Waiting for you» as text — a head with the count, then one message per row, grouped by action. A reply to
         a session's row goes into its session like a reply to any of its messages; to a question's row it is the answer
         (mapped apart from its card, so the card's later rewrites never reach this line). A card to decide is not
         answered by a reply — that would only make it stale — so its line says to use the card's buttons or the app,
@@ -614,12 +614,12 @@ class PlatformBridge:
             return
         rows = [r for r in feed.get("rows") or [] if isinstance(r, dict)]
         if not rows:
-            await self.channel._message("Ничего не ждёт тебя.")
+            await self.channel._message("Nothing is waiting for you.")
             return
         count, more = int(feed.get("count") or len(rows)), int(feed.get("more") or 0)
-        head = f"Ждут тебя: {count}. Ответь на строку — уйдёт в её сессию."
+        head = f"Waiting for you: {count}. Reply to a line — it goes to its session."
         if more:
-            head += f"\nЕщё {more} — в приложении." if self.face_url else f"\nЕщё {more}."
+            head += f"\n{more} more — in the app." if self.face_url else f"\n{more} more."
         await self.channel._message(head)
         group, mine = "", []
         for row in rows:
@@ -645,13 +645,13 @@ class PlatformBridge:
     async def _hers(self, rows: list[dict]) -> None:
         """The assistant's rows as her conversation's own system message (`Core.tell_owner`): on record there, so a
         reply to it reaches her with what it listed — by who and what, the words she knows them by."""
-        now, lines = time.time(), ["Ждут тебя от ассистентки:"]
+        now, lines = time.time(), ["Waiting for you from the assistant:"]
         for row in rows:
             since = row.get("since")
             waited = f" · {ago(now - since)}" if isinstance(since, (int, float)) and since <= now else ""
             where = f" ({row['where']})" if row.get("where") else ""
             lines.append(f"- {row.get('title') or ''}{where}: {row.get('essence') or ''}{waited}")
-        lines.append("Ответь на это сообщение — оно уйдёт ассистентке.")
+        lines.append("Reply to this message — it goes to the assistant.")
         core = getattr(self.channel, "core", None)
         if core is not None:
             await core.tell_owner("\n".join(lines), origin=self.channel)
@@ -662,8 +662,8 @@ class PlatformBridge:
         """A card's buttons one per row; while it still has any, and the face is known, the face's own button last."""
         keyboard = rows_of(buttons)
         if keyboard and approval and self.face_url:  # a question's message is `<approval>/<n>`: the app shows the card
-            base = approval.removeprefix("base/") if approval.startswith("base/") else None  # a «В Базу» card
-            push = approval.removeprefix("push/") if approval.startswith("push/") else None  # a «Запушить» card
+            base = approval.removeprefix("base/") if approval.startswith("base/") else None  # a «To the Base» card
+            push = approval.removeprefix("push/") if approval.startswith("push/") else None  # a «Push» card
             url = f"{self.face_url}/b/{base}" if base else f"{self.face_url}/p/{push}" if push else \
                 f"{self.face_url}/a/{approval.partition('/')[0]}"
             keyboard["inline_keyboard"].append([{"text": IN_APP, "web_app": {"url": url}}])
@@ -684,11 +684,11 @@ class PlatformBridge:
             return
         host = urlsplit(self.face_url).hostname if self.face_url else ""
         link = _tg_link(url, url) if host and linkable(url, (host,)) else f"<code>{_tg_escape(url)}</code>"
-        # «Открыть»: the app as a Mini App, logged in by Telegram's signature — no code needed in Telegram itself.
+        # «Open»: the app as a Mini App, logged in by Telegram's signature — no code needed in Telegram itself.
         keyboard = {"inline_keyboard": [[{"text": OPEN_APP, "web_app": {"url": f"{self.face_url}/"}}]]} \
             if self.face_url else None
-        await self.channel._message(f"Вход в приложение: {link}\n\nИли введи код: <code>{_tg_escape(code)}</code>\n"
-                                    "Код действует 10 минут и один раз.", keyboard=keyboard)
+        await self.channel._message(f"Log in to the app: {link}\n\nOr enter the code: <code>{_tg_escape(code)}</code>\n"
+                                    "The code works once, for 10 minutes.", keyboard=keyboard)
 
 
 def _file_answer(content: bytes) -> dict:
@@ -720,7 +720,7 @@ def ping_parts(data: dict) -> list[str]:
 
 
 def ping_keyboard(data: dict) -> dict | None:
-    """A ping's buttons: its suggested replies while they are open, then «В Базу · N» and «Запушить · N» while it
+    """A ping's buttons: its suggested replies while they are open, then «To the Base · N» and «Push · N» while it
     carries them."""
     buttons = list(data.get("buttons") or []) if data.get("open") else []
     if isinstance(base := data.get("base"), list) and len(base) == 2:
@@ -763,15 +763,15 @@ def _wait_line(row: dict, now: float, group: str) -> str:
     owner's, a model's or a stranger's."""
     since = row.get("since")
     waited = "" if not isinstance(since, (int, float)) else \
-        f"через {ago(since - now)}" if since > now else ago(now - since)
+        f"in {ago(since - now)}" if since > now else ago(now - since)
     parts = [str(row.get(k) or "") for k in ("where", "title")] + [waited]
     text = f"{ICONS.get(str(row.get('source')), '•')} " + " · ".join(_tg_escape(p) for p in parts if p)
     if row.get("essence"):
         text += f"\n{_tg_escape(str(row['essence']))}"
     if isinstance(row.get("session"), str) and row["session"]:
-        text += f"\n<code>сессия {_tg_escape(row['session'])}</code>"
+        text += f"\n<code>session {_tg_escape(row['session'])}</code>"
     return f"<b>{_tg_escape(group)}</b>\n{text}" if group else text
 
 
 def _said(answer: dict) -> str:
-    return str(answer.get("say") or answer.get("error") or "Платформа ответила без текста.")
+    return str(answer.get("say") or answer.get("error") or "The platform answered with no text.")

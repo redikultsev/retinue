@@ -141,7 +141,7 @@ class Live:
 
 
 def _size(n: int) -> str:
-    return f"{n} Б" if n < 1024 else f"{n / 1024:.0f} КБ" if n < 2**20 else f"{n / 2**20:.1f} МБ".replace(".", ",")
+    return f"{n} B" if n < 1024 else f"{n / 1024:.0f} KB" if n < 2**20 else f"{n / 2**20:.1f} MB"
 
 
 def save_inbox(cwd: Path, files: list[dict], date: str, work: Path | None = None) -> list[tuple[str, int]]:
@@ -155,12 +155,12 @@ def save_inbox(cwd: Path, files: list[dict], date: str, work: Path | None = None
     for item in files:
         data = base64.b64decode(item["data"], validate=True)
         if hashlib.sha256(data).hexdigest() != item["sha256"]:
-            raise Refused(f"files: «{item['name']}» не сходится с sha256")
+            raise Refused(f"files: «{item['name']}» does not match its sha256")
         given.append((f"{date}-{item['name']}", data, item["sha256"]))
     try:
         top = os.open(cwd, os.O_RDONLY | os.O_DIRECTORY)
     except OSError as exc:
-        raise Refused(f"inbox: папка сессии не открылась ({type(exc).__name__})") from None
+        raise Refused(f"inbox: the session's folder did not open ({type(exc).__name__})") from None
     try:
         try:
             os.mkdir(cliengine.INBOX_DIR, 0o755, dir_fd=top)
@@ -169,14 +169,14 @@ def save_inbox(cwd: Path, files: list[dict], date: str, work: Path | None = None
         try:
             inbox = os.open(cliengine.INBOX_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=top)
         except OSError:
-            raise Refused(f"{cliengine.INBOX_DIR}: не папка (или ссылка) в папке сессии") from None
+            raise Refused(f"{cliengine.INBOX_DIR}: not a folder (or a link) in the session's folder") from None
         try:
             saved = [(f"{cliengine.INBOX_DIR}/{_save_one(inbox, name, data, digest)}", len(data))
                      for name, data, digest in given]
         finally:
             os.close(inbox)
     except OSError as exc:
-        raise Refused(f"inbox: файл не записан ({type(exc).__name__})") from None
+        raise Refused(f"inbox: a file was not written ({type(exc).__name__})") from None
     finally:
         os.close(top)
     if work is not None:
@@ -216,7 +216,7 @@ def _save_one(inbox: int, name: str, data: bytes, digest: str) -> str:
             os.unlink(candidate, dir_fd=inbox)
             raise
         return candidate
-    raise Refused(f"inbox: для «{name}» нет свободного имени")
+    raise Refused(f"inbox: no free name for «{name}»")
 
 
 EXCLUDE_MAX = 1024 * 1024  # a longer .git/info/exclude is not read, and not written
@@ -279,7 +279,7 @@ def check_code(spec: object) -> dict | None:
             or not isinstance(spec.get("repos"), list) or not all(isinstance(r, str) and CLONE_NAME.fullmatch(r)
                                                                   for r in spec["repos"]) \
             or not isinstance(spec.get("author"), str) or not AUTHOR.fullmatch(spec["author"]):
-        raise Refused("code: не {root, author, repos}")
+        raise Refused("code: not {root, author, repos}")
     return spec
 
 
@@ -304,7 +304,7 @@ def ensure_clone(work: Path, mirrors: Path, root: str, name: str, author: str) -
         try:
             here = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=top)
         except OSError:
-            raise Refused(f"/work/{root}: не папка (или ссылка)") from None
+            raise Refused(f"/work/{root}: not a folder (or a link)") from None
     finally:
         os.close(top)
     try:
@@ -356,7 +356,7 @@ def with_saved(prompt: str | list[dict], saved: list[tuple[str, int]]) -> list[d
     """The prompt with one more text block: where the owner's files now are. Written by code, from what was written."""
     blocks = [{"type": "text", "text": prompt}] if isinstance(prompt, str) else list(prompt)
     lines = "\n".join(f"- {path} ({_size(size)})" for path, size in saved)
-    return [*blocks, {"type": "text", "text": f"Файлы владельца сохранены в папке сессии:\n{lines}"}]
+    return [*blocks, {"type": "text", "text": f"The owner's files are saved in the session's folder:\n{lines}"}]
 
 
 def token_pipe(token: str) -> int:
@@ -444,11 +444,11 @@ class LaneHost:
 
     def _cwd(self, cwd: object) -> Path:
         if not isinstance(cwd, str) or cwd.startswith("/") or "\x00" in cwd or ".." in Path(cwd).parts:
-            raise Refused(f"cwd: не путь внутри {self.cfg.work}")
+            raise Refused(f"cwd: not a path inside {self.cfg.work}")
         work = Path(self.cfg.work).resolve()
         path = (work / cwd).resolve()
         if not path.is_relative_to(work) or not path.is_dir():
-            raise Refused(f"cwd: нет такой папки в {self.cfg.work}")
+            raise Refused(f"cwd: no such folder in {self.cfg.work}")
         return path
 
     def _notes(self, cwd: Path) -> str:
@@ -473,16 +473,16 @@ class LaneHost:
     def _argv(self, body: dict, settings: Path, notes: bool = False, skills: bool = False) -> list[str]:
         allowed, disallowed = body.get("allowed") or [], body.get("disallowed") or []
         if not all(isinstance(rules, list) and all(isinstance(r, str) for r in rules) for rules in (allowed, disallowed)):
-            raise Refused("allowed/disallowed: не списки правил")
+            raise Refused("allowed/disallowed: not lists of rules")
         resume = body.get("cli_session")
         if resume is not None and not isinstance(resume, str):
-            raise Refused("cli_session: не id сессии")
+            raise Refused("cli_session: not a session id")
         fork = body.get("fork", False)  # the first run of a fork: `cli_session` is its parent's, copied, not continued
         if type(fork) is not bool or (fork and (not resume or body.get("prompt") is None)):
-            raise Refused("fork: ответвление без родительской сессии или без первого сообщения")
+            raise Refused("fork: a fork without a parent session or without a first message")
         subs = body.get("subs", False)  # the platform's sub-sessions server, at this lane's own hook address
         if type(subs) is not bool:
-            raise Refused("subs: не да/нет")
+            raise Refused("subs: not true/false")
         return cliengine.check_argv(cliengine.argv(str(settings), allowed, disallowed, resume, instructions=notes,
                                                     skills=skills, fork=fork,
                                                     mcp=self.cfg.hook_url if subs else None), self.cfg.hook_url)
@@ -492,7 +492,7 @@ class LaneHost:
         session, run = body.get("session"), body.get("run")
         if not isinstance(session, str) or not SESSION_ID.fullmatch(session) or \
                 not isinstance(run, str) or not cliengine.RUN_ID.fullmatch(run):
-            return _refused("session/run: не те id")
+            return _refused("session/run: wrong ids")
         async with self.starting:
             if session in self.live:
                 return web.json_response({"status": "running"})
@@ -511,23 +511,23 @@ class LaneHost:
 
     async def _start(self, session: str, run: str, body: dict) -> Live:
         if not self.pinned:
-            raise Refused(f"CLI не {cliengine.CLI_VERSION}: {self.version or 'не ответил'}")
+            raise Refused(f"CLI is not {cliengine.CLI_VERSION}: {self.version or 'no answer'}")
         settings = cliengine.check_settings(body.get("settings"), self.cfg.hook_url)
         prompt, hook_token = body.get("prompt"), body.get("hook_token")
         if prompt is not None:
             prompt = cliengine.check_content(prompt)
         if prompt is None and not body.get("cli_session"):  # '' is no session, as in the store and `cliengine.argv`
-            raise Refused("новая сессия без запроса")
+            raise Refused("a new session without a prompt")
         files = body.get("files")
         if files is not None:
             if prompt is None:
-                raise Refused("files: без запроса")
+                raise Refused("files: without a prompt")
             files = cliengine.check_files(files, body.get("date"))
         if not isinstance(hook_token, str) or not hook_token:
-            raise Refused("hook_token: нет")
+            raise Refused("hook_token: missing")
         oauth_token = body.get("oauth_token")
         if not isinstance(oauth_token, str) or not oauth_token or "\n" in oauth_token:
-            raise Refused("oauth_token: платформа не передала вход подписки — без него запуск не начинается")
+            raise Refused("oauth_token: the platform did not pass the subscription login — no run starts without it")
         self.oauth_token = oauth_token
         if (code := check_code(body.get("code"))) is not None:  # the owner's repositories, cloned once each
             for name in code["repos"]:
@@ -537,7 +537,7 @@ class LaneHost:
             parts = str(body.get("cwd") or "").split("/")
             if len(parts) >= 2 and parts[0] == code["root"] and not (Path(self.cfg.work) / code["root"] /
                                                                     parts[1]).is_dir():
-                raise Refused(f"репозиторий {parts[1]} ещё не склонирован: платформа не подтянула его зеркало")
+                raise Refused(f"repository {parts[1]} is not cloned yet: the platform has not fetched its mirror")
         cwd = self._cwd(body.get("cwd"))
         path = Path(self.cfg.run_dir) / f"{run}.json"
         # The owner's memory, the repository's rules and his skills, read again for every run the platform asks them
@@ -558,7 +558,7 @@ class LaneHost:
         except OSError as exc:
             path.unlink(missing_ok=True)
             notes_path.unlink(missing_ok=True)
-            raise Refused(f"настройки не записаны: {type(exc).__name__}") from None
+            raise Refused(f"settings not written: {type(exc).__name__}") from None
         if files:  # last, after every check and the run's own files: a refused run leaves nothing in the inbox
             try:
                 prompt = with_saved(prompt, await self._saved(cwd, files, body["date"]))
@@ -572,7 +572,7 @@ class LaneHost:
         except OSError as exc:
             path.unlink(missing_ok=True)
             notes_path.unlink(missing_ok=True)
-            raise Refused(f"CLI не запустился: {type(exc).__name__}") from None
+            raise Refused(f"the CLI did not start: {type(exc).__name__}") from None
         if prompt is None:
             proc.stdin.close()  # a resume after a decision: the CLI settles the deferred call and goes on alone
         else:
@@ -611,14 +611,14 @@ class LaneHost:
         body = await _body(request)
         session, prompt = body.get("session"), body.get("prompt")
         if not isinstance(session, str):
-            return _refused("session: не id")
+            return _refused("session: not an id")
         try:
             prompt = cliengine.check_content(prompt) if prompt is not None else None
             files = cliengine.check_files(body["files"], body.get("date")) if "files" in body else None
         except Refused as exc:
             return _refused(str(exc))
         if prompt is None:
-            return _refused("prompt: не текст")
+            return _refused("prompt: not text")
         live = self.live.get(session)
         if live is None or live.proc.stdin.is_closing():
             return web.json_response({"status": "not_running"})
@@ -637,7 +637,7 @@ class LaneHost:
     async def stop(self, request: web.Request) -> web.Response:
         session = (await _body(request)).get("session")
         if not isinstance(session, str):
-            return _refused("session: не id")
+            return _refused("session: not an id")
         live = self.live.get(session)
         if live is None:
             return web.json_response({"status": "not_running"})
@@ -701,7 +701,7 @@ class LaneHost:
     async def confirm(self, request: web.Request) -> web.Response:
         upto = (await _body(request)).get("upto")
         if type(upto) is not int:
-            return _refused("upto: не номер")
+            return _refused("upto: not a number")
         return web.json_response({"confirmed": self.journal.confirm(upto)})
 
 

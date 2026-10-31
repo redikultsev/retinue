@@ -1,4 +1,4 @@
-"""«Запушить»: the owner's button that pushes what a session committed in one of his repositories in the room as a
+"""«Push»: the owner's button that pushes what a session committed in one of his repositories in the room as a
 branch, and opens a pull request (GitHub) or a merge request (GitLab) — never the default branch, never forced. The
 repositories, their mirrors and the push itself are `code.CodeRepos` (docs/code.md); this module is who worked
 where, the button on the ping and the card he decides on, in Telegram and in the app. It never runs git itself and
@@ -12,20 +12,20 @@ its tip and how many of its commits no branch of the remote has yet — `push_re
 repository has one working clone in the room whichever session committed. The look fetches the session's branch into
 the platform's outbox through `CodeRepos.count`, which treats the room's repository as hostile.
 
-**The ping.** The latest ping of such a session carries «Запушить · N» — one button per repository with N > 0 (with
-its name when there are several) — beside its reply buttons and «В Базу». A press opens the card.
+**The ping.** The latest ping of such a session carries «Push · N» — one button per repository with N > 0 (with
+its name when there are several) — beside its reply buttons and «To the Base». A press opens the card.
 
-**The card** (`push_cards`, its buttons bound to `push/<id>`): «Запушить · <repo> · <sphere or track> · сессия <id>»,
+**The card** (`push_cards`, its buttons bound to `push/<id>`): «Push · <repo> · <sphere or track> · session <id>»,
 the local branch and the remote one it goes to (`retinue/<session>-<slug>` by default; a reply of one word sets it,
 a phrase sets the PR's title), the commits (subjects) and files with +/− lines, what in the work tree is not
-committed («попроси сессию закоммитить» — the platform never commits for it), and «Отправить» · «Открыть дифф» ·
-«Отмена». The card holds the tip's sha it was opened on; «Отправить» checks the room's branch still points there
+committed («ask the session to commit» — the platform never commits for it), and «Send» · «Open diff» ·
+«Cancel». The card holds the tip's sha it was opened on; «Send» checks the room's branch still points there
 (else the card comes back with what changed), moves `shown → pushing` once — of two presses anywhere, one wins — and
 pushes in the background; `pushed` with the PR's link, or back to `shown` with why. Changes to `.github/workflows/`
 are refused on the card before any push: a fine-grained token without the Workflows permission cannot push them. A
 card a restart left `pushing` is settled from the remote: its branch at the card's sha → pushed (the PR is opened or
 found again); otherwise shown again for one more press. A card expires after 7 days, goes stale at the session's
-next ping, and «Отмена» closes it. Nothing is pushed without the owner's press: the button is reachable only through
+next ping, and «Cancel» closes it. Nothing is pushed without the owner's press: the button is reachable only through
 the router's token (the bridge) and the face's login, never from a lane.
 """
 
@@ -53,28 +53,28 @@ if TYPE_CHECKING:
 log = logging.getLogger("retinue.topush")
 
 KEY = "push/"                 # a card's buttons and notes: push/<card id>
-OPEN = "push/open"            # the ping's «Запушить · N»: its digest is <session>/<repo>
+OPEN = "push/open"            # the ping's «Push · N»: its digest is <session>/<repo>
 SEND, DIFF, CANCEL = "send", "diff", "cancel"
-LABELS = {SEND: "Отправить", DIFF: "Открыть дифф", CANCEL: "Отмена"}
+LABELS = {SEND: "Send", DIFF: "Open diff", CANCEL: "Cancel"}
 TTL_S = 7 * 86400
 LOOK_TIMEOUT_S = 180.0        # a card's look or a ping's count; past it the owner is told, nothing waits on it
 DIFF_LIMIT = 1024 * 1024
-LISTED_CHARS = 2600           # commits and files of a Telegram card; past it «…и ещё N»
+LISTED_CHARS = 2600           # commits and files of a Telegram card; past it «…and N more»
 STATUS_CHARS = 900
 TITLE_CHARS = 120
 LIVE = ("shown", "pushing")
 CURSOR = "push_cursor"        # the `meta` row: the raw line up to which calls were read for repository paths
-GONE = "Карточка больше не действует."
-NO_CODE = "Репозитории не подключены."
-REOPEN = "Карточка больше не действует — открой «Запушить» заново."
-RESTARTED = "Пуш прервался перезапуском платформы — нажми «Отправить» ещё раз."
-DIRTY = "есть незакоммиченные правки — попроси сессию закоммитить, в пуш они не попадут"
-WORKFLOWS = "Правки .github/workflows токен не пушит — убери их из ветки или запушь сам."
-HINT = "Ответь на карточку: одно слово — имя ветки, фраза — заголовок PR."
+GONE = "This card is no longer active."
+NO_CODE = "No repositories are connected."
+REOPEN = "This card is no longer active — open «Push» again."
+RESTARTED = "A platform restart cut the push off — press «Send» again."
+DIRTY = "there are uncommitted edits — ask the session to commit, they will not go into the push"
+WORKFLOWS = "The token does not push edits to .github/workflows — take them out of the branch or push it yourself."
+HINT = "Reply to the card: one word is the branch name, a phrase is the PR title."
 
 
 def commits_word(n: int) -> str:
-    return plural(n, "коммит", "коммита", "коммитов")
+    return plural(n, "commit", "commits")
 
 
 def slug(text: str, cap: int = 40) -> str:
@@ -111,7 +111,7 @@ class ToPush:
             );
             CREATE INDEX IF NOT EXISTS push_cards_session ON push_cards (session, state);
             CREATE TABLE IF NOT EXISTS push_pings (
-                session TEXT PRIMARY KEY,         -- the one ping of the session that carries «Запушить»
+                session TEXT PRIMARY KEY,         -- the one ping of the session that carries «Push»
                 seq INTEGER NOT NULL,
                 labels TEXT NOT NULL              -- what its buttons said, JSON: rewritten when it changes
             );
@@ -273,15 +273,15 @@ class ToPush:
         self.store.db.commit()
 
     def ping(self, session: str) -> None:
-        """The session's latest ping carries «Запушить · N» per repository with N > 0, and no older ping does; an
+        """The session's latest ping carries «Push · N» per repository with N > 0, and no older ping does; an
         open card of an older ping goes stale."""
         db, now = self.store.db, self.platform.clock()
         latest = db.execute("SELECT MAX(seq) FROM notes WHERE kind = 'summary' AND session = ?", (session,)).fetchone()[0]
         counted, blocked = self.unpushed(session), self.blocked(session)
         many = len(counted) + len(blocked) > 1
         # A repository the count refused keeps a button: its press says why, as the card would.
-        wanted = [(repo, f"Запушить {repo} · {n}" if many else f"Запушить · {n}") for repo, n in counted] + \
-            [(repo, f"⚠ Запушить {repo}: почему нет" if many else "⚠ Запушить: почему нет") for repo, _ in blocked]
+        wanted = [(repo, f"Push {repo} · {n}" if many else f"Push · {n}") for repo, n in counted] + \
+            [(repo, f"⚠ Push {repo}: why not" if many else "⚠ Push: why not") for repo, _ in blocked]
         labels = [label for _, label in wanted]
         held = db.execute("SELECT seq, labels FROM push_pings WHERE session = ?", (session,)).fetchone()
         if held is not None and (held[0] != latest or not wanted):
@@ -291,7 +291,7 @@ class ToPush:
         if latest is not None:
             for card in self.cards(session, ("shown",)):
                 if card["ping"] is not None and card["ping"] < latest:
-                    self._finish(card, "stale", {"said": "Устарела: у сессии новый итог — «Запушить» под ним."}, now)
+                    self._finish(card, "stale", {"said": "Expired: the session has a new result — «Push» is under it."}, now)
         if wanted and latest is not None and (held is None or json.loads(held[1]) != labels):
             buttons = [[label, self.store.add_button(OPEN, "open", f"{session}/{repo}", now + TTL_S)]
                        for repo, label in wanted]
@@ -332,45 +332,45 @@ class ToPush:
         return [self.card(card_id) for (card_id,) in ids]
 
     async def open(self, session_id: str, repo: str | None = None, *, telegram: bool) -> tuple[str, dict | None]:
-        """«Запушить»: the card of the session's repository — its open one brought up to date, or a new one — and,
+        """«Push»: the card of the session's repository — its open one brought up to date, or a new one — and,
         from Telegram, a copy of it. (toast, the card as the app shows it, or None with why)."""
         if self.code is None:
             return NO_CODE, None
         session = self.store.session(session_id)
         if session is None:
-            return "Нет такой сессии.", None
+            return "No such session.", None
         if repo is None:
             mine = [r for r, _ in self.unpushed(session_id)] or \
                 [r for (r,) in self.store.db.execute("SELECT repo FROM push_touched WHERE session = ? ORDER BY repo",
                                                      (session_id,))]
             repo = mine[0] if len(mine) == 1 else self.repo_of_cwd(session.get("cwd"))
             if repo is None:
-                return ("Сессия работала в нескольких репозиториях — нажми «Запушить» нужного под её итогом."
-                        if mine else "Сессия не работала ни в одном репозитории."), None
+                return ("The session worked in several repositories — press «Push» of the one you want under its result."
+                        if mine else "The session did not work in any repository."), None
         if repo not in self.code.repos:
-            return f"Нет такого репозитория: {repo}.", None
+            return f"No such repository: {repo}.", None
         if self.code.repos[repo].off:
-            return f"Репозиторий {repo} выключен: {self.code.repos[repo].off}.", None
+            return f"Repository {repo} is off: {self.code.repos[repo].off}.", None
         async with self._repo_lock(repo):
             if self.cards(session_id, ("pushing",), repo):
-                return "Пуш этого репозитория уже идёт.", None
+                return "A push of this repository is already running.", None
             [card] = self.cards(session_id, ("shown",), repo)[-1:] or [None]
             card_id = card["id"] if card else secrets.token_hex(4)
             try:
                 look = await asyncio.wait_for(asyncio.to_thread(self.code.look, repo, f"refs/retinue/cards/{card_id}"),
                                               LOOK_TIMEOUT_S)
             except TimeoutError:
-                return f"{repo}: карточка не собралась за {int(LOOK_TIMEOUT_S)} с — попробуй позже.", None
+                return f"{repo}: the card was not ready in {int(LOOK_TIMEOUT_S)} s — try later.", None
             except codemod.Refused as exc:
                 return f"{repo}: {exc}.", None
             except Exception as exc:  # `code.Unavailable`: git's words, never the token
                 log.warning("repo %s: the card's look failed (%s: %s)", repo, type(exc).__name__, str(exc)[:200])
-                return f"{repo} сейчас не читается: {line(str(exc), 200)}", None
+                return f"{repo} cannot be read now: {line(str(exc), 200)}", None
             if self.cards(session_id, ("pushing",), repo):
-                return "Пуш этого репозитория уже идёт.", None
+                return "A push of this repository is already running.", None
             if look.ahead == 0 or look.unpushed == 0:
-                said = f"{repo}: на ветке {shown(look.branch, 80)} " + (
-                    f"нет коммитов сверх {look.base}." if look.ahead == 0 else "всё уже есть на удалённом.")
+                said = f"{repo}: the branch {shown(look.branch, 80)} " + (
+                    f"has no commits beyond {look.base}." if look.ahead == 0 else "is all on the remote already.")
                 if look.dirty:
                     said += f" {DIRTY[0].upper()}{DIRTY[1:]}."
                 await asyncio.to_thread(self.code.forget, repo, f"refs/retinue/cards/{card_id}")
@@ -388,9 +388,9 @@ class ToPush:
                         "title": card["title"] if not fresh else self._title(session_id, data),
                         "body": self._body(session_id, card_id, data), "result": {} if fresh else card["result"]}
                 if not self._save(card, now):
-                    return "Пуш этого репозитория уже идёт.", None
+                    return "A push of this repository is already running.", None
             self._show(card, now, send=telegram)
-            return ("Карточка — ниже." if telegram else ""), self.face(card)
+            return ("The card is below." if telegram else ""), self.face(card)
 
     def _new(self, card_id: str, session: dict, repo: str, look: dict, now: float) -> dict:
         latest = self.store.db.execute("SELECT MAX(seq) FROM notes WHERE kind = 'summary' AND session = ?",
@@ -428,8 +428,8 @@ class ToPush:
         issue or load a picture there."""
         rows = [f"- `{inert(c['subject'])}` ({c['sha'][:7]})" for c in reversed(look["commits"][:30])]
         more = len(look["commits"]) - 30
-        return "\n".join([*rows, *([f"- …и ещё {commits_word(more)}"] if more > 0 else []), "",
-                          f"Retinue: сессия {session}, карточка {card_id}. Запушено кнопкой Владельца."])
+        return "\n".join([*rows, *([f"- …and {plural(more, 'more commit', 'more commits')}"] if more > 0 else []), "",
+                          f"Retinue: session {session}, card {card_id}. Pushed by the owner's button."])
 
     @staticmethod
     def _row(card: dict) -> tuple:
@@ -458,7 +458,7 @@ class ToPush:
         return buttons
 
     def _buttons(self, card: dict, now: float) -> list[list[str]]:
-        """A shown card's «Отправить», «Открыть дифф», «Отмена»; none otherwise. A press is answered by the card's
+        """A shown card's «Send», «Open diff», «Cancel»; none otherwise. A press is answered by the card's
         state, never by a spent button."""
         if card["state"] != "shown":
             return []
@@ -494,46 +494,46 @@ class ToPush:
 
     def _view(self, card: dict, place: str) -> dict:
         look, state = card["look"], card["state"]
-        head = [f"Запушить · {card['repo']} · {place} · сессия {card['session']}",
-                f"Ветка: {shown(look['branch'], 80)} → {card['target']} (PR в {look['base']})",
-                f"Заголовок PR: {shown(card['title'], TITLE_CHARS)}"]
+        head = [f"Push · {card['repo']} · {place} · session {card['session']}",
+                f"Branch: {shown(look['branch'], 80)} → {card['target']} (PR into {look['base']})",
+                f"PR title: {shown(card['title'], TITLE_CHARS)}"]
         rows, size = [], 0
         listed = []  # what leaves, commit by commit: its subject, the rest of its message, its own files
         for c in look["commits"]:
-            merge = " (слияние)" if len(c.get("parents") or []) > 1 else ""
+            merge = " (merge)" if len(c.get("parents") or []) > 1 else ""
             listed.append(f"• {c['sha'][:7]} {shown(c['subject'], 100)}{merge}")
             if c.get("author"):
                 who = shown(c["author"], 100)
-                listed.append(f"  автор: {who}" + ("" if c.get("committer") == c["author"] else
-                                                    f"; коммитил: {shown(c.get('committer') or '', 100)}"))
+                listed.append(f"  author: {who}" + ("" if c.get("committer") == c["author"] else
+                                                     f"; committer: {shown(c.get('committer') or '', 100)}"))
             message = c.get("message") or ""
             rest = [row for row in message.split("\n")[1:] if row.strip()]
             listed += [f"  {shown(row, 100)}" for row in rest[:6]]
             if len(rest) > 6 or any(len(shown(row, 10_000)) > 100 for row in message.split("\n")) or \
                     len(shown(message.split("\n", 1)[0], 10_000)) > 100:
-                listed.append("  (сообщение обрезано, полностью — в «Открыть дифф»)")
+                listed.append("  (message cut, the whole of it is in «Open diff»)")
             listed += [f"  {f['status']} {shown(f['path'], 120)}" for f in c.get("files") or []]
         for n, row in enumerate(listed):
             if size + len(row) > LISTED_CHARS:
-                rows.append(f"…и ещё {plural(len(listed) - n, 'строка', 'строки', 'строк')} — в приложении")
+                rows.append(f"…and {plural(len(listed) - n, 'more line', 'more lines')} — in the app")
                 break
             rows.append(row)
             size += len(row) + 1
-        status = [f"Уходит: {commits_word(look.get('unpushed', look['ahead']))}, "
-                  f"{plural(look.get('objects', 0), 'объект', 'объекта', 'объектов')}, {_size(look.get('bytes', 0))}. "
-                  f"В PR: {commits_word(look['ahead'])}, {plural(len(look['files']), 'файл', 'файла', 'файлов')}."]
+        status = [f"Outgoing: {commits_word(look.get('unpushed', look['ahead']))}, "
+                  f"{plural(look.get('objects', 0), 'object', 'objects')}, {_size(look.get('bytes', 0))}. "
+                  f"In the PR: {commits_word(look['ahead'])}, {plural(len(look['files']), 'file', 'files')}."]
         if look["workflows"]:
             status.append(WORKFLOWS)
         if look["dirty"]:
-            named = ", ".join(shown(short(d), 60) for d in look["dirty"][:3]) + (f" и ещё {len(look['dirty']) - 3}"
+            named = ", ".join(shown(short(d), 60) for d in look["dirty"][:3]) + (f" and {len(look['dirty']) - 3} more"
                                                                  if len(look["dirty"]) > 3 else "")
-            status.append(f"В рабочей папке {DIRTY}: {named}.")
+            status.append(f"In the working folder {DIRTY}: {named}.")
         if look["partial"]:
-            status.append("Рабочая папка проверена не вся — она слишком большая.")
+            status.append("Not all of the working folder was checked — it is too large.")
         if state == "shown":
             status.append(HINT)
         elif state == "pushing":
-            status.append("Отправляю…")
+            status.append("Sending…")
         if card["result"].get("url"):
             status.append(f"PR: {card['result']['url']}")
         if card["result"].get("said"):
@@ -541,7 +541,7 @@ class ToPush:
         kept, size = [], 0
         for n, row in enumerate(status):
             if size + len(row) > STATUS_CHARS:
-                kept.append(f"…и ещё {plural(len(status) - n, 'строка', 'строки', 'строк')} — в приложении")
+                kept.append(f"…and {plural(len(status) - n, 'more line', 'more lines')} — in the app")
                 break
             kept.append(row)
             size += len(row) + 1
@@ -575,7 +575,7 @@ class ToPush:
             return {"toast": GONE}
         action = bound["action"]
         if action == DIFF:
-            return {"toast": "Дифф — файлом.", "document": {"name": f"push-{card['id']}.diff",
+            return {"toast": "The diff is attached as a file.", "document": {"name": f"push-{card['id']}.diff",
                                                            "text": await self.diff(card)}}
         if action == SEND:
             toast, card = await self.send(card)
@@ -604,32 +604,32 @@ class ToPush:
         if card["state"] != "shown":
             return GONE, None
         if self.code is not None and (why := self.code.branch_ok(card["repo"], branch)):
-            return f"Ветка не подходит: {why}.", card
+            return f"That branch will not do: {why}.", card
         card = {**card, "target": branch, "custom": True, "result": {}}
         now = self.platform.clock()
         if not self._save(card, now):
             return GONE, None
         self._show(card, now)
-        return f"Ветка: {branch}", card
+        return f"Branch: {branch}", card
 
     def set_title(self, card: dict, text: str) -> tuple[str, dict | None]:
         if card["state"] != "shown":
             return GONE, None
         title = line(text, TITLE_CHARS)
         if not title:
-            return "Пустой заголовок не беру.", card
+            return "An empty title will not do.", card
         card = {**card, "title": title}
         now = self.platform.clock()
         if not self._save(card, now):
             return GONE, None
         self._show(card, now)
-        return f"Заголовок PR: «{title}»", card
+        return f"PR title: «{title}»", card
 
     def cancel(self, card: dict) -> tuple[str, dict | None]:
-        if not self._finish(card, "cancelled", {"said": "Отменено. Коммиты остались в репозитории сессии."},
+        if not self._finish(card, "cancelled", {"said": "Cancelled. The commits stay in the session's repository."},
                             self.platform.clock()):
             return GONE, None
-        return "Отменено.", self.card(card["id"])
+        return "Cancelled.", self.card(card["id"])
 
     async def diff(self, card: dict) -> str:
         look = card["look"]
@@ -638,15 +638,15 @@ class ToPush:
         try:
             return await asyncio.to_thread(self.code.diff, card["repo"], look["sha"], DIFF_LIMIT)
         except Exception as exc:
-            return f"Дифф не получился: {type(exc).__name__}\n"
+            return f"The diff failed: {type(exc).__name__}\n"
 
     async def send(self, card: dict) -> tuple[str, dict | None]:
-        """«Отправить»: the card's commits, exactly as it showed them, pushed in the background — once, whichever place
+        """«Send»: the card's commits, exactly as it showed them, pushed in the background — once, whichever place
         pressed it and however often."""
         if card["state"] == "pushing":
-            return "Отправляю — подожди.", None
+            return "Sending — wait.", None
         if card["state"] == "pushed":
-            return f"Уже отправлено{': ' + card['result']['url'] if card['result'].get('url') else '.'}", None
+            return f"Already sent{': ' + card['result']['url'] if card['result'].get('url') else '.'}", None
         if card["state"] != "shown":
             return GONE, None
         if self.code is None:
@@ -654,19 +654,19 @@ class ToPush:
         if card["look"]["workflows"]:
             return WORKFLOWS, None
         if why := self.code.branch_ok(card["repo"], card["target"]):
-            return f"Не пушу: {why}.", None
+            return f"Not pushing: {why}.", None
         try:
             branch, sha = await asyncio.to_thread(self.code.head, card["repo"])
             there = await asyncio.to_thread(self.code.remote_sha, card["repo"], card["target"])
         except Exception as exc:
-            return f"Репозиторий сессии или удалённый не читается: {line(str(exc), 200)}", None
+            return f"The session's repository or the remote cannot be read: {line(str(exc), 200)}", None
         ours = {c["target"] for c in self.cards(card["session"], ("pushed",), card["repo"])}
         if there is not None and card["target"] not in ours:
-            return (f"Ветка {card['target']} на удалённом уже есть и не от этой сессии — ответь на карточку другим "
-                    "именем."), None
+            return (f"Branch {card['target']} is already on the remote and is not this session's — reply to the card "
+                    "with another name."), None
         if sha != card["look"]["sha"] or branch != card["look"]["branch"]:
             toast, fresh = await self.open(card["session"], card["repo"], telegram=False)
-            return ("Ветка изменилась после карточки — проверь и нажми ещё раз." if fresh else toast), \
+            return ("The branch changed after the card — check it and press again." if fresh else toast), \
                 self.card(card["id"])
         # The remote as it is now: what leaves is counted against it again, and must be exactly what the card showed.
         try:
@@ -674,10 +674,10 @@ class ToPush:
             now_leaving = await asyncio.to_thread(self.code.leaving, card["repo"], f"refs/retinue/cards/{card['id']}",
                                                   sha)
         except Exception as exc:
-            return f"Удалённый репозиторий не читается: {line(str(exc), 200)}", None
+            return f"The remote repository cannot be read: {line(str(exc), 200)}", None
         if now_leaving != card["look"].get("digest"):
             toast, fresh = await self.open(card["session"], card["repo"], telegram=False)
-            return ("Удалённый репозиторий изменился после карточки — обнови карточку: проверь и нажми ещё раз."
+            return ("The remote repository changed after the card — the card is updated: check it and press again."
                     if fresh else toast), self.card(card["id"])
         now = self.platform.clock()
         busy = {**card, "state": "pushing", "result": {}}
@@ -685,7 +685,7 @@ class ToPush:
             return GONE, None
         self._show(busy, now)
         self._pushes[card["id"]] = asyncio.create_task(self._push(busy))
-        return "Отправляю…", busy
+        return "Sending…", busy
 
     async def _push(self, card: dict) -> None:
         try:
@@ -695,7 +695,7 @@ class ToPush:
                                                card["target"], title=card["title"], body=card["body"])
             except Exception as exc:
                 log.error("card %s: the push failed: %s", card["id"], type(exc).__name__)
-                done = codemod.Pushed(False, said=f"Пуш не прошёл: {line(str(exc), 300)}")
+                done = codemod.Pushed(False, said=f"The push failed: {line(str(exc), 300)}")
             await self._pushed(card, done)
         finally:
             self._pushes.pop(card["id"], None)
@@ -711,14 +711,14 @@ class ToPush:
         if not url:
             url, said = await self.code.open_pr(card["repo"], card["target"], card["title"], card["body"])
             if not url and not said and self.code.repos[card["repo"]].host == "gitlab.com":
-                said = "Merge request открыт на GitLab."
-        result = {"url": url, "said": "\n".join(filter(None, [f"Запушено: {card['target']} · "
+                said = "The merge request is open on GitLab."
+        result = {"url": url, "said": "\n".join(filter(None, [f"Pushed: {card['target']} · "
                                                                f"{commits_word(card['look']['ahead'])}.", said]))}
         if self._finish(card, "pushed", result, now, states):
             # The answer to his press as a message of its own: the card above is only rewritten, which he may not see.
             self.store._note("card", card["session"], {
-                "view": {"head": [f"Запушено · {card['repo']} · сессия {card['session']}"],
-                         "body": f"PR: {url}" if url else f"Ветка: {card['target']}",
+                "view": {"head": [f"Pushed · {card['repo']} · session {card['session']}"],
+                         "body": f"PR: {url}" if url else f"Branch: {card['target']}",
                          "status": said if said and not url else "", "link": []},
                 "buttons": []}, approval=f"{KEY}{card['id']}/done")
             self.store.db.commit()
@@ -745,7 +745,7 @@ class ToPush:
         for (card_id,) in self.store.db.execute("SELECT id FROM push_cards WHERE state = 'shown' AND created <= ?",
                                                 (now - TTL_S,)).fetchall():
             if (card := self.card(card_id)) is not None:
-                self._finish(card, "expired", {"said": "Истекла: решения не было семь дней."}, now)
+                self._finish(card, "expired", {"said": "Expired: no decision for seven days."}, now)
 
     async def recover(self) -> None:
         """A card a restart left `pushing`: the remote's branch at the card's sha means the push landed — the PR is
@@ -784,4 +784,4 @@ def inert(text: str) -> str:
 
 
 def _size(n: int) -> str:
-    return f"{n} Б" if n < 1024 else f"{n / 1024:.0f} КБ" if n < 2**20 else f"{n / 2**20:.1f} МБ".replace(".", ",")
+    return f"{n} B" if n < 1024 else f"{n / 1024:.0f} KB" if n < 2**20 else f"{n / 2**20:.1f} MB"

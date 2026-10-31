@@ -171,7 +171,7 @@ def test_the_api_gives_a_sessions_changes_to_the_owner_only(tmp_path):
                     "diff --git a/old.txt b/old.txt\n--- a/old.txt\n+++ b/old.txt\n@@ -1 +1 @@\n-one\n+two\n",
             "truncated": False, "approximate_files": []}
         status, data, _ = await world.call("GET", "/api/sessions/nope0000/diff")
-        assert status == 404 and data["error"] == "Нет такой сессии."
+        assert status == 404 and data["error"] == "No such session."
 
         notes = (await world.owner("new", {"input_id": "tg:2", "track": "notes", "text": "заметка"}))["session"]
         assert (await world.get(f"/api/sessions/{notes}/diff"))["cwd"] == "", \

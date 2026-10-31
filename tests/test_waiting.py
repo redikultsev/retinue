@@ -1,5 +1,5 @@
 """What waits for the owner in the assistant's world, as the router reads it from its own tables for the digest
-(`waiting.digest`): people she judged to ask something of him, drafts waiting for «Отправить», the base's near
+(`waiting.digest`): people she judged to ask something of him, drafts waiting for «Send», the base's near
 deadlines — with no address, no letter's text, and the owner's private matter named by a count only."""
 
 from __future__ import annotations
@@ -62,9 +62,9 @@ def test_people_who_ask_something_come_once_each_without_an_address_or_their_wor
             ("telegram", {}, {"state": "own", "kind": "chat", "sender": "tg:8", "ts": NOW - 4 * HOUR}))
     rows = waiting.digest(c, NOW)
     assert [(r["kind"], r["who"], r["title"]) for r in rows] == [
-        ("letter", "Личное", "1 письмо о личном ждут ответа"),
-        ("chat", "Мария", "ответить: И когда рейс? (+1)"),
-        ("letter", "Банк", "сделать: Подтвердить адрес. · срок пт"),
+        ("letter", "Private", "1 private letter waits for a reply"),
+        ("chat", "Мария", "reply: И когда рейс? (+1)"),
+        ("letter", "Банк", "do: Подтвердить адрес. · deadline пт"),
     ], "reply before act; «read» only to know; Пётр was answered in his chat"
     assert rows[0]["sphere"] == "home" and rows[1]["since"] == NOW - 3 * HOUR
     said = json.dumps(rows, ensure_ascii=False)
@@ -87,8 +87,8 @@ def test_a_draft_waits_for_its_button_and_its_letter_is_not_counted_twice(tmp_pa
     rows = waiting.digest(c, NOW)
     assert [(r["id"], r["who"], r["title"], r["sphere"]) for r in rows] == [
         ("draft:aaaa0001", "Анна Петрова", waiting.DRAFT, None),
-        ("draft:aaaa0002", "отправитель", waiting.LINK_DRAFT, None),
-        ("draft:aaaa0003", "Личное", waiting.DRAFT, "home"),
+        ("draft:aaaa0002", "sender", waiting.LINK_DRAFT, None),
+        ("draft:aaaa0003", "Private", waiting.DRAFT, "home"),
     ]
 
 
@@ -104,11 +104,11 @@ def test_the_bases_dates_are_those_the_heartbeat_pushes(tmp_path):
     ], 0)
     rows = waiting.digest(core(tmp_path, scanned), NOW)
     assert [(r["title"], r["sphere"]) for r in rows] == [
-        ("через 2 дня: Сдать отчёт — срок", "work"),
-        ("сегодня: Абонемент в спортзал — действует до", "personal"),
-        ("просрочено 1 день: Счёт — срок", "personal"),
+        ("in 2 days: Сдать отчёт — deadline", "work"),
+        ("today: Абонемент в спортзал — valid until", "personal"),
+        ("overdue by 1 day: Счёт — deadline", "personal"),
     ]
-    assert all(r["who"] == "База" and r["kind"] == "deadline" and r["since"] <= NOW for r in rows)
+    assert all(r["who"] == "The Base" and r["kind"] == "deadline" and r["since"] <= NOW for r in rows)
     assert waiting.digest(core(tmp_path / "none"), NOW) == [], "no reading of the base yet: nothing"
 
 
@@ -122,9 +122,9 @@ def test_the_week_ahead_goes_too_with_its_day_and_path_and_waits_only_from_the_p
     ], 0)
     rows = waiting.digest(core(tmp_path, scanned), NOW)
     assert [(r["title"], r["when"], r.get("path")) for r in rows] == [
-        ("через 6 дней: Сдать отчёт — срок", "2025-10-15", "work/journal/2025-10-01-report.md"),
-        ("через 7 дней: Паспорт — действует до", "2025-10-16", "personal/profile/passport.md"),
-        ("завтра: Русское имя — срок", "2025-10-10", None),
+        ("in 6 days: Сдать отчёт — deadline", "2025-10-15", "work/journal/2025-10-01-report.md"),
+        ("in 7 days: Паспорт — valid until", "2025-10-16", "personal/profile/passport.md"),
+        ("tomorrow: Русское имя — deadline", "2025-10-10", None),
     ], "a path off the platform's rule is left out, the row is not"
     assert [r["since"] > NOW for r in rows] == [True, True, False], "waits from three days before"
     items, _ = feed.clean({"items": rows}, NOW)
@@ -135,11 +135,11 @@ def test_the_hubs_chips_cross_without_the_builds_age(tmp_path):
     c = core(tmp_path)
     assert waiting.chips(c, NOW) == [], "no hub here: no chips"
     c.lifehub = SimpleNamespace(chips=lambda now: [
-        {"key": "health", "text": "всё работает", "level": "ok"},
-        {"key": "backup", "text": "бэкап 3 ч назад", "level": "ok"},
-        {"key": "build", "text": "хаб собран 4 мин назад", "level": "ok"}])
+        {"key": "health", "text": "all working", "level": "ok"},
+        {"key": "backup", "text": "backup 3 h ago", "level": "ok"},
+        {"key": "build", "text": "hub built 4 min ago", "level": "ok"}])
     chips = waiting.chips(c, NOW)
-    assert [c["text"] for c in chips] == ["всё работает", "бэкап 3 ч назад", "хаб собран"]
+    assert [c["text"] for c in chips] == ["all working", "backup 3 h ago", "hub built"]
     assert feed.clean_chips({"chips": chips}) == chips
 
 
@@ -154,7 +154,7 @@ def test_a_letter_a_sent_draft_answered_waits_no_more(tmp_path):
         c.outbox.store.db.execute("UPDATE drafts SET state = ? WHERE id = 'aaaa0001'", (state,))
         assert waiting.digest(c, NOW) == [], state
     c.outbox.store.db.execute("UPDATE drafts SET state = 'failed' WHERE id = 'aaaa0001'")
-    assert [r["title"] for r in waiting.digest(c, NOW)] == ["ответить: Встретимся?"], "not sent: it waits again"
+    assert [r["title"] for r in waiting.digest(c, NOW)] == ["reply: Встретимся?"], "not sent: it waits again"
 
 
 def test_her_words_cross_short_with_codes_numbers_and_addresses_masked():
@@ -164,7 +164,7 @@ def test_her_words_cross_short_with_codes_numbers_and_addresses_masked():
     assert len(out) <= waiting.SAID_CHARS
     for leak in ("483920", "345-67-89", "acme", "evil", "pay.example", "2025"):
         assert leak not in out, leak
-    assert out.startswith("Код •••• для входа, счёт 12 500 руб., звонить ‹номер›, ‹адрес›")
+    assert out.startswith("Код •••• для входа, счёт 12 500 руб., звонить ‹number›, ‹address›")
 
 
 def test_ids_are_keyed_by_the_routers_own_salt_and_the_digest_fits_the_platform(tmp_path):

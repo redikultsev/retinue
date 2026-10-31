@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw, ImageFont
 from retinue.config import EngineConfig
 from retinue.engine import ClaudeEngine
 
-SYSTEM_PROMPT = "Ты проверочный ассистент. Отвечай по-русски, коротко, без пояснений."
+SYSTEM_PROMPT = "You are a test assistant. Answer in English, briefly, without explanations."
 
 
 def photo() -> dict:
@@ -57,17 +57,18 @@ def text(words: str) -> dict:
     return {"type": "text", "text": words}
 
 
-# (step, prompt, whether it resumes the session, what the answer must contain — all of it, lower case, ё as е)
+# (step, prompt, whether it resumes the session, what the answer must contain — all of it, lower case)
 STEPS = [
-    ("photo", [text("[вложение #1: фото]"), photo(), text("Какое число на картинке? Ответь только числом.")],
+    ("photo", [text("[attachment #1: photo]"), photo(), text("What number is in the picture? Answer with the number only.")],
      False, ("7314",)),
-    ("resume", "Какого цвета фон картинки? Одним словом.", True, ("желт",)),
-    ("pdf", [text("[вложение #2: PDF]"), invoice(), text("Какой номер счёта в PDF? Только число.")], True, ("4711",)),
+    ("resume", "What colour is the picture's background? One word.", True, ("yellow",)),
+    ("pdf", [text("[attachment #2: PDF]"), invoice(), text("What is the invoice number in the PDF? The number only.")],
+     True, ("4711",)),
     ("compact", None, True, ()),
-    ("after_compact", "Какое число было на картинке и какой номер у счёта?", True, ("7314", "4711")),
-    ("broken_photo", [text("[вложение #3: фото]"),
+    ("after_compact", "What number was in the picture and what is the invoice number?", True, ("7314", "4711")),
+    ("broken_photo", [text("[attachment #3: photo]"),
                       {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "bm90IGEganBlZw=="}},
-                      text("Что на картинке?")], False, ()),
+                      text("What is in the picture?")], False, ()),
 ]
 
 
@@ -93,7 +94,7 @@ async def run(engine) -> list[dict]:
             results.append({"step": name, "ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"})
             continue
         session = result.session_id or session
-        answer = result.text.lower().replace("ё", "е")
+        answer = result.text.lower()
         results.append({"step": name, "ok": not result.is_error and all(word in answer for word in expect),
                         "answer": result.text[:300], "is_error": result.is_error, "compacted": result.compacted,
                         "new_session": result.new_session, "seconds": round(time.monotonic() - started, 1)})

@@ -52,14 +52,14 @@ BUTTON_TTL_S = 7 * 86400
 IDLE_CLOSE_S = 7 * 86400
 CLEANUP_DAYS = 30            # the CLI's own transcripts in the lane
 STOP_TIMEOUT_S = 5.0         # a lane's answer to the shutdown's /stop: a hung lane must not outlast the stop grace
-LABELS = {approvals.APPROVE: "Разрешить", approvals.REJECT: "Отказать", approvals.OPEN: "Открыть"}
-STALE = "Карточка устарела — решение не принято."
+LABELS = {approvals.APPROVE: "Allow", approvals.REJECT: "Deny", approvals.OPEN: "Open"}
+STALE = "The card has expired — no decision taken."
 # A session of a lane no longer in platform.yaml (lane-code and lane-web, retired into the room): it stays listed and
 # readable, and nothing goes into it.
-RETIRED = "Полоса выключена: начни новую сессию."
+RETIRED = "The lane is retired: start a new session."
 HOOK_EVENTS = "|".join(cliengine.EVENTS)
 # The prompt of the one resume a run stopped by the platform's own shutdown gets once the platform is back.
-CONTINUE = "Платформа перезапускалась посреди твоего хода. Продолжи с того места, где остановился."
+CONTINUE = "The platform restarted in the middle of your turn. Continue from where you stopped."
 UNKNOWN_RUN = "unknown run"
 HOOK_BODY_MAX = 16 * 1024 * 1024  # a hook carries a Write's content; only the owner's own calls carry his files
 LIMIT_SAID_AGAIN_S = 120  # the CLI repeats its wait every half minute; a reset this close to the one said is the same
@@ -91,7 +91,7 @@ class Platform:
         # readable and whose open runs hold no room.
         self.live = {name for name, lane in cfg.lanes.items() if not lane.retired}
         self.lanes = lanes if lanes is not None else {
-            name: LaneClient(lane.url, lane.token, f"линия {name}") for name, lane in cfg.lanes.items()
+            name: LaneClient(lane.url, lane.token, f"lane {name}") for name, lane in cfg.lanes.items()
             if name in self.live}
         self.tracks = {track.name: track for track in cfg.tracks}
         self.gate = Gate(store, cfg.lanes, cfg.hook_secret, clock, cfg.skills_mount, cfg.owner_memory_mount)
@@ -99,8 +99,8 @@ class Platform:
         self._draining = asyncio.Lock()
         self._sending: set[str] = set()  # runs whose `/run` is awaiting its answer
         self.out = outfiles.OutFiles(store, cfg.out_store_mb, cfg.out_day_mb)  # what sessions hand over from `out/`
-        self.feed = feed.Feed(store, cfg)  # «Ждут тебя»: the face's home and `/wait`, with the assistant's digest
-        self.library = library_mod.Library(store, cfg)  # «Читать»: the hub's pages, as the router pushes them
+        self.feed = feed.Feed(store, cfg)  # «Waiting for you»: the face's home and `/wait`, with the assistant's digest
+        self.library = library_mod.Library(store, cfg)  # «Read»: the hub's pages, as the router pushes them
         self._looking = asyncio.Lock()
         pings.prepare(store)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
@@ -109,13 +109,13 @@ class Platform:
         self.base = base if base is not None or cfg.base is None else BaseRepo(cfg.base, _lane_view(cfg))
         if self.base is not None:
             self.base.busy = self._base_busy
-        # «В Базу»: who changed what in the Base and the owner's commit card (`tobase.py`).
+        # «To the Base»: who changed what in the Base and the owner's commit card (`tobase.py`).
         self.tobase = tobase.ToBase(self)
-        self.feed.tobase = self.tobase  # the feed's «В Базу» rows, nobody's files among them
-        # The owner's repositories in the room (`code.py`) and «Запушить», their push by his button (`topush.py`).
+        self.feed.tobase = self.tobase  # the feed's «To the Base» rows, nobody's files among them
+        # The owner's repositories in the room (`code.py`) and «Push», their push by his button (`topush.py`).
         self.code = CodeRepos(cfg.code, cfg.lanes[cfg.code.lane].work_mount) if cfg.code is not None else None
         self.topush = topush.ToPush(self)
-        self.feed.topush = self.topush  # the feed's «Запушить» rows
+        self.feed.topush = self.topush  # the feed's «Push» rows
         self.gate.push_lanes = frozenset({cfg.code.lane}) if cfg.code is not None else frozenset()
         self._fetching: set[str] = set()  # repositories whose first mirror is being fetched
 
@@ -149,12 +149,12 @@ class Platform:
 
     async def hook(self, request: web.Request) -> web.Response:
         if (body := await _hook_body(request)) is None:
-            return web.json_response({"error": "hook: тело больше 16 МБ"}, status=413)
+            return web.json_response({"error": "hook: body over 16 MB"}, status=413)
         return web.json_response(await self.gate.hook(request.match_info["event"], _bearer(request), body))
 
     async def mark(self, request: web.Request) -> web.Response:
         if (body := await _hook_body(request)) is None:
-            return web.json_response({"error": "hook: тело больше 16 МБ"}, status=413)
+            return web.json_response({"error": "hook: body over 16 MB"}, status=413)
         return web.json_response(await self.gate.hook(f"mark/{int(request.match_info['n'])}", _bearer(request), body))
 
     async def mcp(self, request: web.Request) -> web.Response:
@@ -164,7 +164,7 @@ class Platform:
             return web.json_response({"jsonrpc": "2.0", "id": None, "error": {"code": -32001,
                                                                               "message": UNKNOWN_RUN}}, status=401)
         if (body := await _hook_body(request)) is None:
-            return web.json_response({"error": "mcp: тело больше 16 МБ"}, status=413)
+            return web.json_response({"error": "mcp: body over 16 MB"}, status=413)
         status, answer = await self.subs.mcp(run, body)
         return web.json_response(answer, status=status) if answer is not None else web.Response(status=status)
 
@@ -180,7 +180,7 @@ class Platform:
     async def confirm(self, request: web.Request) -> web.Response:
         upto = (await _body(request)).get("upto")
         if type(upto) is not int:
-            return web.json_response({"error": "upto: не номер"}, status=400)
+            return web.json_response({"error": "upto: not a number"}, status=400)
         return web.json_response({"confirmed": self.store.confirm(upto)})
 
     # --- the owner, through the router --------------------------------------------------------------------------
@@ -189,7 +189,7 @@ class Platform:
         body = await _body(request)
         input_id, name, text = body.get("input_id"), body.get("track"), body.get("text") or ""
         if not all(isinstance(v, str) for v in (input_id, name, text)) or not input_id:
-            return web.json_response({"error": "input_id, track, text: не строки"}, status=400)
+            return web.json_response({"error": "input_id, track, text: not strings"}, status=400)
         return web.json_response(await self.new_session(input_id, name, text, attachments=body.get("attachments")))
 
     async def owner_sphere(self, request: web.Request) -> web.Response:
@@ -197,7 +197,7 @@ class Platform:
         body = await _body(request)
         input_id, name, text = body.get("input_id"), body.get("sphere"), body.get("text") or ""
         if not all(isinstance(v, str) for v in (input_id, name, text)) or not input_id:
-            return web.json_response({"error": "input_id, sphere, text: не строки"}, status=400)
+            return web.json_response({"error": "input_id, sphere, text: not strings"}, status=400)
         return web.json_response(await self.spheres.command(input_id, name, text))
 
     async def owner_spheres(self, request: web.Request) -> web.Response:
@@ -211,17 +211,17 @@ class Platform:
         attachments = body.get("attachments")
         if not all(isinstance(v, str) and v for v in (input_id, session_id)) or not isinstance(text, str) or \
                 not (text or attachments):
-            return web.json_response({"error": "input_id, session, text: не строки"}, status=400)
+            return web.json_response({"error": "input_id, session, text: not strings"}, status=400)
         # The card the owner replied to: an open question takes his text as its own answer. A reply carrying files
         # is never an answer: the bridge sends no `card` with it, and even if one comes, it goes in as a message with
         # its files.
         card = body.get("card")
         if isinstance(card, str) and self.store.input_known(input_id):
-            return web.json_response({"say": "Это сообщение сессия уже получила."})  # the router sent it again
+            return web.json_response({"say": "The session already has this message."})  # the router sent it again
         if isinstance(card, str) and not attachments and (say := self.tobase.reply(card, session_id, text)) is not None:
-            return web.json_response({"say": say})  # a reply to a «В Базу» card: the commit's subject
+            return web.json_response({"say": say})  # a reply to a «To the Base» card: the commit's subject
         if isinstance(card, str) and not attachments and (say := self.topush.reply(card, session_id, text)) is not None:
-            return web.json_response({"say": say})  # a reply to a «Запушить» card: its branch or its PR's title
+            return web.json_response({"say": say})  # a reply to a «Push» card: its branch or its PR's title
         if isinstance(card, str) and not attachments and \
                 (say := await self.reply_answer(card, session_id, text, input_id)) is not None:
             return web.json_response({"say": say})
@@ -231,9 +231,9 @@ class Platform:
         button = (await _body(request)).get("button")
         now = self.clock()
         bound = self.store.peek_button(button, now) if isinstance(button, str) else None
-        if bound is not None and bound["approval"].startswith(tobase.KEY):  # «В Базу»: its card keeps its state
+        if bound is not None and bound["approval"].startswith(tobase.KEY):  # «To the Base»: its card keeps its state
             return web.json_response(await self.tobase.press(bound))
-        if bound is not None and bound["approval"].startswith(topush.KEY):  # «Запушить»: the same, its own card
+        if bound is not None and bound["approval"].startswith(topush.KEY):  # «Push»: the same, its own card
             return web.json_response(await self.topush.press(bound))
         if bound is not None and (ping := pings.seq_of(bound["approval"])) is not None:  # a ping's reply
             if self.store.spend_button(button, now) is None:
@@ -245,7 +245,7 @@ class Platform:
         tick = approval is not None and approval["kind"] == "question" and questions.is_tick(approval, bound["action"])
         spent = bound if tick else self.store.spend_button(button, now) if isinstance(button, str) else None
         if spent is None:
-            return web.json_response({"toast": "Кнопка больше не действует."})
+            return web.json_response({"toast": "The button no longer works."})
         if approval is not None and approval["kind"] == "question":
             return web.json_response(await self.pick(approval, spent["action"], spent["digest"]))
         if spent["action"] == approvals.OPEN:
@@ -253,10 +253,10 @@ class Platform:
                 return web.json_response({"toast": STALE})
             keep = [[LABELS[a], self.store.add_button(approval["id"], a, approval["digest"], now + BUTTON_TTL_S)]
                     for a in (approvals.APPROVE, approvals.REJECT)]
-            # The bridge edits the card with these at once; the note keeps an earlier one from bringing «Открыть» back.
+            # The bridge edits the card with these at once; the note keeps an earlier one from bringing «Open» back.
             self.store.add_note("update", approval["session"], {"view": approval["view"], "buttons": keep},
                                 approval=approval["id"])
-            return web.json_response({"toast": "Ввод целиком — файлом.", "view": approval["view"], "keep": keep,
+            return web.json_response({"toast": "The whole input, as a file.", "view": approval["view"], "keep": keep,
                                       "document": {"name": f"{approval['id']}.txt",
                                                    "text": approvals.input_text(approval)}})
         toast, view = await self.decide(approval, spent["action"], spent["digest"], from_face=False)
@@ -265,7 +265,7 @@ class Platform:
     async def owner_login(self, request: web.Request) -> web.Response:
         """`/app` in the owner's chat: a one-time code for the face, and the link that carries it."""
         if not self.cfg.face_origin:
-            return web.json_response({"error": "Приложение не настроено: у платформы нет RETINUE_FACE_ORIGIN."})
+            return web.json_response({"error": "The app is not set up: the platform has no RETINUE_FACE_ORIGIN."})
         code = face.new_code(self.store, self.clock())
         return web.json_response({"code": code, "url": f"{self.cfg.face_origin}/login#{code}"})
 
@@ -273,9 +273,9 @@ class Platform:
         """A file a session handed over, for the router to send: its name, type and bytes."""
         file_id = (await _body(request)).get("id")
         if not isinstance(file_id, str):
-            return web.json_response({"error": "id: не строка"}, status=400)
+            return web.json_response({"error": "id: not a string"}, status=400)
         if (found := self.out.content(file_id)) is None:
-            return web.json_response({"error": "Файла больше нет: файлы хранятся 30 дней."})
+            return web.json_response({"error": "The file is gone: files are kept for 30 days."})
         payload = await asyncio.to_thread(outfiles.router_payload, *found)  # 20 MB in base64: not on the loop
         return web.Response(body=payload, content_type="application/json")
 
@@ -283,7 +283,7 @@ class Platform:
         """The assistant's digest from the router (`feed.clean`): what waits for the owner in her world, replacing the
         one before it whole."""
         if request.content_length is None or request.content_length > feed.DIGEST_BYTES:
-            return web.json_response({"error": f"дайджест больше {feed.DIGEST_BYTES} байт"}, status=413)
+            return web.json_response({"error": f"digest over {feed.DIGEST_BYTES} bytes"}, status=413)
         now = self.clock()
         try:
             body = await _body(request)
@@ -297,7 +297,7 @@ class Platform:
     async def owner_library(self, request: web.Request) -> web.Response:
         """The hub's list of pages from the router (`library.clean`), replacing the one before it whole."""
         if request.content_length is None or request.content_length > library_mod.BYTES:
-            return web.json_response({"error": f"список страниц больше {library_mod.BYTES} байт"}, status=413)
+            return web.json_response({"error": f"page list over {library_mod.BYTES} bytes"}, status=413)
         try:
             pages, dropped = library_mod.clean(await _body(request), self.library.hub)
         except library_mod.Refused as exc:
@@ -308,11 +308,11 @@ class Platform:
         return web.json_response({"ok": True, "pages": len(pages), "dropped": dropped})
 
     async def owner_stats(self, request: web.Request) -> web.Response:
-        """How the work went between `since` and `until` (`signals.tally`): the weekly review's «Как шла неделя»."""
+        """How the work went between `since` and `until` (`signals.tally`): the weekly review's «How the week went»."""
         body = await _body(request)
         since, until = body.get("since"), body.get("until", self.clock())
         if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (since, until)) or since >= until:
-            return web.json_response({"error": "since, until: числа, since раньше until"}, status=400)
+            return web.json_response({"error": "since, until: numbers, since before until"}, status=400)
         return web.json_response(signals.tally(self.store, float(since), float(until)))
 
     async def owner_feed(self, request: web.Request) -> web.Response:
@@ -332,10 +332,10 @@ class Platform:
             sphere, name = name, self.spheres.by_name[name].track
         track = self.tracks.get(name)
         if track is None:
-            known = f"; сферы: {', '.join(self.spheres.by_name)}" if self.spheres.by_name else ""
-            return {"ok": False, "say": f"Нет такого трека: {name}. Есть: {', '.join(self.tracks)}{known}"}
+            known = f"; spheres: {', '.join(self.spheres.by_name)}" if self.spheres.by_name else ""
+            return {"ok": False, "say": f"No such track: {name}. There are: {', '.join(self.tracks)}{known}"}
         if sphere is not None and sphere not in self.spheres.by_name:
-            return {"ok": False, "say": f"Нет такой сферы: {sphere}."}
+            return {"ok": False, "say": f"No such sphere: {sphere}."}
         session = self.store.input_session(input_id)
         cwd = self.cwd_for(track, sphere)
         if session is None and self._code_track(track) and parent is None and fork_of is None:
@@ -365,7 +365,7 @@ class Platform:
                 await self.drain()
             else:
                 self._set_state(session, "idle", now)
-        said = f"Сессия {session} · {track.name}. Чтобы писать в неё, отвечай на её сообщения."
+        said = f"Session {session} · {track.name}. To write to it, reply to its messages."
         return {"ok": True, "session": session, "say": _with_refused(said, ready)}
 
     def _code_track(self, track) -> bool:
@@ -374,9 +374,9 @@ class Platform:
     def _code_cwd(self, text: str) -> tuple[str, str] | str:
         """`/new code <repo> [text]`: (the repository's folder in the room, the rest of the text), or what to say."""
         word, _, rest = text.strip().partition(" ")
-        names = ", ".join(self.code.repos) or "нет ни одного"
+        names = ", ".join(self.code.repos) or "none"
         if word not in self.code.repos:
-            return f"Назови репозиторий: /new {self.cfg.code.track} <имя> [задача]. Есть: {names}."
+            return f"Name a repository: /new {self.cfg.code.track} <name> [task]. There are: {names}."
         return f"{self.cfg.code.root}/{word}", rest.strip()
 
     def cwd_for(self, track, sphere: str | None) -> str:
@@ -398,7 +398,7 @@ class Platform:
         except inbox.Refused as exc:
             return f"{inbox.NOT_PASSED}: {exc}."
         if ready.empty:
-            return f"{inbox.NOT_PASSED}: {'; '.join(ready.refused) or 'пустое сообщение'}."
+            return f"{inbox.NOT_PASSED}: {'; '.join(ready.refused) or 'empty message'}."
         return ready
 
     def _today(self, now: float) -> str:
@@ -411,7 +411,7 @@ class Platform:
         (`transcript.side_prompt`); the parent is only read."""
         asked = self.store.session(parent_id)
         if asked is None:
-            return {"ok": False, "say": "Нет такой сессии."}
+            return {"ok": False, "say": "No such session."}
         prompt = transcript.side_prompt(asked["id"], asked["track"], self.store.items(asked["id"]), question,
                                         self.store.first_input(asked["id"]))
         # Nested one level only: a question asked from a side session hangs under the same main session.
@@ -424,11 +424,11 @@ class Platform:
         in as a block, any other file into the session's inbox; what cannot be read is said, and the rest goes in."""
         session = self.store.session(session_id)
         if session is None:
-            return "Нет такой сессии."
+            return "No such session."
         if session["lane"] not in self.live:
             return RETIRED
         if self.store.input_session(input_id) is not None:
-            return "Это сообщение сессия уже получила."
+            return "The session already has this message."
         ready = await self._ready(text, attachments) if attachments else None
         if isinstance(ready, str):
             return ready
@@ -447,7 +447,7 @@ class Platform:
         now = self.clock()
         if not self.store.add_input(input_id, session_id, text, now, *((ready.meta, ready.thumbs) if ready else ()),
                                     by=by):
-            return "Это сообщение сессия уже получила."
+            return "The session already has this message."
         if by is None:  # the owner's own word: his buttons answered, his family's exchanges counted again
             self.subs.owner_wrote(session)
             self.store.db.execute("UPDATE sessions SET owner_joined = 1 WHERE id = ?", (session_id,))
@@ -455,18 +455,18 @@ class Platform:
             pings.close_open(self.store, session_id, now, input_id, text)  # its last ping answered, by a reply or not
             for approval in self.store.approvals(session=session_id, kind=questions.KINDS, states=("pending", "shown")):
                 if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
-                    retire(self.store, {**approval, "state": "stale"}, "Устарела: ты написал новое сообщение", now)
+                    retire(self.store, {**approval, "state": "stale"}, "Expired: you wrote a new message", now)
         if session["lane"] in self.lanes and any(r["session"] == session_id for r in self.store.open_runs()):
             try:
                 if (await self.lanes[session["lane"]].answer(session_id, text, content)).get("status") == "sent":
-                    return "Передал в сессию."
+                    return "Passed to the session."
             except Unavailable as exc:
                 log.warning("session %s: %s", session_id, exc)
         self.store.enqueue(session_id, text, now, content, by=by)
         self._set_state(session_id, "active", now)
         await self.drain()
         queued = any(q["session"] == session_id for q in self.store.queued())
-        return "Принято — сессия ждёт места на линии." if queued else "Принято."
+        return "Accepted — the session is waiting for room on the lane." if queued else "Accepted."
 
     async def decide(self, approval: dict | None, action: str, digest: str, *,
                      from_face: bool) -> tuple[str, dict | None]:
@@ -483,7 +483,7 @@ class Platform:
         now = self.clock()
         granted = action == approvals.APPROVE
         view = {**approvals.without_idle(approval["view"]),
-                "status": "Разрешено — выполняю." if granted else "Отказано."}
+                "status": "Allowed — running." if granted else "Denied."}
         # Its card rewritten with the decision — from a Telegram press too, which edits the card at once: a note
         # journaled before it (an idle line with the buttons) may still be on its way, and the latest note wins.
         telegram = {"kind": "update", "session": approval["session"], "data": {"view": view, "buttons": []},
@@ -495,7 +495,7 @@ class Platform:
         self.store.mark_seen(approval["session"], now)
         self._set_state(approval["session"], "active", now)
         await self.drain()
-        return ("Разрешено." if granted else "Отказано."), view
+        return ("Allowed." if granted else "Denied."), view
 
     async def stop(self, session_id: str) -> bool:
         """The session's running turn interrupted by its lane; the lane journals `stopped`, and the session goes idle
@@ -518,7 +518,7 @@ class Platform:
             return False
 
     async def _stop_family(self, parent: dict) -> bool:
-        """«Стоп» on a session stops its open sub-sessions too: their queued runs dropped, their running ones
+        """«Stop» on a session stops its open sub-sessions too: their queued runs dropped, their running ones
         interrupted, their cards stale, each closed; nothing they say after it is a report. True when any was."""
         now, any_stopped = self.clock(), False
         for child in self.subs.family(parent["id"]):
@@ -528,7 +528,7 @@ class Platform:
             self.store.db.commit()
             for approval in self.store.approvals(session=child["id"], kind=questions.KINDS, states=("pending", "shown")):
                 if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
-                    retire(self.store, {**approval, "state": "stale"}, "Устарела: Владелец остановил сессию", now)
+                    retire(self.store, {**approval, "state": "stale"}, "Expired: you stopped the session", now)
             running = any(r["session"] == child["id"] for r in self.store.open_runs())
             if running and child["lane"] in self.lanes:
                 try:
@@ -576,7 +576,7 @@ class Platform:
 
     async def pick(self, approval: dict, action: str, digest: str) -> dict:
         """A press on a question's Telegram button: an option of a single choice answers it; a multi-select's option
-        is ticked or unticked in the stored picks — its button stays live, the message relabelled — and «Готово»
+        is ticked or unticked in the stored picks — its button stays live, the message relabelled — and «Done»
         answers it with what is ticked.
         What the bridge does with the pressed message: the toast, its view and the buttons it keeps."""
         parsed = questions.parse_action(action)
@@ -588,21 +588,21 @@ class Platform:
             return {"toast": STALE}
         q, now = asked[n], self.clock()
         if str(n) in approval["view"].get("answers", {}):
-            return {"toast": "На этот вопрос уже есть ответ."}
+            return {"toast": "This question is already answered."}
         if not q["multiSelect"]:
             return await self._answer(approval, n, q["options"][choice]["label"], False, now)
         picks = list(approval["view"].get("picks", {}).get(str(n)) or [])
         if choice == questions.DONE:
             if picks:
                 return await self._answer(approval, n, questions.joined(questions.in_order(q, picks)), False, now)
-            toast = "Отметь хотя бы один вариант — или ответь на это сообщение своим текстом."
+            toast = "Tick at least one option — or reply to this message with your own text."
         else:
             label = q["options"][choice]["label"]
             picks = [p for p in picks if p != label] if label in picks else [*picks, label]
             toast = ""
         view = {**approval["view"], "picks": {**approval["view"].get("picks", {}), str(n): picks}}
         approval = {**approval, "view": view}
-        keep = self._question_buttons(approval, n, now)  # the same ticks, relabelled; a spent «Готово» made anew
+        keep = self._question_buttons(approval, n, now)  # the same ticks, relabelled; a spent «Done» made anew
         card = dataclasses.asdict(questions.card(approval, n, approval["session"], self._track_of(approval)))
         note = {"kind": "update", "session": approval["session"], "data": {"view": card, "buttons": keep},
                 "approval": questions.key(approval["id"], n)}
@@ -617,26 +617,26 @@ class Platform:
             return STALE
         asked = questions.of(approval["input"])
         if type(n) is not int or not 0 <= n < len(asked):
-            return "Нет такого вопроса."
+            return "No such question."
         if str(n) in approval["view"].get("answers", {}):
-            return "На этот вопрос уже есть ответ."
+            return "This question is already answered."
         q = asked[n]
         if isinstance(text, str) and text.strip():
             if len(text) > questions.OTHER_LIMIT:
-                return f"Ответ длиннее {questions.OTHER_LIMIT} знаков."
+                return f"The answer is longer than {questions.OTHER_LIMIT} characters."
             return (await self._answer(approval, n, text.strip(), True, self.clock()))["toast"]
         options = {o["label"] for o in q["options"]}
         if not isinstance(labels, list) or not labels or not all(isinstance(label, str) and label in options
                                                                  for label in labels):
-            return "Выбери вариант из предложенных или напиши свой ответ."
+            return "Pick one of the options or write your own answer."
         picked = questions.in_order(q, labels)
         if not q["multiSelect"] and len(picked) != 1:
-            return "Здесь выбирают один вариант."
+            return "Pick only one option here."
         return (await self._answer(approval, n, questions.joined(picked), False, self.clock()))["toast"]
 
     async def reply_answer(self, card: str, session_id: str, text: str, input_id: str = "") -> str | None:
         """The owner's reply to a question's Telegram message: while the question asks, his text is its answer
-        («Свой ответ»), taken once per `input_id`. None when the message is no open question of this session — the
+        («Your answer…»), taken once per `input_id`. None when the message is no open question of this session — the
         reply is then a message into the session like any other."""
         found = questions.split_key(card)
         approval = self.store.approval(found[0]) if found else None
@@ -647,11 +647,11 @@ class Platform:
         if n >= len(questions.of(approval["input"])) or not text.strip():
             return None
         if str(n) in approval["view"].get("answers", {}):
-            return "На этот вопрос уже есть ответ. Чтобы написать в сессию, ответь на другое её сообщение."
+            return "This question is already answered. To write to the session, reply to another of its messages."
         if len(text) > questions.OTHER_LIMIT:
-            return f"Ответ длиннее {questions.OTHER_LIMIT} знаков — не принят."
+            return f"The answer is longer than {questions.OTHER_LIMIT} characters — not accepted."
         if input_id and not self.store.take_answer_input(input_id, approval["id"], self.clock()):
-            return "Это сообщение сессия уже получила."
+            return "The session already has this message."
         return (await self._answer(approval, n, text.strip(), True, self.clock()))["toast"]
 
     async def _answer(self, approval: dict, n: int, value: str, other: bool, now: float) -> dict:
@@ -678,12 +678,12 @@ class Platform:
             return {"toast": STALE}
         if not done:
             left = questions.left(approval)
-            return {"toast": f"Принято. Осталось ответить: {left}.", "view": card, "keep": []}
+            return {"toast": f"Accepted. Still to answer: {left}.", "view": card, "keep": []}
         self.store.enqueue(approval["session"], None, now)  # a bare resume: the gate hands the CLI the answers
         self.store.mark_seen(approval["session"], now)
         self._set_state(approval["session"], "active", now)
         await self.drain()
-        return {"toast": "Ответ передан в сессию.", "view": card, "keep": []}
+        return {"toast": "Answer passed to the session.", "view": card, "keep": []}
 
     def _retired(self, session_id: str) -> bool:
         """The session's lane is no longer configured: nothing of the owner's goes into it, a decision neither."""
@@ -732,15 +732,15 @@ class Platform:
 
     def _unrunnable(self, session: dict) -> str | None:
         if session["lane"] not in self.cfg.lanes:
-            return f"линии {session['lane']} больше нет в настройках"
+            return f"lane {session['lane']} is no longer in the settings"
         if session["lane"] not in self.live:
-            return f"полоса {session['lane']} выключена"
+            return f"lane {session['lane']} is retired"
         if session["track"] not in self.tracks:
-            return f"трека {session['track']} больше нет в настройках"
+            return f"track {session['track']} is no longer in the settings"
         return None
 
     async def _start(self, session: dict, queued: dict) -> str:
-        if not await self.tobase.before_start(session):  # a «В Базу» commit in flight: the run waits its turn
+        if not await self.tobase.before_start(session):  # a «To the Base» commit in flight: the run waits its turn
             return "busy"
         now = self.clock()
         track, lane = self.tracks[session["track"]], self.cfg.lanes[session["lane"]]
@@ -907,8 +907,8 @@ class Platform:
 
     def _refused(self, session: dict, why: str, now: float, run: str | None = None) -> str:
         self._set_state(session["id"], "idle", now)
-        self._summary(session, f"Линия не запустила сессию: {why}", pings.FAILED)
-        self._turn_over(session, f"Линия не запустила сессию: {why}", failed=True, run=run)
+        self._summary(session, f"The lane did not start the session: {why}", pings.FAILED)
+        self._turn_over(session, f"The lane did not start the session: {why}", failed=True, run=run)
         return "refused"
 
     def _turn_over(self, session: dict, text: str, failed: bool = False, run: str | None = None) -> None:
@@ -935,11 +935,11 @@ class Platform:
         except Exception as exc:  # files are never worth the lane's journal or the queue: logged, and on
             log.error("the hand-over of files failed: %s", type(exc).__name__)
         try:
-            await self.tobase.settle()  # the Base files these lines' runs changed, and the pings' «В Базу»
+            await self.tobase.settle()  # the Base files these lines' runs changed, and the pings' «To the Base»
         except Exception as exc:
             log.error("the Base's marks failed: %s", type(exc).__name__)
         try:
-            await self.topush.settle()  # the repositories these lines' sessions worked in, and «Запушить · N»
+            await self.topush.settle()  # the repositories these lines' sessions worked in, and «Push · N»
         except Exception as exc:
             log.error("the repositories' looks failed: %s", type(exc).__name__)
         if len(items) < POLL_LIMIT:
@@ -991,7 +991,7 @@ class Platform:
                     self.store.get(f"subs.mcp_failed:{session['id']}") is None:  # said once per session
                 self.store.set(f"subs.mcp_failed:{session['id']}", "1")
                 self._summary(session, said, pings.FAILED, run)
-            mode = str(line.get("permissionMode") or "") or "не назван"
+            mode = str(line.get("permissionMode") or "") or "not given"
             if self.store.set_run_mode(run, mode):  # once per session: the gate falls back for this run on its own
                 self._summary(session, manual_notice(mode, str(line.get("model") or "")), pings.FAILED, run)
         elif kind == "result":
@@ -1043,20 +1043,20 @@ class Platform:
                                                  states=("granted", "answered")):
                 self.store.move(approval["id"], (approval["state"],), "expired", now)
             self._set_state(session["id"], "idle", now)
-            gone = "Отложенный вызов продолжить нельзя: этого инструмента у сессии больше нет. Напиши, что делать дальше."
+            gone = "The deferred call cannot go on: the session no longer has this tool. Write what to do next."
             self._summary(session, gone, pings.FAILED, run)
             self._turn_over(session, gone, failed=True, run=run)
         elif self._failed(line) and self.store.interrupted(run):
             pass  # the shutdown's own interrupt: the run's end resumes the session (`_continue`)
         elif self._failed(line):
-            why = str(line.get("result") or "") or str(line.get("subtype") or "") or "без описания"
+            why = str(line.get("result") or "") or str(line.get("subtype") or "") or "no description"
             signals.add(self.store, signals.RUN_ERROR, session["id"], now, key=f"run:{run}")
-            self._summary(session, f"Ход оборвался ошибкой: {why}", pings.FAILED, run)
+            self._summary(session, f"Turn ended with an error: {why}", pings.FAILED, run)
             self._set_state(session["id"], "idle", now)
             self._owe_look(session)
-            self._turn_over(session, f"Ход оборвался ошибкой: {why}", failed=True, run=run)
+            self._turn_over(session, f"Turn ended with an error: {why}", failed=True, run=run)
         else:
-            text, written = self._sphere_line(session, str(line.get("result") or "") or "Ход закончен без текста.")
+            text, written = self._sphere_line(session, str(line.get("result") or "") or "Turn finished without text.")
             self._summary(session, text, run=run, line_before=written)
             self._set_state(session["id"], "closed" if session["kind"] == "code" else "idle", now)
             self._owe_look(session)
@@ -1100,7 +1100,7 @@ class Platform:
                     await self._look(session, track, lane, owed, looked)
                 except Exception as exc:  # the type only: a name or a line may say anything
                     log.error("session %s: out/ look failed: %s", session["id"], type(exc).__name__)
-                    self.out.failed(session, looked, owed["gen"], f"ошибка платформы ({type(exc).__name__})")
+                    self.out.failed(session, looked, owed["gen"], f"platform error ({type(exc).__name__})")
 
     async def _look(self, session: dict, track, lane, owed: dict, looked: float) -> None:
         cwd = self.cwd_of(session, track)
@@ -1122,17 +1122,17 @@ class Platform:
         never said which session it was, and a resume would start a new one without the task."""
         if not self.store.session(session["id"])["cli_session"]:
             self._set_state(session["id"], "idle", now)
-            self._summary(session, "Ход прервался: платформа перезапускалась, а сессия ещё не началась. "
-                                   "Напиши задачу ещё раз.", pings.FAILED)
+            self._summary(session, "Turn cut off: the platform restarted before the session began. "
+                                   "Write the task again.", pings.FAILED)
             return
         if any(q["session"] == session["id"] for q in self.store.queued()):
             # The owner wrote while it was down: his message goes next, and nothing of ours after it to contradict it.
-            self._summary(session, "Ход прервался: платформа перезапускалась. Сессия продолжит с твоего нового "
-                                   "сообщения.", pings.FAILED)
+            self._summary(session, "Turn cut off: the platform restarted. The session goes on from your new "
+                                   "message.", pings.FAILED)
             return
         self.store.enqueue(session["id"], CONTINUE, now)  # the poll that ingested this line drains next
-        self._summary(session, "Ход прервался: платформа перезапускалась. Продолжаю с того места, где сессия "
-                               "остановилась.", pings.FAILED)
+        self._summary(session, "Turn cut off: the platform restarted. Continuing from where the session "
+                               "stopped.", pings.FAILED)
 
     def _show(self, session: dict, approval: dict, now: float) -> bool:
         if approval["kind"] == "question":
@@ -1152,9 +1152,9 @@ class Platform:
         was not the owner's doing — a sub-session's on its parent's word, a parent's on a report — pings without a
         sound when it is done, and leaves his open buttons as they are unless it brings its own (`subs`)."""
         row = self.store.session(session["id"]) or session
-        side = f" · вопрос к {row['parent']}" if row.get("parent") else ""
-        sub = f" · подсессия {row['sub_of']}" if row.get("sub_of") else ""
-        head = f"Итог · {session['track']} · сессия {session['id']}{side}{sub}"
+        side = f" · question about {row['parent']}" if row.get("parent") else ""
+        sub = f" · sub-session {row['sub_of']}" if row.get("sub_of") else ""
+        head = f"Result · {session['track']} · session {session['id']}{side}{sub}"
         machine = row.get("turn_by") in ("parent", "report") and not row.get("owner_joined")
         pings.add(self.store, row, head, text, kind, self.clock(), run=run, spheres=_sphere_titles(self.cfg),
                   quiet=machine, machine=machine, **extra)
@@ -1172,11 +1172,11 @@ class Platform:
         if until > float(self.store.get("subs.limit_until") or 0):  # no report is delivered until then (`subs`)
             self.store.set("subs.limit_until", str(until))
         at = datetime.fromtimestamp(until, ZoneInfo(self.cfg.owner_tz)).strftime("%H:%M")
-        self._summary(session, f"Лимит подписки — жду сброса до {at}", pings.FAILED, limit_until=until)
+        self._summary(session, f"Subscription limit — waiting for the reset at {at}", pings.FAILED, limit_until=until)
 
     def _set_state(self, session: str, state: str, now: float) -> None:
         """`turn_started` is set only when a turn begins — active from idle, closed or new — never on a resume after a
-        card (waiting -> active), which moves `at`: the face's «Работают» counts a turn from it."""
+        card (waiting -> active), which moves `at`: the face's «Working» counts a turn from it."""
         fields = {}
         if state == "active" and (self.store.session(session) or {}).get("state") not in ("active", "waiting"):
             fields["turn_started"] = now
@@ -1194,11 +1194,11 @@ class Platform:
         self.out.prune(now)
         for approval in self.store.approvals(kind=questions.KINDS, states=("shown",)):
             if approval["at"] <= now - BUTTON_TTL_S and self.store.move(approval["id"], ("shown",), "expired", now):
-                retire(self.store, {**approval, "state": "expired"}, "Истекла: решения не было семь дней", now)
+                retire(self.store, {**approval, "state": "expired"}, "Expired: no decision for seven days", now)
                 if self.store.session(approval["session"])["state"] == "waiting":
                     self._set_state(approval["session"], "idle", now)
-                    self._turn_over(self.store.session(approval["session"]), "Карточка истекла: решения не было семь "
-                                                                             "дней, ход не закончен.", failed=True,
+                    self._turn_over(self.store.session(approval["session"]), "The card expired: no decision for seven "
+                                                                             "days, the turn is not finished.", failed=True,
                                     run=f"expired:{approval['id']}")
         self._mark_idle(now)  # the cards still shown after the expiry
         self.subs.deliver()  # a report that waited for its siblings, or for a limit to pass: `_clock` drains
@@ -1233,23 +1233,23 @@ class Platform:
         self.retire_cards()
         self.tasks = [asyncio.create_task(self._poller(lane)) for lane in self.lanes]
         self.tasks.append(asyncio.create_task(self._clock()))
-        self.tasks.append(asyncio.create_task(self.tobase.recover()))  # a «В Базу» card a restart cut
+        self.tasks.append(asyncio.create_task(self.tobase.recover()))  # a «To the Base» card a restart cut
         if self.base is not None:
             self.tasks.append(asyncio.create_task(self._base_loop()))
-        self.tasks.append(asyncio.create_task(self.topush.recover()))  # a «Запушить» card a restart cut
+        self.tasks.append(asyncio.create_task(self.topush.recover()))  # a «Push» card a restart cut
         if self.code is not None:
             self.tasks.append(asyncio.create_task(self._code_loop()))
 
     def retire_cards(self) -> None:
         """At start: every card still asking in a session of a lane that is gone or retired goes stale with a line
-        that says why, and its session stops waiting — so it leaves «Решить» and /wait. Nothing could take its answer."""
+        that says why, and its session stops waiting — so it leaves «Decide» and /wait. Nothing could take its answer."""
         now = self.clock()
         for approval in self.store.approvals(kind=questions.KINDS, states=("pending", "shown")):
             session = self.store.session(approval["session"])
             if session is None or session["lane"] in self.live:
                 continue
             if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
-                retire(self.store, {**approval, "state": "stale"}, "Устарела: полоса выключена", now)
+                retire(self.store, {**approval, "state": "stale"}, "Expired: the lane is retired", now)
             if session["state"] == "waiting":
                 self._set_state(session["id"], "idle", now)
 
@@ -1316,10 +1316,10 @@ def _sphere_titles(cfg: PlatformConfig) -> dict[str, str]:
 def manual_notice(mode: str, model: str) -> str:
     """What the owner is told when a session's CLI did not start in auto. The CLI gives no reason; the likely ones
     are the model (auto needs a recent one) and a CLI or account where auto is off."""
-    on = f" на модели {model}" if model else ""
-    return (f"Режим auto в этой сессии выключен: CLI запустился в режиме {mode}{on} и причину не назвал — обычно это "
-            "модель без auto или auto, выключенный для CLI или аккаунта. Пока так, каждый вызов вне правил сессии "
-            "приходит тебе карточкой.")
+    on = f" on model {model}" if model else ""
+    return (f"Auto mode is off in this session: the CLI started in {mode} mode{on} and gave no reason — usually a "
+            "model without auto, or auto turned off for the CLI or the account. Until then, every call outside the "
+            "session's rules comes to you as a card.")
 
 
 def bridge_view(view: dict) -> courier.CardView:

@@ -22,7 +22,7 @@ server {
     location ~ /\. { return 404; }
     location / { try_files $uri $uri/ =404; }
 
-    # The owner's own HTML pages (docs/lifehub.md, «Страницы»), on the hub's own origin — so the one barrier between
+    # The owner's own HTML pages (docs/lifehub.md, «Pages»), on the hub's own origin — so the one barrier between
     # a page's script and the hub is the `sandbox` in each response's policy: the document gets an opaque origin, so
     # the hub's pages are another origin to it (no CORS anywhere but /pages/_vendor/), and no storage or cookies.
     # Behind it: no network (`connect-src 'none'`), loads only from /pages/_vendor/. Every location here sets all its

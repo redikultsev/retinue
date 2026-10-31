@@ -54,25 +54,26 @@ MARK_WAIT_S = 1.0     # how long the general PreToolUse waits for the call's mar
 RETRIES_PER_RUN = 2
 CALL_KEEP_S = 3600.0  # how long a call's marks are remembered: a late mark, the same call fired again on resume
 
-NEVER = "Это делает только Владелец: команда ушла ему карточкой. Не повторяй; скажи в итоге, что шаг ждёт его."
-NEVER_PUSH = ("Пушит платформа по кнопке Владельца «Запушить» под твоим итогом: ветка и PR. Не повторяй; закоммить "
-              "всё нужное и скажи в итоге репозиторий, ветку и сколько коммитов.")
-REJECTED = "Владелец отказал"
-STALE = "Владелец написал новое сообщение — вызов не выполнен"
-CHANGED = "Вызов или файл изменились после разрешения — вызов не выполнен"
-UNBINDABLE = "Файл, который меняет вызов, платформе не прочитать — разрешить такой вызов нельзя"
-ASKED = "Это не покрыто правилами сессии. Повтори тот же вызов — он уйдёт Владельцу на разрешение."
+NEVER = ("Only the owner does this: the command went to him as a card. Do not retry; say in your summary that the step "
+         "waits for him.")
+NEVER_PUSH = ("The platform pushes by the owner's button «Push» under your summary: a branch and a PR. Do not retry; "
+              "commit everything needed and say in your summary the repository, the branch and how many commits.")
+REJECTED = "The owner denied it"
+STALE = "The owner wrote a new message — the call was not run"
+CHANGED = "The call or the file changed after it was allowed — the call was not run"
+UNBINDABLE = "The platform cannot read the file this call changes — such a call cannot be allowed"
+ASKED = "This is not covered by the session's rules. Make the same call again — it goes to the owner for permission."
 AUTO = "auto"
-UNKNOWN = "Неизвестный запуск"
-DEFERRED = "Ждёт решения Владельца"
-CLOSING = "Платформа останавливается"
-UNCHECKED = "Платформа не смогла проверить этот вызов — он не выполнен. Упрости его: другой путь или шаблон."
-UNANSWERED = "Вопрос остался без ответа Владельца. Если ответ ещё нужен — спроси снова."
+UNKNOWN = "Unknown run"
+DEFERRED = "Waiting for the owner's decision"
+CLOSING = "The platform is stopping"
+UNCHECKED = "The platform could not check this call — it was not run. Simplify it: another path or pattern."
+UNANSWERED = "The owner did not answer the question. If you still need the answer, ask again."
 # A subagent's call never waits for the owner: a deferral inside a subagent ends the subagent without its report and
 # is lost — the run goes on and no resume brings the call back (probed with 2.1.304). So what would be deferred to the
 # owner is denied with this, no card made; the main agent, told so in the report, makes the call itself.
-SUBAGENT = ("Субагент не может ждать решения Владельца — вызов не выполнен. Не повторяй; закончи отчёт и назови в нём "
-            "этот шаг: главная сессия сделает его сама.")
+SUBAGENT = ("A subagent cannot wait for the owner's decision — the call was not run. Do not retry; finish your report "
+            "and name this step in it: the main session will do it itself.")
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,11 @@ def _decision(decision: str, reason: str) -> dict:
                                    "permissionDecisionReason": reason}}
 
 
+def _lower(text: str) -> str:
+    """A sentence after a «Not run: » head: its first letter lowered, nothing else."""
+    return text[:1].lower() + text[1:]
+
+
 def _ask_denied(message: str) -> dict:
     return {"hookSpecificOutput": {"hookEventName": "PermissionRequest",
                                    "decision": {"behavior": "deny", "message": message}}}
@@ -139,7 +145,7 @@ class Gate:
         signals.prepare(store, clock())  # its journal of every answer (`_journal`)
         self.skills_mount = skills_mount  # the owner's skills as the platform reads them (approvals.SKILLS)
         self.memory_mount = memory_mount  # and his memory snapshot (approvals.OWNER_MEMORY)
-        self.push_lanes: frozenset[str] = frozenset()  # lanes whose `git push` is the owner's «Запушить» (topush)
+        self.push_lanes: frozenset[str] = frozenset()  # lanes whose `git push` is the owner's «Push» (topush)
         self.closing = False
         self._calls: dict[str, _Call] = {}
         # (session, reask key): the CLI asked, or its classifier blocked the call; made again, it goes to the owner
@@ -280,9 +286,9 @@ class Gate:
             state = approval["state"]
             if state == "granted":
                 if digest == approval["digest"] and self.store.move(approval["id"], ("granted",), "executing", now):
-                    return _decision("allow", "Владелец разрешил")
+                    return _decision("allow", "The owner allowed it")
                 if self.store.move(approval["id"], ("granted",), "dropped", now):
-                    retire(self.store, {**approval, "state": "dropped"}, "Не выполнено: " + CHANGED.lower(), now)
+                    retire(self.store, {**approval, "state": "dropped"}, "Not run: " + _lower(CHANGED), now)
                 return _decision("deny", CHANGED)
             if state == "rejected":
                 return _decision("deny", REJECTED)
@@ -371,10 +377,10 @@ class Gate:
                 if digest == asked["digest"] and self.store.move(asked["id"], ("answered",), "executing", now):
                     return {"hookSpecificOutput": {
                         "hookEventName": "PreToolUse", "permissionDecision": "allow",
-                        "permissionDecisionReason": "Владелец ответил",
+                        "permissionDecisionReason": "The owner answered",
                         "updatedInput": questions.updated_input(tool_input, asked["view"].get("answers") or {})}}
                 if self.store.move(asked["id"], ("answered",), "dropped", now):
-                    retire(self.store, {**asked, "state": "dropped"}, "Не передано: " + CHANGED.lower(), now)
+                    retire(self.store, {**asked, "state": "dropped"}, "Not passed on: " + _lower(CHANGED), now)
                 return _decision("deny", CHANGED)
             if state == "stale":
                 return _decision("deny", STALE)
@@ -463,8 +469,8 @@ class Gate:
         for approval in self.store.approvals(session=run.session, tool_use_id=call_id, kind="approval",
                                              states=("pending", "shown", "granted")):
             if self.store.move(approval["id"], (approval["state"],), "dropped", now) and approval["state"] == "shown":
-                retire(self.store, {**approval, "state": "dropped"}, "Снято: это делает только Владелец — "
-                                                                     "ушло карточкой курьера", now)
+                retire(self.store, {**approval, "state": "dropped"}, "Withdrawn: only you do this — it went "
+                                                                     "to you as a courier card", now)
         tool, tool_input, cwd = _call_of(body)
         call = {"tool": tool, "input": tool_input, "cwd": cwd}
         view = dataclasses.asdict(approvals.courier_card(call, run.session, run.track, mark.label,

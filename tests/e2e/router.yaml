@@ -7,5 +7,5 @@ matrix:
   owner: "@owner:test.local"
 agents:
   - id: echo
-    name: Эхо
+    name: Echo
     url: http://agent-echo:9000

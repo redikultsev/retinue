@@ -22,7 +22,7 @@ def test_no_raw_html_and_no_external_images():
 
 
 def test_empty():
-    assert render("  ")[0] == "(пусто)"
+    assert render("  ")[0] == "(empty)"
 
 
 def clickable(html: str) -> list[str]:

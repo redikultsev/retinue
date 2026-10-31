@@ -225,7 +225,7 @@ class PlatformStore:
                 repo TEXT PRIMARY KEY,              -- the room's clone of it as its last look found it (`topush`)
                 branch TEXT NOT NULL,
                 sha TEXT NOT NULL,
-                n INTEGER NOT NULL,                 -- its commits no branch of the remote has: «Запушить · N»
+                n INTEGER NOT NULL,                 -- its commits no branch of the remote has: «Push · N»
                 at REAL NOT NULL
             );
             """)
@@ -305,7 +305,7 @@ class PlatformStore:
 
     def set_sphere(self, session: str, sphere: str | None, by: str = "owner") -> bool:
         """The owner moves the session to another sphere, or out of any: it is no sphere's main session there. `by`
-        session: its own `Сфера:` line (`subs.sphere_line`), taken only while nobody placed it. Its sub-sessions
+        session: its own `Sphere:` line (`subs.sphere_line`), taken only while nobody placed it. Its sub-sessions
         follow it, but one the owner placed himself."""
         cursor = self.db.execute("UPDATE sessions SET sphere = ?, main = 0, sphere_by = ? WHERE id = ?",
                                  (sphere, by, session))
@@ -354,7 +354,7 @@ class PlatformStore:
         return cursor.rowcount == 1
 
     def face_about(self, session: str) -> dict:
-        """What the face's «Сводка» says of a session besides its row — only what the platform was told: the directory
+        """What the face's «Summary» says of a session besides its row — only what the platform was told: the directory
         it ran in, the context its main conversation's last request carried, and from its newest top-level `init` line
         the model, the CLI's version, the permission mode and the MCP servers with their status. A field nothing said
         is null ([] for the servers); an init line pruned with its turn after 90 days takes its fields along."""

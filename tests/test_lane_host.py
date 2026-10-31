@@ -304,11 +304,11 @@ def test_the_owners_memory_index_comes_first_in_every_run_asked_for_it_and_never
 
     served(lane, scenario)
     first, bare, refused, web = (lane.call(r) for r in ("r1", "r2", "r3", "r4"))
-    assert first["notes"].startswith("Память Владельца") and "всегда давать ссылки" in first["notes"]
-    assert first["notes"].index("всегда давать ссылки") < first["notes"].index("Правила репозитория")
-    assert bare["notes"].startswith("Память Владельца") and "Правила репозитория" not in bare["notes"]
+    assert first["notes"].startswith("The owner's memory") and "всегда давать ссылки" in first["notes"]
+    assert first["notes"].index("всегда давать ссылки") < first["notes"].index("Rules of the repository")
+    assert bare["notes"].startswith("The owner's memory") and "Rules of the repository" not in bare["notes"]
     assert "--append-system-prompt-file" in bare["argv"], "a session in no repository still gets the owner's memory"
-    assert "Память Владельца" not in refused["notes"] and refused["notes"].startswith("Правила репозитория")
+    assert "The owner's memory" not in refused["notes"] and refused["notes"].startswith("Rules of the repository")
     assert "--append-system-prompt-file" not in web["argv"]
 
 
@@ -325,7 +325,7 @@ def test_a_repository_that_breaks_the_reading_never_fails_the_run(lane, monkeypa
         await event("exited")
 
     served(lane, scenario)
-    assert lane.call("r1")["notes"].startswith("Правила репозитория этой сессии не прочитаны (RecursionError)")
+    assert lane.call("r1")["notes"].startswith("The rules of this session's repository could not be read (RecursionError)")
 
 
 def test_a_run_in_a_repository_without_rules_has_no_instructions_file(lane):
@@ -505,18 +505,18 @@ def test_a_host_that_comes_up_again_journals_the_runs_left_running_as_restarted(
 
 
 @pytest.mark.parametrize("over, why", [
-    ({"settings": cliengine.settings("http://evil:9500/hook", 30, [])}, "settings: PreToolUse — чужой адрес"),
-    ({"settings": {**cliengine.settings(HOOK_URL, 30, []), "permissions": {"allow": ["Bash"]}}}, "settings: верхний"),
-    ({"cwd": "../state"}, "cwd: не путь внутри"),
-    ({"cwd": "/etc"}, "cwd: не путь внутри"),
-    ({"cwd": "nowhere"}, "cwd: нет такой папки"),
-    ({"cwd": "repo/out"}, "cwd: нет такой папки"),
-    ({"allowed": ["Bash(ls\n)"]}, "argv: не правило"),
-    ({"allowed": "Bash"}, "allowed/disallowed: не списки правил"),
-    ({"cli_session": "../../x"}, "argv: --resume без id сессии"),
-    ({"prompt": None}, "новая сессия без запроса"),
-    ({"prompt": None, "cli_session": ""}, "новая сессия без запроса"),
-    ({"hook_token": ""}, "hook_token: нет"),
+    ({"settings": cliengine.settings("http://evil:9500/hook", 30, [])}, "settings: PreToolUse — a foreign address"),
+    ({"settings": {**cliengine.settings(HOOK_URL, 30, []), "permissions": {"allow": ["Bash"]}}}, "settings: the top level"),
+    ({"cwd": "../state"}, "cwd: not a path inside"),
+    ({"cwd": "/etc"}, "cwd: not a path inside"),
+    ({"cwd": "nowhere"}, "cwd: no such folder"),
+    ({"cwd": "repo/out"}, "cwd: no such folder"),
+    ({"allowed": ["Bash(ls\n)"]}, "argv: not a rule"),
+    ({"allowed": "Bash"}, "allowed/disallowed: not lists of rules"),
+    ({"cli_session": "../../x"}, "argv: --resume without a session id"),
+    ({"prompt": None}, "a new session without a prompt"),
+    ({"prompt": None, "cli_session": ""}, "a new session without a prompt"),
+    ({"hook_token": ""}, "hook_token: missing"),
 ])
 def test_a_run_off_its_shape_is_refused_journaled_and_nothing_is_spawned(lane, over, why):
     (lane.work / "repo" / "out").symlink_to(lane.dir)  # a directory, but outside /work
@@ -537,7 +537,7 @@ def test_a_settings_file_that_cannot_be_written_is_a_refusal_not_a_crash(lane):
         return await post("/run", run_body()), await items(), host.live
 
     (status, answer), journal, live = served(lane, scenario)
-    assert (status, answer) == (400, {"status": "refused", "error": "настройки не записаны: FileNotFoundError"})
+    assert (status, answer) == (400, {"status": "refused", "error": "settings not written: FileNotFoundError"})
     assert lane.call("r1") is None and live == {} and [i["data"]["event"] for i in journal] == ["refused"]
 
 
@@ -560,8 +560,8 @@ def test_stop_and_answer_without_a_session_id_are_refused(lane):
         return await post("/stop", {"session": 1}), await post("/answer", {"prompt": "привет"})
 
     stop, answer = served(lane, scenario)
-    assert stop == (400, {"status": "refused", "error": "session: не id"})
-    assert answer == (400, {"status": "refused", "error": "session: не id"})
+    assert stop == (400, {"status": "refused", "error": "session: not an id"})
+    assert answer == (400, {"status": "refused", "error": "session: not an id"})
 
 
 def test_lines_never_hold_a_line_over_the_cap_across_reads():
@@ -595,7 +595,7 @@ def test_a_cli_off_the_pin_starts_no_run_and_ping_says_so(lane):
         return await post("/run", run_body()), await (await client.get("/ping", headers=SIGNED)).json()
 
     (status, answer), ping = served(lane, scenario)
-    assert status == 400 and answer["error"] == "CLI не 2.1.304: 2.1.305 (Claude Code)" and lane.call("r1") is None
+    assert status == 400 and answer["error"] == "CLI is not 2.1.304: 2.1.305 (Claude Code)" and lane.call("r1") is None
     assert ping == {"version": "2.1.305 (Claude Code)", "pinned": False,
                     "login": {"loggedIn": True, "authMethod": "oauth_token"}, "running": [], "max": 2}
 
@@ -669,7 +669,7 @@ def test_a_run_without_the_login_from_the_platform_is_refused_and_the_token_is_n
         return status, answer, await items()
 
     status, answer, journal = served(lane, scenario)
-    assert status == 400 and answer["error"].startswith("oauth_token: платформа не передала вход подписки")
+    assert status == 400 and answer["error"].startswith("oauth_token: the platform did not pass the subscription login")
     assert lane.call("r1") is None, "no CLI started"
     assert [i["data"]["event"] for i in journal] == ["refused"]
 
@@ -714,8 +714,8 @@ def test_blocks_go_to_stdin_as_one_line_and_files_into_the_inbox_named_after_it(
     [line] = lane.stdin("r1")
     content = json.loads(line)["message"]["content"]
     assert content[:2] == BLOCKS
-    assert content[2] == {"type": "text", "text": "Файлы владельца сохранены в папке сессии:\n"
-                                                  "- inbox/2026-10-27-data.csv (8 Б)"}
+    assert content[2] == {"type": "text", "text": "The owner's files are saved in the session's folder:\n"
+                                                  "- inbox/2026-10-27-data.csv (8 B)"}
 
 
 def test_a_file_sent_again_is_the_same_file_and_other_bytes_under_its_name_get_another(lane):
@@ -730,7 +730,7 @@ def test_a_file_sent_again_is_the_same_file_and_other_bytes_under_its_name_get_a
     assert sorted(p.name for p in inbox.iterdir()) == ["2026-10-27-a-2.txt", "2026-10-27-a.txt"]
     assert (inbox / "2026-10-27-a-2.txt").read_bytes() == b"two"
     assert [json.loads(lane.stdin(r)[0])["message"]["content"][-1]["text"].splitlines()[-1] for r in ("r2", "r3")] \
-        == ["- inbox/2026-10-27-a.txt (3 Б)", "- inbox/2026-10-27-a-2.txt (3 Б)"]
+        == ["- inbox/2026-10-27-a.txt (3 B)", "- inbox/2026-10-27-a-2.txt (3 B)"]
 
 
 def test_an_inbox_or_a_file_name_the_session_made_a_link_is_never_written_through(lane, tmp_path):
@@ -749,7 +749,7 @@ def test_an_inbox_or_a_file_name_the_session_made_a_link_is_never_written_throug
         return linked, taken
 
     linked, taken = served(lane, scenario)
-    assert linked == (400, {"status": "refused", "error": "inbox: не папка (или ссылка) в папке сессии"})
+    assert linked == (400, {"status": "refused", "error": "inbox: not a folder (or a link) in the session's folder"})
     assert taken == (200, {"status": "started"})
     assert list(outside.iterdir()) == [], "nothing written through a link"
     assert (lane.work / "repo" / "inbox" / "2026-10-27-a-2.txt").read_bytes() == b"one"
@@ -757,13 +757,13 @@ def test_an_inbox_or_a_file_name_the_session_made_a_link_is_never_written_throug
 
 @pytest.mark.parametrize("over, why", [
     ({"files": [{"name": "a.txt", "data": "b25l", "sha256": "0" * 64}], "date": "2026-10-27"},
-     "files: «a.txt» не сходится с sha256"),
-    ({"files": [inbox_file("../a", b"x")], "date": "2026-10-27"}, "files: файл не того вида"),
-    ({"files": [inbox_file("a", b"x")]}, "files: без даты YYYY-MM-DD"),
+     "files: «a.txt» does not match its sha256"),
+    ({"files": [inbox_file("../a", b"x")], "date": "2026-10-27"}, "files: a file of the wrong shape"),
+    ({"files": [inbox_file("a", b"x")]}, "files: without a YYYY-MM-DD date"),
     ({"prompt": [{"type": "image", "source": {"type": "url", "url": "https://x"}}]},
-     "prompt: источник блока image не base64 нужного типа"),
+     "prompt: the source of the image block is not base64 of an accepted type"),
     ({"prompt": None, "cli_session": CLI_SESSION, "files": [inbox_file("a", b"x")], "date": "2026-10-27"},
-     "files: без запроса"),
+     "files: without a prompt"),
 ])
 def test_attachments_off_their_shape_are_refused_and_nothing_is_written(lane, over, why):
     async def scenario(host, client, post, items, until, event):
@@ -788,7 +788,7 @@ def test_an_answer_with_files_writes_them_into_the_live_runs_own_folder(lane):
     assert answer == (200, {"status": "sent"}) and bad[0] == 400
     assert (lane.work / "repo" / "inbox" / "2026-10-28-b.txt").read_bytes() == b"bee"
     second = json.loads(lane.stdin("r1")[1])["message"]["content"]
-    assert second[:2] == BLOCKS and second[2]["text"].endswith("- inbox/2026-10-28-b.txt (3 Б)")
+    assert second[:2] == BLOCKS and second[2]["text"].endswith("- inbox/2026-10-28-b.txt (3 B)")
 
 
 def test_a_fifo_or_a_huge_sparse_file_planted_at_the_name_is_never_waited_on_or_read(lane):

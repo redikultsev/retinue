@@ -49,19 +49,19 @@ def refusal(raw) -> str:
 def test_attachments_are_taken_whole_and_within_the_limits_or_not_at_all():
     assert inbox.given(None) == []
     assert inbox.given([wire("a.txt", b"hi", "text/plain")]) == [inbox.Given("a.txt", "text/plain", b"hi")]
-    assert refusal([wire("a.txt", b"hi", sha="0" * 64)]) == "«a.txt»: пришло не целым — sha256 не сходится"
-    assert refusal([{**wire("a.txt", b"hi"), "data": "не base64"}]) == "«a.txt»: не base64"
-    assert refusal([wire("", b"")]) == "фото: пустой файл"
-    assert refusal([wire(f"{n}.txt", b"x") for n in range(11)]) == "вложений больше 10 в одном сообщении"
-    assert refusal([{"name": "a"}]) == "вложение пришло не того вида"
-    assert refusal("a.txt") == "вложений больше 10 в одном сообщении"
+    assert refusal([wire("a.txt", b"hi", sha="0" * 64)]) == '"a.txt": arrived incomplete — sha256 does not match'
+    assert refusal([{**wire("a.txt", b"hi"), "data": "не base64"}]) == '"a.txt": not base64'
+    assert refusal([wire("", b"")]) == "photo: empty file"
+    assert refusal([wire(f"{n}.txt", b"x") for n in range(11)]) == "more than 10 attachments in one message"
+    assert refusal([{"name": "a"}]) == "an attachment came in the wrong shape"
+    assert refusal("a.txt") == "more than 10 attachments in one message"
 
 
 def test_one_too_big_or_all_together_too_big_is_refused(monkeypatch):
     monkeypatch.setattr(inbox, "MAX_FILE", 10)
     monkeypatch.setattr(inbox, "MAX_TOTAL", 15)
-    assert refusal([wire("a.bin", b"x" * 40)]) == "«a.bin»: больше 0 МБ"
-    assert refusal([wire("a.bin", b"x" * 9), wire("b.bin", b"y" * 9)]) == "вложения вместе больше 0 МБ"
+    assert refusal([wire("a.bin", b"x" * 40)]) == '"a.bin": over 0 MB'
+    assert refusal([wire("a.bin", b"x" * 9), wire("b.bin", b"y" * 9)]) == "attachments together over 0 MB"
 
 
 @pytest.mark.parametrize("name, media_type, n, safe", [
@@ -87,8 +87,8 @@ def test_a_picture_becomes_a_jpeg_block_a_short_pdf_a_document_and_anything_else
              inbox.Given("data.csv", "text/csv", b"a,b\n1,2\n"), inbox.Given("scan.heic", "", png(100, 50))]
     ready = asyncio.run(inbox.prepare("  посмотри  ", items))
     head, photo, document, scan = ready.prompt
-    assert head == {"type": "text", "text": "посмотри\n\nПриложено: фото 800×400; PDF «счёт.pdf», 2 стр.; файл "
-                                            "«data.csv» (в папке inbox/, путь ниже); картинка «scan.heic», 100×50."}
+    assert head == {"type": "text", "text": 'посмотри\n\nAttached: photo 800×400; PDF "счёт.pdf", 2 pages; file '
+                                            '"data.csv" (in the inbox/ folder, path below); picture "scan.heic", 100×50.'}
     with Image.open(io.BytesIO(base64.b64decode(photo["source"]["data"]))) as img:
         assert (photo["type"], img.format, img.size) == ("image", "JPEG", (800, 400))
     assert document["type"] == "document" and document["title"] == "счёт.pdf"
@@ -97,7 +97,7 @@ def test_a_picture_becomes_a_jpeg_block_a_short_pdf_a_document_and_anything_else
     assert ready.files == [{"name": "data.csv", "data": base64.b64encode(b"a,b\n1,2\n").decode(),
                             "sha256": hashlib.sha256(b"a,b\n1,2\n").hexdigest()}]
     assert [m["kind"] for m in ready.meta] == ["image", "pdf", "file", "image"]
-    assert ready.meta[2] == {"kind": "file", "name": "data.csv", "size": 8, "what": "файл «data.csv»", "thumb": False}
+    assert ready.meta[2] == {"kind": "file", "name": "data.csv", "size": 8, "what": 'file "data.csv"', "thumb": False}
     with Image.open(io.BytesIO(ready.thumbs[0])) as thumb:
         assert thumb.size == (320, 160)
     assert ready.thumbs[1:3] == [None, None] and ready.refused == []
@@ -109,7 +109,7 @@ def test_a_picture_becomes_a_jpeg_block_a_short_pdf_a_document_and_anything_else
 def test_a_picture_that_does_not_decode_is_refused_and_the_rest_goes_in():
     ready = asyncio.run(inbox.prepare("", [inbox.Given("broken.png", "image/png", b"\x89PNG not really"),
                                            inbox.Given("notes.md", "", b"# hi")]))
-    assert ready.refused == ["картинка «broken.png»: картинку не удалось открыть"]
+    assert ready.refused == ['picture "broken.png": the picture could not be opened']
     assert [m["name"] for m in ready.meta] == ["notes.md"] and len(ready.prompt) == 1
     nothing = asyncio.run(inbox.prepare("", [inbox.Given("broken.png", "image/png", b"nope")]))
     assert nothing.empty and nothing.refused
@@ -169,7 +169,7 @@ def test_any_other_block_is_refused(blocks):
 
 def test_blocks_over_their_size_are_refused(monkeypatch):
     monkeypatch.setattr(cliengine, "CONTENT_B64", 4)
-    with pytest.raises(Refused, match="больше"):
+    with pytest.raises(Refused, match="^prompt: "):  # its words are cliengine's
         cliengine.check_content([{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                               "data": JPEG + JPEG}}])
 
@@ -224,8 +224,8 @@ def test_a_message_s_files_are_read_within_one_budget_and_the_rest_said_by_name(
     monkeypatch.setattr(inbox, "PARSE_BUDGET_S", 0)
     ready = asyncio.run(inbox.prepare("смотри", [inbox.Given("a.png", "image/png", png()),
                                                  inbox.Given("b.txt", "", b"b")]))
-    assert ready.refused == ["картинка «a.png»: не дошла очередь — на разбор файлов одного сообщения 0 с; "
-                             "пришли его отдельно"]
+    assert ready.refused == ['picture "a.png": its turn did not come — the files of one message get 0 s to parse; '
+                             "send it separately"]
     assert [m["name"] for m in ready.meta] == ["b.txt"], "a file needs no reading"
 
 

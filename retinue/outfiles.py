@@ -72,7 +72,7 @@ ACTIVE = ("text/html", "image/svg+xml")
 MB = 1024 * 1024
 # Direction marks and overrides, and control characters: shown as labels, so a name reads as what it is.
 HIDDEN = re.compile("[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
-SHARED = "в папке работали две сессии"
+SHARED = "two sessions worked in the folder"
 EDIT_KEYS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 
 
@@ -165,7 +165,7 @@ def _walk(out_real: str, root: str, look: Look) -> list[_Entry]:
                 changed = float("inf")  # gone or unreadable as an entry: said, as new
             entries.append(_Entry("/".join([*inside, name]), [*_parts(os.path.relpath(dirpath, root)), name], changed))
         if count > MAX_ENTRIES:
-            look.skipped.append(Skipped(f"{OUT}/", f"в папке больше {MAX_ENTRIES} файлов и папок — смотрел первые"))
+            look.skipped.append(Skipped(f"{OUT}/", f"the folder has over {MAX_ENTRIES} files and folders — looked at the first ones"))
             break
     return entries
 
@@ -182,7 +182,7 @@ def scan(work_mount: str, cwd: str, since: float, known: set[tuple[str, str]], n
     try:
         out_real = approvals._in_mount(approvals._lane_relative(lane_out) or [], root)
     except Unbindable:
-        look.skipped.append(Skipped(f"{OUT}/", "папка ведёт за пределы /work — не смотрю"))
+        look.skipped.append(Skipped(f"{OUT}/", "the folder leads outside /work — not looking"))
         return look
     if not os.path.isdir(out_real) or os.path.islink(out_real):
         return look
@@ -191,7 +191,7 @@ def scan(work_mount: str, cwd: str, since: float, known: set[tuple[str, str]], n
         new, path = entry.changed >= since - SLACK_S, shown(entry.path)
         if not utf8(entry.path):
             if new:
-                look.skipped.append(Skipped(path, "имя файла не в UTF-8"))
+                look.skipped.append(Skipped(path, "the file name is not UTF-8"))
             continue
         mime = mime_of(path)
         try:
@@ -199,13 +199,13 @@ def scan(work_mount: str, cwd: str, since: float, known: set[tuple[str, str]], n
             fd = _open(root, _parts(os.path.relpath(real, root)))
         except Unbindable:
             if new:
-                look.skipped.append(Skipped(path, "ссылка ведёт за пределы /work"))
+                look.skipped.append(Skipped(path, "the link leads outside /work"))
             continue
         except IsADirectoryError:
             continue  # a link to a folder, /work itself too: not a file
         except OSError as exc:
             if new:
-                look.skipped.append(Skipped(path, f"платформе не прочитать ({type(exc).__name__})"))
+                look.skipped.append(Skipped(path, f"the platform cannot read it ({type(exc).__name__})"))
             continue
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or max(st.st_mtime, st.st_ctime) < since - SLACK_S \
@@ -219,7 +219,7 @@ def scan(work_mount: str, cwd: str, since: float, known: set[tuple[str, str]], n
                 try:
                     data = f.read(MAX_FILE + 1)
                 except OSError as exc:
-                    why = f"платформе не прочитать ({type(exc).__name__})"
+                    why = f"the platform cannot read it ({type(exc).__name__})"
                 else:
                     why = _over(mime, len(data), len(look.found), total)  # it changed between the look and the read
         if why is not None:
@@ -236,15 +236,15 @@ def scan(work_mount: str, cwd: str, since: float, known: set[tuple[str, str]], n
 def _over(mime: str | None, size: int, count: int, total: int) -> str | None:
     """Why a file of this type and size is not taken after `count` files of `total` bytes; None: it is."""
     if mime is None:
-        return "тип не из списка"
+        return "type not on the list"
     if size == 0:
-        return "пустой"
+        return "empty"
     if size > MAX_FILE:
-        return f"больше {MAX_FILE // MB} МБ"
+        return f"over {MAX_FILE // MB} MB"
     if count >= MAX_FILES:
-        return f"больше {MAX_FILES} файлов за ход"
+        return f"over {MAX_FILES} files in a turn"
     if total + size > MAX_TURN:
-        return f"за ход больше {MAX_TURN // MB} МБ"
+        return f"over {MAX_TURN // MB} MB in a turn"
     return None
 
 
@@ -299,9 +299,9 @@ def notice_text(look: Look) -> str:
     files another session may have made."""
     parts = []
     if look.skipped:
-        parts.append("Не отправил из out/:\n" + "\n".join(f"- {_code(s.path)} — {s.why}" for s in look.skipped))
+        parts.append("Not sent from out/:\n" + "\n".join(f"- {_code(s.path)} — {s.why}" for s in look.skipped))
     if look.shared:
-        parts.append(f"Внимание: {SHARED} — эти файлы могли быть сделаны в другой: "
+        parts.append(f"Warning: {SHARED} — these files may have been made by the other one: "
                      + ", ".join(_code(p) for p in look.shared))
     return "\n\n".join(parts)
 
@@ -389,10 +389,10 @@ class OutFiles:
             size = len(found.data)
             fresh = self.db.execute("SELECT 1 FROM out_blobs WHERE sha256 = ?", (found.sha256,)).fetchone() is None
             if fresh and stored + size > self.store_cap:
-                kept.skipped.append(Skipped(found.path, f"хранилище файлов платформы заполнено ({self.store_cap // MB} МБ)"))
+                kept.skipped.append(Skipped(found.path, f"the platform's file store is full ({self.store_cap // MB} MB)"))
                 continue
             if fresh and today + size > self.day_cap:
-                kept.skipped.append(Skipped(found.path, f"за сутки больше {self.day_cap // MB} МБ файлов"))
+                kept.skipped.append(Skipped(found.path, f"over {self.day_cap // MB} MB of files in a day"))
                 continue
             stored, today = stored + (size if fresh else 0), today + size
             kept.found.append(found)
@@ -424,7 +424,7 @@ class OutFiles:
         """A look that broke: said once, and owed no more — the next turn's look counts from `looked`."""
         with self.db:
             self.store._note("file_skipped", session["id"], {"head": _head(session),
-                                                             "text": f"Файлы из out/ не собраны: {why}."})
+                                                             "text": f"Files from out/ were not collected: {why}."})
             self._looked(session["id"], looked, gen)
 
     def _looked(self, session: str, looked: float, gen: int) -> None:
@@ -468,7 +468,7 @@ class OutFiles:
 
 
 def _head(session: dict) -> str:
-    return f"Файлы · {session['track']} · сессия {session['id']}"
+    return f"Files · {session['track']} · session {session['id']}"
 
 
 def router_payload(data: dict, body: bytes) -> bytes:

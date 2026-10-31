@@ -63,8 +63,8 @@ def build_memory(cfg: RouterConfig, db: sqlite3.Connection) -> tuple[Memory | No
         logging.getLogger("retinue.router").exception("the knowledge base is not ready")
         said = (getattr(exc, "stderr", "") or str(exc)).strip().splitlines()
         why = said[-1][:200] if said else type(exc).__name__
-        return None, (f"База знаний не подключена: хаб {cfg.memory.hub} не ответил ({why}). "
-                      "Её правки не сохраняются, пока Роутер не перезапущен с рабочим хабом.")
+        return None, (f"The Base is not connected: the hub {cfg.memory.hub} did not answer ({why}). "
+                      "Its edits are not saved until the router is restarted with a working hub.")
 
 
 def signed(tokens: dict[str, str]):
@@ -91,11 +91,11 @@ def main() -> None:
     store = Store(cfg.state_db)
     tokens = {a.url: bus_token(cfg.bus_secret, a.id) for a in cfg.agents} if cfg.bus_secret else {}
     memory, memory_error = build_memory(cfg, store.db)
-    gateway = Neighbour(cfg.gateway_url, cfg.gateway_token, "шлюз Telegram") if cfg.gateway_url else None
+    gateway = Neighbour(cfg.gateway_url, cfg.gateway_token, "the Telegram gateway") if cfg.gateway_url else None
     mail = Mailroom(Collector(cfg.collector_url, cfg.collector_token) if cfg.collector_url else None, MailStore(store.db),
                     gateway=gateway) if cfg.collector_url or gateway else None
-    sender = Neighbour(cfg.sender_url, cfg.sender_token, "отправка почты") if cfg.sender_url else None
-    # Replies to people: the mail sender and the gateway hold the keys; the router holds the drafts and the «да».
+    sender = Neighbour(cfg.sender_url, cfg.sender_token, "the mail sender") if cfg.sender_url else None
+    # Replies to people: the mail sender and the gateway hold the keys; the router holds the drafts and the «yes».
     outbox = Outbox(OutboxStore(store.db), sender=sender, gateway=gateway,
                     owner_tg=cfg.telegram.owner_id if cfg.telegram else None) if sender or gateway else None
     lifehub = Lifehub(Data(cfg.lifehub_data), cfg.lifehub_url, cfg.link_hosts, kb=cfg.memory.tree if memory else "",
@@ -107,14 +107,14 @@ def main() -> None:
                 lifehub=lifehub, outbox=outbox, proactive=Proactive(),
                 watch=Watch(cfg.health_status, store.db))
     # The platform's sessions: its cards and summaries reach the owner through Telegram, never through the core.
-    bridge = PlatformBridge(PlatformClient(cfg.platform_url, cfg.platform_token, "платформа"), store, cfg.face_url) \
+    bridge = PlatformBridge(PlatformClient(cfg.platform_url, cfg.platform_token, "the platform"), store, cfg.face_url) \
         if cfg.platform_url else None
     if bridge:  # the week's tally of the platform's sessions, for the weekly review
         core.platform = bridge.neighbour.owner
-    if bridge:  # what waits in the assistant's world, pushed for the face's «Ждут тебя»
+    if bridge:  # what waits in the assistant's world, pushed for the face's «Waiting for you»
         bridge.waiting = lambda now: digest(core, now)
         bridge.chips = lambda now: chips(core, now)
-    if bridge and lifehub:  # the hub's pages, for the face's «Читать»
+    if bridge and lifehub:  # the hub's pages, for the face's «Read»
         bridge.library = lifehub.library
     loop.run_until_complete(core.start(build_channels(cfg, store, loop, bridge)))
     # The tasks are held here for as long as the loop runs: the loop itself keeps only weak references to them.

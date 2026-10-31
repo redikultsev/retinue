@@ -117,13 +117,13 @@ def test_unhealthy_is_told_after_two_checks_once_and_its_recovery_once(tmp_path)
     assert w.check(h.check()) == ""
     assert w.check(h.check(assistant={"health": "unhealthy"})) == "", "one check could be a deploy in the middle"
     at = h.check()
-    assert BAD_CHECKS == 2 and w.check(at) == "Сервер: не в порядке.\n- assistant: не отвечает (healthcheck: unhealthy)"
+    assert BAD_CHECKS == 2 and w.check(at) == "Server: not OK.\n- assistant: not responding (healthcheck: unhealthy)"
     assert w.check(at) == "", "the same file is counted once, however often the router's clock looks"
     assert w.check(h.check(assistant={"health": "unhealthy", "state": "restarting"})) == "", "no repeat while bad"
     assert w.check(h.check(assistant={"health": "healthy", "state": "running"})) == "", "one good check is not enough"
     assert w.check(h.check(assistant={"health": "unhealthy"})) == "", "a flap: still bad, not told again"
     assert w.check(h.check(assistant={"health": "healthy"})) == ""
-    assert w.check(h.check()) == "Сервер: снова в порядке — assistant.", "two good checks in a row"
+    assert w.check(h.check()) == "Server: OK again — assistant.", "two good checks in a row"
     assert w.check(h.check()) == ""
 
 
@@ -131,37 +131,37 @@ def test_a_restart_by_docker_is_told_at_once_and_a_new_container_is_a_deploy(tmp
     h, w = Host(tmp_path), watch(tmp_path)
     w.check(h.check())
     assert w.check(h.check(router={"restarts": 1})) == \
-        "Сервер: не в порядке.\n- router: перезапущен Docker (за жизнь контейнера — 1), сейчас работает"
+        "Server: not OK.\n- router: restarted by Docker (1 in the container's life), running now"
     assert w.check(h.check()) == "", "running again: nothing to recover from"
     assert w.check(h.check(router={"id": "router-2", "restarts": 0})) == "", "recreated by a deploy"
     assert w.check(h.check(egress={"state": "restarting", "restarts": 5, "oom": True})) == \
-        "Сервер: не в порядке.\n- egress: перезапускается, не хватило памяти, перезапущен Docker (за жизнь контейнера — 5)"
+        "Server: not OK.\n- egress: restarting, out of memory, restarted by Docker (5 in the container's life)"
     assert w.check(h.check(egress={"state": "running", "restarts": 6, "oom": False})) == "", "still restarting"
     w.check(h.check())
-    assert w.check(h.check()) == "Сервер: снова в порядке — egress."
+    assert w.check(h.check()) == "Server: OK again — egress."
 
 
 def test_several_at_once_make_one_message_and_a_removed_one_is_let_go(tmp_path):
     h, w = Host(tmp_path), watch(tmp_path)
     w.check(h.check(egress={"state": "exited", "exit_code": 137}, assistant={"state": "exited", "exit_code": 1}))
-    assert w.check(h.check()) == ("Сервер: не в порядке.\n- assistant: остановлен, код 1\n"
-                                  "- egress: остановлен, код 137")
+    assert w.check(h.check()) == ("Server: not OK.\n- assistant: stopped, code 1\n"
+                                  "- egress: stopped, code 137")
     assert w.check(h.check(egress=None, assistant={"state": "running"})) == \
-        "Сервер: снова в порядке — egress (контейнера больше нет)."
-    assert w.check(h.check()) == "Сервер: снова в порядке — assistant."
+        "Server: OK again — egress (the container is gone)."
+    assert w.check(h.check()) == "Server: OK again — assistant."
 
 
 def test_a_status_that_stops_coming_is_itself_told_and_so_is_its_return(tmp_path):
     h, w = Host(tmp_path), watch(tmp_path)
     at = h.check()
     assert w.check(at + STALE_S - 1) == ""
-    assert w.check(at + STALE_S + 60) == ("Сервер: не в порядке.\n- сторож контейнеров молчит (последний — 11 мин "
-                                          "назад): таймер retinue-health на хосте не работает, и о падении контейнера "
-                                          "сказать некому")
+    assert w.check(at + STALE_S + 60) == ("Server: not OK.\n- the container watch is silent (last one 11 min "
+                                          "ago): the retinue-health timer on the host is not running, and nobody is "
+                                          "left to report a container going down")
     assert w.check(at + STALE_S + 180) == ""
     h.checked = at + STALE_S + 300
-    assert w.check(h.check()) == "Сервер: снова в порядке — сторож контейнеров."
-    assert w.health(h.checked) == "контейнеры: все 3 в порядке"
+    assert w.check(h.check()) == "Server: OK again — the container watch."
+    assert w.health(h.checked) == "containers: all 3 OK"
 
 
 def test_docker_silent_is_one_bad_container_and_nothing_is_forgotten(tmp_path):
@@ -171,11 +171,11 @@ def test_docker_silent_is_one_bad_container_and_nothing_is_forgotten(tmp_path):
         h.checked += 120
         h.path.write_text(json.dumps({"checked": h.checked, "error": "Cannot connect to the Docker daemon"}))
         said = w.check(h.checked)
-    assert said == "Сервер: не в порядке.\n- docker: Docker не ответил: Cannot connect to the Docker daemon"
-    assert w.health(h.checked) == "Docker не ответил сторожу: Cannot connect to the Docker daemon"
-    assert w.check(h.check()) == "Сервер: снова в порядке — docker.", "no container is «gone»: their rows were kept"
+    assert said == "Server: not OK.\n- docker: Docker did not answer: Cannot connect to the Docker daemon"
+    assert w.health(h.checked) == "Docker did not answer the watch: Cannot connect to the Docker daemon"
+    assert w.check(h.check()) == "Server: OK again — docker.", "no container is «gone»: their rows were kept"
     h.checked += 3600  # past the hour of the last notice about it
-    assert w.check(h.check(router={"restarts": 3})).startswith("Сервер: не в порядке.\n- router: перезапущен"), \
+    assert w.check(h.check(router={"restarts": 3})).startswith("Server: not OK.\n- router: restarted by Docker"), \
         "the count before Docker went silent is still known"
 
 
@@ -183,21 +183,21 @@ def test_what_was_told_survives_a_router_restart(tmp_path):
     h, db = Host(tmp_path), sqlite3.connect(tmp_path / "r.sqlite")
     first = watch(tmp_path, db)
     first.check(h.check(egress={"state": "exited", "exit_code": 1}))
-    assert first.check(h.check()).startswith("Сервер: не в порядке.")
+    assert first.check(h.check()).startswith("Server: not OK.")
     again = watch(tmp_path, sqlite3.connect(tmp_path / "r.sqlite"))
     assert again.check(h.check()) == "", "told once, not again by the next process"
     again.check(h.check(egress={"state": "running"}))
-    assert again.check(h.check()) == "Сервер: снова в порядке — egress."
+    assert again.check(h.check()) == "Server: OK again — egress."
 
 
 def test_no_file_says_nothing_and_a_torn_one_waits_for_its_time(tmp_path):
     h, w = Host(tmp_path), watch(tmp_path)
-    assert w.check(NOW) == "" and w.health(NOW) == "сторож контейнеров не настроен"
+    assert w.check(NOW) == "" and w.health(NOW) == "container watch not set up"
     w.check(h.check())
     h.path.write_text("{torn")
     os.utime(h.path, (NOW, NOW))
-    assert w.check(NOW + 60) == "" and w.health(NOW + 60) == "статус контейнеров не читается"
-    assert "статус не читается" in w.check(NOW + STALE_S + 60)
+    assert w.check(NOW + 60) == "" and w.health(NOW + 60) == "container status unreadable"
+    assert "status unreadable" in w.check(NOW + STALE_S + 60)
 
 
 def test_the_router_tells_the_owner_once_and_the_morning_summary_has_a_line(tmp_path):
@@ -218,9 +218,9 @@ def test_the_router_tells_the_owner_once_and_the_morning_summary_has_a_line(tmp_
 
     asyncio.run(run())
     told = [text for text, _, _ in channel.cards]
-    assert told == ["Сервер: не в порядке.\n- assistant: остановлен, код 1"]
+    assert told == ["Server: not OK.\n- assistant: stopped, code 1"]
     line = core.health(h.checked)
-    assert "контейнеры: 2 из 3 в порядке, не в порядке — assistant (остановлен, код 1), сбоев за сутки — 1 " \
+    assert "containers: 2 of 3 OK, not OK — assistant (stopped, code 1), failures in a day — 1 " \
            "(assistant)." in line
 
 
@@ -229,9 +229,9 @@ def test_a_restart_loop_is_one_notice_an_hour_and_the_rest_are_counted(tmp_path)
     w.check(h.check())
     said = [w.check(h.check(egress={"restarts": n})) for n in range(1, 11)]  # an OOM loop: a restart every check
     assert [bool(s) for s in said] == [True] + [False] * 9, "one notice; nine more in twenty minutes, counted"
-    assert "сбоев за сутки — 10 (egress)" in w.health(h.checked)
+    assert "failures in a day — 10 (egress)" in w.health(h.checked)
     h.checked += 3600
-    assert w.check(h.check(egress={"restarts": 11})).startswith("Сервер: не в порядке.\n- egress: перезапущен"), \
+    assert w.check(h.check(egress={"restarts": 11})).startswith("Server: not OK.\n- egress: restarted by Docker"), \
         "an hour on: told again"
 
 
@@ -241,8 +241,8 @@ def test_a_flapping_check_told_once_is_counted_not_resent_within_the_hour(tmp_pa
     for _ in range(4):  # bad two checks, good two checks, again and again
         for health in ("unhealthy", "unhealthy", "healthy", "healthy"):
             told.append(w.check(h.check(assistant={"health": health})))
-    assert [t.split("\n")[0] for t in told if t] == ["Сервер: не в порядке.", "Сервер: снова в порядке — assistant."]
-    assert "сбоев за сутки — 4 (assistant)" in w.health(h.checked)
+    assert [t.split("\n")[0] for t in told if t] == ["Server: not OK.", "Server: OK again — assistant."]
+    assert "failures in a day — 4 (assistant)" in w.health(h.checked)
 
 
 def test_quiet_hours_hold_notices_for_one_morning_message_but_not_an_outage(tmp_path):
@@ -252,19 +252,19 @@ def test_quiet_hours_hold_notices_for_one_morning_message_but_not_an_outage(tmp_
     w.check(h.check())
     assert w.check(h.check(egress={"restarts": 1})) == "", "held: 02:54"
     w.check(h.check(router={"state": "exited", "exit_code": 1}))
-    assert w.check(h.check()) == "Сервер: не в порядке.\n- router: остановлен, код 1", "the router down: at once"
+    assert w.check(h.check()) == "Server: not OK.\n- router: stopped, code 1", "the router down: at once"
     h.checked = night(9, 0)
-    assert w.check(h.check(router={"state": "running"})) == ("Сервер за тихие часы:\n- 02:54 egress: перезапущен "
-                                                             "Docker (за жизнь контейнера — 1), сейчас работает")
-    assert w.check(h.check()) == "Сервер: снова в порядке — router."
+    assert w.check(h.check(router={"state": "running"})) == ("Server during quiet hours:\n- 02:54 egress: restarted "
+                                                             "by Docker (1 in the container's life), running now")
+    assert w.check(h.check()) == "Server: OK again — router."
 
 
 def test_an_operators_stop_is_told_once_and_is_no_failure(tmp_path):
     h, w = Host(tmp_path), watch(tmp_path)
     w.check(h.check(egress={"state": "exited", "exit_code": 0}))
-    assert w.check(h.check()) == "Сервер: не в порядке.\n- egress: остановлен вручную (код 0)"
+    assert w.check(h.check()) == "Server: not OK.\n- egress: stopped manually (code 0)"
     assert w.check(h.check()) == ""
-    assert w.health(h.checked) == "контейнеры: все 2 в порядке, остановлен вручную — egress", "not a failure"
+    assert w.health(h.checked) == "containers: all 2 OK, stopped manually — egress", "not a failure"
 
 
 def test_no_container_at_all_is_an_outage_not_all_well(tmp_path):
@@ -272,5 +272,13 @@ def test_no_container_at_all_is_an_outage_not_all_well(tmp_path):
     w.check(h.check())
     h.containers.clear()
     w.check(h.check())
-    assert w.check(h.check()) == "Сервер: не в порядке.\n- docker: Docker не показывает ни одного контейнера retinue"
-    assert w.health(h.checked) == "контейнеры: ни одного не видно"
+    assert w.check(h.check()) == "Server: not OK.\n- docker: Docker shows no retinue container"
+    assert w.health(h.checked) == "containers: none visible"
+
+
+def test_an_operators_stop_kept_in_the_old_words_is_still_no_failure(tmp_path):
+    h, w = Host(tmp_path), watch(tmp_path)
+    w.check(h.check(egress={"state": "exited", "exit_code": 0}))
+    w.check(h.check())
+    w.db.execute("UPDATE health_services SET bad = 'остановлен вручную (код 0)' WHERE name = 'egress'")
+    assert w.health(h.checked) == "containers: all 2 OK, stopped manually — egress", "a row from before the English"

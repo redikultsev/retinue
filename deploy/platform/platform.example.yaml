@@ -3,7 +3,7 @@
 state_db: /platform/platform.sqlite   # on the platform-data volume
 max_sessions: 12                      # running sessions across every lane: you and up to 10 sub-sessions
 owner_tz: UTC                         # your IANA zone (e.g. Europe/Berlin): the times the platform says to you
-# The life hub's address (docs/lifehub.md): «Читать» in the app opens its pages there and nowhere else; without it
+# The life hub's address (docs/lifehub.md): «Read» in the app opens its pages there and nowhere else; without it
 # the router's list of pages is refused (docs/face.md, «Read»).
 # hub_origin: https://hub.in.example.com
 lanes:
@@ -37,11 +37,11 @@ tracks:
 # the Base, like a session on your Mac. A name is also a bot command: a-z, 0-9 and `_`, not a track's name and not one
 # of the bot's own commands. See docs/platform.md.
 spheres:
-  - {name: work, title: Работа, icon: "💼", track: base}
-  - {name: travel, title: Путешествия, icon: "✈️", track: base}
-  - {name: home, title: Дом, icon: "🏠", track: base}
-  - {name: assistant, title: Ассистентка, icon: "🛎", track: base}
-# Your voice in the app (docs/face.md «Голос»): 🎙 dictates into the field, «EN» sends English word for word. Needs
+  - {name: work, title: Work, icon: "💼", track: base}
+  - {name: travel, title: Travel, icon: "✈️", track: base}
+  - {name: home, title: Home, icon: "🏠", track: base}
+  - {name: assistant, title: Assistant, icon: "🛎", track: base}
+# Your voice in the app (docs/face.md «Voice»): 🎙 dictates into the field, «EN» sends English word for word. Needs
 # ELEVENLABS_API_KEY in stack.env and a way out: `proxy` here, or code's (http://platform-egress:3128). `keyterms`:
 # words Scribe should expect when you dictate — your jargon, names, abbreviations. Each under 50 characters, 5 words
 # at most, none of < > { } [ ] \. They cost +20% a dictation, and past 100 each is billed 20 s at least.
@@ -50,7 +50,7 @@ speech:
   keyterms: [Retinue, Telegram, Markdown, Claude, Claude Code, PR, pull request, commit, branch, Docker, Python,
              TypeScript, SQLite]
 # Your repositories in the room (docs/code.md): each at /work/code/<name>, a clone of a mirror the platform
-# fetches with your token; «Запушить» under a session's summary pushes its branch as a new branch and opens a PR
+# fetches with your token; «Push» under a session's summary pushes its branch as a new branch and opens a PR
 # (GitHub) or an MR (GitLab) — never the default branch. One token per owner (you, each org; a GitLab project
 # token), put in by `sudo bash deploy/code/set-git-token.sh <key>` — never pasted into a chat. A repository whose
 # token is missing is listed as off. `/new code <name> [task]` starts a session in it (the track `code`, on the
@@ -65,7 +65,7 @@ speech:
 #    - {name: retinue, url: "https://github.com/you/retinue.git", token: you}
 #    - {name: example-app, url: "https://gitlab.com/group/example-app.git", token: group_gitlab}
 # Your knowledge base in the room (docs/base.md): a clone of the hub's `main` at /work/base, pulled by the platform
-# before each run in it and committed by your «В Базу» button, with your name. Needs MEMORY=1 (the hub) and
+# before each run in it and committed by your «To the Base» button, with your name. Needs MEMORY=1 (the hub) and
 # PLATFORM=1. Without it /work/base is an empty folder. To turn it on, remove the `#` at the start of `#base:` and of
 # the lines under it, name yourself, then `docker compose restart platform`.
 #base:

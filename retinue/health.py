@@ -11,7 +11,7 @@ a router that restarts does not say it again — and a router that crashed tells
   restart. Restarted and running again: one line, and nothing to recover from.
 - At most one notice per container an hour (`NOTICE_S`): an OOM loop or a flapping check is counted for the morning
   summary, not sent every few minutes. Its recovery then goes unsaid too.
-- Stopped with exit code 0 is the operator's own stop: told once, «остановлен вручную», never counted as a failure.
+- Stopped with exit code 0 is the operator's own stop: told once, «stopped manually», never counted as a failure.
 - A health.json older than ten minutes is itself bad: the host's timer has stopped, and nothing else would say so.
 - In the owner's quiet hours (the assistant's, `proactive.py`) a notice is held and the held ones go as one message
   when they end. What is told at once anyway: an outage — Docker not answering or showing no container, a stale
@@ -42,7 +42,8 @@ EVENTS_DAYS = 30        # how long what went bad is kept for the summary's count
 STALE = "#status"       # the row of the file itself
 DOCKER = "docker"       # the row of Docker itself: not answering, or no container at all
 CRITICAL = {STALE, DOCKER, "router", "platform"}  # an outage: told at once, quiet hours or not
-MANUAL = "остановлен вручную"
+MANUAL = "stopped manually"
+MANUAL_RU = "остановлен вручную"  # rows kept in SQLite before the English: still an operator's stop
 
 
 class Watch:
@@ -117,16 +118,16 @@ class Watch:
         if now - written > STALE_S:
             bad = []
             if not stale["bad"]:
-                why = ("статус не читается" if report.get("unreadable")
-                       else f"последний — {clock.ago(now - written)} назад")
-                self._mark(STALE, f"сторож контейнеров молчит: {why}", now, silent=False)
-                bad.append((STALE, f"- сторож контейнеров молчит ({why}): таймер retinue-health на хосте не "
-                                   "работает, и о падении контейнера сказать некому"))
+                why = ("status unreadable" if report.get("unreadable")
+                       else f"last one {clock.ago(now - written)} ago")
+                self._mark(STALE, f"the container watch is silent: {why}", now, silent=False)
+                bad.append((STALE, f"- the container watch is silent ({why}): the retinue-health timer on the host is "
+                                   "not running, and nobody is left to report a container going down"))
             return self._say(now, bad, [])
         recovered = []
         if stale["bad"]:
             self._clear(STALE)
-            recovered.append((STALE, "сторож контейнеров"))
+            recovered.append((STALE, "the container watch"))
         last = self.db.execute("SELECT checked FROM health_checks WHERE id = 1").fetchone()
         if report.get("unreadable") or (last and report["checked"] <= last[0]):
             return self._say(now, [], recovered)
@@ -152,7 +153,7 @@ class Watch:
             if name not in seen:  # taken away (a profile turned off), or Docker answers again: nothing left to watch
                 self.db.execute("DELETE FROM health_services WHERE name = ?", (name,))
                 if was and not silent:
-                    recovered.append((name, name if name == DOCKER else f"{name} (контейнера больше нет)"))
+                    recovered.append((name, name if name == DOCKER else f"{name} (the container is gone)"))
         self.db.execute("DELETE FROM health_events WHERE ts < ?", (now - EVENTS_DAYS * 86400,))
         self.db.commit()
         return self._say(now, bad, recovered)
@@ -174,13 +175,13 @@ class Watch:
             return [], []
         recent = now - row["told"] < NOTICE_S  # told about it within the hour: counted, not sent
         if restarted and not wrong:
-            self._event(name, "перезапущен", now)
+            self._event(name, "restarted", now)
             if recent:
                 return [], []
             self.db.execute("UPDATE health_services SET told = ? WHERE name = ?", (now, name))
-            return [f"- {name}: перезапущен Docker (за жизнь контейнера — {restarts}), сейчас работает"], []
+            return [f"- {name}: restarted by Docker ({restarts} in the container's life), running now"], []
         if wrong and (restarted or failing >= BAD_CHECKS):
-            what = f"{wrong}, перезапущен Docker (за жизнь контейнера — {restarts})" if restarted else wrong
+            what = f"{wrong}, restarted by Docker ({restarts} in the container's life)" if restarted else wrong
             self._mark(name, what, now, silent=recent)
             return [] if recent else [f"- {name}: {what}"], []
         return [], []
@@ -192,7 +193,7 @@ class Watch:
         goes first, as one message with the times."""
         quiet = self._quiet(now)
         held = [line for name, line in bad if quiet and name not in CRITICAL]
-        held += [f"- снова в порядке: {said}" for name, said in recovered if quiet and name not in CRITICAL]
+        held += [f"- OK again: {said}" for name, said in recovered if quiet and name not in CRITICAL]
         self.db.executemany("INSERT INTO health_held (ts, line) VALUES (?, ?)", [(now, line) for line in held])
         bad = [line for name, line in bad if not quiet or name in CRITICAL]
         recovered = [said for name, said in recovered if not quiet or name in CRITICAL]
@@ -202,17 +203,17 @@ class Watch:
             if waited:
                 self.db.execute("DELETE FROM health_held")
                 tz = self.core.tz if self.core else clock.DEFAULT_TZ
-                parts.append("\n".join(["Сервер за тихие часы:", *(f"{line[:2]}{clock.local(ts, tz):%H:%M} {line[2:]}"
+                parts.append("\n".join(["Server during quiet hours:", *(f"{line[:2]}{clock.local(ts, tz):%H:%M} {line[2:]}"
                                                                   for ts, line in waited)]))
         self.db.commit()
         if bad:
-            parts.append("\n".join(["Сервер: не в порядке.", *bad]))
+            parts.append("\n".join(["Server: not OK.", *bad]))
         if recovered:
-            parts.append(f"Сервер: снова в порядке — {', '.join(recovered)}.")
+            parts.append(f"Server: OK again — {', '.join(recovered)}.")
         return "\n\n".join(parts)
 
     def _quiet(self, now: float) -> bool:
-        """The owner's quiet hours, the assistant's own (`/initiative тихо`): no core — none."""
+        """The owner's quiet hours, the assistant's own (`/initiative quiet`): no core — none."""
         if not self.core:
             return False
         from .proactive import DEFAULT_QUIET, quiet_at
@@ -227,30 +228,30 @@ class Watch:
         A container its operator stopped is named apart, not as a failure."""
         report = self.read()
         if report is None:
-            return "сторож контейнеров не настроен"
+            return "container watch not set up"
         if now - report.get("written", report["checked"]) > STALE_S:
-            return "сторож контейнеров молчит"
+            return "container watch silent"
         if report.get("unreadable"):
-            return "статус контейнеров не читается"
+            return "container status unreadable"
         if report.get("error"):
-            return f"Docker не ответил сторожу: {str(report['error']).rstrip('. ')}"
+            return f"Docker did not answer the watch: {str(report['error']).rstrip('. ')}"
         names = sorted(str(c.get("name") or "?") for c in report.get("containers") or [])
         if not names:
-            return "контейнеры: ни одного не видно"
+            return "containers: none visible"
         rows = self.db.execute("SELECT name, bad FROM health_services WHERE bad IS NOT NULL AND name NOT IN (?, ?)",
                                (STALE, DOCKER)).fetchall()
-        stopped = sorted(name for name, bad in rows if bad.startswith(MANUAL) and name in names)
-        bad = {name: said for name, said in rows if not said.startswith(MANUAL) and name in names}
+        stopped = sorted(name for name, bad in rows if _manual(bad) and name in names)
+        bad = {name: said for name, said in rows if not _manual(said) and name in names}
         total = len(names) - len(stopped)
-        text = (f"контейнеры: {total - len(bad)} из {total} в порядке, не в порядке — "
+        text = (f"containers: {total - len(bad)} of {total} OK, not OK — "
                 + ", ".join(f"{name} ({bad[name]})" for name in sorted(bad))) if bad else \
-            f"контейнеры: все {total} в порядке"
+            f"containers: all {total} OK"
         if stopped:
             text += f", {MANUAL} — {', '.join(stopped)}"
         failed = [name for name, in self.db.execute("SELECT name FROM health_events WHERE ts >= ? AND name != ? "
                                                     "ORDER BY ts", (now - 86400, STALE)).fetchall()]
         if failed:
-            text += f", сбоев за сутки — {len(failed)} ({', '.join(dict.fromkeys(failed))})"
+            text += f", failures in a day — {len(failed)} ({', '.join(dict.fromkeys(failed))})"
         return text
 
     # --- rows -------------------------------------------------------------------------------------------------------
@@ -267,7 +268,7 @@ class Watch:
         self.db.execute("UPDATE health_services SET bad = ?, since = ?, silent = ?, good = 0, "
                         "told = CASE WHEN ? THEN told ELSE ? END WHERE name = ?",
                         (what, now, int(silent), int(silent), now, name))
-        if not what.startswith(MANUAL):
+        if not _manual(what):
             self._event(name, what, now)
         self.db.commit()
 
@@ -280,21 +281,26 @@ class Watch:
         self.db.execute("INSERT INTO health_events (ts, name, what) VALUES (?, ?, ?)", (now, name, what))
 
 
+def _manual(bad: str) -> bool:
+    """An operator's stop, in today's words or in those of a row kept before them."""
+    return bad.startswith((MANUAL, MANUAL_RU))
+
+
 def _wrong(container: dict) -> str:
     """What is wrong with a container at this check, in the owner's words; "" when nothing is."""
     state, health = str(container.get("state") or ""), str(container.get("health") or "")
     if state == "error":
-        return f"Docker не ответил: {container.get('error') or 'причина не записана'}"
+        return f"Docker did not answer: {container.get('error') or 'no reason recorded'}"
     if state == "empty":
-        return "Docker не показывает ни одного контейнера retinue"
+        return "Docker shows no retinue container"
     if state == "running":
-        return "не отвечает (healthcheck: unhealthy)" if health == "unhealthy" else ""
-    memory = ", не хватило памяти" if container.get("oom") else ""
+        return "not responding (healthcheck: unhealthy)" if health == "unhealthy" else ""
+    memory = ", out of memory" if container.get("oom") else ""
     if state == "restarting":
-        return f"перезапускается{memory}"
+        return f"restarting{memory}"
     if state in ("exited", "dead"):
         code = container.get("exit_code", "?")
         if state == "exited" and code == 0 and not memory:
-            return f"{MANUAL} (код 0)"
-        return f"остановлен, код {code}{memory}"
-    return {"paused": "на паузе", "created": "создан, но не запущен"}.get(state, f"состояние {state or 'неизвестно'}")
+            return f"{MANUAL} (code 0)"
+        return f"stopped, code {code}{memory}"
+    return {"paused": "paused", "created": "created, not started"}.get(state, f"state {state or 'unknown'}")

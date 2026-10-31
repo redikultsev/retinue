@@ -68,8 +68,8 @@ SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 # A reference-style definition, `[label]: target "title"`, at the start of a line.
 DEFINITION = re.compile(r"\A( {0,3})\[([^\]\n]+)\]:[ \t]*(<[^>\n]*>|\S+)[^\n]*")
 
-NO_BASE = "База не подключена."
-NOT_READY = "База сейчас недоступна — попробуй через минуту."
+NO_BASE = "The Base is not connected."
+NOT_READY = "The Base is unavailable now — try again in a minute."
 
 
 class Refused(Exception):
@@ -403,25 +403,25 @@ class BaseTree:
     def space(self, name: str) -> tuple[str, dict]:
         made = self.commit()
         if space_name(name) not in made.spaces:
-            raise Refused(404, "Нет такого Пространства.")
+            raise Refused(404, "No such Space.")
         return made.head, self._view(made, name)
 
     def record(self, name: str, rel: str) -> tuple[str, dict]:
         made = self.commit()
         if space_name(name) not in made.spaces:
-            raise Refused(404, "Нет такого Пространства.")
+            raise Refused(404, "No such Space.")
         if (rel := record_path(rel)) is None:
-            raise Refused(404, "Такую Запись приложение не показывает.")
+            raise Refused(404, "The app does not show this kind of Record.")
         key = f"{name}/{rel}"
         with self._lock:
             if key in made.records:
                 made.records.move_to_end(key)
                 return made.head, made.records[key]
         if key not in made.files:
-            raise Refused(404, "Нет такой Записи.")
+            raise Refused(404, "No such Record.")
         _, sha, size = made.files[key]
         if size > RECORD_MAX:
-            raise Refused(413, f"Запись большая ({size // 1024} КБ) — открой её на компьютере.")
+            raise Refused(413, f"The Record is large ({size // 1024} KB) — open it on a computer.")
         text = self.blobs([sha]).get(sha, b"").decode("utf-8", "replace")
         head, body = front_matter(text)
         parts = rel.split("/")

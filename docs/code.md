@@ -3,7 +3,7 @@
 Sessions on the server work in your repositories as on your Mac: each is an ordinary git clone at
 `/work/code/<name>` of `lane-private`, where a session runs `git status`, `log`, `diff`, `blame`, makes branches and
 commits, `git pull`s fresh code, runs the tests and installs packages. What leaves the server is yours to decide:
-**«Запушить · N»** under the session's summary opens a card, and «Отправить» pushes the session's branch to the
+**«Push · N»** under the session's summary opens a card, and «Send» pushes the session's branch to the
 remote as a new branch and opens a pull request (GitHub) or a merge request (GitLab). Never the default branch, never
 a force push, never a tag. Your git token stays with the platform; no lane ever holds one.
 
@@ -50,7 +50,7 @@ code:
 `name` is the clone's folder (a-z, 0-9, `-`, `_`); `url` is https on github.com or gitlab.com and nothing else (the
 platform's proxy reaches only those); `token` names the token, `RETINUE_GIT_TOKEN_<TOKEN>`; `default_branch` is
 optional (otherwise the remote's HEAD). A repository whose token is missing is **off**: it is not fetched or pushed,
-a card says why («нет токена RETINUE_GIT_TOKEN_…»), and nothing else stops.
+a card says why («no token RETINUE_GIT_TOKEN_…»), and nothing else stops.
 
 ## Tokens
 
@@ -105,7 +105,7 @@ not redesigned here.
 
 The platform fetches each mirror at its start, every `every_s` (300) seconds, before a run whose folder is in that
 repository (at most 60 s; past that the run goes on the mirror as it is), and after a push. A repository whose first
-mirror is still being fetched holds its first run in the queue («ждёт места на линии») until the mirror is there.
+mirror is still being fetched holds its first run in the queue («waiting for room on the lane») until the mirror is there.
 
 The lane host makes `/work/code/<name>` on the first run of any session in the room after the mirror appears:
 `git clone --no-hardlinks --template=` of `/lane/mirrors/<name>.git` into a temporary folder beside it, your name as
@@ -126,36 +126,36 @@ they come (`push_touched`). When a turn or a run ends, each repository a session
 its tip, and how many commits on it no branch of the remote has yet (`push_repos`). The repository has one clone in
 the room, so this count is the repository's; every session that worked in it shows it.
 
-**The ping.** The session's latest ping gets «Запушить · N» (one per repository, «Запушить retinue · N» when there
-are several) beside its replies and «В Базу», in Telegram and in the app; in its menu and as a «Решить» row of the
-feed too (`/wait` says «Нажми «Запушить» под её итогом или открой в приложении»).
+**The ping.** The session's latest ping gets «Push · N» (one per repository, «Push retinue · N» when there
+are several) beside its replies and «To the Base», in Telegram and in the app; in its menu and as a «Decide» row of the
+feed too (`/wait` says «Press «Push» under its result or open it in the app»).
 
-**The card.** «Запушить · <repo> · <sphere or track> · сессия <id>», «Ветка: <the room's branch> → <the remote
-branch> (PR в <default>)», «Заголовок PR: …»; then **everything a push carries**: every commit the remote has on no
+**The card.** «Push · <repo> · <sphere or track> · session <id>», «Branch: <the room's branch> → <the remote
+branch> (PR into <default>)», «PR title: …»; then **everything a push carries**: every commit the remote has on no
 branch, newest first, merges too, each with its message and its own files (the app shows the whole message), and
-«Уходит: N коммитов, M объектов, K МБ. В PR: …» — the PR's net change with +/− is in the app; what in the work tree is
-not committed («попроси сессию закоммитить» — the platform never commits for it); and «Отправить» · «Открыть дифф»
-(every leaving commit, oldest first, with its whole message and its own diff — plain text, at most 1 MB) · «Отмена».
+«Outgoing: N commits, M objects, K MB. In the PR: …» — the PR's net change with +/− is in the app; what in the work tree is
+not committed («ask the session to commit» — the platform never commits for it); and «Send» · «Open diff»
+(every leaving commit, oldest first, with its whole message and its own diff — plain text, at most 1 MB) · «Cancel».
 A path, a subject or a message is shown with every invisible character as its code (⟦U+202E⟧, a newline in a name as
 ⟦U+000A⟧) and cut, so no name can fake a line of the card. The remote branch is
 `retinue/<session>-<slug>` (the room's branch's name, or its first commit's subject) — or the branch this session's
 last push of the same room branch went to, so a second push updates its PR. **A reply to the card** of one word sets
 the remote branch (checked: a plain name, not `main`/`master`/the default, not `refs/…`); a phrase sets the PR's
-title. In the app both are fields. A card goes stale at the session's next ping, expires after 7 days, «Отмена»
+title. In the app both are fields. A card goes stale at the session's next ping, expires after 7 days, «Cancel»
 closes it.
 
-**«Отправить».** Refused at once when the commits change `.github/workflows/`. Otherwise the room's branch is read
-again: moved since the card → the card comes back with what it holds now («Ветка изменилась после карточки — проверь
-и нажми ещё раз»). Then `shown → pushing` once (a second press anywhere: «Отправляю — подожди.»), and in the
+**«Send».** Refused at once when the commits change `.github/workflows/`. Otherwise the room's branch is read
+again: moved since the card → the card comes back with what it holds now («The branch changed after the card — check it
+and press again»). Then `shown → pushing` once (a second press anywhere: «Sending — wait.»), and in the
 background `git push --porcelain <url from platform.yaml> <card's sha>:refs/heads/<branch>` — no `+`, no tags,
-`--no-verify` — from the platform's own repository. A remote branch already elsewhere is never forced: «На удалённом
-ветка … уже другая — ответь на карточку другим именем ветки». Pushed → the pull request (GitHub: opened by the API,
+`--no-verify` — from the platform's own repository. A remote branch already elsewhere is never forced: «The branch
+… on the remote is already different — reply to the card with another branch name». Pushed → the pull request (GitHub: opened by the API,
 or the open one for that branch found; GitLab: made by the push), the card `pushed` with «PR: <link>» and a message
-of its own, «Запушено · <repo> · сессия <id>» with the link; the mirror fetched so N goes down. A refusal brings the card back `shown` with git's words (never the token).
+of its own, «Pushed · <repo> · session <id>» with the link; the mirror fetched so N goes down. A refusal brings the card back `shown` with git's words (never the token).
 
 **A restart.** A card left `pushing` is settled when the platform is back: the remote's branch at the card's sha (one
 `ls-remote`) means the push landed — the PR is opened or found again, once; otherwise the card is shown again with
-«Пуш прервался перезапуском платформы — нажми «Отправить» ещё раз». Nothing is pushed without a press. While the
+«A platform restart cut the push off — press «Send» again». Nothing is pushed without a press. While the
 remote cannot be read, the clock tries again every minute. Runs in the room go on during a push: it never touches the
 tree.
 
@@ -182,8 +182,8 @@ platform git never opens it as a repository (`retinue/code.py`):
   tried once more after the restart and then refused, never in a loop. A refusal the room causes (a malformed index,
   a pack that moved while read, over the cap) is kept for that pack with its reason; a fault of the platform's (the
   disk, git) keeps nothing, and the next look tries again. One copy at a time across all repositories. A count the
-  room refuses (a detached HEAD, a hostile layout, such a pack) leaves «⚠ Запушить: почему нет» on the ping — its
-  press says the card's own line — and «Запушить нельзя — <repo>: <reason>» in the app; no clone or no commit yet
+  room refuses (a detached HEAD, a hostile layout, such a pack) leaves «⚠ Push: why not» on the ping — its
+  press says the card's own line — and «Cannot push — <repo>: <reason>» in the app; no clone or no commit yet
   says nothing. Nothing of the room's `objects/info`, commit
   graph, bitmaps or multi-pack index comes over, and git runs with them off. `git fetch` from that copy into the
   platform's repository for this mirror moves the session's new objects, verified (`fetch.fsckObjects`), under
@@ -196,15 +196,15 @@ platform git never opens it as a repository (`retinue/code.py`):
   signature (`gpgsig`), an embedded tag (`mergetag`), a field of its own, a repeat (git's fsck lets a second
   author/committer pair through after the first, which a card reading the last one would never show) — you could not
   check them anyway. A message over 16 KiB or not in UTF-8 is refused too, never shown cut: the app shows each message
-  whole; Telegram shows six lines and says «сообщение обрезано, полностью — в «Открыть дифф»», whose text is built
+  whole; Telegram shows six lines and says «message cut, the whole of it is in «Open diff»», whose text is built
   from the same objects with every invisible character as its code. A new root
   commit (a history the remote never had, an orphan merged with `-s ours`) is refused; at most 100 commits. Then the
   objects the push would carry (`rev-list --objects` the same way) must each be a shown commit, its tree, or a tree or
-  blob its own change brings (`diff-tree` against each parent); any other refuses the push («объектов, которых нет в
-  изменениях показанных коммитов»). At most 100 000 objects and 200 MiB. A commit that adds a file and the next that
-  deletes it, an empty commit with a long message: all shown, whatever the net diff says. «Отправить» fetches the
+  blob its own change brings (`diff-tree` against each parent); any other refuses the push («objects that are not in the
+  changes of the commits shown»). At most 100 000 objects and 200 MiB. A commit that adds a file and the next that
+  deletes it, an empty commit with a long message: all shown, whatever the net diff says. «Send» fetches the
   mirror and counts again: if what would leave against the remote as it is now is not exactly what the card showed
-  (its digest), the card comes back («Удалённый репозиторий изменился после карточки — обнови карточку»).
+  (its digest), the card comes back («The remote repository changed after the card — the card is updated»).
 - **What could bring other objects in is refused** before git sees it: `objects/info/alternates`,
   `objects/info/http-alternates`, `commondir`, a `.git` that is a file or a link, a link or anything but a folder or a
   file among the objects and refs, a branch with no common commit with the default one.
@@ -265,18 +265,18 @@ docker compose -p retinue exec platform-egress tail -5 /var/log/squid/access.log
 docker compose -p retinue exec lane-private sh -c 'printenv | grep -c GIT_TOKEN'     # 0: no token in the room
 ```
 
-Then `/new code retinue покажи git status и git log -3`: no card for either; ask it to make a branch and commit a
-small change; the ping has «Запушить · 1»; the card lists the commit; «Отправить» answers «PR: https://github.com/…».
+Then `/new code retinue show git status and git log -3`: no card for either; ask it to make a branch and commit a
+small change; the ping has «Push · 1»; the card lists the commit; «Send» answers «PR: https://github.com/…».
 A `git push` in that session comes as a courier card that points to the button.
 
 ## When something goes wrong
 
-- **«нет токена RETINUE_GIT_TOKEN_…»** — the key in `platform.yaml` has no line in `tokens.env`: run the script with
+- **«no token RETINUE_GIT_TOKEN_…»** — the key in `platform.yaml` has no line in `tokens.env`: run the script with
   that key, restart the platform.
-- **The mirror's fetch fails** (`code <name>: mirror fetch failed: …` in the log; the card «не читается») — an expired
+- **The mirror's fetch fails** (`code <name>: mirror fetch failed: …` in the log; the card «cannot be read») — an expired
   or narrowed token (Authentication failed), a repository renamed (redirects are not followed: put the new URL in
   `platform.yaml`), the proxy down (`up -d platform-egress`).
-- **«репозиторий … ещё не склонирован»** — the run reached the lane before the mirror existed and the first fetch
+- **«repository … is not cloned yet»** — the run reached the lane before the mirror existed and the first fetch
   failed; fix the fetch, then write to the session again.
 - **A push refused** — the card says git's line: a branch name the remote has elsewhere (reply with another), a
   protected branch rule, the token without Contents write on that repository.

@@ -49,9 +49,9 @@ def test_a_turn_becomes_one_commit_in_the_hub(kb):
     showcase.write_text(showcase.read_text() + "- [b](knowledge/b.md)\n")
     done = memory.settle("turn-1", "conversation", ["forwarded"])
     assert done.refusals == [] and done.commit == git(hub, "rev-parse", "main")
-    assert done.subject == "Ассистентка: notes/AGENTS.md, notes/knowledge/b.md"
+    assert done.subject == "Assistant: notes/AGENTS.md, notes/knowledge/b.md"
     message = git(hub, "log", "-1", "--format=%an <%ae>|%B", "main")
-    assert message.startswith("Ассистентка <assistant@retinue>|Ассистентка: notes/AGENTS.md")
+    assert message.startswith("Assistant <assistant@retinue>|Assistant: notes/AGENTS.md")
     assert "Retinue-Turn: turn-1" in message and "Foreign-Input: forwarded" in message
     assert "notes/knowledge/b.md" in hub_files(hub)
     assert subprocess.run(["git", "pull", "-q", "--ff-only"], cwd=mac).returncode == 0
@@ -71,8 +71,8 @@ def test_a_refused_turn_is_undone_and_says_why(kb):
     (memory.tree / ".scratch").mkdir()
     (memory.tree / ".scratch/x.md").write_text("x\n")
     refused = memory.settle("turn-1", "conversation", [])
-    assert refused.commit is None and refused.refusals == [".scratch/x.md: этого в базе не бывает — путь исключён политикой",
-                                                           "notes/knowledge/CLAUDE.md: сюда ассистентке писать нельзя"]
+    assert refused.commit is None and refused.refusals == [".scratch/x.md: this never goes in the Base — the path is excluded by the policy",
+                                                           "notes/knowledge/CLAUDE.md: the assistant may not write here"]
     assert not (memory.tree / "notes/knowledge/CLAUDE.md").exists() and not (memory.tree / ".scratch").exists()
     (memory.tree / "notes/knowledge/b.md").write_text("BROKEN\n")
     assert memory.settle("turn-2", "conversation", []).refusals == ["just check: ОШИБКА: notes/knowledge/b.md: сломано"]
@@ -88,7 +88,7 @@ def test_a_push_from_the_mac_meanwhile_is_put_under_her_commit(kb):
     git(mac, "push", "-q", "origin", "main")
     done = memory.settle("turn-1", "conversation", [])
     assert done.refusals == [] and git(hub, "log", "--format=%s", "-2", "main").split("\n") == [
-        "Ассистентка: notes/knowledge/b.md", "edit"], "her commit goes on top of the Mac's, the history stays a line"
+        "Assistant: notes/knowledge/b.md", "edit"], "her commit goes on top of the Mac's, the history stays a line"
     assert (memory.tree / "notes/knowledge/c.md").is_file(), "and her folder has the Mac's change now"
 
 
@@ -101,7 +101,7 @@ def test_a_conflict_with_the_mac_undoes_her_turn(kb):
     git(mac, "push", "-q", "origin", "main")
     refused = memory.settle("turn-1", "conversation", [])
     assert refused.commit is None
-    assert refused.refusals == ["конфликт с правкой, которая пришла в хаб во время хода: notes/AGENTS.md"]
+    assert refused.refusals == ["a conflict with an edit that reached the hub during the turn: notes/AGENTS.md"]
     assert "строка с Mac" in showcase.read_text() and "её строка" not in showcase.read_text()
 
 
@@ -125,11 +125,11 @@ def test_the_owner_takes_back_a_commit_journal_and_all(kb):
     done = memory.settle("turn-1", "conversation", [])
     memory.record(done)
     ok, text = memory.revert(done.commit)
-    assert ok and text == "Откачено: Ассистентка: notes/journal/2026-10-01-x.md, notes/knowledge/b.md."
+    assert ok and text == "Reverted: Assistant: notes/journal/2026-10-01-x.md, notes/knowledge/b.md."
     assert "notes/knowledge/b.md" not in hub_files(hub) and "Дописала" not in entry.read_text()
-    assert git(hub, "log", "-1", "--format=%s", "main") == "Откат: Ассистентка: notes/journal/2026-10-01-x.md, notes/knowledge/b.md"
+    assert git(hub, "log", "-1", "--format=%s", "main") == "Revert: Assistant: notes/journal/2026-10-01-x.md, notes/knowledge/b.md"
     assert memory.db.execute("SELECT reverted FROM memory_commits WHERE sha = ?", (done.commit,)).fetchone()[0]
-    assert memory.revert(done.commit) == (False, "Этот коммит уже откачен.")
+    assert memory.revert(done.commit) == (False, "This commit is already reverted.")
 
 
 def test_a_commit_changed_since_is_not_taken_back_blindly(kb):
@@ -142,7 +142,7 @@ def test_a_commit_changed_since_is_not_taken_back_blindly(kb):
     showcase.write_text(showcase.read_text().replace("- первая\n", "- первая, исправлена\n"))
     memory.settle("turn-2", "conversation", [])
     ok, text = memory.revert(first.commit)
-    assert not ok and text == ("Не откатилось: notes/AGENTS.md менялся после этого коммита. Откати на Mac: "
+    assert not ok and text == ("Not reverted: notes/AGENTS.md changed after this commit. Revert it on the Mac: "
                                f"git revert {first.commit[:12]}")
 
 
@@ -187,8 +187,8 @@ def test_her_turn_is_committed_with_a_mark_and_a_refusal_is_told_to_both(kb, tmp
     assert "Foreign-Input: forwarded, travel" in message and "Retinue-Run: conversation" in message
     assert [e[2] for e in telegram.events if e[0] == "send"] == [
         "Записала в notes/knowledge/b.md.", "Готово.", "Вижу: база не приняла."], "the reply goes first"
-    refusal = ("База не приняла правку этого хода, она откачена: notes/knowledge/CLAUDE.md: сюда ассистентке писать "
-               "нельзя. Написанное сохранено на сервере.")
+    refusal = ("The Base did not accept this turn's edit; it was reverted: notes/knowledge/CLAUDE.md: the assistant may "
+               "not write here. What was written is kept on the server.")
     assert telegram.cards[-1][0] == refusal and not (memory.tree / "notes/knowledge/CLAUDE.md").exists()
     assert refusal in asked[2], "she learns it in her next request, as something that happened without her"
     assert [card[0] for card in telegram.cards] == [refusal], "a committed turn says nothing: she says it herself"
@@ -196,7 +196,7 @@ def test_her_turn_is_committed_with_a_mark_and_a_refusal_is_told_to_both(kb, tmp
 
 def test_the_evening_list_names_her_commits_and_takes_one_back_on_a_press(kb, tmp_path):
     """Code writes it, at 21:00 by default: what changed, the owner's own records first, someone else's text on
-    the input, and «Откатить» on each commit. A day without commits sends nothing."""
+    the input, and «Revert» on each commit. A day without commits sends nothing."""
     import asyncio
     import time
 
@@ -238,13 +238,13 @@ def test_the_evening_list_names_her_commits_and_takes_one_back_on_a_press(kb, tm
 
     telegram, (text, buttons, _), pressed = asyncio.run(run())
     lines = text.split("\n")
-    assert lines[0] == "База за день: коммитов ассистентки — 2."
-    assert lines[2].endswith(" · notes/knowledge/a.md") and lines[3] == "   **Записи Владельца:** notes/knowledge/a.md"
-    assert lines[4] == "   чужой текст на входе: пересланное"
-    assert lines[5].endswith(" · notes/knowledge/b.md (новая)")
-    assert [label for label, _ in buttons] == ["Откатить 1", "Откатить 2"]
-    assert pressed.toast == "Откатываю…"
-    assert telegram.cards[-1][0] == "Откачено: Ассистентка: notes/knowledge/b.md.", "the next day had no commits"
+    assert lines[0] == "The Base today: the assistant's commits — 2."
+    assert lines[2].endswith(" · notes/knowledge/a.md") and lines[3] == "   **Owner's Records:** notes/knowledge/a.md"
+    assert lines[4] == "   someone else's text in the input: forwarded"
+    assert lines[5].endswith(" · notes/knowledge/b.md (new)")
+    assert [label for label, _ in buttons] == ["Revert 1", "Revert 2"]
+    assert pressed.toast == "Reverting…"
+    assert telegram.cards[-1][0] == "Reverted: Assistant: notes/knowledge/b.md.", "the next day had no commits"
     assert "notes/knowledge/b.md" not in hub_files(hub) and "Уточнение." in (memory.tree / "notes/knowledge/a.md").read_text()
 
 
@@ -294,7 +294,7 @@ def test_the_evening_list_survives_a_failed_send_and_never_lists_a_commit_twice(
         refuse = True
 
         async def notice(self, agent_id, text, buttons=None, ref=None):
-            if self.refuse and "База за день" in text:
+            if self.refuse and "The Base today" in text:
                 raise RuntimeError("Bad Request: too many buttons")
             await super().notice(agent_id, text, buttons, ref)
 
@@ -313,14 +313,14 @@ def test_the_evening_list_survives_a_failed_send_and_never_lists_a_commit_twice(
         await core.handle(telegram, None, "запиши первое", native_id="1")
         await drain()
         await at(utc(9, 0, 5))  # three hours late, and Telegram says no
-        assert not [c for c in telegram.cards if "База за день" in c[0]]
+        assert not [c for c in telegram.cards if "The Base today" in c[0]]
         telegram.refuse = False
         await at(utc(9, 0, 40))  # tried again
         clock[0] = utc(9, 10)
         await core.handle(telegram, None, "запиши второе", native_id="2")
         await drain()
         await at(utc(9, 21, 1))
-        return [c[0] for c in telegram.cards if "База за день" in c[0]]
+        return [c[0] for c in telegram.cards if "The Base today" in c[0]]
 
     core = None
     lists = asyncio.run(run())
@@ -342,7 +342,7 @@ def test_what_she_wrote_before_the_limit_is_committed(kb, tmp_path):
 
     async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None, **extra):
         (memory.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Ассистентка", body="Б."))
-        return Reply("failed", "Лимит подписки исчерпан.", [], {"limit": True, "limit_until": 4102444800})
+        return Reply("failed", "Subscription limit reached.", [], {"limit": True, "limit_until": 4102444800})
 
     async def run():
         core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", ask=fake_ask, memory=memory)
@@ -354,7 +354,7 @@ def test_what_she_wrote_before_the_limit_is_committed(kb, tmp_path):
 
     telegram = asyncio.run(run())
     assert "notes/knowledge/b.md" in hub_files(hub)
-    assert telegram.cards[-1][0].startswith("Лимит подписки до "), "and the owner hears about the limit as before"
+    assert telegram.cards[-1][0].startswith("Subscription limit until "), "and the owner hears about the limit as before"
 
 
 def test_a_commit_in_the_hub_is_never_called_undone(kb, monkeypatch):
@@ -458,8 +458,8 @@ def test_a_file_the_owner_handed_to_code_is_committed_by_the_same_rules_and_is_n
     assert git(hub, "log", "-1", "--format=%s|%b", "main") == "Владелец через Telegram: c|Retinue-Upload: x"
     assert memory.put("notes/knowledge/c.md", record, "again", [])[0] == commit, "nothing new: no commit"
     assert memory.since(0) == []
-    assert memory.put("scripts/lint.py", b"x", "s", [])[1] == ["scripts/lint.py: сюда ассистентке писать нельзя"]
-    assert memory.put("../outside.md", b"x", "s", []) == (None, ["../outside.md: не путь внутри базы"])
+    assert memory.put("scripts/lint.py", b"x", "s", [])[1] == ["scripts/lint.py: the assistant may not write here"]
+    assert memory.put("../outside.md", b"x", "s", []) == (None, ["../outside.md: not a path inside the Base"])
     assert git(hub, "rev-parse", "main") == commit and not (memory.tree / "scripts").exists()
 
 

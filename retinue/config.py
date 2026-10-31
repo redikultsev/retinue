@@ -95,7 +95,7 @@ class MemoryConfig:
     git_dir: str = "/kb-git"            # its repository: in the router's container only, so she cannot write hooks
     hub: str = "/hub"                   # the bare repository every copy pushes to; its pre-receive checks each push
     policy: str = "/config/memory-policy.json"  # what she may write (kbcheck.Policy); the hub has the same file
-    author: str = "Ассистентка <assistant@retinue>"
+    author: str = "Assistant <assistant@retinue>"
     checkout: list[str] = field(default_factory=lambda: ["/*"])  # sparse checkout: what of the base she sees
     digest_at: str = "21:00"            # the evening list of her commits, the owner's wall time
     # Spaces whose reading makes a draft's card louder: «*» — all of them, until the owner names the closed ones.
@@ -137,7 +137,7 @@ class RouterConfig:
     sender_token: str = ""              # from RETINUE_SENDER_TOKEN
     platform_url: str = ""              # the platform (`retinue-platform`): sessions in the lanes; empty = none
     platform_token: str = ""            # from RETINUE_PLATFORM_TOKEN
-    face_url: str = ""                  # the platform's face, https://<host>: a card's «Открыть в приложении», /app
+    face_url: str = ""                  # the platform's face, https://<host>: a card's «Open in the app», /app
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -320,7 +320,7 @@ class Sphere:
     track: str                          # the track a new session of this sphere runs on
     icon: str = ""                      # an emoji or a short mark before the title
     cwd: str = ""                       # its sessions' directory under the lane's /work, in the track's ('' : the
-    # track's own) — e.g. `base/travel`: a session «в Пространстве» of the Base (docs/base.md)
+    # track's own) — e.g. `base/travel`: a session «in a Space» of the Base (docs/base.md)
 
 
 @dataclass
@@ -388,7 +388,7 @@ class CodeConfig:
 
 @dataclass
 class SpeechConfig:
-    """The owner's voice in the app (`face.Face.speech`, docs/face.md «Голос»): ElevenLabs Scribe, called by the
+    """The owner's voice in the app (`face.Face.speech`, docs/face.md «Voice»): ElevenLabs Scribe, called by the
     platform through its own proxy. Absent from `platform.yaml`: no terms, `code.proxy` as the way out."""
     keyterms: list[str] = field(default_factory=list)  # words Scribe should expect in dictation: «KV cache», «RAG»…
     proxy: str = ""                     # the platform's way out to api.elevenlabs.io; '' : code.proxy
@@ -414,12 +414,12 @@ class PlatformConfig:
     webapp_key: str = ""                # from RETINUE_WEBAPP_KEY: HMAC_SHA256("WebAppData", bot token), hex — the
     # Mini App's initData is checked with it; the platform never holds the bot token itself
     owner_tg: int = 0                   # from TELEGRAM_OWNER_ID: the only Telegram user a Mini App login is for
-    owner_tz: str = "UTC"               # IANA zone: the times the platform says to the owner («жду сброса до 14:05»)
+    owner_tz: str = "UTC"               # IANA zone: the times the platform says to the owner («… until 14:05»)
     skills_mount: str = "/skills"       # the owner's skills, read-only, as the lanes mount them (docs/instructions.md)
     owner_memory_mount: str = "/owner-memory"  # his memory snapshot, read-only, as lane-private mounts it (same doc)
     out_store_mb: int = 500             # the bytes of handed-over files the platform keeps, in all (outfiles)
     out_day_mb: int = 200               # and new in one day
-    # The life hub's address, https://<host>: the one origin a page of «Читать» may open on (`library.py`); '' : the
+    # The life hub's address, https://<host>: the one origin a page of «Read» may open on (`library.py`); '' : the
     # router's list of pages is refused.
     hub_origin: str = ""
     spheres: list[Sphere] = field(default_factory=list)
@@ -671,7 +671,7 @@ def _check_code(cfg: PlatformConfig) -> None:
         if not isinstance(repo.default_branch, str) or (repo.default_branch and not BRANCH.fullmatch(repo.default_branch)):
             raise SystemExit(f"code: {repo.name}: default_branch is not a branch name")
         repo.secret = os.environ.get(git_token_env(repo.token), "").strip()
-        repo.off = "" if repo.secret else f"нет токена {git_token_env(repo.token)}"
+        repo.off = "" if repo.secret else f"no token {git_token_env(repo.token)}"
     # Held in the repositories alone from here: out of this process's environment, so no child it starts inherits a
     # token (git gets its own environment anyway; the parse worker too). docs/code.md says what this does not cover.
     for name in [n for n in os.environ if n.startswith("RETINUE_GIT_TOKEN_")]:

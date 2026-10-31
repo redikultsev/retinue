@@ -14,7 +14,7 @@ assistant ── publish_trip (bus) ──▶ router ── refine_* / stay_phot
 your phone / Mac ── WireGuard ── Traefik (your devices only, adds the key) ──▶ lifehub (nginx, read-only)
 ```
 
-On a phone the pages are tabs at the bottom — **Сейчас · Поездки · Трекер · Библиотека · Ещё** («Ещё» holds the
+On a phone the pages are tabs at the bottom — **Now · Trips · Tracker · Library · More** («More» holds the
 review, the status, finance and health); from 900 px they are a sidebar. Dark unless your system asks for light;
 the glasses button in the header switches to a pure-black theme for additive displays (borders only, type
 +20 %), remembered on that device. The header says how fresh the data is and turns yellow past 15 minutes.
@@ -23,11 +23,11 @@ What it never does: take HTML from the model (she sends data by a schema, Hugo e
 from elsewhere (the page policy is `default-src 'self'`, no inline script or style), make a link of an address that
 did not come from travel-ops, answer a device that is not on your list (404, as if there were no site).
 An address is never page text: a link is a button with its host — to a travel-ops site, a meeting service
-(«войти · meet.example.com»: its password stays in the button's target) or an address in your own tracker; an address
+(«join · meet.example.com»: its password stays in the button's target) or an address in your own tracker; an address
 from a letter is only its host on a chip. An address is kept only if Go and Python read it alike (no `\`, no bad
 `%`, no `user@` before the host), and one Hugo cannot parse is skipped, not a failed build. Nobody's e-mail is on
-«Сейчас» or the tracker page. Your own HTML pages — courses, notes made in claude.ai — are served under `/pages/`, each a
-sandboxed document: see [Pages](#pages-страницы).
+«Now» or the tracker page. Your own HTML pages — courses, notes made in claude.ai — are served under `/pages/`, each a
+sandboxed document: see [Pages](#pages).
 
 ## Turn it on
 
@@ -80,7 +80,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://hub.in.example.com/   # VPN off
 sudo cat /srv/retinue/lifehub/site/build.json                         # "ok": true, the live release
 ```
 
-The morning summary's health line says «хаб собран N мин назад» or why it is not up to date.
+The morning brief's health line says «hub built N min ago» or why it is not up to date.
 
 ## How it works
 
@@ -92,11 +92,11 @@ The morning summary's health line says «хаб собран N мин назад
   `link`. The router looks the option up in travel-ops' stored search (no site is asked) and takes the price, the
   seller, the times, the rating and when the price was seen from there; stay photos come from travel-ops
   (`stay_photos`) and are re-encoded as JPEG by the router's file worker. A page's address is random.
-- **«Сейчас».** The next meeting with a countdown; who waits for your answer, by person — three, the rest folded —
+- **«Now».** The next meeting with a countdown; who waits for your answer, by person — three, the rest folded —
   with how long; today, the evening (from 18:00) and tomorrow as a timeline in your local time; deadlines overdue
   first, documents (`until`) apart from facts to re-check (`stale_after`); upcoming trips; a row of chips — broken
-  or not, the backup, the limit, the build — that leads to «Статус». Your own recurring blocks with nobody else
-  and nowhere to be («Блок», four hours or longer) are one line «Фоном», not meetings.
+  or not, the backup, the limit, the build — that leads to «Status». Your own recurring blocks with nobody else
+  and nowhere to be («Block», four hours or longer) are one line «In the background», not meetings.
 - **The tracker.** The table of your tracker in the base (docs/proactive.md, «The tracker»; its title is the tab's
   name): a funnel by state, the rows in groups, the tracker's meetings in your calendars two weeks ahead, and the
   letters of your private matter (docs/mail.md) you have not answered. Read only: a row changes in the base.
@@ -105,9 +105,9 @@ The morning summary's health line says «хаб собран N мин назад
 - **Charts and dollars.** A chart is geometry the router lays out (`retinue/charts.py`) and the page draws with
   its own classes, so it follows the theme. The CLI's dollar estimate is per session and grows as a session is
   resumed: a run counts what it added to its session (`protocol.tokens`), not the session's running total.
-- **Библиотека.** Cards from `pages.json` in the data folder, if there is one: a list (or `{"pages": [...]}`) of
+- **Library.** Cards from `pages.json` in the data folder, if there is one: a list (or `{"pages": [...]}`) of
   `{id, title, description, topic, words, reading_min, updated, url}`; `url` is a path on the hub (`/…`).
-- **Script.** One file, `static/js/hub.js`: relative times («через 42 мин», «обновлено 3 мин назад») and the
+- **Script.** One file, `static/js/hub.js`: relative times («in 42 min», «updated 3 min ago») and the
   glasses button. Every element already has its text from Hugo, so with the script blocked the page says the same
   in clock time. The gate lets through only `<script src="/js/<name>.js" defer></script>` of a file the image
   ships, and `js/<name>.js` only byte for byte; nothing inline, nothing from elsewhere. Icons: Lucide, inline
@@ -119,11 +119,11 @@ The morning summary's health line says «хаб собран N мин назад
 - **Serving.** nginx (unprivileged, read-only) serves `current/hub` with the same headers as Traefik and refuses any
   request without the key Traefik adds — a container on Traefik's network that is not Traefik gets 404.
 
-## Pages («Страницы»)
+## Pages
 
 Your own HTML pages from the base — a regex course, a cheat sheet, anything a claude.ai artifact made — open on
 your devices at `https://hub.in.<your domain>/pages/<id>.html`, with their scripts, highlighting and diagrams, and
-the hub lists them («Библиотека», from `pages.json`).
+the hub lists them («Library», from `pages.json`).
 
 **Publishing.** A page is any `*.html` in a nature folder of the base (`<Space>/knowledge|profile|journal|artifacts/`)
 that says so in its `<head>`:
@@ -135,7 +135,8 @@ that says so in its `<head>`:
 ```
 
 Push it like any change of the base; a few minutes later it is up. From the phone: send the file to the bot with the
-caption `в хаб <Space>` (e.g. `в хаб travel`) — the router's code, not the model, checks it (HTML, UTF-8, at most
+caption `to hub <Space>` (e.g. `to hub travel`; the Russian `в хаб <Space>` works too) — the router's code, not
+the model, checks it (HTML, UTF-8, at most
 3 MB, a Space with its `AGENTS.md`), adds the `<meta>` if it is missing, commits it to `<Space>/artifacts/<name>.html`
 with the trailer `Retinue-Upload: telegram` and answers with the address. A page is 3 MB at most, pictures included;
 libraries and fonts are never in git (below).
@@ -188,7 +189,7 @@ id, more than 3 MB. Links out (`<a href>`) are fine. A script that uses `WebSock
 `RTCPeerConnection`, `sendBeacon`, `window.open`, `location.href =`/`assign`/`replace`, `document.cookie`, `import(`,
 a `Worker` or an outside address is a tripwire: the page goes up with its scripts off and the reason in
 `pages.json` (`notes`). A refused page is left out of the release and named in `build.json` and the health line
-(«не опубликованы страницы: …») by its id and the check in fixed words — never an address or any other text of the
+(«pages not published: …») by its id and the check in fixed words — never an address or any other text of the
 page: the health line reaches the model. Each entry of `pages.json` carries its file's sha256; a file that does not
 match (the router between two writes) waits for the next build. Comment forms a browser and the build's parser read
 differently (`<!-->`, `<!--->`, `--!>`, `<![`) are refused; inside `<svg>`/`<math>` a `<script>` or `<style>` is
@@ -213,10 +214,10 @@ and `notes`) — the hub's library reads `assets/pages.json`, a list, newest fir
 | `author`, `scripts` | `owner` / `assistant`; `on` / `off` |
 | `sha256` | of the file's bytes; `path` — the file in the base |
 
-**In the app («Читать»).** The router pushes the list to the platform (`Lifehub.library`, `bridge.push_library`):
+**In the app («Read»).** The router pushes the list to the platform (`Lifehub.library`, `bridge.push_library`):
 each page's id, title, full address, Space, day and reading time — no description, no body, no path in the base; a
 page the last build refused (build.json) is left out, a page with no `<title>` goes by its id. The face lists them
-under «Читать» and opens each on the hub, never inside the app ([face.md](face.md#read-читать)). The platform takes a
+under «Read» and opens each on the hub, never inside the app ([face.md](face.md#read)). The platform takes a
 page's address only as `<hub_origin>/pages/<id>.html`, `hub_origin` from its `platform.yaml`.
 
 **Turn it on.** Pages come with the hub and the base; nothing of their own in DNS or `setup.sh`.

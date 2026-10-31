@@ -10,11 +10,11 @@ and writes them to `/srv/retinue/status/health.json`. The router reads that file
 as the backup's and sends you one message when something goes bad and one when it is well again:
 
 ```
-Сервер: не в порядке.
-- assistant: не отвечает (healthcheck: unhealthy)
-- egress: остановлен, код 137, не хватило памяти
+Server: not OK.
+- assistant: not responding (healthcheck: unhealthy)
+- egress: stopped, code 137, out of memory
 
-Сервер: снова в порядке — assistant, egress.
+Server: OK again — assistant, egress.
 ```
 
 - Down (exited, restarting, paused, created) or unhealthy is told after **two checks in a row**: a deploy that
@@ -24,20 +24,20 @@ as the backup's and sends you one message when something goes bad and one when i
   running again it is one line, with nothing to recover from. A new container with a count of 0 is a deploy; a
   container gone between the host's `ps` and `inspect` (a deploy again) is skipped.
 - **One notice per container an hour** at most: an OOM restart loop or a flapping healthcheck is told once and then
-  counted for the morning summary («сбоев за сутки — 10 (egress)»), not sent every few minutes. A bad state that
+  counted for the morning summary («failures in a day — 10 (egress)»), not sent every few minutes. A bad state that
   went untold this way has its recovery untold too.
 - While something stays bad, **nothing is said again**, whatever changes. What was told is kept in the router's
   SQLite, so a restarted router does not tell it twice — and a router that crashed tells of its own restart once
   it is back.
-- Stopped with **exit code 0** is your own `docker stop`: told once as «остановлен вручную», named apart in the
+- Stopped with **exit code 0** is your own `docker stop`: told once as «stopped manually», named apart in the
   summary, never counted as a failure.
-- **Your quiet hours** (the assistant's, `/initiative тихо 23-8`; [proactive.md](proactive.md)) hold every notice
-  but an outage, and the held ones come as one message «Сервер за тихие часы:» with their times when they end.
+- **Your quiet hours** (the assistant's, `/initiative quiet 23-8`; [proactive.md](proactive.md)) hold every notice
+  but an outage, and the held ones come as one message «Server during quiet hours:» with their times when they end.
   An outage is told at once, night or not: Docker not answering the host or showing no container at all, a stale
   `health.json`, the router or the platform down.
 - A `health.json` **older than ten minutes** is told too: the timer has stopped, and nothing else would say so.
 
-The morning summary has a line: `контейнеры: все 17 в порядке`, or which are not, and how many went bad in the last
+The morning summary has a line: `containers: all 17 OK`, or which are not, and how many went bad in the last
 day. The life hub's status page has it as well.
 
 ## What it cannot tell

@@ -139,7 +139,7 @@ def test_the_agenda_is_read_live_from_every_calendar():
                                                   NOW, NOW + DAY + 30000))
     assert [(e["summary"], e["calendar_name"], e["account"]) for e in events] == [
         ("Стендап", "Команда", fake.address), ("Интервью с Acme", fake.address, fake.address)]
-    assert failed == ["x@example.org: нужен вход заново"]
+    assert failed == ["x@example.org: needs a new sign-in"]
 
 
 def test_the_router_reads_through_the_collector_with_its_token_and_nothing_more():

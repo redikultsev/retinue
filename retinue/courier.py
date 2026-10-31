@@ -1,5 +1,5 @@
 """The courier's own code: what may leave the system for a third party, in what form, and the card the owner presses
-«Отправить» under. Standard library only — the router imports it to build a draft and its card, and each sender
+«Send» under. Standard library only — the router imports it to build a draft and its card, and each sender
 (`sender.py` for Gmail, `tgbusiness.py` for Telegram) imports it to check the same envelope again before it sends.
 
 An envelope is everything that decides where a message goes and what it says: the channel, the account it leaves
@@ -8,7 +8,7 @@ bound to his button — and a sender sends exactly the envelope whose digest it 
 
 The text is refused, never repaired: a control, bidi, zero-width or unassigned character is a reason to say no,
 because what the owner sees must be what is hashed and what leaves. What a person may not notice in a text he
-approves — links, addresses, numbers next to «код» or «паспорт» — is named on the card by code (`findings`).
+approves — links, addresses, numbers next to «code» or «passport» — is named on the card by code (`findings`).
 """
 
 from __future__ import annotations
@@ -48,18 +48,18 @@ class Refused(ValueError):
     """Not sent, not shown: the text says what to fix."""
 
 
-def clean(text: str, cap: int = MAX_TEXT, what: str = "текст") -> str:
+def clean(text: str, cap: int = MAX_TEXT, what: str = "text") -> str:
     """The text as it will be shown, hashed and sent: NFC, line ends as \\n, no spaces around. An invisible or
     control character (a tab too) is refused with its code and place, never stripped."""
     text = unicodedata.normalize("NFC", str(text)).replace("\r\n", "\n")
     for i, char in enumerate(text):
         if char != "\n" and (unicodedata.category(char) in INVISIBLE):
-            raise Refused(f"{what}: невидимый или управляющий символ U+{ord(char):04X} на {i + 1}-м месте — убери его")
+            raise Refused(f"{what}: an invisible or control character U+{ord(char):04X} at position {i + 1} — remove it")
     text = text.strip()
     if not text:
-        raise Refused(f"{what}: пусто")
+        raise Refused(f"{what}: empty")
     if len(text) > cap:
-        raise Refused(f"{what}: {len(text)} знаков, можно не больше {cap}")
+        raise Refused(f"{what}: {len(text)} characters, at most {cap} allowed")
     return text
 
 
@@ -102,7 +102,7 @@ class Envelope:
     def of(cls, data) -> Envelope:
         """From JSON — a sender's request. Anything of another shape is refused."""
         if not isinstance(data, dict) or set(data) != set(cls.__dataclass_fields__):
-            raise Refused("конверт: не те поля")
+            raise Refused("envelope: wrong fields")
         try:
             refs = tuple(str(r) for r in data["references"])
             values = {k: v for k, v in data.items() if k != "references"}
@@ -111,7 +111,7 @@ class Envelope:
                 raise TypeError
             return cls(**values, references=refs)
         except (TypeError, ValueError):
-            raise Refused("конверт: не те поля") from None
+            raise Refused("envelope: wrong fields") from None
 
 
 def sha256_of(data: object) -> str:
@@ -131,25 +131,25 @@ def check(envelope: Envelope) -> Envelope:
     e = envelope
     if e.channel == MAIL:
         if not ADDRESS.fullmatch(e.to) or not ADDRESS.fullmatch(e.account):
-            raise Refused("адрес: один адрес латиницей, без имени")
+            raise Refused("address: one address in Latin letters, no name")
         if not e.subject or e.subject != line(e.subject, MAX_SUBJECT):
-            raise Refused("тема: пустая или не в одну строку")
+            raise Refused("subject: empty or not one line")
         if (e.in_reply_to and not MESSAGE_ID.fullmatch(e.in_reply_to)) or len(e.references) > MAX_REFERENCES or \
                 not all(MESSAGE_ID.fullmatch(r) for r in e.references) or (e.references and not e.in_reply_to):
-            raise Refused("тред: не те Message-ID")
+            raise Refused("thread: wrong Message-IDs")
         if e.thread and not re.fullmatch(r"[0-9a-f]{1,32}", e.thread):
-            raise Refused("тред: не тот threadId")
+            raise Refused("thread: wrong threadId")
         if e.reply_to_message:
-            raise Refused("у письма нет reply_to_message")
+            raise Refused("a letter has no reply_to_message")
     elif e.channel == TELEGRAM:
         if not CHAT.fullmatch(e.to) or not CHAT.fullmatch(e.account) or e.reply_to_message < 0:
-            raise Refused("чат: не тот id")
+            raise Refused("chat: wrong id")
         if e.subject or e.thread or e.in_reply_to or e.references:
-            raise Refused("у сообщения Telegram нет темы и треда")
+            raise Refused("a Telegram message has no subject or thread")
     else:
-        raise Refused(f"канал: {e.channel!r}")
+        raise Refused(f"channel: {e.channel!r}")
     if clean(e.text) != e.text:
-        raise Refused("текст: не в каноническом виде")
+        raise Refused("text: not in canonical form")
     return e
 
 
@@ -163,7 +163,7 @@ def mail_bytes(envelope: Envelope, key: str) -> bytes:
     headers from the envelope. Read back after it is built: exactly one recipient, the envelope's, and no copy."""
     e = check(envelope)
     if e.channel != MAIL:
-        raise Refused("не письмо")
+        raise Refused("not a letter")
     message = EmailMessage(policy=email.policy.SMTP)
     message["From"] = Address(addr_spec=e.account)
     message["To"] = Address(addr_spec=e.to)
@@ -178,7 +178,7 @@ def mail_bytes(envelope: Envelope, key: str) -> bytes:
     back = email.message_from_bytes(raw, policy=email.policy.default)
     to = [address.lower() for _, address in getaddresses([str(v) for v in back.get_all("To", [])])]
     if to != [e.to] or back.get_all("Cc") or back.get_all("Bcc") or back.get_content().replace("\r\n", "\n").rstrip("\n") != e.text:
-        raise Refused("письмо собралось не так, как в конверте")
+        raise Refused("the letter came out different from the envelope")
     return raw
 
 
@@ -240,15 +240,15 @@ async def send_once(ledger: Ledger, body, channel: str, transport: Transport, no
     body = body if isinstance(body, dict) else {}
     key = str(body.get("key") or "")
     if not KEY.fullmatch(key):
-        return {"status": "refused", "error": "ключ: не тот"}
+        return {"status": "refused", "error": "key: wrong"}
     try:
         envelope = check(Envelope.of(body.get("envelope")))
     except Refused as exc:
         return {"status": "refused", "error": str(exc)}
     if envelope.channel != channel:
-        return {"status": "refused", "error": f"этот отправитель не шлёт в {envelope.channel}"}
+        return {"status": "refused", "error": f"this sender does not send to {envelope.channel}"}
     if digest(envelope) != body.get("digest"):
-        return {"status": "refused", "error": "конверт не совпал с подтверждённым"}
+        return {"status": "refused", "error": "the envelope does not match the confirmed one"}
     if known := ledger.get(key):
         state = "unknown" if known["state"] == "sending" else known["state"]
         return {**known["result"], "status": state, "repeat": True}
@@ -257,7 +257,7 @@ async def send_once(ledger: Ledger, body, channel: str, transport: Transport, no
     try:
         state, result = await transport(envelope, key)
     except Exception as exc:  # whatever broke during the call: it may have gone — never «failed», never again
-        state, result = "unknown", {"error": f"сбой отправителя: {type(exc).__name__}"}
+        state, result = "unknown", {"error": f"sender failure: {type(exc).__name__}"}
     ledger.finish(key, state, result)
     return {**result, "status": state}
 
@@ -270,6 +270,7 @@ PHONE = re.compile(r"(?<![\w+])\+?\d[\d ().-]{7,}\d(?!\w)")
 NUMBER = re.compile(r"(?<![\d.,])\d{4,}(?![\d])")
 IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b")
 CARD = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+# Russian and English both: the text is anybody's, in any language.
 SECRET = re.compile(r"(?i)код|парол|pin|пин|cvv|cvc|паспорт|карт|сч[её]т|iban|password|code|passport|card|account")
 FINDINGS = 12
 
@@ -283,48 +284,51 @@ def _luhn(digits: str) -> bool:
 
 
 def findings(text: str, known: set[str] = frozenset()) -> list[str]:
-    """«В тексте найдено»: every link whole (and that it carries parameters, and a domain not in Latin letters),
+    """«Found in the text»: every link whole (and that it carries parameters, and a domain not in Latin letters),
     an address not among the thread's participants, a phone, a number of four digits or more next to a word like
-    «код», «пароль», «паспорт», «карта», an IBAN, a card number. In the order found, each once."""
+    «code», «password», «passport», «card» (or their Russian), an IBAN, a card number. In the order found, each once."""
     found: list[str] = []
     rest = text
     for match in EMAIL.finditer(text):
         address = match.group().lower()
         if address not in known:
-            found.append(f"адрес {address}")
+            found.append(f"address {address}")
         rest = rest.replace(match.group(), " " * len(match.group()))
     for match in URL.finditer(rest):
         url = match.group().rstrip(".,;:!?)»\"'")
         if match.start() and rest[match.start() - 1] in "/\\":
             continue  # the end of a path (/work/x/hello.md), not a host: .md, .rs, .sh are domains too, so not by name
-        said = f"ссылка {url}"
+        said = f"link {url}"
         host = urlsplit(url if "://" in url else f"https://{url}").hostname or ""
         if host and not host.isascii():
             try:
-                said += f" (домен не латиницей: {host.encode('idna').decode()})"
+                said += f" (domain not in Latin letters: {host.encode('idna').decode()})"
             except UnicodeError:
-                said += " (домен не латиницей)"
+                said += " (domain not in Latin letters)"
         if "?" in url:
-            said += " — с параметрами"
+            said += " — with parameters"
         found.append(said)
     for match in IBAN.finditer(text):
-        found.append(f"похоже на IBAN: {match.group()}")
+        found.append(f"looks like an IBAN: {match.group()}")
     for match in CARD.finditer(text):
         digits = re.sub(r"\D", "", match.group())
         if 13 <= len(digits) <= 19 and _luhn(digits):
-            found.append(f"похоже на номер карты: {match.group()}")
+            found.append(f"looks like a card number: {match.group()}")
     for match in PHONE.finditer(rest):
         if sum(c.isdigit() for c in match.group()) >= 9:
-            found.append(f"телефон {match.group().strip()}")
+            found.append(f"phone {match.group().strip()}")
     for match in NUMBER.finditer(text):
         around = text[max(0, match.start() - 40):match.end() + 40]
         if word := SECRET.search(around):
-            found.append(f"число {match.group()} рядом с «{word.group().lower()}»")
+            found.append(f"number {match.group()} next to «{word.group().lower()}»")
     unique = list(dict.fromkeys(f[:160] for f in found))
-    return unique[:FINDINGS] + ([f"и ещё {len(unique) - FINDINGS}"] if len(unique) > FINDINGS else [])
+    return unique[:FINDINGS] + ([f"and {len(unique) - FINDINGS} more"] if len(unique) > FINDINGS else [])
 
 
 # --- the card -----------------------------------------------------------------------------------------------------
+
+WARNING = "Warning:"  # the head line of a card's flags: the send button then names the recipient
+
 
 @dataclass
 class CardView:
@@ -353,19 +357,19 @@ def head(draft_id: str, envelope: Envelope, about: str, flags: list[str], found:
     value is one cleaned line."""
     e = envelope
     if e.channel == MAIL:
-        lines = [f"Черновик {draft_id} · {CHANNELS[MAIL]} · {e.account}",
-                 f"Кому: {line(e.name) + ' ' if e.name else ''}<{e.to}>", f"Тема: {line(e.subject, MAX_SUBJECT)}"]
+        lines = [f"Draft {draft_id} · {CHANNELS[MAIL]} · {e.account}",
+                 f"To: {line(e.name) + ' ' if e.name else ''}<{e.to}>", f"Subject: {line(e.subject, MAX_SUBJECT)}"]
     else:
-        lines = [f"Черновик {draft_id} · {CHANNELS[TELEGRAM]} · от твоего имени", f"Кому: {line(e.name) or e.to}"]
+        lines = [f"Draft {draft_id} · {CHANNELS[TELEGRAM]} · in your name", f"To: {line(e.name) or e.to}"]
     if about:
         lines.append(line(about, 160))
     if flags:
-        lines.append("Внимание: " + "; ".join(flags))
+        lines.append(f"{WARNING} " + "; ".join(flags))
     if read:
-        lines.append(f"Писала, читая: {read}")
+        lines.append(f"Read while drafting: {read}")
     if found:
-        lines.append("В тексте найдено: " + "; ".join(found))
-    lines.append(f"Текст, {len(e.text)} знаков:")
+        lines.append("Found in the text: " + "; ".join(found))
+    lines.append(f"Text, {len(e.text)} characters:")
     return lines
 
 
@@ -384,14 +388,14 @@ DRAFT_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["text"],
     "properties": {
         "reply_to": {"type": "string", "maxLength": 300,
-                     "description": "id из архива (mail:… или tgb:…) входящего письма или сообщения, на которое "
-                                    "отвечаешь. Адрес, тему и тред Роутер возьмёт оттуда"},
+                     "description": "the archive id (mail:… or tgb:…) of the incoming letter or message you are "
+                                    "answering. The router takes the address, subject and thread from it"},
         "to": {"type": "string", "maxLength": 254,
-               "description": "только для нового письма: адрес, с которым Владелец уже переписывался (есть в архиве)"},
-        "subject": {"type": "string", "maxLength": MAX_SUBJECT, "description": "только для нового письма: тема"},
+               "description": "only for a new letter: an address the owner has already corresponded with (it is in the archive)"},
+        "subject": {"type": "string", "maxLength": MAX_SUBJECT, "description": "only for a new letter: the subject"},
         "text": {"type": "string", "minLength": 1, "maxLength": MAX_TEXT,
-                 "description": "текст целиком, как он уйдёт: обычный текст без разметки, от лица Владельца"},
+                 "description": "the whole text as it will leave: plain text without markup, on the owner's behalf"},
         "replaces": {"type": "string", "pattern": "^[0-9a-f]{8}$",
-                     "description": "номер черновика, который этот заменяет: Владелец попросил поправить"},
+                     "description": "the number of the draft this one replaces: the owner asked for an edit"},
     },
 }

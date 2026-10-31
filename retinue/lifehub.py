@@ -1,5 +1,5 @@
 """The life hub (`lifehub`): pages about the owner's life on his own server, behind his VPN, for his devices only.
-In Retinue «хаб» already names the knowledge base's git hub, so in code the site is the lifehub.
+In Retinue "hub" already names the knowledge base's git hub, so in code the site is the lifehub.
 
 The router writes data here and nothing else: JSON checked by a schema, pictures drawn or re-encoded by code. The
 pages are built from it by Hugo in a container of its own with no network (deploy/lifehub); the model never writes
@@ -44,54 +44,54 @@ class Refused(ValueError):
 
 # --- the schema: the same dict is the tool's input schema for her and the check here --------------------------------
 
-TYPES = {"object": (dict, "нужен объект"), "array": (list, "нужен список"), "string": (str, "нужна строка"),
-         "integer": (int, "нужно целое число"), "number": ((int, float), "нужно число"),
-         "boolean": (bool, "true или false")}
+TYPES = {"object": (dict, "must be an object"), "array": (list, "must be a list"),
+         "string": (str, "must be a string"), "integer": (int, "must be an integer"),
+         "number": ((int, float), "must be a number"), "boolean": (bool, "true or false")}
 
 
 def check(schema: dict, value, where: str = ""):
     """`value` if it fits `schema` — a subset of JSON Schema: type, properties, required, additionalProperties,
     items, minItems, maxItems, enum, minLength, maxLength, pattern, format date, minimum, maximum. Raises Refused
     naming the first field that does not fit."""
-    name = where or "аргументы"
+    name = where or "arguments"
     kind = schema.get("type")
     if kind:
         types, words = TYPES[kind]
         if not isinstance(value, types) or (kind != "boolean" and isinstance(value, bool)):
             raise Refused(f"{name}: {words}")
     if "enum" in schema and value not in schema["enum"]:
-        raise Refused(f"{name}: одно из: {', '.join(map(str, schema['enum']))}")
+        raise Refused(f"{name}: one of: {', '.join(map(str, schema['enum']))}")
     if isinstance(value, str):
         if len(value) < schema.get("minLength", 0):
-            raise Refused(f"{name}: пустая строка" if schema["minLength"] == 1 else
-                          f"{name}: не короче {schema['minLength']} знаков")
+            raise Refused(f"{name}: empty string" if schema["minLength"] == 1 else
+                          f"{name}: at least {schema['minLength']} characters")
         if len(value) > schema.get("maxLength", len(value)):
-            raise Refused(f"{name}: не длиннее {schema['maxLength']} знаков")
+            raise Refused(f"{name}: at most {schema['maxLength']} characters")
         if "pattern" in schema and not re.search(schema["pattern"], value):
-            raise Refused(f"{name}: {schema.get('description') or 'не по форме'}")
+            raise Refused(f"{name}: {schema.get('description') or 'malformed'}")
         if schema.get("format") == "date":
             try:
                 if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
                     raise ValueError(value)
                 date.fromisoformat(value)
             except ValueError:
-                raise Refused(f"{name}: дата вида 2026-05-14") from None
+                raise Refused(f"{name}: a date like 2026-05-14") from None
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         low, high = schema.get("minimum"), schema.get("maximum")
         if (low is not None and value < low) or (high is not None and value > high):
-            raise Refused(f"{name}: от {low} до {high}")
+            raise Refused(f"{name}: from {low} to {high}")
     if isinstance(value, list):
         if not schema.get("minItems", 0) <= len(value) <= schema.get("maxItems", len(value)):
-            raise Refused(f"{name}: от {schema.get('minItems', 0)} до {schema.get('maxItems')} элементов")
+            raise Refused(f"{name}: from {schema.get('minItems', 0)} to {schema.get('maxItems')} items")
         for i, item in enumerate(value):
             check(schema.get("items", {}), item, f"{where}[{i}]")
     if isinstance(value, dict):
         fields = schema.get("properties", {})
         if schema.get("additionalProperties") is False and (unknown := [k for k in value if k not in fields]):
-            raise Refused(f"{name}: неизвестное поле {str(unknown[0])[:40]}. Поля: {', '.join(fields)}.")
+            raise Refused(f"{name}: unknown field {str(unknown[0])[:40]}. Fields: {', '.join(fields)}.")
         for field in schema.get("required", []):
             if field not in value:
-                raise Refused(f"{name}: нет поля {field}")
+                raise Refused(f"{name}: missing field {field}")
         for field, inner in fields.items():
             if field in value:
                 check(inner, value[field], f"{where}.{field}" if where else field)
@@ -109,24 +109,24 @@ TRIP_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["title", "summary", "start", "end", "options"],
     "properties": {
         "trip_id": {"type": "string", "pattern": "^[0-9a-f]{16}$",
-                    "description": "id страницы из ответа publish_trip — только чтобы обновить ту же поездку"},
-        "title": text(80, "заголовок страницы: откуда, куда, даты — «Энск — Лукоморье, 22–24 мая»", 1),
-        "summary": text(1500, "твой вывод для Владельца: что советуешь и почему, чего нет в цене, что не так с "
-                              "датами — обычный текст, без разметки и ссылок"),
-        "start": {"type": "string", "format": "date", "description": "первый день поездки, 2026-05-22"},
-        "end": {"type": "string", "format": "date", "description": "последний день поездки, 2026-05-24"},
-        "options": {"type": "array", "minItems": 1, "maxItems": 12, "description": "варианты, которые ты нашла",
+                    "description": "the page's id from publish_trip's answer — only to update the same trip"},
+        "title": text(80, "the page's title: from, to, dates — \"Springfield — Shelbyville, 22–24 May\"", 1),
+        "summary": text(1500, "your conclusion for the owner: what you recommend and why, what the price leaves out, "
+                              "what is off with the dates — plain text, no markup and no links"),
+        "start": {"type": "string", "format": "date", "description": "the trip's first day, 2026-05-22"},
+        "end": {"type": "string", "format": "date", "description": "the trip's last day, 2026-05-24"},
+        "options": {"type": "array", "minItems": 1, "maxItems": 12, "description": "the options you found",
                     "items": {
                         "type": "object", "additionalProperties": False,
                         "required": ["kind", "search_id", "link", "note"],
                         "properties": {
                             "kind": {"type": "string", "enum": list(OPTION_KINDS),
-                                     "description": "flight — перелёт, stay — жильё, ground — поезд или автобус"},
+                                     "description": "flight — a flight, stay — a place to stay, ground — a train or a bus"},
                             "search_id": {"type": "string", "pattern": "^[a-z0-9]{6,16}$",
-                                          "description": "search_id из ответа travel-ops, где этот вариант"},
-                            "link": text(1000, "ссылка варианта из ответа travel-ops целиком (link.url)"),
-                            "note": text(600, "твои слова о варианте: почему он, что в отзывах (как чужое мнение)"),
-                            "pick": {"type": "boolean", "description": "true — этот вариант ты советуешь"},
+                                          "description": "the search_id of travel-ops' answer that has this option"},
+                            "link": text(1000, "the option's link from travel-ops' answer, whole (link.url)"),
+                            "note": text(600, "your words about the option: why this one, what the reviews say (as someone else's opinion)"),
+                            "pick": {"type": "boolean", "description": "true — you recommend this option"},
                         }}},
     },
 }
@@ -197,36 +197,35 @@ class Data:
 DAY = 86400
 WEEK = 7 * DAY
 # How a model run is named on the status page. A kind not here is shown as it is.
-RUN_KINDS = {"conversation": "разговор", "retry": "ответ после лимита", "summary": "утренняя сводка",
-             "compact": "сжатие", "reminder": "напоминание", "price": "слежение за ценой", "triage": "разбор письма",
-             "mail": "суждение о почте", "weekly": "недельный обзор", "initiative": "своя мысль"}
-TOKENS = ("вход", "выход", "кеш: чтение", "кеш: запись")
-RUN_STATES = {"done": "удачно", "error": "сбой", "failed": "сбой", "rejected": "отказ", "limit": "упёрлись в лимит"}
-WINDOW_NAMES = {"five_hour": "5 часов", "seven_day": "неделя"}
+RUN_KINDS = {"conversation": "conversation", "retry": "reply after the limit", "summary": "morning brief",
+             "compact": "compaction", "reminder": "reminder", "price": "price watch", "triage": "letter triage",
+             "mail": "mail judgement", "weekly": "weekly review", "initiative": "own thought"}
+TOKENS = ("input", "output", "cache: read", "cache: write")
+RUN_STATES = {"done": "ok", "error": "failure", "failed": "failure", "rejected": "refused", "limit": "hit the limit"}
+WINDOW_NAMES = {"five_hour": "5 hours", "seven_day": "week"}
 REFRESH_S = 300           # the pages' data is written this often
 AFTER_RUN_S = 60          # and this long after a model run ended: what she just did shows on the status page
 DEADLINE_PAST_DAYS = 30   # a deadline that passed this long ago is history, not a deadline
 DEADLINES_DOCUMENTS = 8   # coming deadlines of documents (`until`) on the «now» page, besides the overdue ones
 DEADLINES_RECHECKS = 8    # and of facts to check again (`stale_after`)
-EVENING = 18              # from this local hour the day's events are «вечер»
-BLOCK_HOURS = 4           # an own recurring event this long, alone and nowhere, is a busy block («Блок»), not a meeting
+EVENING = 18              # from this local hour the day's events are «Evening»
+BLOCK_HOURS = 4           # an own recurring event this long, alone and nowhere, is a busy block («Block»), not a meeting
 WAITING_ITEMS = 200       # items that wait for the owner, read for the «now» page at most
 WAITING_SHOWN = 5         # and the newest of them under each person
-# What the owner is asked to do, the most pressing first; «прочитать» is only to know.
+# What the owner is asked to do, the most pressing first; «read» is only to know.
 URGENCY = {"reply": 0, "decide": 1, "pay": 2, "attend": 3, "act": 4, "read": 5}
 URL = re.compile(r"https?://[^\s<>\"'`]+")
 LINKS = 4                 # addresses taken out of one note at most
 URL_CHARS = 2000          # an address longer than this is not made a link
-# Meeting services: an event's address there is a «войти» button showing the host. Matched by the host's end.
+# Meeting services: an event's address there is a «join» button showing the host. Matched by the host's end.
 MEETINGS = (("zoom.us", "zoom"), ("zoom.com", "zoom"), ("meet.google.com", "meet"), ("teams.microsoft.com", "teams"),
             ("teams.live.com", "teams"), ("whereby.com", "online"), ("meet.jit.si", "online"), ("webex.com", "online"))
 # A letter from a robot of a service — a CRM, a shop — is a notice, not a letter that waits for his answer.
 NOTICE = re.compile(r"^(no-?reply|notifications?|notify|alerts?|mailer-daemon|do-?not-?reply|robot|bounces?)[@+.-]",
                     re.IGNORECASE)
 PARAGRAPH_CHARS = 280     # a summary's paragraph is cut after a sentence past this
-KIND_NAMES = {"flight": "Перелёт", "stay": "Жильё", "ground": "Дорога"}
-NEEDS = {"read": "прочитать", "reply": "ответить", "decide": "решить", "attend": "прийти", "pay": "оплатить",
-         "act": "сделать"}
+KIND_NAMES = {"flight": "Flight", "stay": "Stay", "ground": "Overland"}
+NEEDS = {"read": "read", "reply": "reply", "decide": "decide", "attend": "attend", "pay": "pay", "act": "do"}
 REVIEW_DAYS = 7           # the review page: her judgements this many days back
 REVIEW_ITEMS = 400        # at most this many of them
 REVIEW_DROPPED = 300      # and this many lines of the dropped log
@@ -234,29 +233,31 @@ REVIEW_PAGE = 25          # cards on one page of the review
 REVIEW_DROPPED_PAGE = 50  # lines on one page of the dropped
 REVIEW_SENDERS = 40       # senders with a page of their own, the most frequent first
 CHIP_CHARS = 28           # a sender's name on a chip: her «who» up to its first aside, then cut
-SOURCES = {"telegram": "Telegram", "mail": "почта", "calendar": "календарь"}
-REVIEW_MARKS = {"told": "сразу тебе", "held": "сразу, одним сообщением", "later": "в утреннюю сводку",
-                "done": "была в утренней сводке", "silent": "молча", "waiting": "ждёт её оценки"}
-DECISIONS = {"told": "сразу тебе", "held": "сразу, одним сообщением с другими от него", "later": "в утреннюю сводку",
-             "done": "была в утренней сводке", "silent": "молча", "kept": "ждёт её оценки", "new": "ждёт её оценки"}
-DRAFTS = {"shown": "черновик ждёт твоей кнопки", "hidden": "черновик ждёт твоей кнопки", "fixing": "черновик правится",
-          "queued": "черновик отправляется", "sending": "черновик отправляется", "sent": "черновик отправлен",
-          "stale": "черновик устарел: пришло новое сообщение", "expired": "черновик устарел по времени",
-          "dropped": "ты сказал не отвечать", "failed": "черновик не отправлен", "unknown": "черновик: ушло ли — неизвестно",
-          "link": "черновик: отправить сам по ссылке"}
+SOURCES = {"telegram": "Telegram", "mail": "mail", "calendar": "calendar"}
+REVIEW_MARKS = {"told": "told you at once", "held": "at once, in one message", "later": "in the morning brief",
+                "done": "was in the morning brief", "silent": "silently", "waiting": "awaiting judgement"}
+DECISIONS = {"told": "told you at once", "held": "at once, in one message with the others from them",
+             "later": "in the morning brief", "done": "was in the morning brief", "silent": "silently",
+             "kept": "awaiting judgement", "new": "awaiting judgement"}
+DRAFTS = {"shown": "draft waits for your button", "hidden": "draft waits for your button", "fixing": "draft being edited",
+          "queued": "draft being sent", "sending": "draft being sent", "sent": "draft sent",
+          "stale": "draft expired: a new message came", "expired": "draft expired with time",
+          "dropped": "you said not to reply", "failed": "draft not sent", "unknown": "draft: whether it went is unknown",
+          "link": "draft: send it yourself by the link"}
 MAIL_DAYS = 7             # mail that needs the owner, judged this many days back
 TRACKER_DAYS = 14         # the tracker page: its meetings this many days ahead
 TRACKER_MAIL_DAYS = 30    # and the private matter's letters waiting for his answer, this many days back
 TRACKER_NOTES = 300       # a tracker row's notes, cut to this on the page
 # The tracker's defaults; the owner's own are his config (`Tracker`).
-STATES = {"new": "новое", "sent": "отправлено", "answered": "ответили", "meeting": "встреча", "won": "принято",
-          "lost": "отказ", "dropped": "отброшено"}
+STATES = {"new": "new", "sent": "sent", "answered": "answered", "meeting": "meeting", "won": "accepted",
+          "lost": "rejected", "dropped": "dropped"}
 # The page's groups of rows: what goes on, where an answer is due, what to do next, the closed. A group keyed «next»
-# is sorted by score; «closed» is folded. Rows of no group's state are «Другое».
-GROUPS = (("live", "Идёт", ("meeting", "answered")), ("waiting", "Ждём ответа", ("sent",)),
-          ("next", "Следующие", ("new",)), ("closed", "Закрыто", ("won", "lost", "dropped")))
+# is sorted by score; «closed» is folded. Rows of no group's state are «Other».
+GROUPS = (("live", "Ongoing", ("meeting", "answered")), ("waiting", "Awaiting reply", ("sent",)),
+          ("next", "Next", ("new",)), ("closed", "Closed", ("won", "lost", "dropped")))
 COUNTED = ("sent", "answered", "meeting", "won", "lost")  # a row counts for the week when it reached one of these
-MEETING_WORDS = ("встреча", "meeting")  # a calendar event with one of these, or a row's item, in its title
+MEETING_WORDS = ("meeting", "встреча")  # a calendar event with one of these, or a row's item, in its title (the
+# calendar is the owner's data: Russian titles too)
 
 
 @dataclass(frozen=True)
@@ -268,7 +269,7 @@ class Tracker:
     the words of a calendar event that is one of its `meetings`, and the table's columns of the `item` and its
     `detail`. Each has a neutral default."""
     path: str = "profile/tracker.md"
-    title: str = "Трекер"
+    title: str = "Tracker"
     states: dict = dataclass_field(default_factory=lambda: dict(STATES))
     groups: tuple = GROUPS
     counted: tuple = COUNTED
@@ -329,9 +330,9 @@ class Tracker:
         if not tree or not (Path(tree) / self.path).is_file():
             return ""
         moves = ", ".join(f"`{state.capitalize()}`" for state in self.counted)
-        return (f"Трекер Владельца «{self.title}»: `{tree.rstrip('/')}/{self.path}`. Status после отправки — ровно "
-                f"одно из {moves}; новая строка — `{self.counted[0].capitalize()}`." if self.counted else
-                f"Трекер Владельца «{self.title}»: `{tree.rstrip('/')}/{self.path}`.")
+        return (f"The owner's tracker \"{self.title}\": `{tree.rstrip('/')}/{self.path}`. Status after sending — "
+                f"exactly one of {moves}; a new row — `{self.counted[0].capitalize()}`." if self.counted else
+                f"The owner's tracker \"{self.title}\": `{tree.rstrip('/')}/{self.path}`.")
 
 
 def unlinked(text: str) -> tuple[str, list[dict]]:
@@ -450,18 +451,18 @@ class Lifehub:
                 "next": None, "today": [], "evening": [], "tomorrow": [], "blocks": [], "calendar": "",
                 "reminders": [self.reminder(job, now) for job in core.jobs.reminders(10)],
                 "mail": self.waiting(now), "deadlines": self.deadlines(today), "chips": self.chips(now),
-                "health": core.health(now).removeprefix("Здоровье за сутки: ").rstrip(".")}
+                "health": health_words(core.health(now))}
         if core.mail and core.mail.collector is not None:
             try:
                 start = midnight(today, self.tz)
                 events, failed = await core.mail.collector.agenda(start, midnight(today + timedelta(days=2), self.tz))
                 page.update(self.timeline(events, now))
-                page["calendar"] = "; ".join(f"не прочитан {f}" for f in failed)
+                page["calendar"] = "; ".join(f"not read: {f}" for f in failed)
             except Exception:
                 log.exception("lifehub: the agenda was not read")
-                page["calendar"] = "календарь не прочитан: сборщик недоступен"
+                page["calendar"] = "calendar not read: the collector is unavailable"
         elif not core.mail:
-            page["calendar"] = "календарь не подключён"
+            page["calendar"] = "calendar not connected"
         return page
 
     async def write_now(self, now: float) -> None:
@@ -469,7 +470,7 @@ class Lifehub:
 
     def timeline(self, events: list[dict], now: float) -> dict:
         """Today, the evening and tomorrow from the calendars, by the moment each begins in the owner's zone. What
-        ended is gone; the owner's own recurring blocks with nobody else and nowhere to be — «Блок» — are
+        ended is gone; the owner's own recurring blocks with nobody else and nowhere to be — «Block» — are
         named once in `blocks`, not shown as meetings; `next` is the nearest meeting, going on or ahead."""
         from . import clock
 
@@ -518,7 +519,7 @@ class Lifehub:
                 return None
         except (TypeError, ValueError):
             return None
-        title = str(event.get("summary") or "").strip() or "(без названия)"
+        title = str(event.get("summary") or "").strip() or "(no title)"
         place = places(str(event.get("location") or ""), str(event.get("description") or ""))
         alone = int(event.get("attendees") or 0) <= 1
         block = (not all_day and bool(event.get("recurring")) and alone and not place["place"]
@@ -557,13 +558,13 @@ class Lifehub:
             chat = item["source"] == "telegram" or sender.startswith("tg:")
             private = item["kind"] == PRIVATE or bool(card.get(PRIVATE))
             key = PRIVATE if private else sender or str(card.get("who") or "?")
-            who = "Личное" if private else named(str(data.get("name") or "") if chat else
+            who = "Private" if private else named(str(data.get("name") or "") if chat else
                                                      str(card.get("who") or ""), "" if chat else sender)
             ts = float(item["ts"] or item["at"] or now)
             need = str(card.get("needs_now") or "read")
             group = groups.setdefault(key, {
                 "key": hashlib.sha256(key.encode()).hexdigest()[:10], "who": who, "private": private,
-                "where": "почта" if private else SOURCES["telegram" if chat else "mail"],
+                "where": "mail" if private else SOURCES["telegram" if chat else "mail"],
                 "source": "mail" if private else "telegram" if chat else "mail",
                 "action": need, "needs": "", "count": 0, "first": ts, "last": ts, "deadline": "", "items": []})
             group["count"] += 1
@@ -578,8 +579,8 @@ class Lifehub:
         for group in groups.values():
             group["needs"] = NEEDS.get(group["action"], "")
             group["age"] = clock.ago(now - group["first"])
-            group["text"] = (f"{group['count']} {plural(group['count'], 'письмо', 'письма', 'писем')} о личном — "
-                             "на странице трекера" if group["private"] else group["items"][-1]["text"])
+            group["text"] = (f"{group['count']} {plural(group['count'], 'letter', 'letters')} about the private "
+                             "matter — on the tracker page" if group["private"] else group["items"][-1]["text"])
             group["items"] = group["items"][::-1][:WAITING_SHOWN]
             group["first"], group["last"] = round(group["first"]), round(group["last"])
         ordered = sorted(groups.values(), key=lambda g: (URGENCY.get(g["action"], 9) >= URGENCY["read"],
@@ -590,21 +591,21 @@ class Lifehub:
 
     def chips(self, now: float) -> list[dict]:
         """The row of status chips on «now»: whether anything is broken, the backup, the limit, the hub's build —
-        each `ok`, `warn` or `bad`, the details on «Статус»."""
+        each `ok`, `warn` or `bad`, the details on «Status»."""
         broken = [c for c in self.connectors(now) if not c["ok"]]
-        out = [{"key": "health", "text": "всё работает" if not broken else
-                f"{len(broken)} {plural(len(broken), 'сбой', 'сбоя', 'сбоев')}", "level": "bad" if broken else "ok"}]
+        out = [{"key": "health", "text": "all working" if not broken else
+                f"{len(broken)} {plural(len(broken), 'failure', 'failures')}", "level": "bad" if broken else "ok"}]
         if self.core.backup_status:
             said = self.core.backup(now)
-            good = said.startswith("бэкап —") and "не удался" not in said
-            out.append({"key": "backup", "text": said.replace("бэкап — ", "бэкап ") if good else said,
+            good = backed_up(said)
+            out.append({"key": "backup", "text": BACKUP.sub(r"\1 ", said, count=1) if good else said,
                         "level": "ok" if good else "bad"})
         windows = self.core.store.windows()
         if windows:
             share = max(round(w["utilization"] * 100) for w in windows.values())
-            out.append({"key": "limit", "text": f"лимит {share} %", "level": level(share)})
+            out.append({"key": "limit", "text": f"limit {share} %", "level": level(share)})
         if (built := self.built(now)) is not None:
-            out.append({"key": "build", "text": "хаб " + built["said"].removeprefix("хаб "),
+            out.append({"key": "build", "text": built["said"],
                         "level": "ok" if built["ok"] else "bad"})
         return out
 
@@ -622,7 +623,7 @@ class Lifehub:
         page = {"updated": self.stamp(now), "days": REVIEW_DAYS, "views": [], "dropped": 0,
                 "facets": {"sources": [], "decisions": [], "senders": []}}
         if not self.core.mail:
-            page["views"] = cut("all", "Всё", {}, [])
+            page["views"] = cut("all", "All", {}, [])
             return page
         store, since = self.core.mail.store, now - REVIEW_DAYS * DAY
         drafts = self.core.outbox.store.by_reply() if self.core.outbox else {}
@@ -644,7 +645,7 @@ class Lifehub:
                 "needs": NEEDS.get(card.get("needs_now"), ""), "deadline": str(card.get("deadline_now") or ""),
                 "draft": DRAFTS.get(drafts.get(item["event_id"] or ""), "")})
         facets = page["facets"]
-        page["views"] += cut("all", "Всё", {}, items)
+        page["views"] += cut("all", "All", {}, items)
         for key, name in SOURCES.items():
             these = [i for i in items if i["source"] == key]
             if these:
@@ -661,12 +662,12 @@ class Lifehub:
         for key, these in sorted(senders.items(), key=lambda kv: -len(kv[1]))[:REVIEW_SENDERS]:
             facets["senders"].append({"key": key, "name": chip(these[0]["who"]), "where": these[0]["where"],
                                       "count": len(these), "path": key})
-            page["views"] += cut(key, these[0]["who"] or "без имени", {"who": key}, these)
+            page["views"] += cut(key, these[0]["who"] or "no name", {"who": key}, these)
         rows = [{"when": self.stamp(row["ts"]), "from": row["sender"], "subject": row["subject"],
-                 "kind": "твоё правило" if row["why"] == "blocked" else KINDS.get(row["kind"], row["kind"])}
+                 "kind": "your rule" if row["why"] == "blocked" else KINDS.get(row["kind"], row["kind"])}
                 for row in store.dropped_since(since, REVIEW_DROPPED)]
         page["dropped"], page["dropped_shown"] = store.dropped_count(since), len(rows)
-        page["views"] += cut("dropped", "Отсеяно", {}, rows, key="rows", size=REVIEW_DROPPED_PAGE)
+        page["views"] += cut("dropped", "Dropped", {}, rows, key="rows", size=REVIEW_DROPPED_PAGE)
         return page
 
     def write_review(self, now: float) -> None:
@@ -690,7 +691,7 @@ class Lifehub:
                             "tone": next((g for g, _, states in tracker.groups if key in states), "other")}
                            for key, label in tracker.states.items() if (n := sum(1 for r in rows if r["key"] == key))],
                 "rows": rows, "meetings": [], "letters": [], "notices": []}
-        groups = (*tracker.groups, ("other", "Другое", ()))
+        groups = (*tracker.groups, ("other", "Other", ()))
         page["groups"] = [{"key": key, "title": title, "rows": these} for key, title, states in groups
                           if (these := sorted((r for r in rows if r["key"] in states or (not states and not any(
                               r["key"] in s for _, _, s in tracker.groups))), key=lambda r: -score(r["score"])
@@ -756,7 +757,7 @@ class Lifehub:
             head = front_matter(path)
             if not head or head.get("status") == "superseded":
                 continue
-            for field, kind, what in (("until", "document", "действует до"), ("stale_after", "recheck", "перепроверить")):
+            for field, kind, what in (("until", "document", "valid until"), ("stale_after", "recheck", "recheck")):
                 value = head.get(field)
                 when = value if isinstance(value, date) else _day(value)
                 if when and when >= horizon:
@@ -807,15 +808,15 @@ class Lifehub:
             "problems": [c for c in connectors if not c["ok"]],
             "build": self.built(now),
             "sent": [[name, core.outbox.store.sent(now - DAY, channel), core.outbox.store.sent(now - WEEK, channel)]
-                     for channel, name in (("mail", "почта"), ("telegram", "Telegram"))] if core.outbox else None,
+                     for channel, name in (("mail", "mail"), ("telegram", "Telegram"))] if core.outbox else None,
             "mail": None,
             "ts": round(now),
         }
         status["charts"] = [
-            charts.bars("Токены за 7 дней по видам запусков", list(TOKENS),
+            charts.bars("Tokens over 7 days by kind of run", list(TOKENS),
                         [(row["name"], [row["input"], row["output"], row["cache_read"], row["cache_write"]])
                          for row in status["tokens"]]),
-            charts.bars("Запуски модели по дням", ["удачные", "сбои"], self.runs_by_day(now), colours=[1, 4])]
+            charts.bars("Model runs by day", ["ok", "failures"], self.runs_by_day(now), colours=[1, 4])]
         if core.mail:
             def named(counts: dict) -> list:
                 return [[KINDS.get(k, k), n] for k, n in sorted(counts.items(), key=lambda x: -x[1])]
@@ -826,8 +827,8 @@ class Lifehub:
                         "blocked": [[s, n] for s, n in tally["blocked"].items()]},
                 "week": {"kept": named(week["kept"]), "dropped": named(week["dropped"]),
                          "blocked": [[s, n] for s, n in week["blocked"].items()]},
-                "rules": [f"отсеивать {sender}" if rule == "block" else
-                          f"не уведомлять сразу: {sender}, {KINDS.get(kind, kind)}"
+                "rules": [f"drop {sender}" if rule == "block" else
+                          f"do not notify at once: {sender}, {KINDS.get(kind, kind)}"
                           for rule, sender, kind in core.mail.store.rules()],
             }
         return status
@@ -839,51 +840,50 @@ class Lifehub:
         core, out = self.core, []
         for channel in core.channels:
             out.append({"name": channel.name.capitalize() if channel.name == "telegram" else channel.name,
-                        "ok": True, "state": "работает"})
+                        "ok": True, "state": "working"})
         if core.travel is None:
-            out.append({"name": "travel-ops", "ok": False, "state": "не подключён"})
+            out.append({"name": "travel-ops", "ok": False, "state": "not connected"})
         elif core.travel_state is None:
-            out.append({"name": "travel-ops", "ok": True, "state": "подключён, ещё не опрошен"})
+            out.append({"name": "travel-ops", "ok": True, "state": "connected, not polled yet"})
         else:
             seen, error = core.travel_state
             out.append({"name": "travel-ops", "ok": not error,
-                        "state": f"{'не ответил' if error else 'ответил'} {clock.ago(now - seen)} назад"
+                        "state": f"{'did not answer' if error else 'answered'} {clock.ago(now - seen)} ago"
                                  + (f": {error}" if error else "")})
         if core.mail:
             for row in core.mail.store.health():
-                what = "почта" if row["source"] == "mail" else "календарь"
+                what = "mail" if row["source"] == "mail" else "calendar"
                 if row["error"] == "invalid_grant":
-                    state, ok = "нужен вход заново", False
+                    state, ok = "needs a new sign-in", False
                 elif row["error"]:
-                    state, ok = f"сбой: {row['error']}", False
+                    state, ok = f"failure: {row['error']}", False
                 elif row["last_ok"]:
-                    state, ok = f"синхронизирована {clock.ago(now - row['last_ok'])} назад", True
+                    state, ok = f"synced {clock.ago(now - row['last_ok'])} ago", True
                 else:
-                    state, ok = "ещё не синхронизирована", False
+                    state, ok = "not synced yet", False
                 out.append({"name": what, "detail": row["account"], "ok": ok, "state": state})
         else:
-            out.append({"name": "почта и календарь", "ok": False, "state": "не подключены"})
+            out.append({"name": "mail and calendar", "ok": False, "state": "not connected"})
         if core.mail and core.mail.gateway:
-            seen, said = core.mail.chats or (0.0, "ещё не опрошен")
+            seen, said = core.mail.chats or (0.0, "not polled yet")
             ok = isinstance(said, dict) and bool(said.get("connected"))
             out.append({"name": "Telegram Business", "ok": ok, "state": said if isinstance(said, str) else
-                        ("бот подключён" if ok else "бот не подключён") + (
-                            f", права: {', '.join(said.get('rights') or []) or 'нет'}" if isinstance(said, dict) else "")})
+                        ("bot connected" if ok else "bot not connected") + (
+                            f", rights: {', '.join(said.get('rights') or []) or 'none'}" if isinstance(said, dict) else "")})
         if core.outbox:
-            out.append({"name": "отправка почты", "ok": bool(core.outbox.sender),
-                        "state": "подключена" if core.outbox.sender else "не подключена"})
-        out.append({"name": "база знаний", "ok": bool(core.memory),
-                    "state": "подключена" if core.memory else "не подключена"})
+            out.append({"name": "mail sending", "ok": bool(core.outbox.sender),
+                        "state": "connected" if core.outbox.sender else "not connected"})
+        out.append({"name": "the Base", "ok": bool(core.memory),
+                    "state": "connected" if core.memory else "not connected"})
         if core.backup_status:
             said = core.backup(now)
-            out.append({"name": "бэкап", "ok": said.startswith("бэкап —") and "не удался" not in said,
-                        "state": said.removeprefix("бэкап — ")})
+            out.append({"name": "backup", "ok": backed_up(said), "state": BACKUP.sub("", said, count=1)})
         if (built := self.built(now)) is not None:
-            out.append({"name": "хаб", "ok": built["ok"], "state": built["said"].removeprefix("хаб ")})
+            out.append({"name": "hub", "ok": built["ok"], "state": built["said"].removeprefix("hub ")})
         if getattr(core, "watch", None):
             said = core.watch.health(now)
-            out.append({"name": "контейнеры", "ok": said.startswith("контейнеры: все"),
-                        "state": said.removeprefix("контейнеры: ")})
+            out.append({"name": "containers", "ok": bool(CONTAINERS_OK.match(said)),
+                        "state": CONTAINERS.sub("", said, count=1)})
         return out
 
     def health(self, now: float) -> str:
@@ -905,19 +905,19 @@ class Lifehub:
             if not isinstance(built, dict):
                 raise ValueError(built)
         except FileNotFoundError:
-            return {**out, "said": "хаб ещё не собран"}
+            return {**out, "said": "hub not built yet"}
         except (OSError, ValueError):
-            return {**out, "said": "статус хаба не читается"}
+            return {**out, "said": "hub status unreadable"}
         at = float(built.get("at") or 0)
         out.update(at=round(at), ago=clock.ago(now - at), release=str(built.get("release") or ""))
         if not built.get("ok"):
-            out["error"] = str(built.get("error") or "причина не записана").rstrip(". ")
-            return {**out, "said": f"хаб не обновлён: {out['error']}"}
+            out["error"] = str(built.get("error") or "no reason recorded").rstrip(". ")
+            return {**out, "said": f"hub not updated: {out['error']}"}
         # Pages the build left out: their ids and the check, in the builder's fixed words — never a page's text.
         out["refused"] = [f"{page.get('id')} ({page.get('why')})" for page in built.get("refused") or []
                           if isinstance(page, dict)]
-        return {**out, "ok": True, "said": f"хаб собран {out['ago']} назад" + (
-            f"; не опубликованы страницы: {', '.join(out['refused'][:3])}" if out["refused"] else "")}
+        return {**out, "ok": True, "said": f"hub built {out['ago']} ago" + (
+            f"; pages not published: {', '.join(out['refused'][:3])}" if out["refused"] else "")}
 
     def runs_by_day(self, now: float) -> list[tuple[str, list[int]]]:
         """Model runs of the last seven days by the owner's local date: good ones and failures."""
@@ -946,16 +946,16 @@ class Lifehub:
         try:
             check(TRIP_SCHEMA, trip)
         except Refused as exc:
-            return False, f"Не опубликовано: {str(exc).rstrip('.')}."
+            return False, f"Not published: {str(exc).rstrip('.')}."
         if travel is None:
-            return False, "Не опубликовано: travel-ops не подключён — цены для страницы брать неоткуда."
+            return False, "Not published: travel-ops is not connected — there is nowhere to take the page's prices from."
         page_id = trip.get("trip_id")
         if page_id and not self.data.has("trips", page_id):
-            return False, f"Не опубликовано: страницы {page_id} нет — опубликуй без trip_id."
+            return False, f"Not published: there is no page {page_id} — publish without trip_id."
         for number, option in enumerate(trip["options"]):
             if not linkable(option["link"], self.link_hosts):
-                return False, (f"Не опубликовано: options[{number}].link — не ссылка на площадку travel-ops: возьми "
-                               "link.url из ответа инструмента целиком.")
+                return False, (f"Not published: options[{number}].link is not a link to a travel-ops site: take "
+                               "link.url from the tool's answer, whole.")
         views: dict[tuple, dict] = {}
         options = []
         try:
@@ -971,12 +971,12 @@ class Lifehub:
                     if found:
                         break
                 if found is None:
-                    return False, (f"Не опубликовано: options[{number}] — этой ссылки нет в поиске "
-                                   f"{option['search_id']}. Возьми link.url варианта из ответа travel-ops по этому "
-                                   "search_id.")
+                    return False, (f"Not published: options[{number}] — this link is not in search "
+                                   f"{option['search_id']}. Take the option's link.url from travel-ops' answer for "
+                                   "this search_id.")
                 options.append(self.describe(option, *found))
         except (TravelRefused, TravelUnavailable) as exc:
-            return False, f"Не опубликовано: {str(exc).rstrip('.')}."
+            return False, f"Not published: {str(exc).rstrip('.')}."
         page_id = page_id or self.data.new_id("trips")
         self.data.write(f"trips/{page_id}.json", {
             "id": page_id, "title": trip["title"], "summary": trip["summary"], "paragraphs": paragraphs(trip["summary"]),
@@ -986,8 +986,8 @@ class Lifehub:
         if any(option.get("photo_from") for option in options):  # the page goes up now, its photos a little later
             self.pending.append(page_id)
         url = f"{self.url}/trips/{page_id}/"
-        return True, (f"Опубликовано: {url} (trip_id {page_id} — чтобы обновить эту же страницу). В конце ответа "
-                      f"Владельцу: [подробнее]({url})")
+        return True, (f"Published: {url} (trip_id {page_id} — to update this same page). At the end of your reply to "
+                      f"the owner: [details]({url})")
 
     async def photos(self, page_id: str, travel, now: float) -> None:
         """Photos of the page's stays: travel-ops fetches them from the sites (`stay_photos`; the router has no way
@@ -1032,9 +1032,9 @@ class Lifehub:
         kind = option["kind"]
         price = money(offer.get("price") or offer.get("total"))
         converted = money(offer.get("converted"))
-        seen = f"цена на {self.moment(offer.get('seen_at'))}"
+        seen = f"price as of {self.moment(offer.get('seen_at'))}"
         if view.get("searched_at"):
-            seen += f" (поиск {self.moment(view['searched_at'])})"
+            seen += f" (search {self.moment(view['searched_at'])})"
         out = {"kind": kind, "what": "", "pick": option.get("pick") is True, "note": option["note"], "price": price,
                "converted": "" if converted == price else converted, "seller": str(offer.get("seller") or ""),
                "lines": [], "seen": seen, "link": option["link"], "linkable": True, "photos": [],
@@ -1044,48 +1044,48 @@ class Lifehub:
             out["leg"] = f"{route[0]} → {route[-1]}" if len(route) >= 2 else ""
             out["day"] = str((legs[0] if legs else {}).get("departs") or "")[:10]
             stops = card.get("stops") or 0
-            changes = f"{stops} {plural(stops, 'пересадка', 'пересадки', 'пересадок')}" if stops else "без пересадок"
-            out["what"] = f"Перелёт {' → '.join(card.get('route') or [])}, {changes}"
-            for word, legs in (("туда", card.get("outbound") or []), ("обратно", card.get("inbound") or [])):
+            changes = f"{stops} {plural(stops, 'stop', 'stops')}" if stops else "nonstop"
+            out["what"] = f"Flight {' → '.join(card.get('route') or [])}, {changes}"
+            for word, legs in (("out", card.get("outbound") or []), ("back", card.get("inbound") or [])):
                 if legs:
                     flights = dict.fromkeys(str(leg.get("flight") or leg.get("carrier")) for leg in legs)
                     out["lines"].append(f"{word} {clock_of(legs[0]['departs'])} → {clock_of(legs[-1]['arrives'])} · "
                                         + ", ".join(flights))
-            out["lines"].append("в пути " + duration(card.get("duration_min"))
-                                + (f", обратно {duration(card['return_duration_min'])}"
+            out["lines"].append("travel time " + duration(card.get("duration_min"))
+                                + (f", back {duration(card['return_duration_min'])}"
                                    if card.get("return_duration_min") else ""))
             baggage = offer.get("baggage") or {}
-            out["lines"].append("багаж: " + ("включён" + (f", {baggage['checked_kg']} кг" if baggage.get("checked_kg")
-                                                           else "") if baggage.get("checked") else
-                                             "только ручная кладь" if baggage.get("checked") is False else
-                                             "источник не сказал"))
+            out["lines"].append("baggage: " + ("included" + (f", {baggage['checked_kg']} kg" if baggage.get("checked_kg")
+                                                             else "") if baggage.get("checked") else
+                                               "hand luggage only" if baggage.get("checked") is False else
+                                               "the source did not say"))
         elif kind == "stay":
             stay = card.get("stay") or {}
-            out["what"] = f"Жильё: {stay.get('name', '')}"
+            out["what"] = f"Stay: {stay.get('name', '')}"
             out["leg"] = str(stay.get("name") or "")
-            about = [STAY_KINDS.get(stay.get("kind"), "жильё")]
+            about = [STAY_KINDS.get(stay.get("kind"), "stay")]
             if stay.get("rating") is not None:
                 reviews = stay.get("reviews")
-                about.append(f"рейтинг {decimal(stay['rating'])}" + (
-                    f" ({reviews} {plural(reviews, 'отзыв', 'отзыва', 'отзывов')})" if reviews else ""))
+                about.append(f"rating {decimal(stay['rating'])}" + (
+                    f" ({reviews} {plural(reviews, 'review', 'reviews')})" if reviews else ""))
             if stay.get("center_km") is not None:
-                about.append(f"{decimal(stay['center_km'])} км от центра")
+                about.append(f"{decimal(stay['center_km'])} km from the centre")
             out["lines"].append(" · ".join(about))
             nights = card.get("nights") or 0
-            night = [f"{nights} {plural(nights, 'ночь', 'ночи', 'ночей')}"] if nights else []
-            night += [f"{money(offer['per_night'])} за ночь"] if offer.get("per_night") else []
+            night = [f"{nights} {plural(nights, 'night', 'nights')}"] if nights else []
+            night += [f"{money(offer['per_night'])} per night"] if offer.get("per_night") else []
             night += [str(offer["room"])] if offer.get("room") else []
             out["lines"].append(" · ".join(night))
             if offer.get("free_cancellation"):
-                out["lines"].append("бесплатная отмена" + (f" до {offer['free_cancel_until']}"
+                out["lines"].append("free cancellation" + (f" until {offer['free_cancel_until']}"
                                                            if offer.get("free_cancel_until") else ""))
             elif offer.get("free_cancellation") is False:
-                out["lines"].append("без бесплатной отмены")
+                out["lines"].append("no free cancellation")
             out["photo_from"] = {"search_id": option["search_id"], "stay": str(stay.get("source_id") or "")}
         else:
             rides = card.get("rides") or []
-            out["what"] = "Дорога " + " → ".join([str(rides[0].get("from"))] + [str(r.get("to")) for r in rides]) \
-                if rides else "Дорога"
+            out["what"] = "Overland " + " → ".join([str(rides[0].get("from"))] + [str(r.get("to")) for r in rides]) \
+                if rides else "Overland"
             if rides:
                 out["leg"] = f"{rides[0].get('from')} → {rides[-1].get('to')}"
                 out["day"] = str(rides[0].get("departs") or "")[:10]
@@ -1093,7 +1093,7 @@ class Lifehub:
                 out["lines"].append(f"{RIDES.get(ride.get('mode'), ride.get('mode'))} {clock_of(ride.get('departs'))}"
                                     f" → {clock_of(ride.get('arrives'))} · {ride.get('carrier') or ''} "
                                     f"{ride.get('number') or ''}".rstrip(" ·"))
-            out["lines"].append("в пути " + duration(card.get("duration_min")))
+            out["lines"].append("travel time " + duration(card.get("duration_min")))
         return out
 
     def moment(self, iso) -> str:
@@ -1110,7 +1110,7 @@ class Lifehub:
 
     def pages(self, now: float) -> bool:
         """Every HTML file in a nature folder of the base that says `<meta name="lifehub" content="publish">`, as the
-        hub's `main` has it: its bytes to data/pages/<id>.html, what the «Библиотека» lists to pages.json (with each
+        hub's `main` has it: its bytes to data/pages/<id>.html, what the «Library» lists to pages.json (with each
         file's sha256: the builder takes a page only with the bytes this list names), what was left out and why to
         pages-refused.json. Scripts run only when no commit of hers ever touched the file (`author`). Read again only
         when `main` moved. Returns whether it read the hub."""
@@ -1135,10 +1135,10 @@ class Lifehub:
                 continue
             if mode != "100644" or not PAGE_PATH.fullmatch(path):  # a name git or a glob would read another way
                 log.warning("lifehub: %r is not a plain page name: not published", path)
-                refused.append({"id": "?", "why": "имя файла не по форме: a-z, 0-9, / _ . -"})
+                refused.append({"id": "?", "why": "file name malformed: a-z, 0-9, / _ . -"})
                 continue
             if int(size) > PAGE_MAX:
-                refused.append({"id": slug(PurePosixPath(path).stem) or "?", "why": "больше 3 МБ"})
+                refused.append({"id": slug(PurePosixPath(path).stem) or "?", "why": "over 3 MB"})
                 continue
             body = git_bytes(memory, "cat-file", "blob", blob)
             meta = page_meta(body.decode("utf-8", "replace"))
@@ -1146,7 +1146,7 @@ class Lifehub:
                 continue
             page_id = meta.pop("id") or slug(PurePosixPath(path).stem)
             if not PAGE_ID.fullmatch(page_id):
-                refused.append({"id": "?", "why": "lifehub:id не по форме: a-z, 0-9, -"})
+                refused.append({"id": "?", "why": "lifehub:id malformed: a-z, 0-9, -"})
                 continue
             author, seconds = self.author(path, ref)
             found.setdefault(page_id, []).append({
@@ -1159,13 +1159,13 @@ class Lifehub:
         for page_id, claims in found.items():
             owners = [page for page in claims if page["author"] == "owner"]
             if len(claims) > 1 and len(owners) != 1:  # one address, two files: nobody's guess which one is meant
-                refused.append({"id": page_id, "why": "id у двух файлов, ни один не твой" if not owners
-                                else "id у двух твоих файлов"})
+                refused.append({"id": page_id, "why": "one id on two files, neither of them yours" if not owners
+                                else "one id on two files of yours"})
                 continue
             pages.append(owners[0] if len(claims) > 1 else claims[0])
         pages.sort(key=lambda page: (page["updated"], page["id"]), reverse=True)
         if len(pages) > PAGES_MAX:
-            refused += [{"id": page["id"], "why": f"страниц больше {PAGES_MAX}"} for page in pages[PAGES_MAX:]]
+            refused += [{"id": page["id"], "why": f"more than {PAGES_MAX} pages"} for page in pages[PAGES_MAX:]]
             pages = pages[:PAGES_MAX]
         for page in pages:
             body = page.pop("body")
@@ -1182,7 +1182,7 @@ class Lifehub:
         return True
 
     def library(self) -> list[dict] | None:
-        """The list «Читать» shows in the face, pushed to the platform (`bridge.push_library`): each page's id, title,
+        """The list «Read» shows in the face, pushed to the platform (`bridge.push_library`): each page's id, title,
         full address, Space, day and reading time — no description, no body, no path in the base; a page with no
         <title> goes by its id, a page the last build refused is left out (its address is a 404). None until the
         pages were first read: an empty list would say every page is gone."""
@@ -1222,14 +1222,15 @@ class Lifehub:
         return ("assistant" if hers or not history else "owner"), seconds
 
     async def upload(self, origin, space: str, upload, native_id: str) -> None:
-        """The owner sent an HTML file with «в хаб <Пространство>» (a page made in claude.ai on his phone): code, not
-        the model, puts it in the base as <Пространство>/artifacts/<name>.html with the opt-in mark, commits it with
-        a trailer that says it is his, and answers with the page's address. On record like any message of his."""
+        """The owner sent an HTML file with «to hub <Space>» (or the Russian «в хаб <Space>»: `channels/telegram.py`; a
+        page made in claude.ai on his phone): code, not the model, puts it in the base as <Space>/artifacts/<name>.html
+        with the opt-in mark, commits it with a trailer that says it is his, and answers with the page's address. On
+        record like any message of his."""
         from .archive import OWNER
 
         core = self.core
         name = (upload.name or "page.html").strip()
-        event, fresh = core.archive.append(OWNER, f"[страница в хаб {space}: {name}]", channel=origin.name,
+        event, fresh = core.archive.append(OWNER, f"[page to hub {space}: {name}]", channel=origin.name,
                                            native_id=native_id, meta={"hub_page": space},
                                            conversation_id=core.store.conversation(core.default_agent))
         if not fresh and core.archive.answered(event.id):
@@ -1238,35 +1239,35 @@ class Lifehub:
             text = await self.put_page(space, name, upload, time.time())
         except Exception as exc:  # the owner hears of it instead of silence
             log.exception("lifehub: the page %s was not put in the base", name)
-            text = f"Страница не опубликована: ошибка Роутера ({type(exc).__name__})."
+            text = f"Page not published: the router failed ({type(exc).__name__})."
         await core.tell_owner(text, origin=origin, ref=event.id)
 
     async def put_page(self, space: str, name: str, upload, now: float) -> str:
         core = self.core
         memory = core.memory
         if memory is None:
-            return "Страница не опубликована: база знаний не подключена — класть её некуда."
+            return "Page not published: the Base is not connected — there is nowhere to put it."
         spaces = sorted(p.name for p in Path(memory.tree).iterdir()  # a Space is a folder with its showcase
                         if SPACE.fullmatch(p.name) and (p / "AGENTS.md").is_file())
         if space not in spaces:
-            return f"Страница не опубликована: Пространства «{space[:40]}» в базе нет. Есть: {', '.join(spaces)}."
+            return f"Page not published: there is no Space \"{space[:40]}\" in the Base. There are: {', '.join(spaces)}."
         if not name.lower().endswith((".html", ".htm")):
-            return "Страница не опубликована: это не HTML-файл (нужен .html)."
+            return "Page not published: this is not an HTML file (.html needed)."
         if upload.refused or upload.size > PAGE_MAX:
-            return f"Страница не опубликована: файл больше {PAGE_MAX // 1024 // 1024} МБ."
+            return f"Page not published: the file is over {PAGE_MAX // 1024 // 1024} MB."
         data = await upload.fetch()
         if len(data) > PAGE_MAX:
-            return f"Страница не опубликована: файл больше {PAGE_MAX // 1024 // 1024} МБ."
+            return f"Page not published: the file is over {PAGE_MAX // 1024 // 1024} MB."
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
-            return "Страница не опубликована: файл не в UTF-8."
+            return "Page not published: the file is not UTF-8."
         text = opted_in(text)
         meta = page_meta(text) or {}
         stem = slug(PurePosixPath(name).stem) or f"page-{time.strftime('%Y%m%d-%H%M%S', time.gmtime(now))}"
         named = meta.get("id")
         if named and not PAGE_ID.fullmatch(named):
-            return "Страница не опубликована: lifehub:id в файле — только a-z, 0-9 и дефис."
+            return "Page not published: lifehub:id in the file — only a-z, 0-9 and hyphens."
         async with core.queue:  # one writer: her turns and this commit take turns
             await asyncio.to_thread(memory.sync)
             taken = Path(memory.tree) / space / "artifacts"
@@ -1275,21 +1276,22 @@ class Lifehub:
                 number += 1                                      # hers, and a new file is his alone
                 path = f"{space}/artifacts/{stem}-{number}.html"
             if not PAGE_PATH.fullmatch(path):
-                return "Страница не опубликована: имя файла — только a-z, 0-9 и дефис."
+                return "Page not published: the file name — only a-z, 0-9 and hyphens."
             commit, refusals = await asyncio.to_thread(
-                memory.put, path, text.encode("utf-8"), f"Владелец через Telegram: страница {path}",
+                memory.put, path, text.encode("utf-8"), f"The owner via Telegram: page {path}",
                 [f"{UPLOADED}: telegram"])
         if refusals:
-            return "Страница не опубликована: база не приняла файл — " + "; ".join(refusals) + "."
+            return "Page not published: the Base did not take the file — " + "; ".join(refusals) + "."
         self.poke(now)
         page_id = named or PurePosixPath(path).stem
-        said = (f"Страница в базе: {path}. Через пару минут она откроется на {self.url}{PAGES}/{page_id}.html "
-                "(с VPN), со скриптами — она твоя.")
+        said = (f"Page in the Base: {path}. In a couple of minutes it opens at {self.url}{PAGES}/{page_id}.html "
+                "(with the VPN), with its scripts — it is yours.")
         if number > 1:
-            said += f" Файл {stem}.html уже был — этот лёг рядом под новым именем, старый не тронут."
+            said += f" A file {stem}.html was already there — this one went beside it under a new name, the old one " \
+                    "is untouched."
             if named:
-                said += (f" У обоих lifehub:id «{named}»: пока один из них не уйдёт или не сменит id, страница не "
-                         "выйдет.")
+                said += (f" Both have lifehub:id \"{named}\": until one of them goes or changes its id, the page will "
+                         "not come out.")
         return said
 
 
@@ -1304,9 +1306,9 @@ LOOKS = {kind: [{}, {**bars, "sort": "price"}, {**bars, "sort": "rating" if kind
          for kind, bars in LOOSE.items()}
 VIEW_LIMIT = 100
 PHOTOS = 2  # photos of one stay on the page
-STAY_KINDS = {"hotel": "отель", "apartment": "апартаменты", "room": "комната", "house": "дом",
-              "shared_room": "место в общей комнате", "other": "жильё"}
-RIDES = {"train": "поезд", "bus": "автобус", "ferry": "паром", "van": "микроавтобус"}
+STAY_KINDS = {"hotel": "hotel", "apartment": "apartment", "room": "room", "house": "house",
+              "shared_room": "bed in a shared room", "other": "stay"}
+RIDES = {"train": "train", "bus": "bus", "ferry": "ferry", "van": "minibus"}
 
 
 def offers(kind: str, view: dict):
@@ -1320,12 +1322,12 @@ def offers(kind: str, view: dict):
 
 
 def named(who: str, sender: str = "") -> str:
-    """A person as «Сейчас» and the tracker page name him: her «who» up to its first aside — never an e-mail address; with
-    none, the sender's domain, else «отправитель»."""
+    """A person as «Now» and the tracker page name him: her «who» up to its first aside — never an e-mail address; with
+    none, the sender's domain, else «sender»."""
     name = chip(who) if who else ""
-    if name and name != "без имени" and "@" not in name:
+    if name and name not in NO_NAME and "@" not in name:
         return name
-    return domain(sender) or "отправитель"
+    return domain(sender) or "sender"
 
 
 def domain(sender: str) -> str:
@@ -1336,8 +1338,9 @@ def domain(sender: str) -> str:
 
 def chip(who: str) -> str:
     """A sender's name short enough for a chip: her «who» — «Google (no-reply@…)», «CarHire Example (…), Maria
-    Example» — up to its first aside; the full one stays on the sender's page."""
-    name = re.split(r" \(|, | через | → | — ", who or "", maxsplit=1)[0].strip() or "без имени"
+    Example» — up to its first aside; the full one stays on the sender's page. Her «who» may be in either language:
+    «via» and «через» both open an aside."""
+    name = re.split(r" \(|, | via | через | → | — ", who or "", maxsplit=1)[0].strip() or NO_NAME[0]
     return name if len(name) <= CHIP_CHARS else name[:CHIP_CHARS - 1].rstrip() + "…"
 
 
@@ -1372,18 +1375,22 @@ def money(value) -> str:
         return ""
     try:
         amount = Decimal(str(value.get("amount")))
-        shown = f"{amount:.0f}" if amount == amount.to_integral() else f"{amount:.2f}".replace(".", ",")
+        shown = f"{amount:.0f}" if amount == amount.to_integral() else f"{amount:.2f}"
     except InvalidOperation:
         return ""
     return f"{shown} {value.get('currency') or ''}".strip()
 
 
 def decimal(number) -> str:
-    return f"{number:g}".replace(".", ",")
+    return f"{number:g}"
 
 
-def plural(n: int, one: str, few: str, many: str) -> str:
+def plural(n: int, one: str, few: str, many: str | None = None) -> str:
+    """The word for `n`: plural(n, "stop", "stops") by the English rule; with three forms (one, few, many), by the
+    Russian one — for Russian words, which the Base still has."""
     n = abs(int(n))
+    if many is None:
+        return one if n == 1 else few
     if n % 10 == 1 and n % 100 != 11:
         return one
     return few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many
@@ -1401,7 +1408,7 @@ def duration(minutes) -> str:
     if not isinstance(minutes, int):
         return "?"
     hours, minutes = divmod(minutes, 60)
-    return f"{hours} ч {minutes} мин" if hours and minutes else f"{hours} ч" if hours else f"{minutes} мин"
+    return f"{hours} h {minutes} min" if hours and minutes else f"{hours} h" if hours else f"{minutes} min"
 
 
 def _day(value) -> date | None:
@@ -1437,7 +1444,7 @@ def timeline(options: list[dict]) -> list[dict]:
 
         moment = _day(day)
         label = f"{clock.WEEKDAYS[moment.weekday()]}, {moment.day} {clock.MONTHS[moment.month - 1]}" if moment else \
-            "Жильё" if all(kind == "stay" for _, kind in days[day]) else "Без даты"
+            "Stays" if all(kind == "stay" for _, kind in days[day]) else "No date"
         out.append({"day": day, "label": label, "legs": [{"leg": leg, "kind": kind, "name": KIND_NAMES.get(kind, ""),
                                                           "options": numbers}
                                                          for (leg, kind), numbers in days[day].items()]})
@@ -1453,7 +1460,7 @@ def paragraphs(text: str) -> list[str]:
             out += [block] if block else []
             continue
         chunk = ""
-        for sentence in re.split(r"(?<=[.!?])\s+(?=[«\"(A-ZА-ЯЁ0-9])", block):
+        for sentence in re.split(r"(?<=[.!?])\s+(?=[«\"(A-ZА-ЯЁ0-9])", block):  # her words may be Russian too
             if chunk and len(chunk) + len(sentence) > PARAGRAPH_CHARS:
                 out.append(chunk)
                 chunk = ""
@@ -1510,6 +1517,26 @@ def sound(url: str) -> str:
     return parts._replace(scheme="https", netloc=netloc).geturl()
 
 
+# Health lines other modules write (core.backup, core.health, health.py), read here in either language: an older
+# router or a persisted line may still carry the Russian words.
+BACKUP = re.compile(r"^(backup|бэкап) — ")
+BACKUP_FAILED = ("failed", "не удался")
+CONTAINERS = re.compile(r"^(containers|контейнеры): ")
+CONTAINERS_OK = re.compile(r"^(containers: all|контейнеры: все)\b")
+HEALTH = re.compile(r"^(Health[^:]*|Здоровье за сутки): ")
+NO_NAME = ("no name", "без имени")  # chip's word for a sender with none; the Russian one may be in older data
+
+
+def backed_up(said: str) -> bool:
+    """Whether the backup's health line says it went well: «backup — 5 h ago», not a failure."""
+    return bool(BACKUP.match(said)) and not any(word in said for word in BACKUP_FAILED)
+
+
+def health_words(line: str) -> str:
+    """The health line without its heading and its full stop: what the «now» page shows."""
+    return HEALTH.sub("", line, count=1).rstrip(".")
+
+
 def level(share: int) -> str:
     """A limit window's share as a colour: ok below 70 %, warn below 90 %, bad from there."""
     return "ok" if share < 70 else "warn" if share < 90 else "bad"
@@ -1554,6 +1581,7 @@ WORDS_PER_MIN = 180
 DESCRIPTION_CHARS = 300
 PARAGRAPH_CHARS = 60          # a shorter first paragraph is a label, not what the page is about
 SILENT = {"script", "style", "template", "noscript", "svg", "head", "title"}
+# The owner's file names may be Russian: transliterated for a page's address.
 TRANSLIT = dict(zip("абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
                     ["a", "b", "v", "g", "d", "e", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s",
                      "t", "u", "f", "h", "ts", "ch", "sh", "sch", "", "y", "", "e", "yu", "ya"]))

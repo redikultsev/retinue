@@ -248,7 +248,7 @@ async def agenda(accounts: list[google.Google], start: float, end: float) -> tup
                     found.append({**brief(event), "account": account.key.account,
                                   "calendar_name": str(calendar.get("summary") or "")[:100]})
         except google.GoogleError as exc:
-            failed.append(f"{account.key.account}: {'нужен вход заново' if isinstance(exc, google.InvalidGrant) else exc}")
+            failed.append(f"{account.key.account}: {'needs a new sign-in' if isinstance(exc, google.InvalidGrant) else exc}")
     return sorted(found, key=begins), failed
 
 
@@ -341,7 +341,7 @@ class Service:
         body = await request.json()
         mailbox = self._mailbox(str(body.get("account", "")))
         if mailbox is None:
-            return web.json_response({"error": "нет ключа этого ящика"}, status=404)
+            return web.json_response({"error": "no key for this mailbox"}, status=404)
         try:
             message = await mailbox.raw(str(body.get("id", "")))
         except google.Gone:
@@ -359,7 +359,7 @@ class Service:
         body = await request.json()
         mailbox = self._mailbox(str(body.get("account", "")))
         if mailbox is None:
-            return web.json_response({"error": "нет ключа этого ящика"}, status=404)
+            return web.json_response({"error": "no key for this mailbox"}, status=404)
         try:
             message = await mailbox.raw(str(body.get("id", "")))
             name, media_type, data = letter.attachment(message["raw"], int(body.get("part", -1)))
@@ -368,7 +368,7 @@ class Service:
         except google.GoogleError as exc:
             return web.json_response({"error": str(exc)}, status=503)
         if len(data) > MAX_ATTACHMENT:
-            return web.json_response({"error": f"больше {MAX_ATTACHMENT // 2**20} МБ", "size": len(data)}, status=413)
+            return web.json_response({"error": f"more than {MAX_ATTACHMENT // 2**20} MB", "size": len(data)}, status=413)
         return web.json_response({"name": name, "type": media_type, "data": base64.b64encode(data).decode()})
 
     async def agenda(self, request: web.Request) -> web.Response:

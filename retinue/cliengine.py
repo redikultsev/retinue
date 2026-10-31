@@ -47,17 +47,17 @@ PREFIX = ("-p", "--input-format", "stream-json", "--output-format", "stream-json
 # the gate and answered on resume (`allow` + `updatedInput.answers`); every other ask is denied by the gate's
 # PermissionRequest hook, and one that still reaches stdio is denied by the lane host (`deny_control`) — never granted.
 STDIO_TOOL = ("--permission-prompt-tool", "stdio")
-# A fork (the owner's «Ответвить»): `--resume <parent> --fork-session` starts a new CLI session from a copy of the
+# A fork (the owner's «Fork»): `--resume <parent> --fork-session` starts a new CLI session from a copy of the
 # parent's conversation and leaves the parent's own transcript untouched (probed with 2.1.304, tests/test_probes.py).
 # Allowed only right after `--resume <id>`: a flag alone, or anywhere else, is refused like any unknown one.
 FORK_SESSION = "--fork-session"
 MCP_CONFIG, MCP_STRICT = "--mcp-config", "--strict-mcp-config"
 MCP_SERVER = "retinue"  # `subs.SERVER`: the platform's sub-sessions server, the only one a run may have
-FORBIDDEN = {"bypassPermissions": "режим bypassPermissions",
-             "--dangerously-skip-permissions": "флаг --dangerously-skip-permissions",
-             "--allow-dangerously-skip-permissions": "флаг --allow-dangerously-skip-permissions",
-             "--permission-prompt-tool": "флаг --permission-prompt-tool (кроме stdio префикса)",
-             "--permission-prompts": "флаг --permission-prompts (он прячет AskUserQuestion)"}
+FORBIDDEN = {"bypassPermissions": "the bypassPermissions mode",
+             "--dangerously-skip-permissions": "the flag --dangerously-skip-permissions",
+             "--allow-dangerously-skip-permissions": "the flag --allow-dangerously-skip-permissions",
+             "--permission-prompt-tool": "the flag --permission-prompt-tool (except the stdio prefix)",
+             "--permission-prompts": "the flag --permission-prompts (it hides AskUserQuestion)"}
 
 # Off, and so set: the scrub silently forces the manual mode (probed with 2.1.304), and unset is the same as off only
 # until a default changes. What it did — keep the CLI's secrets out of the commands' environment — the managed
@@ -152,7 +152,7 @@ def argv(settings_path: str, allowed: Sequence[str], disallowed: Sequence[str], 
     if disallowed:
         out += ["--disallowedTools", *disallowed]
     if fork and not resume:
-        raise Refused("argv: ответвление без сессии, от которой ответвляться")
+        raise Refused("argv: a fork without a session to fork from")
     if resume:
         out += ["--resume", resume, *((FORK_SESSION,) if fork else ())]
     if instructions:
@@ -175,50 +175,50 @@ def check_argv(args: Sequence[str], hook_url: str = "") -> list[str]:
         if token == STDIO_TOOL[0] and args[i + 1:i + 2] == [STDIO_TOOL[1]]:
             continue  # the prefix's own: an ask comes to the lane host, which denies it; twice is an unknown flag
         if (name := token.split("=", 1)[0]) in FORBIDDEN:
-            raise Refused(f"argv: запрещено — {FORBIDDEN[name]}")
+            raise Refused(f"argv: forbidden — {FORBIDDEN[name]}")
     prefix = [cli_path(), *PREFIX]
     if args[:len(prefix)] != prefix:
-        raise Refused("argv: не тот фиксированный префикс")
+        raise Refused("argv: not the fixed prefix")
     rest = args[len(prefix):]
     if not rest or not SETTINGS_PATH.fullmatch(rest[0]):
-        raise Refused(f"argv: файл настроек не в {SETTINGS_DIR}/*.json")
+        raise Refused(f"argv: the settings file is not in {SETTINGS_DIR}/*.json")
     seen: set[str] = set()
     i = 1
     while i < len(rest):
         flag = rest[i]
         if flag in seen:
-            raise Refused(f"argv: {flag} дважды")
+            raise Refused(f"argv: {flag} twice")
         seen.add(flag)
         if flag in ("--allowedTools", "--disallowedTools"):
             j = i + 1
             while j < len(rest) and not rest[j].startswith("-"):
                 if not rule_ok(rest[j]):
-                    raise Refused(f"argv: не правило — {rest[j]!r}")
+                    raise Refused(f"argv: not a rule — {rest[j]!r}")
                 j += 1
             if j == i + 1:
-                raise Refused(f"argv: {flag} без правил")
+                raise Refused(f"argv: {flag} without rules")
             i = j
         elif flag == "--resume":
             if i + 1 >= len(rest) or not UUID4.fullmatch(rest[i + 1]):
-                raise Refused("argv: --resume без id сессии")
+                raise Refused("argv: --resume without a session id")
             i += 2
             if rest[i:i + 1] == [FORK_SESSION]:  # only right after the session it copies: nowhere else
                 seen.add(FORK_SESSION)
                 i += 1
         elif flag == MCP_CONFIG:
             if not hook_url or rest[i + 1:i + 3] != [mcp_config(hook_url), MCP_STRICT]:
-                raise Refused(f"argv: {MCP_CONFIG} не сервер платформы с {MCP_STRICT}")
+                raise Refused(f"argv: {MCP_CONFIG} is not the platform's server with {MCP_STRICT}")
             seen.add(MCP_STRICT)
             i += 3
         elif flag in ("--append-system-prompt-file", "--plugin-dir"):
             want = instructions_path(rest[0]) if flag == "--append-system-prompt-file" else skills_dir()
             if i + 1 >= len(rest) or rest[i + 1] != want:
-                raise Refused(f"argv: {flag} не {want}")
+                raise Refused(f"argv: {flag} is not {want}")
             i += 2
         elif flag.startswith("-"):
-            raise Refused(f"argv: неизвестный флаг {flag!r}")
+            raise Refused(f"argv: unknown flag {flag!r}")
         else:
-            raise Refused(f"argv: позиционный аргумент {flag!r}")
+            raise Refused(f"argv: positional argument {flag!r}")
     return args
 
 
@@ -235,24 +235,24 @@ def env(home: str, config_dir: str, proxy: str, no_proxy: str, hook_token: str, 
 def check_env(data: dict[str, str]) -> dict[str, str]:
     for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"):
         if key in data:
-            raise Refused(f"env: {key} в среде линии")
+            raise Refused(f"env: {key} in the lane's environment")
     if not re.fullmatch(r"[0-9]{1,5}", str(data.get(TOKEN_FD, ""))):
-        raise Refused(f"env: без {TOKEN_FD}")
+        raise Refused(f"env: without {TOKEN_FD}")
     if unknown := sorted(set(data) - ENV_KEYS):
-        raise Refused(f"env: лишние переменные {', '.join(unknown)}")
+        raise Refused(f"env: extra variables {', '.join(unknown)}")
     if data.get(SCRUB) != "0":  # "1" forces manual; unset is "0" only by today's default
-        raise Refused(f"env: без {SCRUB}=0")
+        raise Refused(f"env: without {SCRUB}=0")
     if data.get(FORK) != "0":
-        raise Refused(f"env: без {FORK}=0")
+        raise Refused(f"env: without {FORK}=0")
     if data.get(NO_MEMORY) != "1":
-        raise Refused(f"env: без {NO_MEMORY}=1")
+        raise Refused(f"env: without {NO_MEMORY}=1")
     if data.get(NO_BACKGROUND) != "1":
-        raise Refused(f"env: без {NO_BACKGROUND}=1")
+        raise Refused(f"env: without {NO_BACKGROUND}=1")
     if not all(isinstance(v, str) for v in data.values()):
-        raise Refused("env: значение не строка")
+        raise Refused("env: a value is not a string")
     for key in (*WATCHDOG, *BASH_TIMEOUTS):
         if key in data and not re.fullmatch(r"[1-9][0-9]{0,9}", data[key]):
-            raise Refused(f"env: {key} не целое число")
+            raise Refused(f"env: {key} is not an integer")
     return data
 
 
@@ -277,21 +277,21 @@ def settings(hook_url: str, cleanup_days: int, marks: Sequence[str]) -> dict:
 
 def check_settings(data: object, hook_url: str) -> dict:
     if not isinstance(data, dict) or set(data) != {"hooks", "cleanupPeriodDays"}:
-        raise Refused("settings: верхний уровень — только hooks и cleanupPeriodDays")
+        raise Refused("settings: the top level is only hooks and cleanupPeriodDays")
     days = data["cleanupPeriodDays"]
     if type(days) is not int or days < 1:
-        raise Refused("settings: cleanupPeriodDays не целое число дней")
+        raise Refused("settings: cleanupPeriodDays is not a whole number of days")
     hooks = data["hooks"]
     if not isinstance(hooks, dict) or not set(hooks) <= set(EVENTS):
-        raise Refused("settings: события не из " + ", ".join(EVENTS))
+        raise Refused("settings: events not among " + ", ".join(EVENTS))
     for event, entries in hooks.items():
         if not isinstance(entries, list):
-            raise Refused(f"settings: {event} не список")
+            raise Refused(f"settings: {event} is not a list")
         for entry in entries:
             if not isinstance(entry, dict) or set(entry) != {"matcher", "hooks"} or \
                     not isinstance(entry["hooks"], list) or not isinstance(entry["matcher"], str) or \
                     not (entry["matcher"] == "*" or TOOL_NAME.fullmatch(entry["matcher"])):
-                raise Refused(f"settings: {event} — не та запись")
+                raise Refused(f"settings: {event} — not the expected entry")
             for hook in entry["hooks"]:
                 _check_hook(event, hook, hook_url)
     return data
@@ -299,16 +299,16 @@ def check_settings(data: object, hook_url: str) -> dict:
 
 def _check_hook(event: str, hook: object, hook_url: str) -> None:
     if not isinstance(hook, dict) or not set(HOOK_FIELDS) | {"url"} <= set(hook) <= set(HOOK_FIELDS) | {"url", "if"}:
-        raise Refused(f"settings: {event} — не те поля хука")
+        raise Refused(f"settings: {event} — not the expected hook fields")
     if any(hook[k] != v for k, v in HOOK_FIELDS.items()):
-        raise Refused(f"settings: {event} — хук не http, не блокирует при сбое или не тот заголовок")
+        raise Refused(f"settings: {event} — the hook is not http, does not block on failure or has the wrong header")
     url = hook["url"]
     mark = event == "PreToolUse" and isinstance(url, str) and \
         re.fullmatch(re.escape(hook_url) + rf"/mark/{MARK_N}", url)
     if url != f"{hook_url}/{event}" and not mark:
-        raise Refused(f"settings: {event} — чужой адрес {url!r}")
+        raise Refused(f"settings: {event} — a foreign address {url!r}")
     if "if" in hook and not rule_ok(hook["if"]):
-        raise Refused(f"settings: {event} — if не правило")
+        raise Refused(f"settings: {event} — if is not a rule")
 
 
 def user_line(content: str | list[dict]) -> bytes:
@@ -341,37 +341,37 @@ def check_content(content: object) -> str | list[dict]:
     if isinstance(content, str):
         return content
     if not isinstance(content, list) or not 0 < len(content) <= CONTENT_BLOCKS:
-        raise Refused("prompt: не текст и не список блоков")
+        raise Refused("prompt: neither text nor a list of blocks")
     size = 0
     for block in content:
         if not isinstance(block, dict):
-            raise Refused("prompt: блок не объект")
+            raise Refused("prompt: a block is not an object")
         kind = block.get("type")
         if kind == "text":
             if set(block) != {"type", "text"} or not isinstance(block["text"], str) or not block["text"]:
-                raise Refused("prompt: текстовый блок не тот")
+                raise Refused("prompt: a text block is not as expected")
             continue
         if kind not in BLOCK_MEDIA or not set(block) <= {"type", "source", "title"} or \
                 ("title" in block and not (isinstance(block["title"], str) and TITLE.fullmatch(block["title"]))):
-            raise Refused(f"prompt: блок {kind!r} не тот")
+            raise Refused(f"prompt: a block {kind!r} is not as expected")
         source = block.get("source")
         if not isinstance(source, dict) or set(source) != {"type", "media_type", "data"} or \
                 source["type"] != "base64" or source["media_type"] not in BLOCK_MEDIA[kind] or \
                 not isinstance(source["data"], str) or not source["data"] or len(source["data"]) % 4 or \
                 not BASE64.fullmatch(source["data"]):
-            raise Refused(f"prompt: источник блока {kind} не base64 нужного типа")
+            raise Refused(f"prompt: the source of the {kind} block is not base64 of an accepted type")
         size += len(source["data"])
     if size > CONTENT_B64:
-        raise Refused(f"prompt: вложения больше {CONTENT_B64 // 2**20} МБ в base64")
+        raise Refused(f"prompt: attachments over {CONTENT_B64 // 2**20} MB in base64")
     return content
 
 def check_files(files: object, date: object) -> list[dict]:
     """Files for the session's inbox: `[{name, data (base64), sha256}]`, a plain name each (no path, no leading dot),
     the digest of the bytes as given, and the date of the message that brought them."""
     if not isinstance(files, list) or not 0 < len(files) <= INBOX_FILES:
-        raise Refused(f"files: не список до {INBOX_FILES} файлов")
+        raise Refused(f"files: not a list of up to {INBOX_FILES} files")
     if not isinstance(date, str) or not INBOX_DATE.fullmatch(date):
-        raise Refused("files: без даты YYYY-MM-DD")
+        raise Refused("files: without a YYYY-MM-DD date")
     size = 0
     for item in files:
         if not isinstance(item, dict) or set(item) != {"name", "data", "sha256"} or \
@@ -379,10 +379,10 @@ def check_files(files: object, date: object) -> list[dict]:
                 len(item["name"].encode()) > INBOX_NAME_BYTES or \
                 not isinstance(item["data"], str) or len(item["data"]) % 4 or not BASE64.fullmatch(item["data"]) or \
                 not isinstance(item["sha256"], str) or not SHA256.fullmatch(item["sha256"]):
-            raise Refused("files: файл не того вида")
+            raise Refused("files: a file of the wrong shape")
         size += len(item["data"]) // 4 * 3
     if size > INBOX_BYTES + 2 * INBOX_FILES:
-        raise Refused(f"files: больше {INBOX_BYTES // 2**20} МБ")
+        raise Refused(f"files: over {INBOX_BYTES // 2**20} MB")
     return files
 
 
@@ -400,8 +400,8 @@ def deny_control(line: str) -> bytes | None:
     request = data.get("request") if isinstance(data.get("request"), dict) else {}
     if request.get("subtype") == "can_use_tool":
         response = {"subtype": "success", "request_id": request_id,
-                    "response": {"behavior": "deny", "message": "Этот вызов спрашивает разрешения, а ответить "
-                                                                "на него здесь некому — он не выполнен."}}
+                    "response": {"behavior": "deny", "message": "This call asks for permission, and nobody "
+                                                                "here can answer it — it was not run."}}
     else:
         response = {"subtype": "error", "request_id": request_id, "error": "the lane host answers no such request"}
     return (json.dumps({"type": "control_response", "response": response}, ensure_ascii=False) + "\n").encode()

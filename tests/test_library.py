@@ -1,4 +1,4 @@
-"""«Читать»: the hub's list of pages the router pushes to the platform (`library.clean`, `POST /owner/library`), the
+"""«Read»: the hub's list of pages the router pushes to the platform (`library.clean`, `POST /owner/library`), the
 face's `/api/library` with what the owner opened and finished, the router's side (`Lifehub.library`,
 `PlatformBridge.push_library`)."""
 
@@ -54,12 +54,12 @@ def test_one_origin_is_one_origin_however_it_is_written(hub, url):
 
 
 @pytest.mark.parametrize("bad, why", [
-    (page(), "повторяется"),
+    (page(), "repeated"),
     (page(id="Regex"), "id"),
     (page(id="../x"), "id"),
-    ({**page("x"), "description": "о чём"}, "поля"),
-    ({**page("x"), "body": "<html>"}, "поля"),
-    ({k: v for k, v in page("x").items() if k != "url"}, "поля"),
+    ({**page("x"), "description": "о чём"}, "fields"),
+    ({**page("x"), "body": "<html>"}, "fields"),
+    ({k: v for k, v in page("x").items() if k != "url"}, "fields"),
     (page("x", url="http://hub.in.example.test/pages/x.html"), "url"),
     (page("x", url="https://evil.example/pages/x.html"), "url"),
     (page("x", url="https://hub.in.example.test.evil.example/pages/x.html"), "url"),
@@ -97,8 +97,8 @@ def test_a_page_off_the_contract_is_dropped_and_named_and_the_rest_stand(bad, wh
     ([], "pages"),
     ({"pages": "x"}, "pages"),
     ({"pages": [], "bot": "x"}, "pages"),
-    ({"pages": [page(), "regex"]}, "объектов"),
-    ({"pages": [page(f"p{n}") for n in range(library.PAGES_MAX + 1)]}, "больше"),
+    ({"pages": [page(), "regex"]}, "objects"),
+    ({"pages": [page(f"p{n}") for n in range(library.PAGES_MAX + 1)]}, "more than"),
 ])
 def test_a_list_off_its_shape_or_over_its_cap_is_refused_whole(body, why):
     with pytest.raises(library.Refused, match=why):
@@ -147,7 +147,7 @@ def test_the_router_pushes_the_list_signed_and_a_refused_one_leaves_the_last_in_
     scenario(tmp_path, body)
 
 
-# --- the face: the list, «открыл», «дочитал» ------------------------------------------------------------------
+# --- the face: the list, «opened», «Finished» -------------------------------------------------------------------
 
 def test_the_face_lists_the_pages_with_what_was_opened_and_finished_the_same_on_every_device(tmp_path):
     async def body(world: FaceWorld):
@@ -209,7 +209,7 @@ def test_the_hubs_list_names_each_page_by_its_full_address_and_no_more(tmp_path)
                               "updated": "2026-10-20", "section": "travel"}]
     assert library.clean({"pages": pages}, HUB) == ([page(), {**pages[1], "minutes": None}], []), \
         "the platform takes it"
-    (tmp_path / "build.json").write_text(json.dumps({"ok": True, "refused": [{"id": "untitled", "why": "нет <title>"}]}))
+    (tmp_path / "build.json").write_text(json.dumps({"ok": True, "refused": [{"id": "untitled", "why": "no <title>"}]}))
     assert [p["id"] for p in hub.library()] == ["regex-course"], "a page the build refused is a 404: not listed"
     (tmp_path / "build.json").write_text("{")
     assert len(hub.library()) == 2, "a build status it cannot read refuses nothing"
@@ -236,10 +236,10 @@ def test_the_hubs_list_is_pushed_when_it_changes_and_at_least_hourly(tmp_path, c
         pages = [page(), page("cv")]
         assert await bridge.push_library(1300.0)
         assert await bridge.push_library(1300.0 + bridge_module.WAITING_PUSH_S), "an hour later, changed or not"
-        platform.answers = {"library": {"ok": True, "dropped": [{"id": "cv", "why": "url не страница хаба"}]}}
+        platform.answers = {"library": {"ok": True, "dropped": [{"id": "cv", "why": "url is not the hub's page"}]}}
         pages = [page(), page("cv"), page("y")]
         assert await bridge.push_library(5000.0)
-        platform.answers = {"library": {"error": "pages: не список"}}
+        platform.answers = {"library": {"error": "pages: not a list"}}
         pages = [page("x")]
         assert await bridge.push_library(9000.0)
         assert not await bridge.push_library(9100.0), "a refused list is not hammered"
@@ -247,7 +247,7 @@ def test_the_hubs_list_is_pushed_when_it_changes_and_at_least_hourly(tmp_path, c
     asyncio.run(run())
     pushed = [body for call, body in platform.calls if call == "library"]
     assert pushed[0] == {"pages": [page()]} and len(pushed) == 5
-    assert "refused the hub's pages" in caplog.text and "dropped the hub's page cv: url не страница хаба" in caplog.text
+    assert "refused the hub's pages" in caplog.text and "dropped the hub's page cv: url is not the hub's page" in caplog.text
 
 
 def test_the_list_goes_to_the_platforms_own_address_with_a_short_wait():

@@ -61,8 +61,8 @@ def test_a_look_takes_the_listed_types_and_says_why_it_left_the_rest(work):
                                                        ("charts/a.png", "image/png")]
     report = next(f for f in found.found if f.path == "report.md")
     assert report.data == "# Отчёт".encode() and report.sha256 == hashlib.sha256(report.data).hexdigest()
-    assert sorted(found.skipped, key=lambda s: s.path) == [Skipped("empty.pdf", "пустой"),
-                                                           Skipped("tool.exe", "тип не из списка")]
+    assert sorted(found.skipped, key=lambda s: s.path) == [Skipped("empty.pdf", "empty"),
+                                                           Skipped("tool.exe", "type not on the list")]
 
 
 def test_no_out_folder_is_an_empty_look(work):
@@ -89,8 +89,8 @@ def test_the_limits_of_one_turn(work, monkeypatch):
     put(work, "repo/out/e.md", b"1")
     found = look(work)
     assert [f.path for f in found.found] == ["a.md", "d.md"]
-    assert found.skipped == [Skipped("b.md", "больше 0 МБ"), Skipped("c.md", "за ход больше 0 МБ"),
-                             Skipped("e.md", "больше 2 файлов за ход")]
+    assert found.skipped == [Skipped("b.md", "over 0 MB"), Skipped("c.md", "over 0 MB in a turn"),
+                             Skipped("e.md", "over 2 files in a turn")]
 
 
 def test_a_look_walks_a_bounded_tree(work, monkeypatch):
@@ -100,7 +100,7 @@ def test_a_look_walks_a_bounded_tree(work, monkeypatch):
     put(work, "repo/out/1/2/3/4/deep.md", b"x")
     found = look(work)
     assert [f.path for f in found.found] == ["0.md", "1.md"], "the folder `1` counts too"
-    assert found.skipped == [Skipped("out/", "в папке больше 3 файлов и папок — смотрел первые")]
+    assert found.skipped == [Skipped("out/", "the folder has over 3 files and folders — looked at the first ones")]
     monkeypatch.setattr(outfiles, "MAX_ENTRIES", 500)
     assert "1/2/3/4/deep.md" not in [f.path for f in look(work).found], "deeper than three folders"
 
@@ -119,8 +119,8 @@ def test_links_are_followed_as_the_gate_follows_them_and_never_out_of_work(work,
     found = look(work)
     assert sorted((f.path, f.data) for f in found.found) == [("again.pdf", b"%PDF-1.7"), ("report.pdf", b"%PDF-1.7")]
     assert sorted(found.skipped, key=lambda s: s.path) == [
-        Skipped("hosts.md", "ссылка ведёт за пределы /work"), Skipped("platform.md", "ссылка ведёт за пределы /work"),
-        Skipped("up.md", "ссылка ведёт за пределы /work")]
+        Skipped("hosts.md", "the link leads outside /work"), Skipped("platform.md", "the link leads outside /work"),
+        Skipped("up.md", "the link leads outside /work")]
 
 
 def test_an_out_folder_that_leads_out_of_work_is_not_looked_into(work, tmp_path):
@@ -130,7 +130,7 @@ def test_an_out_folder_that_leads_out_of_work_is_not_looked_into(work, tmp_path)
     assert look(work).found == []
     (work / "repo" / "out").unlink()
     os.symlink("../../elsewhere", work / "repo" / "out")
-    assert look(work) == outfiles.Look(skipped=[Skipped("out/", "папка ведёт за пределы /work — не смотрю")])
+    assert look(work) == outfiles.Look(skipped=[Skipped("out/", "the folder leads outside /work — not looking")])
 
 
 def test_a_link_swapped_in_after_the_check_is_refused_not_followed(work, tmp_path):
@@ -153,9 +153,9 @@ def test_a_link_swapped_in_after_the_check_is_refused_not_followed(work, tmp_pat
 
 
 def test_what_was_left_out_reads_as_a_list():
-    text = outfiles.notice_text(outfiles.Look(skipped=[Skipped("a_b.exe", "тип не из списка"),
-                                                       Skipped("x`y.md", "пустой")]))
-    assert text == "Не отправил из out/:\n- `a_b.exe` — тип не из списка\n- x`y.md — пустой"
+    text = outfiles.notice_text(outfiles.Look(skipped=[Skipped("a_b.exe", "type not on the list"),
+                                                       Skipped("x`y.md", "empty")]))
+    assert text == "Not sent from out/:\n- `a_b.exe` — type not on the list\n- x`y.md — empty"
 
 
 # --- the platform ---------------------------------------------------------------------------------------------------
@@ -190,11 +190,11 @@ def test_a_turn_hands_over_what_it_left_in_out_once_after_its_summary(tmp_path, 
                                                                       ("report.md", "text/markdown; charset=utf-8",
                                                                        len("# Итог".encode()))]
         [skipped] = world.notes("file_skipped")
-        assert skipped["data"]["head"] == f"Файлы · retinue · сессия {session}"
-        assert skipped["data"]["text"] == "Не отправил из out/:\n- `run.sh` — тип не из списка"
+        assert skipped["data"]["head"] == f"Files · retinue · session {session}"
+        assert skipped["data"]["text"] == "Not sent from out/:\n- `run.sh` — type not on the list"
         got = await world.owner("file", {"id": files[1]["id"]})
         assert got["name"] == "report.md" and base64.b64decode(got["data"]) == "# Итог".encode()
-        assert (await world.owner("file", {"id": "nope"}))["error"].startswith("Файла больше нет")
+        assert (await world.owner("file", {"id": "nope"}))["error"].startswith("The file is gone")
 
         await world.owner("input", {"input_id": "tg:2", "session": session, "text": "ещё"})
         run2 = world.lanes["code"].runs()[-1]
@@ -244,7 +244,7 @@ def test_a_look_that_fails_is_said_and_owed_no_more(tmp_path, monkeypatch):
         [run] = world.lanes["code"].runs()
         await turn(world, session, run, DONE)
         [skipped] = world.notes("file_skipped")
-        assert skipped["data"]["text"] == "Файлы из out/ не собраны: ошибка платформы (RuntimeError)."
+        assert skipped["data"]["text"] == "Files from out/ were not collected: platform error (RuntimeError)."
         assert world.platform.out.owed() == []
 
     scenario(tmp_path, body)
@@ -330,7 +330,7 @@ def bridged(tmp_path, notes, files):
     async def out_file(file_id):
         platform.calls.append(("file", file_id))
         if file_id not in files:
-            return {"error": "Файла больше нет: файлы хранятся 30 дней."}
+            return {"error": "The file is gone: files are kept for 30 days."}
         name, mime, data = files[file_id]
         return {"name": name, "mime": mime, "body": data}
 
@@ -345,14 +345,14 @@ def file_note(seq, file_id, session="ab12cd34"):
 def test_the_router_sends_each_file_under_the_session_s_last_message_and_maps_it_to_the_session(tmp_path):
     from retinue.bridge import SESSION
     summary = {"seq": 1, "kind": "summary", "session": "ab12cd34", "approval": "",
-               "data": {"head": "Итог · retinue · сессия ab12cd34", "text": "Готово."}}
+               "data": {"head": "Result · retinue · session ab12cd34", "text": "Done."}}
     skipped = {"seq": 4, "kind": "file_skipped", "session": "ab12cd34", "approval": "",
-               "data": {"head": "Файлы · retinue · сессия ab12cd34", "text": "Не отправил из out/:\n- `a.exe` — тип"}}
+               "data": {"head": "Files · retinue · session ab12cd34", "text": "Not sent from out/:\n- `a.exe` — type"}}
     files = {"f1": ("chart.png", "image/png", PNG), "f2": ("report.pdf", "application/pdf", b"%PDF")}
     ch, bridge, platform = bridged(tmp_path, [summary, file_note(2, "f1"), file_note(3, "f2"), skipped], files)
     assert asyncio.run(bridge.deliver()) == 4
     (m1, p1, _), (m2, p2, f2), (m3, p3, f3), (m4, p4, _) = ch.sent
-    assert m1 == "sendMessage" and m4 == "sendMessage" and p4["text"].startswith("Файлы · retinue · сессия ab12cd34")
+    assert m1 == "sendMessage" and m4 == "sendMessage" and p4["text"].startswith("Files · retinue · session ab12cd34")
     assert m2 == "sendPhoto" and f2 == {"photo": ("chart.png", PNG, "image/png")}
     assert m3 == "sendDocument" and f3 == {"document": ("report.pdf", b"%PDF", "application/pdf")}
     assert "caption" not in p2 and "caption" not in p3, "the platform's words go only through _message"
@@ -408,7 +408,7 @@ def test_a_file_the_platform_no_longer_keeps_is_said_and_one_that_did_not_go_out
         assert await bridge.deliver() == 1
 
     asyncio.run(run())
-    assert ch.sent[0][1]["text"] == "Файла больше нет: файлы хранятся 30 дней."
+    assert ch.sent[0][1]["text"] == "The file is gone: files are kept for 30 days."
     assert [m for m, _, _ in ch.sent] == ["sendMessage", "sendDocument"]
     assert platform.confirmed == [1, 2]
 
@@ -428,7 +428,7 @@ def test_a_name_that_is_not_utf8_is_left_out_and_never_stalls_the_lanes(work, mo
     monkeypatch.setattr(outfiles.os, "fwalk", fwalk)
     found = look(work)
     assert [f.path for f in found.found] == ["ok.md"]
-    assert found.skipped == [Skipped("bad�.md", "имя файла не в UTF-8")]
+    assert found.skipped == [Skipped("bad�.md", "the file name is not UTF-8")]
     assert outfiles.utf8("ok.md") and not outfiles.utf8("bad\udcff.md")
 
 
@@ -446,7 +446,7 @@ def test_a_hand_over_that_breaks_is_said_once_and_the_lane_goes_on(tmp_path, mon
         world.lanes["private"].exited(session, run["run"])
         await world.poll()
         [said] = world.notes("file_skipped")
-        assert said["data"]["text"] == "Файлы из out/ не собраны: ошибка платформы (UnicodeEncodeError)."
+        assert said["data"]["text"] == "Files from out/ were not collected: platform error (UnicodeEncodeError)."
         assert world.platform.out.owed() == [] and world.notes("file") == []
         assert all(line["given"] for line in world.lanes["private"].journal), "the journal confirmed"
         await world.owner("input", {"input_id": "tg:2", "session": session, "text": "ещё"})
@@ -471,7 +471,7 @@ def test_a_bad_link_is_said_only_while_it_is_new(work):
     out = work / "repo" / "out"
     out.mkdir()
     os.symlink("/etc/hosts", out / "hosts.md")
-    assert look(work).skipped == [Skipped("hosts.md", "ссылка ведёт за пределы /work")]
+    assert look(work).skipped == [Skipped("hosts.md", "the link leads outside /work")]
     assert look(work, since=time.time() + 60).skipped == [], "the next turn's look: not said again"
 
 
@@ -487,7 +487,7 @@ def test_a_name_cannot_spoof_its_type_with_direction_marks(work):
     put(work, "repo/out/a⁦b.md", b"x")
     found = look(work)
     assert [f.path for f in found.found] == ["a⟦U+2066⟧b.md"]
-    assert found.skipped == [Skipped("report⟦U+202E⟧fdp.exe", "тип не из списка")]
+    assert found.skipped == [Skipped("report⟦U+202E⟧fdp.exe", "type not on the list")]
     assert outfiles.shown("a\nb‏") == "a⟦U+000A⟧b⟦U+200F⟧"
 
 
@@ -519,7 +519,7 @@ def test_two_sessions_in_one_directory_each_get_the_files_their_own_calls_named(
         await world.poll()
         assert [(n["session"], n["data"]["path"]) for n in world.notes("file")] == [(b, "b.pdf"), (b, "nobody.md")]
         [said] = world.notes("file_skipped")
-        assert said["session"] == b and "в папке работали две сессии" in said["data"]["text"]
+        assert said["session"] == b and "two sessions worked in the folder" in said["data"]["text"]
         assert "`nobody.md`" in said["data"]["text"] and "b.pdf" not in said["data"]["text"]
 
         world.lanes["code"].add(a, run_a["run"], DONE)
@@ -543,14 +543,14 @@ def test_a_file_over_the_storage_caps_is_left_out_and_said(tmp_path):
         await turn(world, session, run, DONE)
         assert [n["data"]["path"] for n in world.notes("file")] == ["a.md"]
         [said] = world.notes("file_skipped")
-        assert said["data"]["text"] == "Не отправил из out/:\n- `b.md` — за сутки больше 0 МБ файлов"
+        assert said["data"]["text"] == "Not sent from out/:\n- `b.md` — over 0 MB of files in a day"
         world.clock.now += 2 * DAY
         out.day_cap = 100
         await world.owner("input", {"input_id": "tg:2", "session": session, "text": "ещё"})
         run2 = world.lanes["code"].runs()[-1]
         put(world.tmp / "work", "repo/out/c.md", b"123456")
         await turn(world, session, run2, DONE)
-        assert "хранилище файлов платформы заполнено" in world.notes("file_skipped")[-1]["data"]["text"]
+        assert "the platform's file store is full" in world.notes("file_skipped")[-1]["data"]["text"]
 
     scenario(tmp_path, body)
 
@@ -580,7 +580,7 @@ def test_a_page_goes_to_telegram_as_an_open_button_never_as_itself(tmp_path):
     assert [m for m, _, _ in ch.sent] == ["sendMessage", "sendMessage"] and platform.calls == []
     params = ch.sent[0][1]
     assert "<code>page.html</code>" in params["text"]
-    assert params["reply_markup"] == {"inline_keyboard": [[{"text": "Открыть",
+    assert params["reply_markup"] == {"inline_keyboard": [[{"text": "Open",
                                                             "web_app": {"url": "https://app.example.test/f/f1"}}]]}
 
     ch, bridge, _ = bridged(tmp_path / "b", notes, files)  # no face: as text

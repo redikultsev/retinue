@@ -102,18 +102,18 @@ async def _run(tmp_path):
         assert [(f.name, f.media_type, f.data) for f in files] == [("plan.html", "text/html", b"<h1>plan</h1>")]
         _, _, files = await ask_agent(url, "hello", "ctx-3")
         assert files == [], "an unchanged file is not sent again"
-        sent = [AgentFile("вложение #3: фото", "image/jpeg", b"\xff\xd8jpeg"),
-                AgentFile("вложение #4: PDF", "application/pdf", b"%PDF-1.4"),
+        sent = [AgentFile("attachment #3: photo", "image/jpeg", b"\xff\xd8jpeg"),
+                AgentFile("attachment #4: PDF", "application/pdf", b"%PDF-1.4"),
                 AgentFile("архив.zip", "application/zip", b"PK")]
-        status, _, _ = await ask_agent(url, "[Новая реплика Владельца]\nчто здесь?", "ctx-4", attachments=sent)
+        status, _, _ = await ask_agent(url, "[New message from the owner]\nчто здесь?", "ctx-4", attachments=sent)
         jpeg, pdf = base64.b64encode(b"\xff\xd8jpeg").decode(), base64.b64encode(b"%PDF-1.4").decode()
         assert status == "done" and engine.calls[-1] == [
-            {"type": "text", "text": "[вложение #3: фото]"},
+            {"type": "text", "text": "[attachment #3: photo]"},
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": jpeg}},
-            {"type": "text", "text": "[вложение #4: PDF]"},
+            {"type": "text", "text": "[attachment #4: PDF]"},
             {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf}},
-            {"type": "text", "text": "[файл «архив.zip» не передан: тип application/zip]"},
-            {"type": "text", "text": "[Новая реплика Владельца]\nчто здесь?"},
+            {"type": "text", "text": '[file "архив.zip" not passed: type application/zip]'},
+            {"type": "text", "text": "[New message from the owner]\nчто здесь?"},
         ], "files travel as bytes inside the A2A message and become content blocks, each after its name"
     finally:
         server.should_exit = True

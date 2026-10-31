@@ -1,7 +1,7 @@
 """The Telegram Business gateway: code, no model, the only holder of the Business bot's token. That token both reads
 and replies, so the gateway is one process: it takes the messages of the chats the owner chose in
 Telegram's settings and hands them to the router by number, like the mail collector; it sends one reply when the
-router asks with a key, the envelope and its digest — the envelope the owner pressed «Отправить» under — and never
+router asks with a key, the envelope and its digest — the envelope the owner pressed «Send» under — and never
 the same key twice (`courier.send_once`).
 
 Whose messages: only the owner's connection counts (`user.id` — the connection's id changes when he edits the bot's
@@ -45,7 +45,7 @@ WINDOW_S = 24 * 3600      # can_reply: «private chats that had incoming message
 WINDOW_MARGIN_S = 120     # a reply this close to the end of the window is not tried
 TEXT_CHARS = 4096
 MEDIA = ("photo", "video", "voice", "audio", "document", "video_note", "sticker", "animation", "contact", "location")
-FILES = ("photo", "document", "voice", "audio", "video", "video_note")  # what the router reads, as the owner's own (8б)
+FILES = ("photo", "document", "voice", "audio", "video", "video_note")  # what the router reads, as the owner's own (8b)
 MAX_FILE = 20 * 1024 * 1024  # getFile serves bots files up to 20 MB
 OWN_SPEECH = ("voice", "video_note")  # the owner's own files that are fetched: what he said, for its transcript
 
@@ -227,9 +227,9 @@ class Gateway:
         now = time.time() if now is None else now
         connection = self.state.connection()
         if envelope.account != str(self.owner) or not connection or not connection["enabled"]:
-            return "failed", {"error": "бот не подключён к аккаунту Владельца"}
+            return "failed", {"error": "the bot is not connected to the owner's account"}
         if "can_reply" not in connection["rights"]:
-            return "failed", {"error": "у бота нет права отвечать"}
+            return "failed", {"error": "the bot has no right to reply"}
         last = self.state.last_in(envelope.to)
         if last is None or now - last > WINDOW_S - WINDOW_MARGIN_S:
             return "failed", {"error": "window"}
@@ -242,9 +242,9 @@ class Gateway:
         except TelegramError as exc:
             return ("unknown" if exc.code >= 500 else "failed"), {"error": str(exc)[:200]}
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            return "failed", {"error": f"сеть: {type(exc).__name__}"}
+            return "failed", {"error": f"network: {type(exc).__name__}"}
         except httpx.HTTPError as exc:
-            return "unknown", {"error": f"сеть после отправки запроса: {type(exc).__name__}"}
+            return "unknown", {"error": f"network after the request was sent: {type(exc).__name__}"}
         return "sent", {"id": str(sent.get("message_id") or "")}
 
 
@@ -305,11 +305,11 @@ class Service:
         """One file of the other person's, by the id an item carried — no other id is fetched."""
         file_id = str((await request.json()).get("id") or "")
         if not self.gateway.state.known(file_id):
-            return web.json_response({"error": "такого файла не было в сообщениях"}, status=400)
+            return web.json_response({"error": "no such file was in the messages"}, status=400)
         try:
             data = await _fetch(self.gateway, file_id)
         except (TelegramError, KeyError) as exc:
-            return web.json_response({"error": f"Telegram не отдал файл ({exc})"}, status=400)
+            return web.json_response({"error": f"Telegram did not give the file ({exc})"}, status=400)
         return web.json_response({"data": base64.b64encode(data).decode()})
 
     async def status(self, request: web.Request) -> web.Response:

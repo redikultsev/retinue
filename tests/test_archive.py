@@ -77,7 +77,8 @@ def test_one_reply_covers_several_messages(tmp_path):
     assert not archive.answered(c.id)
     archive.append(OWNER, "[фото] смотри", conversation_id="c1", channel="telegram", native_id="4", ts=13.0,
                    meta={"unsupported": "фото"})
-    archive.append(OWNER, "[кнопка] Да", conversation_id="c1", channel="telegram", ref=c.id, ts=14.0)
+    archive.append(OWNER, "[button] Yes", conversation_id="c1", channel="telegram", ref=c.id, ts=14.0)
+    archive.append(OWNER, "[кнопка] Да", conversation_id="c1", channel="telegram", ref=c.id, ts=14.5)  # an older record
     assert [e.id for e in archive.unanswered(0)] == [c.id], "a refused photo and a button are not questions"
     assert archive.unanswered(12.5) == []
 
@@ -97,9 +98,9 @@ def test_conversation_window_and_counts(tmp_path):
 
 def test_attachments_keep_what_the_model_got(tmp_path):
     archive = make(tmp_path)
-    photo = archive.attach("telegram:5", "photo", "фото 800×600", "своё", "", [("image/jpeg", b"jpeg-bytes")])
-    voice = archive.attach("telegram:5", "voice", "голосовое 0:42", "переслано от Иван", "купи хлеб", [])
-    assert photo.mark() == "[вложение #1: фото 800×600 · своё]" and voice.id == 2, "the number the model sees"
+    photo = archive.attach("telegram:5", "photo", "photo 800×600", "own", "", [("image/jpeg", b"jpeg-bytes")])
+    voice = archive.attach("telegram:5", "voice", "voice message 0:42", "переслано от Иван", "купи хлеб", [])
+    assert photo.mark() == "[attachment #1: photo 800×600 · own]" and voice.id == 2, "the number the model sees"
     assert [a.id for a in archive.attachments_of("telegram:5")] == [1, 2] and archive.attachments_of("x") == []
     assert archive.read(photo) == [("image/jpeg", b"jpeg-bytes")] and archive.read(voice) == []
     (stored,) = (tmp_path / "attachments").rglob("*.jpg")

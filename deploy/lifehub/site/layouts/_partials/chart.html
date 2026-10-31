@@ -1,7 +1,7 @@
 {{- /* A chart the router laid out (retinue/charts.py): each row is text and a strip of rects in per cent, coloured
      by the stylesheet's classes s0…s5 — so it follows the theme, and its labels are the page's own type. */ -}}
 <div class="chart" role="img" aria-label="{{ .title }}">
-{{- if .empty }}<p class="empty">нет данных</p>{{ else }}
+{{- if .empty }}<p class="empty">no data</p>{{ else }}
 {{- range .rows }}
 <div class="chart-row"><span class="label">{{ .label }}</span>
 <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">{{ range .segments }}<rect class="s{{ int .n }}" x="{{ .x }}" y="0" width="{{ .w }}" height="10"><title>{{ .series }}: {{ .value }}</title></rect>{{ end }}</svg>

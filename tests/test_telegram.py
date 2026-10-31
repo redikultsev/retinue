@@ -36,8 +36,8 @@ class FakeCore:
     async def press(self, channel, button_id):
         self.calls.append(("press", button_id))
         if button_id == "btn-live" and self.calls.count(("press", button_id)) == 1:
-            return Pressed(True, "Кнопка дошла до Роутера.", "Проверка https://example.com\n\n_Выбрано: Вижу_")
-        return Pressed(False, "Кнопка уже нажата или устарела.")
+            return Pressed(True, "The button reached the router.", "Check https://example.com\n\n_Chosen: I see it_")
+        return Pressed(False, "The button was pressed already or has expired.")
 
 def make(tmp_path):
     ch = TelegramChannel(TelegramConfig(owner_id=OWNER, bot_token="t"), Store(str(tmp_path / "s.db")))
@@ -109,9 +109,9 @@ def test_reply_forward_and_unsupported_types(tmp_path):
         ("handle", None, "из канала", {"native_id": "12", "reply_to": None, "forwarded_from": "Новости"}),
         ("handle", None, "скрытый", {"native_id": "13", "reply_to": None, "forwarded_from": "Аноним"}),
         ("handle", None, "/new", {"native_id": "14", **PLAIN}),  # forwarded, his own too: data, never a reset
-        ("unsupported", "гифки", {"native_id": "15", "caption": "смотри"}),  # a GIF is a document too: not read
-        ("unsupported", "опросы", {"native_id": "16", "caption": ""}),
-        ("unsupported", "такие сообщения", {"native_id": "17", "caption": ""}),
+        ("unsupported", "GIFs", {"native_id": "15", "caption": "смотри"}),  # a GIF is a document too: not read
+        ("unsupported", "polls", {"native_id": "16", "caption": ""}),
+        ("unsupported", "messages like this", {"native_id": "17", "caption": ""}),
     ], "a stranger's photo is ignored; the owner's is refused aloud, never dropped in silence"
 
 def fetching(tmp_path, missing=()):
@@ -155,7 +155,7 @@ def test_files_are_fetched_and_handed_to_the_core(tmp_path):
     assert voice == ("receive", "", [Upload("voice", b"", "", "audio/ogg", 42, 1000)],
                      {"native_id": "31", "reply_to": None, "forwarded_from": "Иван", "group": None})
     assert film[2] == [Upload("document", b"", "film.mp4", "video/mp4", 0, 35 * 2**20,
-                              "файл «film.mp4», 35 МБ: Telegram отдаёт ботам файлы до 20 МБ")]
+                              'file "film.mp4", 35 MB: Telegram gives bots files up to 20 MB')]
     assert film[2][0].fetch is None, "a file over 20 MB is not even asked for"
 
     async def fetch_all():
@@ -169,8 +169,9 @@ def test_files_are_fetched_and_handed_to_the_core(tmp_path):
 
 
 def test_an_html_file_captioned_to_the_hub_is_the_hubs_code_not_the_models(tmp_path):
-    """«в хаб <Пространство>» on a file: the life hub's code puts it in the base (`Lifehub.upload`). Someone else's
-    forwarded file with that caption is data like any other; without the hub the owner hears so."""
+    """«to hub <Space>» on a file (the Russian «в хаб <Space>» too): the life hub's code puts it in the base
+    (`Lifehub.upload`). Someone else's forwarded file with that caption is data like any other; without the hub the
+    owner hears so."""
     ch = make(tmp_path)
     uploads = []
 
@@ -183,21 +184,23 @@ def test_an_html_file_captioned_to_the_hub_is_the_hubs_code_not_the_models(tmp_p
     ivan = {"type": "user", "sender_user": {"id": 7, "first_name": "Иван"}}
 
     async def run():
-        await ch.on_message(msg(None, message_id=40, document=page, caption=" В хаб Work "))
-        await ch.on_message(msg(None, message_id=41, document=page, caption="в хаб work", forward_origin=ivan))
-        await ch.on_message(msg(None, message_id=42, document=page, caption="в хаб"))
-        await ch.on_message(msg(None, message_id=43, document=page, caption="положи в хаб work, пожалуйста"))
-        await ch.on_message(msg(None, message_id=45, document=page, caption="в хаб work", forward_date=1,
+        await ch.on_message(msg(None, message_id=40, document=page, caption=" To hub Work "))
+        await ch.on_message(msg(None, message_id=47, document=page, caption=" В хаб Notes "))
+        await ch.on_message(msg(None, message_id=41, document=page, caption="to hub work", forward_origin=ivan))
+        await ch.on_message(msg(None, message_id=42, document=page, caption="to hub"))
+        await ch.on_message(msg(None, message_id=43, document=page, caption="put it to hub work, please"))
+        await ch.on_message(msg(None, message_id=45, document=page, caption="to hub work", forward_date=1,
                                 forward_sender_name="Скрыт"))
         await ch.on_message(msg(None, message_id=46, document=page, caption="в хаб work",
                                 forward_origin={"type": "user", "sender_user": {"id": OWNER}}))
         ch.core.lifehub = None
-        await ch.on_message(msg(None, message_id=44, document=page, caption="в хаб work"))
+        await ch.on_message(msg(None, message_id=44, document=page, caption="to hub work"))
 
     asyncio.run(run())
-    assert uploads == [(True, "work", Upload("document", b"", "course.html", "text/html", 0, 4000), "40")]
+    page_upload = Upload("document", b"", "course.html", "text/html", 0, 4000)
+    assert uploads == [(True, "work", page_upload, "40"), (True, "notes", page_upload, "47")]
     assert [call[0] for call in ch.core.calls] == ["receive"] * 5 + ["tell"], \
-        "a forward (a hidden sender's, his own too), a bare «в хаб» and a sentence go to her as files"
+        "a forward (a hidden sender's, his own too), a bare «to hub» and a sentence go to her as files"
     assert ch.core.calls[-1] == ("tell", NO_PAGES)
 
 
@@ -237,8 +240,8 @@ def test_stickers_places_and_contacts_are_text(tmp_path):
 
     asyncio.run(run())
     assert [(c[2], c[3]["native_id"]) for c in ch.core.calls] == [
-        ("[стикер 👍]", "40"), ("[геопозиция: 55.0001, 37.0001]", "41"),
-        ("[место: Кафе, Примерная 1 (55.0001, 37.0001)]", "42"), ("[контакт: Иван Петров, +442079460000]", "43")]
+        ("[sticker 👍]", "40"), ("[location: 55.0001, 37.0001]", "41"),
+        ("[place: Кафе, Примерная 1 (55.0001, 37.0001)]", "42"), ("[contact: Иван Петров, +442079460000]", "43")]
     assert all(c[0] == "handle" for c in ch.core.calls)
 
 
@@ -250,7 +253,7 @@ def test_buttons(tmp_path):
     ch = make(tmp_path)
 
     async def run():
-        await ch.notice("assistant", "Проверка канала", [("Вижу", "btn-live"), ("Вторая кнопка", "btn-other")], "ev-1")
+        await ch.notice("assistant", "Channel check", [("I see it", "btn-live"), ("Second button", "btn-other")], "ev-1")
         await ch.on_update(press("btn-live"))
         await ch.on_update(press("btn-live"))
         await ch.on_update(press("btn-live", sender=7))
@@ -259,16 +262,16 @@ def test_buttons(tmp_path):
 
     asyncio.run(run())
     card = ch.sent[0][1]
-    assert card["reply_markup"] == {"inline_keyboard": [[{"text": "Вижу", "callback_data": "btn-live"},
-                                                          {"text": "Вторая кнопка", "callback_data": "btn-other"}]]}
+    assert card["reply_markup"] == {"inline_keyboard": [[{"text": "I see it", "callback_data": "btn-live"},
+                                                          {"text": "Second button", "callback_data": "btn-other"}]]}
     assert [c for c in ch.core.calls if c[0] == "press"] == [("press", "btn-live")] * 2, "only the owner, only his chat"
     assert [m for m, _ in ch.sent[1:]] == ["answerCallbackQuery", "editMessageText", "answerCallbackQuery"]
     toast, edit, stale = (p for _, p in ch.sent[1:])
-    assert toast == {"callback_query_id": "q1", "text": "Кнопка дошла до Роутера."}
+    assert toast == {"callback_query_id": "q1", "text": "The button reached the router."}
     assert edit["message_id"] == 900 and "reply_markup" not in edit, "the card loses its buttons"
     assert edit["link_preview_options"] == {"is_disabled": True} and "<code>https://example.com</code>" in edit["text"]
-    assert edit["text"].endswith("<i>Выбрано: Вижу</i>")
-    assert stale["text"] == "Кнопка уже нажата или устарела."
+    assert edit["text"].endswith("<i>Chosen: I see it</i>")
+    assert stale["text"] == "The button was pressed already or has expired."
     assert ch.core.calls[-1][:3] == ("handle", None, "обычный текст")
 
 def test_offset_moves_after_handling_and_a_failure_is_not_silent(tmp_path):
@@ -300,7 +303,7 @@ def test_everything_leaves_without_preview_or_links(tmp_path):
 
     async def run():
         await ch.send("assistant", "## Итог\n\nСмотри [тут](https://example.com/a?b=1).\n\n" + "длинный абзац. " * 600, [], "ev-1")
-        await ch.notice("assistant", "Пока не умею принимать фото. Напиши текстом.", None, "ev-2")
+        await ch.notice("assistant", "I can't take photos yet. Write it as text.", None, "ev-2")
         await ch.typing("assistant", True)
         await ch.typing("assistant", False)
         await ch.draft("assistant", "черновик https://example.com")
@@ -341,18 +344,18 @@ def test_a_link_to_a_travel_site_is_clickable_and_still_has_no_preview(tmp_path)
 
 
 def test_many_buttons_go_in_rows_and_a_press_can_leave_the_others(tmp_path):
-    """Telegram takes at most 8 buttons in a row; ten «Откатить» go in rows of four. A press that spends only its
+    """Telegram takes at most 8 buttons in a row; ten «Revert» go in rows of four. A press that spends only its
     own button (an evening list) rewrites the card with the buttons still alive."""
     ch = make(tmp_path)
-    buttons = [(f"Откатить {i}", f"b{i}") for i in range(1, 11)]
+    buttons = [(f"Revert {i}", f"b{i}") for i in range(1, 11)]
 
     async def press(channel, button_id):
-        return Pressed(True, "Откатываю…", "Список\n\n_Нажато: Откатить 2_", keep=[b for b in buttons if b[1] != "b2"])
+        return Pressed(True, "Reverting…", "List\n\n_Pressed: Revert 2_", keep=[b for b in buttons if b[1] != "b2"])
 
     ch.core.press = press
 
     async def run():
-        await ch.notice("assistant", "Список", buttons, "ev-1")
+        await ch.notice("assistant", "List", buttons, "ev-1")
         await ch.on_update(press_of("b2"))
 
     def press_of(data):
@@ -365,7 +368,7 @@ def test_many_buttons_go_in_rows_and_a_press_can_leave_the_others(tmp_path):
     assert [(b["text"], b["callback_data"]) for row in rows for b in row] == buttons
     edit = ch.sent[2][1]
     kept = [(b["text"], b["callback_data"]) for row in edit["reply_markup"]["inline_keyboard"] for b in row]
-    assert kept == [b for b in buttons if b[1] != "b2"] and edit["text"].endswith("<i>Нажато: Откатить 2</i>")
+    assert kept == [b for b in buttons if b[1] != "b2"] and edit["text"].endswith("<i>Pressed: Revert 2</i>")
 
 
 def test_a_courier_card_shows_the_text_verbatim_and_one_button_per_row(tmp_path):
@@ -489,12 +492,12 @@ def test_the_platform_gets_replies_to_its_sessions_and_new_with_a_track(tmp_path
         ("new", "retinue", "fix CI\nи прогони тесты", "11"),
         ("new", "notes", "", "12"),
         ("files", "ab12cd34", 17, "вот"),
-        ("say", "В сессии принимаю текст, голосовые, фото и файлы.", "ab12cd34"),  # a video
+        ("say", "A session takes text, voice messages, photos and files.", "ab12cd34"),  # a video
     ]
     assert ch.bridge.replied == ["900"], "the message replied to goes along: a question's card takes it as an answer"
     assert ch.core.calls == [
         ("handle", None, "!new", {"native_id": "13", **PLAIN}),  # bare /new still resets her
-        ("handle", None, "/new x", {"native_id": "14", "reply_to": None, "forwarded_from": "неизвестный отправитель"}),
+        ("handle", None, "/new x", {"native_id": "14", "reply_to": None, "forwarded_from": "unknown sender"}),
         # Any forward is data for her, his own one too: a session gets only what he typed or said there.
         ("handle", None, "переслал сам", {"native_id": "15", "reply_to": "900", "forwarded_from": None}),
         ("handle", None, "а ей", {"native_id": "16", "reply_to": "901", "forwarded_from": None}),
@@ -598,7 +601,7 @@ def test_a_platform_that_does_not_answer_is_said_and_the_assistant_is_not_asked(
     from retinue.bridge import UNAVAILABLE, PlatformBridge, PlatformClient
 
     ch = make(tmp_path)
-    ch.bridge = PlatformBridge(PlatformClient("http://127.0.0.1:9", "t", "платформа"), ch.store)
+    ch.bridge = PlatformBridge(PlatformClient("http://127.0.0.1:9", "t", "the platform"), ch.store)
     ch.bridge.attach(ch)
     ch.store.save_sent("platform", "900", "ab12cd34")
 

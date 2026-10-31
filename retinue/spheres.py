@@ -25,10 +25,10 @@ from .config import Sphere
 if TYPE_CHECKING:
     from .platformd import Platform
 
-STATE_WORDS = {"active": "работает", "waiting": "ждёт тебя", "idle": "готова", "closed": "закрыта"}
+STATE_WORDS = {"active": "working", "waiting": "waiting for you", "idle": "ready", "closed": "closed"}
 LINE_CHARS = 300  # what `/<sphere>` alone shows of the main session's last summary
-BUSY = {"active": "сессия сейчас работает — ответви, когда она закончит ход",
-        "waiting": "сессия ждёт твоего решения по карточке — ответви после него"}
+BUSY = {"active": "the session is working now — fork it when it finishes its turn",
+        "waiting": "the session is waiting for your decision on a card — fork it after that"}
 
 
 def label(sphere: Sphere) -> str:
@@ -40,8 +40,8 @@ def first_line(text: str) -> str:
     return line if len(line) <= LINE_CHARS else line[:LINE_CHARS - 1] + "…"
 
 
-DEFERRED = "разговор сессии кончается вызовом, который ещё не выполнен — ответвить можно после её следующего хода"
-MOVED = "трек сессии теперь на другой линии или в другой папке — её разговора там нет"
+DEFERRED = "the session's conversation ends in a call not yet run — it can be forked after its next turn"
+MOVED = "the session's track is now on another lane or in another folder — its conversation is not there"
 
 
 class Spheres:
@@ -59,47 +59,47 @@ class Spheres:
         reply to the answer goes to."""
         sphere = self.by_name.get(name)
         if sphere is None:
-            return {"ok": False, "say": f"Нет такой сферы: {name}."}
+            return {"ok": False, "say": f"No such sphere: {name}."}
         store = self.platform.store
         main = store.main_of(name)
         if not text.strip():
             return self.status(sphere, main)
         if (known := store.input_session(input_id)) is not None:  # the router sent it again
-            return {"ok": True, "session": known, "say": "Это сообщение сессия уже получила."}
+            return {"ok": True, "session": known, "say": "The session already has this message."}
         if main is not None:
             said = await self.platform.write(input_id, main, text)
-            return {"ok": True, "session": main, "say": f"{label(sphere)} · сессия {main}: {said}"}
+            return {"ok": True, "session": main, "say": f"{label(sphere)} · session {main}: {said}"}
         # Main from its INSERT, before its run is started: a message meanwhile already writes into it.
         answer = await self.platform.new_session(input_id, sphere.track, text, sphere=name, main=True)
         if not answer["ok"]:
             return answer
         session = answer["session"]
         made = store.session(session)["main"] == 1  # lost only to a main session made meanwhile: an ordinary one
-        head = f"{label(sphere)} · новая {'главная ' if made else ''}сессия {session}"
+        head = f"{label(sphere)} · new {'main ' if made else ''}session {session}"
         return {"ok": True, "session": session,
-                "say": f"{head}. Чтобы писать в неё, отвечай на её сообщения или пиши /{name} …"}
+                "say": f"{head}. To write to it, reply to its messages or write /{name} …"}
 
     def status(self, sphere: Sphere, main: str | None) -> dict:
         if main is None:
-            return {"ok": True, "say": f"{label(sphere)}: главной сессии нет. Напиши /{sphere.name} <задача> — "
-                                       "она начнётся и станет главной."}
+            return {"ok": True, "say": f"{label(sphere)}: no main session. Write /{sphere.name} <task> — "
+                                       "it starts and becomes the main one."}
         store = self.platform.store
         row = store.face_session(main) or {}
-        waits = f" · ждут карточки: {row['waiting']}" if row.get("waiting") else ""
-        head = f"{label(sphere)} · сессия {main} · {STATE_WORDS.get(row.get('state'), row.get('state'))}{waits}"
+        waits = f" · cards waiting: {row['waiting']}" if row.get("waiting") else ""
+        head = f"{label(sphere)} · session {main} · {STATE_WORDS.get(row.get('state'), row.get('state'))}{waits}"
         said = store.last_summary(main)
         line = first_line(str(said.get("text") or "")) if said else ""
-        return {"ok": True, "session": main, "say": f"{head}\n{line}" if line else f"{head}\nИтогов пока нет."}
+        return {"ok": True, "session": main, "say": f"{head}\n{line}" if line else f"{head}\nNo summaries yet."}
 
     async def fork(self, input_id: str, parent_id: str, text: str) -> dict:
-        """«Ответвить»: a new session from a copy of `parent_id`'s conversation, started with `text`; the same
+        """«Fork»: a new session from a copy of `parent_id`'s conversation, started with `text`; the same
         `input_id` again names the same fork."""
         store = self.platform.store
         if (known := store.input_session(input_id)) is not None:
-            return {"ok": True, "session": known, "say": "Это сообщение сессия уже получила."}
+            return {"ok": True, "session": known, "say": "The session already has this message."}
         parent = store.session(parent_id)
         if (why := self.fork_refusal(parent)) is not None:
-            return {"ok": False, "say": f"Не ответвил: {why}."}
+            return {"ok": False, "say": f"Not forked: {why}."}
         return await self.platform.new_session(input_id, parent["track"], text, sphere=parent["sphere"],
                                                fork_of=parent["id"])
 
@@ -110,7 +110,7 @@ class Spheres:
             return None, None
         parent = self.platform.store.session(session["fork_of"])
         if (why := self.fork_refusal(parent)) is not None:
-            return None, f"Ответвление не запущено: {why}. Напиши в эту сессию ещё раз — и оно запустится."
+            return None, f"The fork did not start: {why}. Write into this session again — and it will start."
         return parent["cli_session"], None
 
     def fork_refusal(self, parent: dict | None) -> str | None:
@@ -119,11 +119,11 @@ class Spheres:
         resume refused or lost — or that has a run queued is refused: the fork's resume would run that call itself,
         under the parent's tool_use id (probed, `tests/test_probes.py`)."""
         if parent is None:
-            return "нет такой сессии"
+            return "no such session"
         if parent.get("parent"):
-            return "вопрос в сторону не ответвляется — ответви сессию, к которой он задан"
+            return "a side question is not forked — fork the session it is about"
         if not parent["cli_session"]:
-            return "сессия ещё не сделала ни одного хода — ответвляться не от чего"
+            return "the session has not made a single turn yet — there is nothing to fork from"
         if why := BUSY.get(parent["state"]):
             return why
         store = self.platform.store

@@ -51,11 +51,11 @@ and `base` (the root of the Base) and `code` (your repositories, [code.md](code.
 - `/new <track> [text]` starts a session on that track; the answer names the session. `/new <sphere> [text]` starts
   one in that sphere, on its track ([Spheres](#spheres)). Bare `/new` still starts the assistant's conversation over,
   as before.
-- **Reply** to any of a session's messages to write to it. A reply while a card is open makes that card stale («Устарела:
-  ты написал новое сообщение»): the call it asked about is not run. A reply to an open question's own message is
+- **Reply** to any of a session's messages to write to it. A reply while a card is open makes that card stale («Expired:
+  you wrote a new message»): the call it asked about is not run. A reply to an open question's own message is
   its answer instead ([Questions](#questions)). Text and voice go into a session: a voice note,
   an audio file or a video note in reply is transcribed by the router's own speech path (the assistant's scribe and
-  limits) and goes in as «(голосом) <transcript>», and the answer shows what was heard («🎙 «…»»); speech that cannot
+  limits) and goes in as «(by voice) <transcript>», and the answer shows what was heard («🎙 «…»»); speech that cannot
   be read is said with the reason, and nothing goes in. A photo, a PDF or any other file goes in too
   ([What a session gets from you](#what-a-session-gets-from-you)); a video, a sticker and the like are refused. Any
   forwarded message, your own forward too, is data for the assistant, never a session's input. Transcription holds the Telegram update loop
@@ -65,8 +65,8 @@ and `base` (the root of the Base) and `code` (your repositories, [code.md](code.
 - A turn cut by a graceful stop of the platform or of its lane (`docker compose stop`, `restart`, an update that
   recreates either, in any order) goes on by itself: the platform records the runs it stopped, a lane journals
   its own stop as such (`stopped` with `by: shutdown`), and when such a run's end comes in, the session is resumed
-  once with «Платформа перезапускалась посреди твоего хода. Продолжи с того места, где остановился.», and its
-  summary says «Ход прервался: платформа перезапускалась…». If you wrote to the session meanwhile, your message goes
+  once with «The platform restarted in the middle of your turn. Continue from where you stopped.», and its
+  summary says «Turn cut off: the platform restarted…». If you wrote to the session meanwhile, your message goes
   next instead, alone. A session waiting on a card keeps its card; a run stopped any other way (a crash, a kill)
   goes idle and waits for you.
 - At most 12 sessions run in the room and 12 in all, one place always kept for your own message; the rest wait
@@ -74,8 +74,8 @@ and `base` (the root of the Base) and `code` (your repositories, [code.md](code.
 - **The subscription's limit.** A run that hits it waits for the reset instead of failing: the lanes run the CLI with
   its retry watchdog (`CLAUDE_CODE_RETRY_WATCHDOG=1`), a reset at most 5 hours away is waited out
   (`CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS`; a weekly limit fails at once), and no request waits more than
-  6 hours in all (`CLAUDE_CODE_RETRY_WATCHDOG_MAX_WAIT_MS`). While it waits, the session stays «работает» and holds its
-  room on the lane; you get «Лимит подписки — жду сброса до HH:MM» once per wait (from the CLI's `system/api_retry`
+  6 hours in all (`CLAUDE_CODE_RETRY_WATCHDOG_MAX_WAIT_MS`). While it waits, the session stays «working» and holds its
+  room on the lane; you get «Subscription limit — waiting for the reset at HH:MM» once per wait (from the CLI's `system/api_retry`
   line: a 429 waited longer than the watchdog's 5-minute backoff; a wait that is not a finite number is ignored, and
 one past the CLI's 6-hour cap is read as 6 hours), the time in `owner_tz` of `platform.yaml` (default
   `UTC`). The watchdog also retries other transient API errors longer (about 3 hours). The CLI's recheck of a
@@ -83,16 +83,16 @@ one past the CLI's 6-hour cap is read as 6 hours), the time in `owner_tz` of `pl
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` turns those checks off anyway.
 - **A side question** from the app starts a session of its own beside the one it is about and never writes into it
   ([face.md](face.md#in-the-app)).
-- **`/wait`** answers with «Ждут тебя» as text ([face.md](face.md#the-feed)): a head with the count, then one message
+- **`/wait`** answers with «Waiting for you» as text ([face.md](face.md#the-feed)): a head with the count, then one message
   per session's row, grouped by action — its icon, sphere or track, title, how long it waits, its one line and
-  `сессия <id>`, with «Открыть в приложении» when the face is on. Reply to a row to write to its session (to a
+  `session <id>`, with «Open in the app» when the face is on. Reply to a row to write to its session (to a
   question's row: that is its answer, as a reply to the question's own message; the line is mapped apart from the
   card, so the card's later rewrites never touch it). A card to decide is not answered by a reply — it would only go
-  stale — so its line says «Реши кнопками её карточки или в приложении» and a reply to it goes nowhere. The
+  stale — so its line says «Decide with its card's buttons or in the app.» and a reply to it goes nowhere. The
   assistant's rows come as one system message in her conversation (on record there): a reply to it goes to her with
-  that message quoted. A session's «В Базу» row (🗂) says «Нажми «В Базу» под её итогом или открой в приложении» and maps
-to nothing. The first 10 rows; «Ещё N — в приложении».
-- If the platform is down, the router says «Платформа недоступна — попробуй позже.» and never hands the message to
+  that message quoted. A session's «To the Base» row (🗂) says «Press «To the Base» under its result or open it in the app.» and maps
+to nothing. The first 10 rows; «N more — in the app.».
+- If the platform is down, the router says «The platform is unavailable — try again later.» and never hands the message to
   the assistant.
 
 ### The assistant's digest
@@ -108,12 +108,12 @@ What the router counts (`retinue/waiting.py`), each by a rule it already had:
   only to know) in the last 7 days, as the hub's «now» page reads it (`MailStore.needing`). A chat you wrote in after
   it is seen, unless she asked you to do or decide something (the morning summary's rule). One row per person; the
   letters you keep private are one row with a count and no name.
-- **draft** — a reply card whose «Отправить» still means something (`outbox.LIVE`, not expired); its letter is not
+- **draft** — a reply card whose «Send» still means something (`outbox.LIVE`, not expired); its letter is not
   counted again, nor a letter a draft already answered (queued, sending, sent).
-- **deadline** — a `deadline` of any Record or an `until` of a profile Record at most 7 days away (the face's «Сроки»),
+- **deadline** — a `deadline` of any Record or an `until` of a profile Record at most 7 days away (the face's «Deadlines»),
   from the heartbeat's last reading of the base; an overdue `deadline` up to 3 days. Its `since` is three days before
-  its day — the heartbeat's own push rule — so one further off has a `since` ahead: the platform keeps it out of «Ждут
-  тебя» (and `/wait`) until then and shows it only under «Сроки». It also carries its day (`when`, `YYYY-MM-DD`) and,
+  its day — the heartbeat's own push rule — so one further off has a `since` ahead: the platform keeps it out of «Waiting
+  for you» (and `/wait`) until then and shows it only under «Deadlines». It also carries its day (`when`, `YYYY-MM-DD`) and,
   when the path is a plain one, the Record's path in the base (`path`) — never the Record's text.
 
 The digest is minimal: `{items: [{id, kind, who, title, since, sphere?, when?, path?}], bot, chips?}` — an id made with an HMAC under the
@@ -123,15 +123,15 @@ router's own random salt (its kv `waiting.salt`; never sent), so it names no one
 (`waiting.said`), so no code, amount or account crosses; a time; the base's Space. The router cuts it to 50 items
 and under 32 KB, the least pressing left out. The platform checks it again (`feed.clean`): at most 50 items and
 32 KB, no other field, a name or title folded (NFKC) with invisible characters dropped, then anything shaped like an
-e-mail address written as ‹адрес›, then cut to 60 and 160 characters; `when` and `path` only on a deadline — a real
+e-mail address written as ‹address›, then cut to 60 and 160 characters; `when` and `path` only on a deadline — a real
 date; a Space, at most two folders and a `*.md` name, no dot-led part; one item off the contract refuses the whole
 push (400) and the last one stays.
 
 The same push carries the hub's **status chips** (`waiting.chips`, the hub's own «now» chips): `[{key, text, level}]`,
 `key` one of `health`, `backup`, `limit`, `build` at most once each, `level` `ok`, `warn` or `bad`, the text folded and
-cut to 60 characters — the build's said without its age («хаб собран»), so the digest does not change every
+cut to 60 characters — the build's said without its age («hub built»), so the digest does not change every
 minute. No hub on the router: none. A chip off the contract refuses the push as an item does. The face shows them on
-«Сегодня» (`GET /api/feed`'s `chips`).
+«Today» (`GET /api/feed`'s `chips`).
 
 ## Spheres
 
@@ -143,15 +143,15 @@ the sphere runs; `cwd`, when given, is its directory inside the track's (`base/t
 Base, [base.md](base.md)), and a session keeps the directory it was made with. A sphere's name is also a bot command: `a-z`, `0-9` and `_`, not a track's name, not one of the
 bot's own commands (`new`, `app`, `wait`… — `config.BOT_COMMANDS`); the platform refuses to start otherwise.
 
-- **`/<sphere> <text>`** (`/travel найди жильё в Зурбагане на 3–8 июня`) writes into the sphere's main session, as a
+- **`/<sphere> <text>`** (`/travel find a place to stay in Zurbagan for June 3–8`) writes into the sphere's main session, as a
   reply to it would; when the sphere has none, it starts a session there and makes it the main one. **`/<sphere>`**
   alone answers with the main session's state and the first line of its last summary. A reply to either answer goes
   into that session. The router knows the spheres by asking the platform (`/owner/spheres`, at its start and every
   10 minutes, kept in its SQLite for a restart while the platform is away) and adds them to the bot's menu
-  («/travel — ✈️ Путешествия»); the logic is the platform's (`/owner/sphere`, `retinue/spheres.py`).
+  («/travel — ✈️ Travel»); the logic is the platform's (`/owner/sphere`, `retinue/spheres.py`).
 - **A session's sphere** is set when it starts — `/new <sphere>`, `/<sphere>`, the app's form, or its parent's for a
   side question, a fork and a sub-session — and you change it in the app's session menu. A session started with
-  none names its own by a last line `Сфера: <name>` ([Sub-sessions](#the-sphere-line)). A session moved to another sphere is no
+  none names its own by a last line `Sphere: <name>` ([Sub-sessions](#the-sphere-line)). A session moved to another sphere is no
   sphere's main session there. **The main mark** is set and taken off in the same menu; marking one takes it off the
   sphere's previous main session. SQLite holds «at most one per sphere» itself (a unique index on the sphere where
   `main = 1`), so two `/travel` racing make one main session, and the other message goes into it or stays an ordinary
@@ -161,7 +161,7 @@ bot's own commands (`new`, `app`, `wait`… — `config.BOT_COMMANDS`); the plat
   on a visible screen, wrote into it (in the app or in Telegram) or decided its card there. One `seen_at` per session:
   you are one person. The app marks it with a dot.
 
-**A fork** («Ответвить» in the app's session menu, with its first message) is a new session — `fork_of` the parent —
+**A fork** («Fork» in the app's session menu, with its first message) is a new session — `fork_of` the parent —
 on the parent's track, lane, directory and sphere, with the track's full rights (unlike a side question, which only
 reads). Its first run resumes the parent's CLI session with `--fork-session` (`cliengine.FORK_SESSION`, allowed only
 right after `--resume <id>` and only on this path); from its own first line on, it resumes its own. Probed with the
@@ -180,7 +180,7 @@ forked, and a session that never ran has nothing to fork.
 ## Sub-sessions
 
 A session you started hands separable work to sessions of its own — as your main session of a sphere does in Claude
-Code on the Mac («Путешествия» runs «жильё», «поездка к морю») — and is told when each one's turn ends
+Code on the Mac («Travel» runs «stay», «a trip to the sea») — and is told when each one's turn ends
 (`retinue/subs.py`). The lanes' instructions teach it when to (`deploy/lanes/instructions/common.md`).
 
 **The mechanism: an MCP server the platform serves to the run**, at `http://platform:9500/hook/mcp` — beside the hooks,
@@ -201,7 +201,7 @@ every engine the lanes may run speaks, and a real tool gets a real result where 
   the token is expanded, the CLI asks `server/discover` (the new spec's; refused, it goes on with `initialize`), the
   tools are deferred — the model loads them by `ToolSearch`, which passes the gate too — the server's `instructions`
   reach the model, a call with no decision goes to the classifier, and a call let through reaches the server with the
-  id the gate saw. A run whose server did not connect is told to you once («Подсессии в этой сессии недоступны…»).
+  id the gate saw. A run whose server did not connect is told to you once («Sub-sessions are not available in this session…»).
 - **The argv.** The platform marks a run `subs: true`; the lane host writes `--mcp-config` (the platform's server at its
   own hook address, never one the platform sent) and `--strict-mcp-config`, and `cliengine.check_argv` refuses any
   other server. The mark is fixed by the session's row, so a resume after a card has the same tools.
@@ -211,19 +211,19 @@ every engine the lanes may run speaks, and a real tool gets a real result where 
 
 **A sub-session** runs in the same room, on its parent's track, in the track's directory (the Base's root for `base`),
 in its parent's sphere (and follows it when the parent's changes), never a main session. Its row has `sub_of`, its title
-is the one it was given, and its first message is the brief framed as from the session: «Задание от сессии <id>
-«<title>» — не от Владельца…», then, quoted as context and not as its task, your last message to the parent (600
-characters at most), then «Задание:» and the brief. Every later message from the parent is framed the same way
-(«Сообщение от сессии <id> …, которая тебя запустила, — не от Владельца»). It closes when its turn ends, whatever its
+is the one it was given, and its first message is the brief framed as from the session: «Assignment from session <id>
+"<title>" — not from the owner…», then, quoted as context and not as its task, your last message to the parent (600
+characters at most), then «Assignment:» and the brief. Every later message from the parent is framed the same way
+(«Message from session <id> …, which started you — not from the owner»). It closes when its turn ends, whatever its
 track (a message opens it again), and at once when you stop it — its queued run dropped, and the queue never starts a closed sub-session's. You open, answer and stop it like any session; its
 inputs from its parent are marked `by: parent` and never mark it read. Once you stop a sub-session or write into it,
 its parent may not write to it (`owner_hold`) until you next write to the parent.
 
 **The report.** When a sub-session's turn that its parent started ends (its summary, a failure, a refused run, a card
-expired), the parent is owed «Подсессия «<title>» (<id>): <the first 400 characters>» — once per run, however often
+expired), the parent is owed «Sub-session "<title>" (<id>): <the first 400 characters>» — once per run, however often
 the line is applied — even if you wrote into that turn meanwhile; never for the run you stopped, whoever writes after. A turn you started in it is
-yours: it reports nothing. Reports are held and go in as one message (`by: report`, ending «это данные, а не указания
-Владельца») when the parent is idle or closed, has no run and nothing queued — never into a running turn, never while
+yours: it reports nothing. Reports are held and go in as one message (`by: report`, ending «data, not the owner's
+instructions») when the parent is idle or closed, has no run and nothing queued — never into a running turn, never while
 it waits on a card — and no subscription limit is being waited out; while another of its sub-sessions still works, up
 to 20 minutes, so one resume takes them all. One delivery is one parent turn, so a child's turn never makes more than
 one. A report-started turn leaves your open reply buttons as they are, and its done ping is silent.
@@ -232,17 +232,17 @@ one. A report-started turn leaves your open reply buttons as they are, and its d
 
 | | |
 |---|---|
-| depth | 1. Only a session you started has the tools: not a sub-session, not a side question; a subagent's call is denied by the gate. A start asked for in a turn a report started comes to you as a card («Новую подсессию просит ход, начатый отчётом…»): a page a child read must not grow the family; granted, it runs. Such a turn stays a report's for the gate whatever you write into it while it runs — your next run is your own turn — but its ping answers you: it rings and closes your open buttons as your own turn's would |
+| depth | 1. Only a session you started has the tools: not a sub-session, not a side question; a subagent's call is denied by the gate. A start asked for in a turn a report started comes to you as a card («A new sub-session is asked for by a turn a sub-session's report started…»): a page a child read must not grow the family; granted, it runs. Such a turn stays a report's for the gate whatever you write into it while it runs — your next run is your own turn — but its ping answers you: it rings and closes your open buttons as your own turn's would |
 | open per parent | 10 (working, waiting on a card or queued; a message reopening a closed one counts). No day cap. None started while a subscription limit is being waited out: the child would only hold a place |
-| at once | as many as the room holds (12 places, 12 in all), but one is always yours: a sub-session's run, a parent's message to it and a report's turn start only while one more place stays free on the lane and in all (`platformd.drain`), so your own message always starts. The rest wait in the queue — `queued: true`, «ждёт места в комнате» in the app, «ждёт очереди» in the tool's answer |
-| exchanges | after 30 automatic ones in a row without your word (a report delivered or a message to a child is one), reports stop waking the parent and wait for your next message; the parent gets one quiet line «Подсессии и сессия обменялись 30 раз подряд без тебя — их отчёты ждут твоего сообщения», no sound. Messages to children stay allowed. Your next message into the parent or any of its children counts from zero |
+| at once | as many as the room holds (12 places, 12 in all), but one is always yours: a sub-session's run, a parent's message to it and a report's turn start only while one more place stays free on the lane and in all (`platformd.drain`), so your own message always starts. The rest wait in the queue — `queued: true`, «waiting for room on the lane» in the app, «it waits in the queue» in the tool's answer |
+| exchanges | after 30 automatic ones in a row without your word (a report delivered or a message to a child is one), reports stop waking the parent and wait for your next message; the parent gets one quiet line «The sub-sessions and the session exchanged 30 times in a row without you — their reports wait for your message», no sound. Messages to children stay allowed. Your next message into the parent or any of its children counts from zero |
 | the same start twice | the same call id, or the same title and brief while that child is open: the child already started is named |
 
 The parent does not write into a child you stopped or wrote into (above), nor into one waiting on your card.
 Your place in the room is kept by the reserved slot rather than by putting your messages ahead of the queue: that
 would reorder one session's own messages.
-**«Стоп» on a parent** stops its family: queued runs dropped, running ones stopped, cards stale, each closed, held
-reports dropped. **What you see**: a quiet ping when a sub-session starts («Запущена сессией …: <title>», the brief
+**«Stop» on a parent** stops its family: queued runs dropped, running ones stopped, cards stale, each closed, held
+reports dropped. **What you see**: a quiet ping when a sub-session starts («Started by session …: <title>», the brief
 whole in its transcript); its done turns are quiet (the parent reads them), its cards and failures ring as usual; the
 parent's next ping that needs you rings. The session JSON has `sub_of`, `children` (open), `queued`, and `side` for a
 side question ([face.md](face.md#api)).
@@ -264,8 +264,8 @@ dies with its session, `claude --bg` is interactive only.
 ### The sphere line
 
 A session started with no sphere and not placed by you names its own: the server's instructions list the sphere names,
-and the model ends its turn with one line `Сфера: <name>` — the last line, or the one right before `Ответы:`, outside a
-code fence; bold or code marks tolerated; only a configured name. The platform takes it off the ping (the app hides it
+and the model ends its turn with one line `Sphere: <name>` (the older `Сфера:` is read too) — the last line, or the one right before
+`Replies:`, outside a code fence; bold or code marks tolerated; only a configured name. The platform takes it off the ping (the app hides it
 with the replies' line), sets the sphere, never the main mark, and the session's sub-sessions follow — but one you
 placed yourself. Once you place a
 session in the menu (`sphere_by: owner`), its line is ignored; a sub-session and a side question never read theirs.
@@ -276,8 +276,8 @@ A photo, a PDF or any other file sent **in reply** to a session's message (its c
 the app, goes into that session; an album is one message (its parts gathered for 1.5 s, as the assistant gathers
 hers, under the first part's id; the captions joined). The parts are kept in the router's SQLite as they come: a
 router restarted mid-album gathers them again on start, a part Telegram delivers again joins its album by its group
-(a part already kept is not taken twice), and an album that cannot be sent is said («альбом из N файлов не собран…
-Пришли его ещё раз»). **A reply carrying files is never an answer to a question card** (the questions part): it goes
+(a part already kept is not taken twice), and an album that cannot be sent is said («an album of N files was not put together…
+Send it again.»). **A reply carrying files is never an answer to a question card** (the questions part): it goes
 in as an ordinary message with its files, and the question's own buttons, or a reply in text, answer it.
 The router reads nothing of it: it downloads the bytes (the
 Bot API gives bots 20 MB a file) and hands them to the platform whole, with their SHA-256 (`bridge.files`); the app
@@ -288,15 +288,15 @@ sends the same (`POST /api/sessions/{id}/input` with `attachments`). The platfor
   the router's own reader (`attachments.isolated`: a worker process with a deadline and a memory ceiling, one at a
   time across all messages, 1 GiB of address space in the platform's 768 MB),
   turned upright, at most 1568 px on its long side, re-encoded as JPEG — HEIC from an iPhone too. One that does not
-  decode is said («Не передано в сессию: картинка «x.png»: картинку не удалось открыть») and left out; the rest of
+  decode is said («Not passed to the session: picture "x.png": the picture could not be opened») and left out; the rest of
   the message goes in. A block the API rejected would sit in the session's history and break every later turn.
 - **A PDF** of at most 20 pages and 5 MB becomes a `document` block, opened by the same reader first. A longer one,
   or one that does not open, goes in as a file: the session reads its pages itself.
 - **Anything else** — a table, an archive, code, a text, a picture of a kind the reader does not re-encode (SVG,
   PSD) — goes into the session's own folder as a file,
   `inbox/<date>-<name>` (the date your own, `owner_tz`): the platform cannot write there (its mount of the lanes'
-  `/work` is read-only), so the lane host writes it, then adds to your message where the files now are («Файлы
-  владельца сохранены в папке сессии: - inbox/2026-10-27-report.xlsx (12 КБ)»). The name is reduced to a plain file
+  `/work` is read-only), so the lane host writes it, then adds to your message where the files now are («The
+  owner's files are saved in the session's folder: - inbox/2026-10-27-report.xlsx (12 KB)»). The name is reduced to a plain file
   name (no path, no leading dot, at most 80 characters); the same bytes sent again are the same file, other bytes
   under a taken name get «-2». Nothing is followed: a session that made `inbox` or a file in it a link gets a refusal,
   not a write elsewhere; a name that is taken by a FIFO, a device or a file of another size is never opened for
@@ -311,11 +311,11 @@ so the container's OOM killer takes it before the platform or the router; it kee
 platform and the router make themselves non-dumpable at start (`prctl(PR_SET_DUMPABLE, 0)`, `attachments.undumpable`),
 so a worker a file took over cannot read their `/proc/<pid>/environ` or memory, though it runs as the same user. All
 of one message's pictures and PDFs are read within 240 s (`inbox.PARSE_BUDGET_S`, below the router's and nginx's 300
-s wait); a file not reached by then is named in the answer («не дошла очередь… пришли его отдельно») and left out. A
+s wait); a file not reached by then is named in the answer («its turn did not come… send it separately») and left out. A
 name loses its control characters and bidi overrides (U+202A–U+202E, U+2066–U+2069) before anyone reads it.
 
-Your text comes first, then one line naming what came with it («Приложено: фото 1280×960; PDF «счёт.pdf», 3 стр.;
-файл «data.csv» (в папке inbox/, путь ниже).»), then the blocks. Limits, checked by the platform whatever sent it: at
+Your text comes first, then one line naming what came with it («Attached: photo 1280×960; PDF "invoice.pdf", 3 pages;
+file "data.csv" (in the inbox/ folder, path below).»), then the blocks. Limits, checked by the platform whatever sent it: at
 most 10 files and 30 MB in one message, 20 MB a file (`inbox.MAX_*`); the router does not download what Telegram
 already says is over them, and says so. A message whose files all failed and that has no text does not go in at all.
 The lane checks the blocks again before it writes them (`cliengine.check_content`: `text`, `image` as JPEG,
@@ -327,7 +327,7 @@ Probed with the pinned CLI (`tests/test_inbox_probe.py`, against the stand-in AP
 for byte on the first turn and again in the history of a resume, and the CLI does not echo your line into the
 journal. Checked once with a real login (Haiku): a picture with «4711» and a red circle, sent as an
 `image` block and again as a one-page scanned PDF in a `document` block, was read back both times as «4711,
-красный».
+red» (in Russian, as it was asked then).
 
 The app shows your messages in the transcript where they came — your text, a picture as the platform's own
 thumbnail of its JPEG (`GET /api/sessions/{id}/inputs/{input_id}/{n}`, 320 px), a PDF or a file by its name and size
@@ -345,15 +345,15 @@ directory before:
 - **In Telegram**, each file after the summary, as a reply to the session's last message: a PNG, JPEG or WebP up to
   5 MB as a photo (refused as one, as a document), a PDF, a document, a table or an archive as a document, with no
   caption. Reply to it to write to the session, as to any of its messages. What was left out comes as one message
-  «Файлы · <track> · сессия <id>» with the reason per file.
+  «Files · <track> · session <id>» with the reason per file.
 - **An HTML page or an SVG never goes to Telegram as itself**: opened there, its script would run with the open web —
-  `out/` would be a way out of a lane that has no web. It comes as a message with its name and «Открыть», a button of
+  `out/` would be a way out of a lane that has no web. It comes as a message with its name and «Open», a button of
   the face's Mini App (`/f/<id>`), where it opens in the sandboxed frame ([face.md](face.md#a-sessions-files)).
   Without the face it comes as a document `<name>.txt`, plain text. The residual: a page in the sandbox runs no
   script and loads nothing CSP governs, but Chromium does not hold `<link rel=dns-prefetch>` to CSP, so a page opened
   in the face can make your phone resolve a name it chose — a DNS lookup, which can carry a few bytes in the name,
   no request.
-- **In the app**, under «Файлы» of the session ([face.md](face.md#a-sessions-files)).
+- **In the app**, under «Files» of the session ([face.md](face.md#a-sessions-files)).
 - **Limits**: the types `.pdf .md .txt .csv .json .html .htm .png .jpg .jpeg .gif .webp .svg .docx .xlsx .pptx .zip`
   (served as the type the extension has on the list, never what the file says); 20 MB a file (Telegram lets a bot
   send 50, and the bytes cross from the platform to the router as JSON); 10 files and 50 MB a turn; 500 entries and
@@ -365,24 +365,24 @@ directory before:
   nothing again.
 - **Names** are stored and shown as valid UTF-8 with every direction mark, override and control character written as
   a label (`report⟦U+202E⟧fdp.exe`), in Telegram, in the app and in a downloaded file's name; a name that is not UTF-8
-  is left out («имя файла не в UTF-8»).
+  is left out («the file name is not UTF-8»).
 - **Links** are followed as the gate follows them: an absolute target is a lane path, a link out of `/work` is refused
-  («ссылка ведёт за пределы /work»), a link to a folder (or to `/work` itself) is not walked; the walk goes by
+  («the link leads outside /work»), a link to a folder (or to `/work` itself) is not walked; the walk goes by
   directory descriptors (`os.fwalk`). Then the file is opened one directory at a time with `O_NOFOLLOW`, so a link
   swapped in after the check fails instead of leading into the platform's own files. A bad link or an unreadable
   entry is said only in the look after it appeared, not after every turn. The platform reads bytes and hashes them;
   it never runs, opens or interprets a file.
 - **Kept by value**: the bytes go into the platform's SQLite (`out_blobs`, one copy per SHA-256) in the same
   transaction as the file's row, the router's note and the app's event, so a crash looks again and a file is never
-  sent twice; a turn that ends while a look runs is looked at again. A look that breaks is said once («Файлы из out/
-  не собраны: ошибка платформы (…)») and owed no more, and nothing in a look can hold back the lanes' journals or
+  sent twice; a turn that ends while a look runs is looked at again. A look that breaks is said once («Files from out/
+  were not collected: platform error (…)») and owed no more, and nothing in a look can hold back the lanes' journals or
   the queue. Files and their bytes are pruned after 30 days.
 - **What a session hands over**: a file whose time (`mtime` or `ctime`, 2 s of slack) is at or after the look's start
   and whose bytes differ. A side question's session hands nothing over. Two sessions may share one directory (one
   track, or two tracks with one lane and `cwd`): when another of them ran during the look's window, a file goes to
   the session whose own calls named it — the path of a Write, Edit, MultiEdit or NotebookEdit, or a Bash command
   holding its name; named only by the other, it waits for the other's look; named by both or neither, it goes with
-  this one and the message says «в папке работали две сессии».
+  this one and the message says «two sessions worked in the folder».
 - A session that never writes into `out/` hands nothing over: a file elsewhere stays where it is.
 
 ## The face: from your phone
@@ -393,12 +393,12 @@ an app or in a Telegram Mini App — over WireGuard only. Send `/app` to the bot
 
 ### Voice
 
-What you dictate in the app ([face.md](face.md#voice-голос)) is transcribed by the platform itself, not the router:
+What you dictate in the app ([face.md](face.md#voice)) is transcribed by the platform itself, not the router:
 `POST /api/speech` of the face API hands the recording to ElevenLabs Scribe (`retinue/speech.py`, the router's own
 client, `scribe_v2`) and answers the text. Two modes, each Scribe's own options: `dictate` — `no_verbatim=true`,
 your terms as `keyterms`, no `language_code`; `en` — `language_code=en`, `no_verbatim=false`, no terms. An `en`
-transcript goes into a session as «(голосом, дословно) <transcript>» (a voice note through the router stays
-«(голосом) …»).
+transcript goes into a session as «(by voice, verbatim) <transcript>» (a voice note through the router stays
+«(by voice) …»; the older Russian marks are still read in old transcripts).
 
 - **The key.** `ELEVENLABS_API_KEY` from `stack.env`, given in compose to the router and the platform and to nothing
   else; the platform reads it at start and drops it from its own environment, so no child — git, a parse worker —
@@ -413,7 +413,7 @@ transcript goes into a session as «(голосом, дословно) <transcri
   by Scribe's rules — at most 1000, each under 50 characters and 5 words, none of `< > { } [ ] \` — so a bad one
   stops the platform with the reason rather than fail each dictation. They cost: +20% a dictation, and past 100 each
   is billed 20 s at least (the platform warns at start). The example seeds a short generic list; add your own.
-- **«Отмена».** aiohttp goes on with a handler whose client went away, so the handler looks every 0.25 s (and a
+- **«Cancel».** aiohttp goes on with a handler whose client went away, so the handler looks every 0.25 s (and a
   server that cancels handlers is handled the same way): a recording still being sent is cancelled with the call —
   never sent, never paid; one ElevenLabs already has (httpx took its last byte) is paid, so the call ends in the
   background — one at a time — to delete the transcript there, and the lock is free at once. nginx closes its
@@ -477,14 +477,14 @@ What keeps the way out narrow: **the web is the CLI's, not Bash's** — exactly 
 A host added to that list (and the image rebuilt) is one more way out.
 
 What never enters the room: your mail, Telegram, the bot tokens, the subscription token (a pipe to the CLI, below),
-any GitHub or registry credential and any right to push — a commit leaves only by your button, the Base's «В Базу»
+any GitHub or registry credential and any right to push — a commit leaves only by your button, the Base's «To the Base»
 ([base.md](base.md)) and the code's ([code.md](code.md)). There are no documents in the Base. The never list still
 holds in the room ([The never list](#the-never-list-and-the-courier-card)).
 
 ### The exfil guard
 
 Before any rule, the gate reads every `WebFetch` and `WebSearch` (`retinue/exfil.py`); one that looks like it carries
-data is deferred to you as an ordinary card — «Разрешение», «Похоже на вынос данных: <why>. Прочитай адрес целиком»,
+data is deferred to you as an ordinary card — «Permission», «Looks like data leaving: <why>. Read the whole address»,
 the address or query whole as its input — never refused and never let through silently. It is bound, kept across
 restarts and decided like every card ([Approvals](#approvals)); granted, the call runs once. It goes through the
 gate's one owner-card path, so a subagent's suspicious fetch is denied there like any call a subagent would defer.
@@ -640,7 +640,7 @@ whose input has the shape of an Anthropic token (`sk-ant-oat01-…`, `sk-ant-api
 percent-escaped) in an address, a search, a command or a file; and it keeps every file tool inside `/work` as the
 lane sees it — `.`, `..`, `//`, `~` folded, brace alternatives expanded, links followed through its own read-only
 mount of the lane's `/work`, so a repository's `README -> /proc/1/environ` is refused — but for `Read` and `Grep` of
-the CLI's spill of a large result and the read-only file tools in your skills. The session reads why, in Russian.
+the CLI's spill of a large result and the read-only file tools in your skills. The session reads why, in English.
 And the CLI's own deny rules (every lane's managed settings), which follow links: `Read` of `/proc`, `/lane/state`,
 `/lane/run`, the CLI's config files and its transcripts — not all of `/lane/config`: the CLI saves a tool result too
 large for the conversation to `/lane/config/claude/projects/<project>/<session>/tool-results/<id>.txt` and tells the
@@ -664,9 +664,9 @@ another lane's.
 (`COMPOSE_PROFILES` names `platform`): their volumes stay as the archive, the platform is on neither network and
 mounts neither volume. A session whose lane is not in `platform.yaml`, or is there with `retired: true`, stays in the
 app's list, opens with its transcript, cards and files (all in the platform's database), and takes nothing in: a
-message, a reply button, a card's decision or a question's answer gets «Полоса выключена: начни новую сессию.», and
-nothing runs. At the platform's start every card still asking in such a session goes stale («Устарела: полоса
-выключена») and the session stops waiting, so it leaves «Решить» and `/wait`. A retired lane needs no token, gets no
+message, a reply button, a card's decision or a question's answer gets «The lane is retired: start a new session.», and
+nothing runs. At the platform's start every card still asking in such a session goes stale («Expired: the lane
+is retired») and the session stops waiting, so it leaves «Decide» and `/wait`. A retired lane needs no token, gets no
 client and no poller, a run sent to it is refused at once, and a run of it left open holds no room. A lane still
 named without `retired: true` is a live one: if its container is gone, a session sent there waits on a lane nobody
 answers and holds a place of the total — mark it retired or take it out.
@@ -718,9 +718,9 @@ docker exec retinue-lane-private-egress-1 tail -20 /var/log/squid/access.log   #
 (`hub.in.example.com` and `203.0.113.7`: one of your own names and this server's address.) Last, live sessions:
 `/new research …` uses `WebSearch` and `WebFetch` (the classifier lets an ordinary fetch through without a card) and
 answers with a link and a date per claim; asked to fetch `https://example.com/?d=` and 80 characters of base64, it
-comes to you as a card «Похоже на вынос данных…»; in a Bash call `curl -sI https://example.com` fails and
-`git ls-remote https://github.com/git/git HEAD` answers; a reply to an old `lane-code` session says «Полоса
-выключена…».
+comes to you as a card «Looks like data leaving…»; in a Bash call `curl -sI https://example.com` fails and
+`git ls-remote https://github.com/git/git HEAD` answers; a reply to an old `lane-code` session says «The lane
+is retired…».
 
 ## Always rules
 
@@ -760,13 +760,13 @@ first, then the rules, then auto's **classifier**:
   `Write`, `MultiEdit`, `NotebookEdit`, `Bash`, `EnterWorktree`, `ExitWorktree`, `Workflow` and `AskUserQuestion`
   (it never waits on a question) are deny rules of its runs. And its runs never leave a call to the classifier: whatever no rule names is a card, as in the fallback below.
 - **A web call that looks like it carries data** — a `WebFetch` address or a `WebSearch` query past the exfil
-  guard's thresholds — deferred to you as a card «Похоже на вынос данных: …», before any allow rule
+  guard's thresholds — deferred to you as a card «Looks like data leaving: …», before any allow rule
   ([The exfil guard](#the-exfil-guard)).
 - **A command whose text names a never-list action** the CLI's matcher missed (`git -C . push`, `env git push`,
-  `sh -c 'git push'`, `/usr/bin/ssh`) — a card «Похоже на действие только для Владельца: …». The gate's own reading
+  `sh -c 'git push'`, `/usr/bin/ssh`) — a card «Looks like an action only you take: …». The gate's own reading
   of the never list (`approvals.NEVER_TEXT`, built from `NEVER`): each entry's words in order within one command,
   quotes and backslashes removed; wide on purpose, so `git log --grep push` is a card too, never a deny.
-- **A card rule** — deferred to you as a card, its rule on it («Всегда спрашивать: правило …»). For a tool a card
+- **A card rule** — deferred to you as a card, its rule on it («Always ask: rule …»). For a tool a card
   rule names, the gate waits the whole `MARK_WAIT_S` (1 s) for a card or never mark, so an allow mark that comes
   first cannot run it without the card.
 - **AskUserQuestion** — always deferred to you as a question ([Questions](#questions)), whatever the rules but a
@@ -775,41 +775,41 @@ first, then the rules, then auto's **classifier**:
 - **Anything else** — the gate gives no decision and the classifier decides: it runs what is ordinary work and
   blocks what is destructive, irreversible or leaves the machine. A block is no dead end: the gate tells the CLI the
   model may retry (`PermissionDenied` → `retry: true`), and the same call made again — Bash's `description` aside —
-  is deferred to you as a card that says why: «Классификатор остановил: [Remote Repoint]». A retry is given once per
+  is deferred to you as a card that says why: «Stopped by the classifier: [Remote Repoint]». A retry is given once per
   call and at most twice per run (`RETRIES_PER_RUN`), far from the CLI's own limit (a headless run aborts after 3
   classifier denials in a row or 20 in all); a retry is deferred, never denied. A block that does not come back as a
   card — no retry given, or the model went on and the run ended — comes as a notice card without buttons
-  («Заблокировано · …», the command, the reason). The transcript keeps it too: the call's item carries the reason
+  («Blocked · …», the command, the reason). The transcript keeps it too: the call's item carries the reason
   (`denied`) and the CLI's error as its result.
 
 **When a run is not in auto.** The CLI starts in manual without failing when auto is unavailable to it (the
-model, the account, the scrub turned on). Its init line says so; the platform tells you once per session («Режим
-auto в этой сессии выключен: CLI запустился в режиме default…») and that run falls back to the gate before auto:
+model, the account, the scrub turned on). Its init line says so; the platform tells you once per session («Auto
+mode is off in this session: the CLI started in default mode…») and that run falls back to the gate before auto:
 every call no rule decides comes as a card, and a call the CLI still asks about despite a rule (a compound
 command, a path outside the directory) is refused with a request to repeat it, and repeated, comes as a card. The
 gate reads the mode from each hook's `permission_mode` and from the run's init line once the platform has it:
 either one not `auto`, and the call falls back. In auto the gate waits for a call's marker hooks only when the run
 has a card rule — the only mark that changes its answer there.
 
-A card: «Разрешение · <track> · сессия <id>», the tool, the directory, why it came (a card rule, the classifier's
+A card: «Permission · <track> · session <id>», the tool, the directory, why it came (a card rule, the classifier's
 reason; nothing in the fallback), the input verbatim (a Bash command as it is), and what code found in it. Buttons:
 
-- **«Разрешить»** — the session resumes and the call runs exactly once, past the classifier (the gate's `allow`):
+- **«Allow»** — the session resumes and the call runs exactly once, past the classifier (the gate's `allow`):
   the grant is bound to a digest of the tool,
   its input, the directory and the file it would change, as the file is now. A file changed since the card, a
   second press, a press after a restart that already used it — nothing runs again.
-- **«Отказать»** — the session resumes and the model is told you refused.
-- **«Открыть»** — the whole input as a file, with the same buttons. A card longer than one Telegram message offers
-  only «Открыть».
+- **«Deny»** — the session resumes and the model is told you refused.
+- **«Open»** — the whole input as a file, with the same buttons. A card longer than one Telegram message offers
+  only «Open».
 
 A card survives restarts of the platform, the lanes and the router: press it an hour later and the call runs once.
 But a press is a resume, and since CLI 2.1.304 a resume of a conversation idle past the one-hour prompt cache re-reads
 its whole context uncached — a noticeable share of the subscription's 5-hour window. So a card whose session has been
-silent for 55 minutes is rewritten, in Telegram and in the app, with «Сессия простаивает N мин — продолжение перечитает
-контекст (~K тыс. токенов) без кэша» before its input line: K is the input and cache tokens of the session's last
+silent for 55 minutes is rewritten, in Telegram and in the app, with «The session is idle N min — resuming re-reads
+the context (~Kk tokens) uncached» before its input line: K is the input and cache tokens of the session's last
 top-level request (not the turn's `result`, which sums every request of the turn); without one, no number. The line
-is rewritten at 90 minutes and then as the hours change («2 ч», …, «больше суток»), not every minute; the buttons,
-«Открыть в приложении» and the card's expiry stay. Once the card is decided, stale or expired, the line goes. Every
+is rewritten at 90 minutes and then as the hours change («2 h», …, «over a day»), not every minute; the buttons,
+«Open in the app» and the card's expiry stay. Once the card is decided, stale or expired, the line goes. Every
 decision is journaled as the card's last note — a Telegram press too, though it edits its card at once — so an idle
 rewrite still on its way to the router never brings the buttons back.
 Unpressed for 7 days, it expires. When the model makes several calls at once and the first is deferred, the CLI
@@ -829,8 +829,8 @@ A session runs subagents (the `Agent` tool) as on your Mac — to search, read a
 - **A subagent cannot wait for you.** A deferral inside a subagent ends the subagent without its report; the main
   agent goes on and the run ends with no `deferred_tool_use` — nothing a resume could run, the card an orphan. So the
   gate never defers a subagent's call: what would come to you as a card — a card rule, a never action by its text, a
-  classifier block made again, the fallback's every call, a question, a shutdown — is denied with «Субагент не может
-  ждать решения Владельца…» (`gate.SUBAGENT`), no card made; a classifier block in a subagent is not retried and comes
+  classifier block made again, the fallback's every call, a question, a shutdown — is denied with «A subagent cannot
+  wait for the owner's decision…» (`gate.SUBAGENT`), no card made; a classifier block in a subagent is not retried and comes
   as a notice card. The subagent names the step in its report and the main agent makes the call itself, which then
   comes to you as usual. The lane's instructions say the same.
 - **In the foreground, several at once.** 2.1.304 launches a subagent in the background by default in `-p`. A
@@ -846,7 +846,7 @@ A session runs subagents (the `Agent` tool) as on your Mac — to search, read a
   60 at most when the model asks (`BASH_DEFAULT_TIMEOUT_MS`, `BASH_MAX_TIMEOUT_MS` in `cliengine.BASH_TIMEOUTS`;
   the CLI's own are 2 and 10) — and the lane's instructions say: long builds and tests as one foreground command, no
   servers or watch modes (they never end; the timeout would end them). A run waits for such a call; the owner's
-  «Стоп» still stops it.
+  «Stop» still stops it.
 
 Fork subagents stay off ([What a lane sees](#what-a-lane-sees)). `tests/test_probes.py` pins all of the above but the
 real runs.
@@ -861,11 +861,11 @@ decided reaches the lane host as a `control_request` on the CLI's stdout, and th
 (`cliengine.deny_control`) — the run never waits on it, and nothing is ever granted that way.
 
 The gate defers every AskUserQuestion — never the classifier's, never run unanswered — and you get one message per
-question: «Вопрос · <track> · сессия <id> · 1 из 2», the question and its options verbatim, and the options as
+question: «Question · <track> · session <id> · 1 of 2», the question and its options verbatim, and the options as
 buttons. A single choice is answered by its button; a multi-select's buttons tick (☐/☑: each press toggles that
-option in the stored picks, the same buttons relabelled, so fast taps all count) and «Готово» sends what is ticked;
-**a reply to the question's message** is your own answer («Свой ответ»), a spoken one too — taken once: the router
-sending it again changes nothing. A reply with files is never an answer: it goes in as a message with its files. The message is rewritten with «Ответ: …» and no buttons; in the app the same
+option in the stored picks, the same buttons relabelled, so fast taps all count) and «Done» sends what is ticked;
+**a reply to the question's message** is your own answer («Your answer…»), a spoken one too — taken once: the router
+sending it again changes nothing. A reply with files is never an answer: it goes in as a message with its files. The message is rewritten with «Answer: …» and no buttons; in the app the same
 question card answers by the same rules ([face.md](face.md)), and an answer in either place retires the other. When
 every question has its answer, the session resumes: the gate answers the resumed call `allow` with the call's input
 plus `answers` (each question's text → the label, the labels joined by «, », or your text), and the model is told
@@ -885,9 +885,10 @@ message or on your decision on a card; one that waited for room on its lane coun
 split as before; a reply to any of its messages goes into the session.
 
 **Suggested replies.** The lanes' instructions (`deploy/lanes/instructions/common.md`) ask the model to end a turn
-that leaves you a choice with one line `Ответы: «Да, делай» · «Сначала покажи план»`. The platform takes that line
-off the text and parses it strictly: only the very last line, not inside an open code fence (a fence closes only with
-its own marker, ``` or ~~~, at least as long), `«…»` joined by ` · ` (a bold label is tolerated); each reply loses
+that leaves you a choice with one line `Replies: "Yes, go ahead" · "Show me the plan first"`. The platform takes that
+line off the text and parses it strictly: only the very last line, not inside an open code fence (a fence closes only
+with its own marker, ``` or ~~~, at least as long), `"…"` (or `“…”`, `«…»`) joined by ` · ` (a bold label is
+tolerated; the older label `Ответы:` is read too); each reply loses
 invisible, bidi and blank characters, and one longer than 60 characters, one with no letter or digit, one that starts
 with `/`, `!` or `#` (the CLI would read a command or a skill, maybe one a page steered the model to), an empty one
 and a repeat are dropped; three at most are kept, in the model's order. Anything else stays text as the model
@@ -906,25 +907,25 @@ message is rewritten with «→ <reply>» (or just without its buttons), its but
 Buttons last 7 days, in the app too.
 
 A session in the Base with files not committed yet has one more button on its latest ping, after the replies:
-**«В Базу · N»** ([base.md](base.md#the-button)). It comes a poll after the ping (the message is rewritten
+**«To the Base · N»** ([base.md](base.md#the-button)). It comes a poll after the ping (the message is rewritten
 with it), moves to the next ping, is relabelled when N changes and goes when nothing is left.
 
 **Loudness.** A ✅ ping less than 2 minutes (`pings.QUIET_S`) after you last acted on the session, of a run your own
 message or decision started, goes out without a sound (`disable_notification`): you are looking. A longer one, a ❓
 and a ⚠️ one, and one of a run the platform started by itself — a turn going on after a restart, a resume the gate's
 own shutdown left owed (`ping_unattended`) — notify. A summary from before pings
-(no `kind` in its note) goes out as it did, «Итог · <track> · сессия <id>» and the text.
+(no `kind` in its note) goes out as it did, «Result · <track> · session <id>» and the text.
 
 ## The never list and the courier card
 
 `git push`, `gh pr create`, `gh pr merge`, `gh release create`, `npm publish`, `pnpm publish`, `yarn publish`,
 `uv publish`, `twine upload`, `cargo publish`, `docker push`, `kubectl apply`, `ssh`, `scp`, `sftp`, `rsync`,
 `sendmail`, `mail`, `mailx` (`NEVER` in
-`retinue/approvals.py`). Such a call is refused in the session and comes to you as a courier card: «Курьер · <track> ·
-сессия <id>», what the session wants, the directory, the exact command, and «Не выполняю: это делаешь ты сам —
-команда выше целиком.» There is no button: run it yourself, where you hold the credential. On the lane that holds
-your repositories (`code:` in platform.yaml), a `git push` or a `gh pr create` says instead «нажми «Запушить» под
-итогом сессии», and the session is told the platform pushes by your button: a branch and a pull request, never the
+`retinue/approvals.py`). Such a call is refused in the session and comes to you as a courier card: «Courier · <track> ·
+session <id>», what the session wants, the directory, the exact command, and «Not running it: you do this yourself —
+the whole command is above.» There is no button: run it yourself, where you hold the credential. On the lane that holds
+your repositories (`code:` in platform.yaml), a `git push` or a `gh pr create` says instead «press «Push» under
+the session's result», and the session is told the platform pushes by your button: a branch and a pull request, never the
 default branch ([code.md](code.md)). Each entry is also a
 deny rule of every run, so not even a mistaken grant could run it.
 
@@ -938,8 +939,8 @@ A row is a kind, a time, a session, at most a tool and a short note — never an
 | `gate` | every hook the gate answers | `allow` (your grant), `deny` or `defer` with the gate's reason, `rule` / `rule_deny` (an always or deny rule decides), `classifier` (nothing named it), `blocked` with the classifier's `[tag]` only, `asked` (a fallback run's ask) |
 | `tool_error` | a tool result the CLI marks as an error | the call's id: the tool is the one the gate saw for it |
 | `compaction` | the CLI's `compact_boundary` line | — |
-| `run_error` | a turn the platform told you ended in an error («Ход оборвался ошибкой») | once a run |
-| `owner_stop` | «Стоп» in the app | — |
+| `run_error` | a turn the platform told you ended in an error («Turn ended with an error») | once a run |
+| `owner_stop` | «Stop» in the app | — |
 
 `tool_error` and `compaction` are read by the engine's adapter (`signals.from_line`), the one place that knows the
 CLI's stream-json, keyed by the lane's line so a line given again counts once; another engine gets its own adapter
@@ -949,7 +950,7 @@ and cards with how you decided them. Rows older than 400 days go when the platfo
 `POST /owner/stats` (the router's token, as every `/owner/*` call) with `{since, until}` answers the tally: sessions
 and sub-sessions started, runs, your messages and stops, tool errors by tool, compactions, failed turns, the gate's
 calls by how they went and its five most frequent reasons, and cards by how they ended. The weekly review puts it
-in words at its end, «Как шла неделя» ([proactive.md](proactive.md#how-the-week-went)).
+in words at its end, «How the week went» ([proactive.md](proactive.md#how-the-week-went)).
 
 ## Probes
 
@@ -996,30 +997,30 @@ If bubblewrap cannot run in a lane, sessions do not start. The probe says why: t
 
 1. The container probe above, on the server.
 2. A code session on a real repository runs `git status` and an edit with no card (auto); asked to repoint
-   `origin` to another URL, it comes to you as a card «Классификатор остановил: …»; `docker compose restart`; an
-   hour later press «Разрешить»: the call ran once (the approval's row in the platform's `approvals` table is
-   `executed`; one execution in the transcript). No session got «Режим auto … выключен».
+   `origin` to another URL, it comes to you as a card «Stopped by the classifier: …»; `docker compose restart`; an
+   hour later press «Allow»: the call ran once (the approval's row in the platform's `approvals` table is
+   `executed`; one execution in the transcript). No session got «Auto mode is off…».
 3. A code session asked to push gets a courier card, no approval card, and nothing is pushed.
 4. `docker kill $(docker compose -p retinue ps -q platform)` in the middle of a turn (a crash, not a graceful stop:
    no hook answers `defer`, no run is stopped): the session's tool calls fail as blocked; `docker compose up -d
    platform`: the transcript is complete.
 5. `docker compose restart platform` in the middle of a turn: once it is back, the session goes on by itself, and
-   you get «Ход прервался: платформа перезапускалась…» — once, however many lines the lane gives again.
+   you get «Turn cut off: the platform restarted…» — once, however many lines the lane gives again.
 6. `docker compose stop lane-private` in the middle of a turn returns within seconds, not after the 30 s grace
    (`docker compose logs lane-private`: «stopping 1 runs»); after `docker compose up -d lane-private` the run's lines in the
    platform's `raw` table end with `stopped` (`by: shutdown`) and `exited`, no `restarted`, and the session went on
-   by itself, with one «Ход прервался…» summary.
+   by itself, with one «Turn cut off…» summary.
 7. In a session in the room, Bash runs `git ls-remote https://github.com/git/git HEAD`, `pip index versions six` and
    `curl -sI https://registry.npmjs.org/left-pad`: all three answer, through the sandbox and the room's proxy (its
    log shows `TCP_TUNNEL` to github.com, pypi.org, registry.npmjs.org); `curl -sI https://example.com` fails, and a
    `WebFetch` of it answers.
 8. A change under `retinue/` mid-turn, then `docker compose up -d --build` (it recreates the lanes, then the
-   platform): the session goes on by itself once both are up, with one «Ход прервался…» summary and one resumed run.
-9. `/new notes Спроси меня с вариантами (AskUserQuestion), куда поехать и что взять — несколько вариантов во втором
-   вопросе`: one message per question with buttons; answer the first by a button, `docker compose restart platform`,
-   tick two options of the second and press «Готово»: both messages read «Ответ: …», the session goes on and its
+   platform): the session goes on by itself once both are up, with one «Turn cut off…» summary and one resumed run.
+9. `/new notes Ask me with options (AskUserQuestion) where to go and what to take — several options in the second
+   question`: one message per question with buttons; answer the first by a button, `docker compose restart platform`,
+   tick two options of the second and press «Done»: both messages read «Answer: …», the session goes on and its
    answer uses both (the question's row in `approvals` is `executed`). Another such question, answered by a reply to
-   its message, reads «Свой ответ: …». No session's run hangs on an ask: `docker compose logs lane-private` is quiet,
+   its message, reads «Your answer: …». No session's run hangs on an ask: `docker compose logs lane-private` is quiet,
    and a `control_request` in the platform's `raw` table, if any, is followed by the run's `result`.
-10. Voice ([face.md](face.md#voice-голос), check 10): dictation works, and
+10. Voice ([face.md](face.md#voice), check 10): dictation works, and
    `docker compose exec lane-private env | grep -c ELEVENLABS` is `0` — the room never has the key.

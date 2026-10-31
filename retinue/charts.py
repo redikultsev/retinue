@@ -13,11 +13,11 @@ SERIES = 6  # colour classes s0…s5 in the stylesheet
 
 
 def short(number: float) -> str:
-    """983, 31 тыс, 1,8 млн — a number as a label."""
-    for size, word in ((1e9, "млрд"), (1e6, "млн"), (1e3, "тыс")):
+    """983, 31k, 1.8m, 2bn — a number as a label."""
+    for size, word in ((1e9, "bn"), (1e6, "m"), (1e3, "k")):
         if abs(number) >= size:
             value = number / size
-            return (f"{value:.1f}".replace(".", ",").removesuffix(",0") if value < 10 else f"{value:.0f}") + f" {word}"
+            return (f"{value:.1f}".removesuffix(".0") if value < 10 else f"{value:.0f}") + word
     return f"{number:.0f}"
 
 

@@ -19,12 +19,12 @@ def test_a_chart_is_geometry_in_per_cent_and_labels_are_plain_strings():
     assert triage[0]["x"] == 0 and all(abs(b["x"] - (a["x"] + a["w"])) < 0.02 for a, b in zip(triage, triage[1:])), \
         "segments are stacked: each starts where the one before ends"
     assert [s["n"] for s in triage] == [1, 2, 3], "by its series' colour; a sliver too thin to see is not drawn"
-    assert rows["conversation"]["total"] == "8,9 млн"
+    assert rows["conversation"]["total"] == "8.9m"
 
 
 def test_numbers_are_short_and_an_empty_chart_says_so():
     assert [charts.short(n) for n in (0, 983, 30_710, 304_355, 1_795_872, 2_500_000_000)] == [
-        "0", "983", "31 тыс", "304 тыс", "1,8 млн", "2,5 млрд"]
+        "0", "983", "31k", "304k", "1.8m", "2.5bn"]
     assert charts.bars("Запуски", ["запуски"], [])["empty"] is True
     zero = charts.bars("Запуски", ["запуски"], [("пн", [0])])
     assert zero["empty"] is True and zero["rows"][0]["segments"] == [], "nothing to draw, nothing divided by zero"

@@ -29,23 +29,23 @@ def test_her_trip_is_checked_by_the_schema_and_every_refusal_names_the_field():
     """The model sends JSON; code checks it by the same schema the tool shows her, and a refusal says which field
     and what is wrong — she fixes it and calls again."""
     assert lifehub.check(lifehub.TRIP_SCHEMA, trip()) == trip()
-    assert refusal([]) == "аргументы: нужен объект"
-    assert refusal(trip(title="")) == "title: пустая строка"
-    assert refusal(trip(title="x" * 81)) == "title: не длиннее 80 знаков"
-    assert refusal(trip(start="22.05.2026")).startswith("start: дата вида 2026-05-14")
-    assert refusal(trip(end="2026-02-30")).startswith("end: дата вида 2026-05-14"), "a date that is not one"
-    assert refusal(trip(options=[])) == "options: от 1 до 12 элементов"
-    assert refusal(trip(html="<b>x</b>")).startswith("аргументы: неизвестное поле html. Поля: trip_id, title")
+    assert refusal([]) == "arguments: must be an object"
+    assert refusal(trip(title="")) == "title: empty string"
+    assert refusal(trip(title="x" * 81)) == "title: at most 80 characters"
+    assert refusal(trip(start="22.05.2026")).startswith("start: a date like 2026-05-14")
+    assert refusal(trip(end="2026-02-30")).startswith("end: a date like 2026-05-14"), "a date that is not one"
+    assert refusal(trip(options=[])) == "options: from 1 to 12 items"
+    assert refusal(trip(html="<b>x</b>")).startswith("arguments: unknown field html. Fields: trip_id, title")
     option = trip()["options"][0]
-    assert refusal(trip(options=[{**option, "kind": "boat"}])) == "options[0].kind: одно из: flight, stay, ground"
+    assert refusal(trip(options=[{**option, "kind": "boat"}])) == "options[0].kind: one of: flight, stay, ground"
     assert refusal(trip(options=[option, {**option, "search_id": "../../x"}])).startswith(
-        "options[1].search_id: search_id из ответа travel-ops")
-    assert refusal(trip(options=[{k: v for k, v in option.items() if k != "link"}])) == "options[0]: нет поля link"
-    assert refusal(trip(options=[{**option, "pick": "yes"}])) == "options[0].pick: true или false"
-    assert refusal(trip(trip_id="Mon-Springfield")).startswith("trip_id: id страницы из ответа publish_trip")
-    assert refusal(trip(options=[{**option, "note": 5}])) == "options[0].note: нужна строка"
+        "options[1].search_id: the search_id of travel-ops' answer")
+    assert refusal(trip(options=[{k: v for k, v in option.items() if k != "link"}])) == "options[0]: missing field link"
+    assert refusal(trip(options=[{**option, "pick": "yes"}])) == "options[0].pick: true or false"
+    assert refusal(trip(trip_id="Mon-Springfield")).startswith("trip_id: the page's id from publish_trip's answer")
+    assert refusal(trip(options=[{**option, "note": 5}])) == "options[0].note: must be a string"
     numbers = {"type": "object", "properties": {"n": {"type": "integer", "minimum": 1, "maximum": 3}}}
-    assert refusal({"n": 4}, numbers) == "n: от 1 до 3" and refusal({"n": True}, numbers) == "n: нужно целое число"
+    assert refusal({"n": 4}, numbers) == "n: from 1 to 3" and refusal({"n": True}, numbers) == "n: must be an integer"
     assert lifehub.check(numbers, {"n": 2}) == {"n": 2}
 
 
@@ -128,35 +128,35 @@ def test_the_status_page_counts_what_the_router_saw(tmp_path):
 
     status = hub.status(NOW)
     assert status["updated"].startswith("2025-10-09 ") and status["day"] == {
-        "owner": 1, "answers": 1, "notices": 1, "runs": [["удачно", 2], ["сбой", 1]], "reminders": 0,
+        "owner": 1, "answers": 1, "notices": 1, "runs": [["ok", 2], ["failure", 1]], "reminders": 0,
         "letters": {"kept": 1, "dropped": 2}}
-    assert status["limit"] == [{"window": "5 часов", "share": 23, "level": "ok", "resets": "2025-10-09 09:53 UTC, четверг",
-                                "resets_ts": round(NOW + 3600), "resets_in": "1 ч",
-                                "seen": "2025-10-09 08:46 UTC, четверг"},
-                               {"window": "неделя", "share": 63, "level": "ok", "resets": "2025-10-10 08:53 UTC, пятница",
-                                "resets_ts": round(NOW + day), "resets_in": "1 дн",
-                                "seen": "2025-10-09 08:46 UTC, четверг"}], "the last run that said, not the last row"
+    assert status["limit"] == [{"window": "5 hours", "share": 23, "level": "ok", "resets": "2025-10-09 09:53 UTC, Thursday",
+                                "resets_ts": round(NOW + 3600), "resets_in": "1 h",
+                                "seen": "2025-10-09 08:46 UTC, Thursday"},
+                               {"window": "week", "share": 63, "level": "ok", "resets": "2025-10-10 08:53 UTC, Friday",
+                                "resets_ts": round(NOW + day), "resets_in": "1 d",
+                                "seen": "2025-10-09 08:46 UTC, Thursday"}], "the last run that said, not the last row"
     tokens = {row["kind"]: row for row in status["tokens"]}
     assert list(tokens) == ["conversation", "triage", "summary"], "seven days, the largest first; older runs left out"
-    assert tokens["triage"] == {"kind": "triage", "name": "разбор письма", "runs": 2, "input": 422, "output": 86278,
+    assert tokens["triage"] == {"kind": "triage", "name": "letter triage", "runs": 2, "input": 422, "output": 86278,
                                 "cache_read": 1795872, "cache_write": 304355, "cost_usd": 1.0, "cells": [
-                                    "разбор письма", "2", "422", "86 278", "1 795 872", "304 355", "1.00"]}
-    assert status["mail"]["day"] == {"kept": [["деньги", 1]], "dropped": [["реклама", 1]],
+                                    "letter triage", "2", "422", "86 278", "1 795 872", "304 355", "1.00"]}
+    assert status["mail"]["day"] == {"kept": [["money", 1]], "dropped": [["promo", 1]],
                                      "blocked": [["spam@x.example", 1]]}
-    assert status["mail"]["rules"] == ["отсеивать spam@x.example", "не уведомлять сразу: news@site.example, рассылки"]
+    assert status["mail"]["rules"] == ["drop spam@x.example", "do not notify at once: news@site.example, newsletters"]
     connectors = {c["name"]: c for c in status["connectors"]}
-    assert connectors["почта"] == {"name": "почта", "detail": ACCOUNT, "ok": True,
-                                   "state": "синхронизирована 4 мин назад"}, "the account under the name, not in it"
-    assert connectors["travel-ops"]["ok"] is False and connectors["travel-ops"]["state"] == "не подключён"
-    assert "бэкап" not in connectors, "a core with no backup status says nothing of backups"
+    assert connectors["mail"] == {"name": "mail", "detail": ACCOUNT, "ok": True,
+                                  "state": "synced 4 min ago"}, "the account under the name, not in it"
+    assert connectors["travel-ops"]["ok"] is False and connectors["travel-ops"]["state"] == "not connected"
+    assert "backup" not in connectors, "a core with no backup status says nothing of backups"
     assert [c["name"] for c in status["problems"]] == [c["name"] for c in status["connectors"] if not c["ok"]], \
         "what is broken comes first on the page"
     assert status["build"] is None, "a router with no hub builder has no build to show"
     tokens_chart, runs_chart = status["charts"]
-    assert tokens_chart["title"] == "Токены за 7 дней по видам запусков" and [r["label"] for r in tokens_chart[
-        "rows"]] == ["разговор", "разбор письма", "утренняя сводка"]
+    assert tokens_chart["title"] == "Tokens over 7 days by kind of run" and [r["label"] for r in tokens_chart[
+        "rows"]] == ["conversation", "letter triage", "morning brief"]
     days = [r["label"] for r in runs_chart["rows"]]
-    assert days[0] == "пт 3.10" and days[-1] == "чт 9.10", "seven days back, each by its local date"
+    assert days[0] == "Fri 3.10" and days[-1] == "Thu 9.10", "seven days back, each by its local date"
     assert [sum(s["w"] for s in r["segments"]) > 0 for r in runs_chart["rows"]] == [
         False, False, False, True, False, False, True], "the days a model ran: three days ago and today"
 
@@ -172,7 +172,7 @@ def record(kb, path, head, body="Текст.\n"):
 
 def test_the_now_page_has_trips_the_day_reminders_mail_deadlines_and_health(tmp_path):
     """What is next, who waits for an answer (by person), today, the evening and tomorrow in the owner's local
-    time, deadlines overdue and coming, upcoming trips, the status chips. A meeting is a host on a «войти» button,
+    time, deadlines overdue and coming, upcoming trips, the status chips. A meeting is a host on a «join» button,
     never its address in text; nobody's e-mail; a letter of the private matter says only that it is one."""
     from test_mailroom import ACCOUNT, NOW
 
@@ -251,24 +251,24 @@ def test_the_now_page_has_trips_the_day_reminders_mail_deadlines_and_health(tmp_
     assert (dentist["place"], dentist["join_host"], dentist["unanswered"]) == ("meet", "meet.google.com", True)
     assert page["next"]["title"] == "Стендап" and page["next"]["going"] is False
     assert page["reminders"] == [{"ts": page["reminders"][0]["ts"], "time": "18:00", "date": "2025-10-10",
-                                  "day": "пт 10 октября", "text": "позвонить в банк"}]
+                                  "day": "Fri 10 October", "text": "позвонить в банк"}]
     waiting = page["mail"]
     assert (waiting["count"], waiting["act"]) == (5, 3)
     assert [(g["who"], g["needs"], g["count"]) for g in waiting["groups"]] == [
-        ("Александр", "ответить", 3), ("Личное", "ответить", 1), ("Банк", "сделать", 1)], \
+        ("Александр", "reply", 3), ("Private", "reply", 1), ("Банк", "do", 1)], \
         "by person, the most pressing ask first"
     alex, private, bank = waiting["groups"]
     assert [i["text"] for i in alex["items"]] == ["И про билеты.", "Спрашивает про автобус.", "Александр шлёт статью."]
-    assert alex["text"] == "И про билеты." and alex["age"] == "2 ч" and alex["where"] == "Telegram"
-    assert private["text"] == "1 письмо о личном — на странице трекера" and private["items"] == []
-    assert bank["deadline"] == "пт" and bank["age"] == "2 дн" and "bank@" not in json.dumps(bank)
+    assert alex["text"] == "И про билеты." and alex["age"] == "2 h" and alex["where"] == "Telegram"
+    assert private["text"] == "1 letter about the private matter — on the tracker page" and private["items"] == []
+    assert bank["deadline"] == "пт" and bank["age"] == "2 d" and "bank@" not in json.dumps(bank)
     assert [(d["title"], d["kind"], d["overdue"], d["days"]) for d in page["deadlines"]] == [
         ("Тариф", "recheck", True, -4), ("Правила спортзала", "recheck", False, 23),
         ("Абонемент в спортзал", "document", False, 66)], "superseded, journal, broken and long past ones left out"
-    assert page["chips"][0] == {"key": "health", "text": "2 сбоя", "level": "bad"}, "no travel-ops, no base here"
-    assert page["health"].startswith("ответов — 0, напоминаний — 0, сбоев — 0") and "почта" not in page["health"][:5]
+    assert page["chips"][0] == {"key": "health", "text": "2 failures", "level": "bad"}, "no travel-ops, no base here"
+    assert page["health"].startswith("answers — 0, reminders — 0, failures — 0") and "mail" not in page["health"][:5]
     empty, _, _ = hub_core(tmp_path / "other", kb=str(tmp_path / "nothing"))
-    assert asyncio.run(empty.lifehub.now(NOW))["deadlines"] == [], "the template says «без срока»"
+    assert asyncio.run(empty.lifehub.now(NOW))["deadlines"] == [], "the template says «no deadlines»"
 
 
 def test_the_agenda_is_sorted_by_the_moment_not_by_the_string():
@@ -318,7 +318,7 @@ def test_a_refresh_that_fails_says_so_in_the_log_and_the_next_one_comes(tmp_path
     fake.agenda = broken
     asyncio.run(hub.refresh(NOW))
     page = hub.data.read("now.json")
-    assert page["calendar"] == "календарь не прочитан: сборщик недоступен" and page["today"] == [], \
+    assert page["calendar"] == "calendar not read: the collector is unavailable" and page["today"] == [], \
         "a part that fails is named, the rest stays"
     assert hub.data.read("status.json")["updated"] and hub.data.read("site.json") == {
         "url": "https://hub.in.example.com", "link_hosts": ["www.kupibilet.ru", "www.booking.com", "www.google.com"]}
@@ -375,30 +375,30 @@ def test_a_trip_page_takes_its_prices_from_travel_ops_not_from_her(tmp_path):
     (name,) = hub.data.names("trips")
     page = hub.data.read(name)
     assert lifehub.ID.fullmatch(page["id"]) and name == f"trips/{page['id']}.json"
-    assert text == (f"Опубликовано: https://hub.in.example.com/trips/{page['id']}/ (trip_id {page['id']} — чтобы "
-                    f"обновить эту же страницу). В конце ответа Владельцу: [подробнее](https://hub.in.example.com/"
+    assert text == (f"Published: https://hub.in.example.com/trips/{page['id']}/ (trip_id {page['id']} — to update "
+                    f"this same page). At the end of your reply to the owner: [details](https://hub.in.example.com/"
                     f"trips/{page['id']}/)")
     assert (page["title"], page["summary"], page["start"], page["end"]) == (
         "Энск — Лукоморье, 22–24 мая", "Прямой рейс и жильё у моря.", "2026-05-22", "2026-05-24")
     flight, stay = page["options"]
-    assert flight == {"kind": "flight", "what": "Перелёт AMS → LIS, без пересадок", "pick": True, "note": "прямой",
+    assert flight == {"kind": "flight", "what": "Flight AMS → LIS, nonstop", "pick": True, "note": "прямой",
                       "price": "412 EUR", "converted": "", "seller": "kupibilet",
-                      "lines": ["туда 22.05 10:15 → 22.05 11:10 · XX 123", "в пути 55 мин",
-                                "багаж: только ручная кладь"],
-                      "seen": "цена на 2025-10-09 08:00 UTC, четверг (поиск 2025-10-09 07:58 UTC, четверг)",
+                      "lines": ["out 22.05 10:15 → 22.05 11:10 · XX 123", "travel time 55 min",
+                                "baggage: hand luggage only"],
+                      "seen": "price as of 2025-10-09 08:00 UTC, Thursday (search 2025-10-09 07:58 UTC, Thursday)",
                       "link": "https://www.kupibilet.ru/x", "linkable": True, "photos": [], "seen_ts": 1759996800,
                       "leg": "AMS → LIS", "day": "2026-05-22", "host": "kupibilet.ru"}, \
         "the fare her link names, not the cheaper one beside it"
     assert page["paragraphs"] == ["Прямой рейс и жильё у моря."]
     assert page["timeline"] == [
-        {"day": "2026-05-22", "label": "пятница, 22 мая",
-         "legs": [{"leg": "AMS → LIS", "kind": "flight", "name": "Перелёт", "options": [0]}]},
-        {"day": "", "label": "Жильё", "legs": [{"leg": "Harbor View <b>Apartment</b>", "kind": "stay", "name": "Жильё",
+        {"day": "2026-05-22", "label": "Friday, 22 May",
+         "legs": [{"leg": "AMS → LIS", "kind": "flight", "name": "Flight", "options": [0]}]},
+        {"day": "", "label": "Stays", "legs": [{"leg": "Harbor View <b>Apartment</b>", "kind": "stay", "name": "Stay",
                                                "options": [1]}]}], "by day, the stays without one last"
-    assert stay["what"] == "Жильё: Harbor View <b>Apartment</b>" and stay["price"] == "40 EUR"
-    assert stay["lines"] == ["апартаменты · рейтинг 8,7 (154 отзыва) · 1,5 км от центра",
-                             "2 ночи · 20 EUR за ночь · Апартаменты с видом на море",
-                             "бесплатная отмена до 2026-05-20"]
+    assert stay["what"] == "Stay: Harbor View <b>Apartment</b>" and stay["price"] == "40 EUR"
+    assert stay["lines"] == ["apartment · rating 8.7 (154 reviews) · 1.5 km from the centre",
+                             "2 nights · 20 EUR per night · Апартаменты с видом на море",
+                             "free cancellation until 2026-05-20"]
     assert stay["photo_from"] == {"search_id": "s7n3p2xk", "stay": "harbor-view"} and stay["pick"] is False
     assert hub.poked == NOW, "the pages are built again within a minute"
 
@@ -412,21 +412,21 @@ def test_a_trip_is_refused_with_the_field_to_fix(tmp_path):
     def publish(trip, *answers):
         return asyncio.run(hub.publish(trip, travel_ops(list(answers), []), NOW))
 
-    assert publish({**trip_with(FLIGHT), "price": 1}) == (False, "Не опубликовано: аргументы: неизвестное поле price. "
-                                                          "Поля: trip_id, title, summary, start, end, options.")
+    assert publish({**trip_with(FLIGHT), "price": 1}) == (False, "Not published: arguments: unknown field price. "
+                                                          "Fields: trip_id, title, summary, start, end, options.")
     assert publish(trip_with({**FLIGHT, "link": "https://evil.example/x"})) == (
-        False, "Не опубликовано: options[0].link — не ссылка на площадку travel-ops: возьми link.url из ответа "
-               "инструмента целиком.")
+        False, "Not published: options[0].link is not a link to a travel-ops site: take link.url from the tool's "
+               "answer, whole.")
     assert publish(trip_with({**FLIGHT, "link": "https://www.kupibilet.ru/gone"}), FLIGHTS, FLIGHTS, FLIGHTS) == (
-        False, "Не опубликовано: options[0] — этой ссылки нет в поиске f4k2m9qa. Возьми link.url варианта из ответа "
-               "travel-ops по этому search_id.")
+        False, "Not published: options[0] — this link is not in search f4k2m9qa. Take the option's link.url from "
+               "travel-ops' answer for this search_id.")
     assert publish(trip_with(FLIGHT), {"error": "no search 'f4k2m9qa' in memory (results are kept for 7 days)"}) == (
-        False, "Не опубликовано: travel-ops отказал: no search 'f4k2m9qa' in memory (results are kept for 7 days).")
-    assert publish(trip_with(FLIGHT), 503) == (False, "Не опубликовано: travel-ops ответил HTTP 503.")
+        False, "Not published: travel-ops refused: no search 'f4k2m9qa' in memory (results are kept for 7 days).")
+    assert publish(trip_with(FLIGHT), 503) == (False, "Not published: travel-ops answered HTTP 503.")
     assert publish(trip_with(FLIGHT, trip_id="0123456789abcdef")) == (
-        False, "Не опубликовано: страницы 0123456789abcdef нет — опубликуй без trip_id.")
+        False, "Not published: there is no page 0123456789abcdef — publish without trip_id.")
     assert asyncio.run(hub.publish(trip_with(FLIGHT), None, NOW)) == (
-        False, "Не опубликовано: travel-ops не подключён — цены для страницы брать неоткуда.")
+        False, "Not published: travel-ops is not connected — there is nowhere to take the page's prices from.")
     assert hub.data.names("trips") == [], "nothing half-published"
 
 
@@ -489,7 +489,7 @@ def test_stay_photos_come_from_travel_ops_and_are_re_encoded_by_code(tmp_path):
 
 
 def test_the_status_page_counts_what_was_sent_to_people_by_channel(tmp_path):
-    """Sent by the owner's «Отправить», by channel, for a day and a week — counted from the
+    """Sent by the owner's «Send», by channel, for a day and a week — counted from the
     drafts' table; a doubt is not counted as sent. The gateway and the sender among the connectors."""
     from retinue.outbox import Outbox, OutboxStore
 
@@ -504,15 +504,15 @@ def test_the_status_page_counts_what_was_sent_to_people_by_channel(tmp_path):
         core.outbox.store.db.execute("INSERT INTO drafts (id, created, state, channel, envelope, digest, head, expires,"
                                      " at) VALUES (?, ?, ?, ?, '{}', '', '[]', 0, ?)", (f"{n:08x}", at, state, channel, at))
     status = hub.status(NOW)
-    assert status["sent"] == [["почта", 1, 2], ["Telegram", 1, 1]]
+    assert status["sent"] == [["mail", 1, 2], ["Telegram", 1, 1]]
     connectors = {c["name"]: c for c in status["connectors"]}
     assert connectors["Telegram Business"] == {"name": "Telegram Business", "ok": True,
-                                               "state": "бот подключён, права: can_reply"}
-    assert connectors["отправка почты"] == {"name": "отправка почты", "ok": False, "state": "не подключена"}
+                                               "state": "bot connected, rights: can_reply"}
+    assert connectors["mail sending"] == {"name": "mail sending", "ok": False, "state": "not connected"}
     from pathlib import Path
 
     page = (Path(__file__).resolve().parents[1] / "deploy" / "lifehub" / "site" / "layouts" / "status.html").read_text()
-    assert "{{ with $s.sent }}" in page and "Отправлено людям" in page
+    assert "{{ with $s.sent }}" in page and "Sent to people" in page
 
 
 def test_an_option_beyond_the_first_hundred_of_a_view_is_still_found(tmp_path):
@@ -578,22 +578,22 @@ def test_the_review_page_shows_what_she_decided_on_each_letter_and_message(tmp_p
     views = {view["path"]: view for view in page["views"]}
     everything = views["all"]
     assert [(i["where"], i["who"], i["decision"]) for i in everything["items"]] == [
-        ("Telegram", "Александр", "ждёт её оценки"),
-        ("Telegram", "Александр", "сразу тебе"),
-        ("Telegram", "Александр", "молча"),
-        ("почта", "Анна, Acme", "в утреннюю сводку")], "a week, newest first; his own and older ones left out"
+        ("Telegram", "Александр", "awaiting judgement"),
+        ("Telegram", "Александр", "told you at once"),
+        ("Telegram", "Александр", "silently"),
+        ("mail", "Анна, Acme", "in the morning brief")], "a week, newest first; his own and older ones left out"
     told, silent, letter = everything["items"][1:]
-    assert told["text"] == "Александр спрашивает, когда автобус." and told["needs"] == "ответить" and \
-        told["draft"] == "черновик отправлен" and told["mark"] == "told"
+    assert told["text"] == "Александр спрашивает, когда автобус." and told["needs"] == "reply" and \
+        told["draft"] == "draft sent" and told["mark"] == "told"
     assert letter["text"] == "Анна зовёт на созвон в пятницу." and letter["deadline"] == "пт 17.10" and \
         letter["from"] == "anna@acme.example" and letter["draft"] == "" and letter["mark"] == "later"
-    assert silent["needs"] == "" and told["time"] == "08:36" and told["day"] == "четверг, 9 октября"
+    assert silent["needs"] == "" and told["time"] == "08:36" and told["day"] == "Thursday, 9 October"
     assert (everything["page"], everything["pages"], everything["prev"], everything["next"]) == (1, 1, "", "")
     facets = page["facets"]
     assert [(f["name"], f["count"], f["path"]) for f in facets["sources"]] == [("Telegram", 3, "src-telegram"),
-                                                                             ("почта", 1, "src-mail")]
+                                                                             ("mail", 1, "src-mail")]
     assert [(f["name"], f["count"]) for f in facets["decisions"]] == [
-        ("сразу тебе", 1), ("в утреннюю сводку", 1), ("молча", 1), ("ждёт её оценки", 1)]
+        ("told you at once", 1), ("in the morning brief", 1), ("silently", 1), ("awaiting judgement", 1)]
     (alex, anna) = facets["senders"]
     assert (alex["name"], alex["count"], anna["name"], anna["count"]) == ("Александр", 3, "Анна", 1), "a short chip"
     assert re.fullmatch(r"who-[0-9a-f]{10}", alex["path"]) and "@" not in anna["path"], "no address in a path"
@@ -602,7 +602,7 @@ def test_the_review_page_shows_what_she_decided_on_each_letter_and_message(tmp_p
     assert [i["mark"] for i in views["dec-told"]["items"]] == ["told"] and views["src-mail"]["filter"] == \
         {"source": "mail", "decision": "", "who": ""}
     assert views["dropped"]["rows"] == [{"when": views["dropped"]["rows"][0]["when"], "from": "sale@shop.example",
-                                        "subject": "Скидки до 70%", "kind": "реклама"}] and page["dropped"] == 1
+                                        "subject": "Скидки до 70%", "kind": "promo"}] and page["dropped"] == 1
     assert all(re.fullmatch(r"[a-z0-9-]{1,40}", path) for path in views), "the adapter checks every path again"
     hub.write_review(NOW)
     assert hub.data.read("review.json") == page
@@ -641,7 +641,8 @@ def test_a_sender_chip_is_short_and_the_dropped_count_is_the_whole_week(tmp_path
     assert lifehub.chip("Пётр Сидоров (через Google Таблицы)") == "Пётр Сидоров"
     assert lifehub.chip("Владелец (owner) → прокат") == "Владелец"
     assert lifehub.chip("Анна Петрова, поддержка") == "Анна Петрова"
-    assert lifehub.chip("A" * 40) == "A" * 27 + "…" and lifehub.chip("") == "без имени"
+    assert lifehub.chip("Jane Doe (via Google Sheets)") == "Jane Doe" and lifehub.chip("Jane Doe via Acme") == "Jane Doe"
+    assert lifehub.chip("A" * 40) == "A" * 27 + "…" and lifehub.chip("") == "no name"
     core, hub, _ = hub_core(tmp_path)
     mail = core.mail.store
     for n in range(lifehub.REVIEW_DROPPED + 5):
@@ -650,6 +651,26 @@ def test_a_sender_chip_is_short_and_the_dropped_count_is_the_whole_week(tmp_path
     mail.db.commit()
     page = hub.review(NOW)
     assert (page["dropped"], page["dropped_shown"]) == (lifehub.REVIEW_DROPPED + 5, lifehub.REVIEW_DROPPED)
+
+
+def test_health_lines_are_read_in_either_language():
+    """The backup's, the containers' and the health line's words come from other modules (core, health.py), and an
+    older router or a persisted line may still say them in Russian: both read the same."""
+    for said in ("backup — 5 h ago", "backup — under an hour ago", "бэкап — 5 ч назад"):
+        assert lifehub.backed_up(said), said
+    for said in ("backup — 7 h ago, the last run failed: x", "бэкап — 7 ч назад, последний запуск не удался: x",
+                 "no backup for 2 d: x", "бэкапа нет 2 сут: x", "backup status unreadable", "backup not set up"):
+        assert not lifehub.backed_up(said), said
+    assert lifehub.BACKUP.sub(r"\1 ", "backup — 5 h ago", count=1) == "backup 5 h ago"
+    assert lifehub.BACKUP.sub("", "бэкап — 5 ч назад", count=1) == "5 ч назад"
+    assert lifehub.health_words("Health for the day: answers — 1, failures — 0.") == "answers — 1, failures — 0"
+    assert lifehub.health_words("Здоровье за сутки: ответов — 1.") == "ответов — 1"
+    assert lifehub.CONTAINERS_OK.match("containers: all 3 OK") and lifehub.CONTAINERS_OK.match(
+        "контейнеры: все 3 в порядке")
+    assert not lifehub.CONTAINERS_OK.match("containers: 2 of 3 OK, not OK — assistant (stopped, code 1)")
+    assert lifehub.CONTAINERS.sub("", "containers: none visible", count=1) == "none visible"
+    assert (lifehub.plural(1, "stop", "stops"), lifehub.plural(21, "stop", "stops")) == ("stop", "stops")
+    assert lifehub.plural(21, "день", "дня", "дней") == "день", "three forms: the Russian rule, for Russian words"
 
 
 TRACKER_TEXT = """---
@@ -679,8 +700,8 @@ def test_the_tracker_page_reads_the_tracker_the_calendar_and_unanswered_private_
 
     rows = lifehub.Tracker().rows(TRACKER_TEXT)
     assert [(r["n"], r["item"], r["status"], r["report"], r["tone"]) for r in rows] == [
-        ("1", "Acme", "встреча", "001", "live"), ("2", "?", "новое", "002", "next"),
-        ("3", "Globex", "отправлено", "003", "waiting"), ("4", "Initech", "Maybe later", "", "other")]
+        ("1", "Acme", "meeting", "001", "live"), ("2", "?", "new", "002", "next"),
+        ("3", "Globex", "sent", "003", "waiting"), ("4", "Initech", "Maybe later", "", "other")]
     assert (rows[2]["notes"], rows[2]["links"]) == ("form", [
         {"url": "https://forms.globex.example/42", "host": "forms.globex.example"}]), "an address is a button, not text"
     kb = tmp_path / "kb"
@@ -713,10 +734,10 @@ def test_the_tracker_page_reads_the_tracker_the_calendar_and_unanswered_private_
     store.set(n, NOW - 600, state="later", kind="private", sender="notifications@crm.example", ts=NOW - 600,
               card={"text": "В CRM новая заявка: https://crm.example/leads/1", "needs_now": "read"})
     page = asyncio.run(hub.tracker(NOW))
-    assert (page["title"], page["path"]) == ("Трекер", "profile/tracker.md")
-    assert page["funnel"] == [{"key": "new", "state": "новое", "count": 1, "tone": "next"},
-                              {"key": "sent", "state": "отправлено", "count": 1, "tone": "waiting"},
-                              {"key": "meeting", "state": "встреча", "count": 1, "tone": "live"}]
+    assert (page["title"], page["path"]) == ("Tracker", "profile/tracker.md")
+    assert page["funnel"] == [{"key": "new", "state": "new", "count": 1, "tone": "next"},
+                              {"key": "sent", "state": "sent", "count": 1, "tone": "waiting"},
+                              {"key": "meeting", "state": "meeting", "count": 1, "tone": "live"}]
     assert [(g["key"], [r["n"] for r in g["rows"]]) for g in page["groups"]] == [
         ("live", ["1"]), ("waiting", ["3"]), ("next", ["2"]), ("other", ["4"])], "what goes on, what waits, what next"
     assert [i["title"] for i in page["meetings"]] == ["Acme — обсуждение", "Встреча с Hooli"]
@@ -725,7 +746,7 @@ def test_the_tracker_page_reads_the_tracker_the_calendar_and_unanswered_private_
     assert [n["from"] for n in page["notices"]] == ["notifications@crm.example"], \
         "his own CRM's robot does not wait for his answer"
     asyncio.run(hub.write_tracker(NOW))
-    assert hub.data.read("tracker.json")["title"] == "Трекер"
+    assert hub.data.read("tracker.json")["title"] == "Tracker"
 
 
 def test_what_the_tracker_tracks_is_the_owners_config(tmp_path):
@@ -750,8 +771,8 @@ def test_what_the_tracker_tracks_is_the_owners_config(tmp_path):
     assert tracker.line(str(tmp_path)) == "", "no Record in the base: nothing told to her"
     (tmp_path / "plans/profile").mkdir(parents=True)
     (tmp_path / "plans/profile/bids.md").write_text("x", encoding="utf-8")
-    assert tracker.line(str(tmp_path)) == (f"Трекер Владельца «Заявки»: `{tmp_path}/plans/profile/bids.md`. Status "
-                                           "после отправки — ровно одно из `Filed`, `Won`; новая строка — `Filed`.")
+    assert tracker.line(str(tmp_path)) == (f"The owner's tracker \"Заявки\": `{tmp_path}/plans/profile/bids.md`. "
+                                           "Status after sending — exactly one of `Filed`, `Won`; a new row — `Filed`.")
     with pytest.raises(SystemExit):
         lifehub.Tracker.of(SimpleNamespace(cfg=SimpleNamespace(tracker={"rows": 3})))
 
@@ -800,7 +821,8 @@ def test_a_person_is_named_never_by_an_address_and_what_runs_on_from_yesterday_i
     assert lifehub.named("Банк (no-reply@bank.example)", "x@bank.example") == "Банк"
     assert lifehub.named("", "billing@mail.bank.example") == "mail.bank.example"
     assert lifehub.named("hr@acme.example", "hr@acme.example") == "acme.example"
-    assert lifehub.named("", "tg:777") == "отправитель" and lifehub.domain("tg:777") == ""
+    assert lifehub.named("", "tg:777") == "sender" and lifehub.domain("tg:777") == ""
+    assert lifehub.named("без имени", "") == lifehub.named("no name", "") == "sender", "older data: the Russian word too"
     core, hub, _ = hub_core(tmp_path)
 
     def at(start, end, summary, **fields):
@@ -921,7 +943,7 @@ def test_a_name_with_a_glob_is_literal_and_never_borrows_the_owners_history(base
     hub.pages(1_760_000_000)
     assert [p["id"] for p in json.loads((tmp_path / "data" / "pages.json").read_text())] == ["course"]
     assert json.loads((tmp_path / "data" / "pages-refused.json").read_text()) == [
-        {"id": "?", "why": "имя файла не по форме: a-z, 0-9, / _ . -"}], "nothing of the name itself"
+        {"id": "?", "why": "file name malformed: a-z, 0-9, / _ . -"}], "nothing of the name itself"
 
 
 def test_an_id_two_files_claim_goes_to_the_owners_or_to_nobody(based, tmp_path):
@@ -938,7 +960,8 @@ def test_an_id_two_files_claim_goes_to_the_owners_or_to_nobody(based, tmp_path):
     listed = json.loads((tmp_path / "data" / "pages.json").read_text())
     assert [(p["id"], p["path"], p["scripts"]) for p in listed] == [("cv", "notes/artifacts/a.html", "on")]
     assert sorted(json.loads((tmp_path / "data" / "pages-refused.json").read_text()), key=lambda r: r["id"]) == [
-        {"id": "hers", "why": "id у двух файлов, ни один не твой"}, {"id": "twin", "why": "id у двух твоих файлов"}]
+        {"id": "hers", "why": "one id on two files, neither of them yours"},
+        {"id": "twin", "why": "one id on two files of yours"}]
 
 
 class Sent:
@@ -952,39 +975,39 @@ class Sent:
 
 
 def test_a_page_sent_in_telegram_goes_to_the_base_as_the_owners(based, tmp_path):
-    """«в хаб notes» with an HTML file: code puts it in notes/artifacts/ with the mark, commits it with the trailer
+    """«to hub notes» with an HTML file: code puts it in notes/artifacts/ with the mark, commits it with the trailer
     that says it is his — the router's identity, his page: scripts run — and answers with the address."""
     core, hub, push, subprocess = based
     sent = PAGE.format(mark="", title="Шпаргалка").encode()
     told = asyncio.run(hub.put_page("notes", "Шпаргалка Regex.html", Sent("Шпаргалка Regex.html", sent), 1_760_000_000))
-    assert told == ("Страница в базе: notes/artifacts/shpargalka-regex.html. Через пару минут она откроется на "
-                    "https://hub.in.example.com/pages/shpargalka-regex.html (с VPN), со скриптами — она твоя.")
+    assert told == ("Page in the Base: notes/artifacts/shpargalka-regex.html. In a couple of minutes it opens at "
+                    "https://hub.in.example.com/pages/shpargalka-regex.html (with the VPN), with its scripts — it is yours.")
     log = subprocess.run([*core.memory.repo, "log", "-1", "--format=%ae|%s|%b", "origin/main"], capture_output=True,
                          text=True, env=core.memory.env).stdout
-    assert log.strip() == ("assistant@retinue|Владелец через Telegram: страница notes/artifacts/shpargalka-regex.html|"
+    assert log.strip() == ("assistant@retinue|The owner via Telegram: page notes/artifacts/shpargalka-regex.html|"
                            "Retinue-Upload: telegram")
     stored = (core.memory.tree / "notes/artifacts/shpargalka-regex.html").read_text()
     assert stored.startswith('<!doctype html><html><head>\n<meta name="lifehub" content="publish"><meta charset')
-    assert core.memory.since(0) == [], "not hers: no line in the evening list, no «откатить»"
+    assert core.memory.since(0) == [], "not hers: no line in the evening list, no «Revert»"
     hub.pages(1_760_000_100)
     listed = json.loads((tmp_path / "data" / "pages.json").read_text())
     assert [(p["id"], p["author"], p["scripts"]) for p in listed] == [("shpargalka-regex", "owner", "on")]
     again = asyncio.run(hub.put_page("notes", "Шпаргалка Regex.html", Sent("x.html", sent + b" "), 1_760_000_150))
-    assert again.startswith("Страница в базе: notes/artifacts/shpargalka-regex-2.html.") and \
-        "уже был — этот лёг рядом под новым именем, старый не тронут" in again, "never replaced: it may be hers"
+    assert again.startswith("Page in the Base: notes/artifacts/shpargalka-regex-2.html.") and \
+        "was already there — this one went beside it under a new name, the old one is untouched" in again, "never replaced: it may be hers"
 
     for space, name, upload, said in (
-            ("travel", "a.html", Sent("a.html", sent), "Пространства «travel» в базе нет. Есть: notes."),
-            ("notes", "a.pdf", Sent("a.pdf", sent), "это не HTML-файл (нужен .html)."),
-            ("notes", "a.html", Sent("a.html", b"x", size=4 * 2**20), "файл больше 3 МБ."),
-            ("notes", "a.html", Sent("a.html", "<title>ё</title>".encode("cp1251")), "файл не в UTF-8."),
+            ("travel", "a.html", Sent("a.html", sent), "there is no Space \"travel\" in the Base. There are: notes."),
+            ("notes", "a.pdf", Sent("a.pdf", sent), "this is not an HTML file (.html needed)."),
+            ("notes", "a.html", Sent("a.html", b"x", size=4 * 2**20), "the file is over 3 MB."),
+            ("notes", "a.html", Sent("a.html", "<title>ё</title>".encode("cp1251")), "the file is not UTF-8."),
             ("notes", "a.html", Sent("a.html", PAGE.format(mark='<meta name="lifehub:id" content="A B">',
                                                            title="x").encode()),
-             "lifehub:id в файле — только a-z, 0-9 и дефис.")):
-        assert asyncio.run(hub.put_page(space, name, upload, 1_760_000_200)) == f"Страница не опубликована: {said}"
+             "lifehub:id in the file — only a-z, 0-9 and hyphens.")):
+        assert asyncio.run(hub.put_page(space, name, upload, 1_760_000_200)) == f"Page not published: {said}"
     core.memory = None
     assert asyncio.run(hub.put_page("notes", "a.html", Sent("a.html", sent), 0)) == (
-        "Страница не опубликована: база знаний не подключена — класть её некуда.")
+        "Page not published: the Base is not connected — there is nowhere to put it.")
 
 
 def test_the_owners_upload_is_on_record_and_answered_once(based):
@@ -996,8 +1019,8 @@ def test_the_owners_upload_is_on_record_and_answered_once(based):
     asyncio.run(hub.upload(channel, "notes", sent, "77"))
     asyncio.run(hub.upload(channel, "notes", sent, "77"))  # delivered again after a restart
     rows = core.archive.db.execute("SELECT kind, text FROM events ORDER BY ts").fetchall()
-    assert [r[0] for r in rows] == ["owner", "system"] and rows[0][1] == "[страница в хаб notes: x.html]"
-    assert rows[1][1].startswith("Страница в базе: notes/artifacts/x.html.")
+    assert [r[0] for r in rows] == ["owner", "system"] and rows[0][1] == "[page to hub notes: x.html]"
+    assert rows[1][1].startswith("Page in the Base: notes/artifacts/x.html.")
 
 
 def test_a_page_says_what_the_library_shows():

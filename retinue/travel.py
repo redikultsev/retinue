@@ -47,7 +47,7 @@ def pattern(regex: str, what: str, upper: bool = False, longest: int = 60) -> Ch
 def integer(low: int, high: int) -> Check:
     def check(value):
         if type(value) is not int or not low <= value <= high:
-            raise ValueError(f"целое от {low} до {high}")
+            raise ValueError(f"a whole number from {low} to {high}")
         return value
     return check
 
@@ -55,21 +55,21 @@ def integer(low: int, high: int) -> Check:
 def number(low: float, high: float) -> Check:
     def check(value):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
-            raise ValueError(f"число от {low:g} до {high:g}")
+            raise ValueError(f"a number from {low:g} to {high:g}")
         return value
     return check
 
 
 def flag(value):
     if not isinstance(value, bool):
-        raise ValueError("да или нет: true или false")
+        raise ValueError("yes or no: true or false")
     return value
 
 
 def choice(*values: str) -> Check:
     def check(value):
         if value not in values:
-            raise ValueError(f"одно из: {', '.join(values)}")
+            raise ValueError(f"one of: {', '.join(values)}")
         return value
     return check
 
@@ -77,17 +77,17 @@ def choice(*values: str) -> Check:
 def many(item: Check, most: int) -> Check:
     def check(value):
         if not isinstance(value, list) or not 1 <= len(value) <= most:
-            raise ValueError(f"список, от 1 до {most}")
+            raise ValueError(f"a list of 1 to {most}")
         try:
             return [item(v) for v in value]
         except ValueError as exc:
-            raise ValueError(f"в списке: {exc}") from None
+            raise ValueError(f"in the list: {exc}") from None
     return check
 
 
 def obj(value):
     if not isinstance(value, dict):
-        raise ValueError("нужен объект с полями")
+        raise ValueError("an object with fields is needed")
     return value
 
 
@@ -97,7 +97,7 @@ def day(value):
             raise ValueError
         date.fromisoformat(value)
     except ValueError:
-        raise ValueError("дата вида 2026-05-14") from None
+        raise ValueError("a date like 2026-05-14") from None
     return value
 
 
@@ -112,7 +112,7 @@ def real_codes(check: Check) -> Check:
         codes = check(value)
         unknown = [code for code in codes.split(",") if code not in known_codes()]
         if unknown:
-            raise ValueError(f"код аэропорта: {', '.join(unknown)} — нет такого аэропорта IATA")
+            raise ValueError(f"airport code: {', '.join(unknown)} — no such IATA airport")
         return codes
     return checked
 
@@ -129,21 +129,21 @@ USD UYU UZS VES VND VUV WST XAF XCD XCG XOF XPF YER ZAR ZMW ZWG""".split())
 
 def currency(value):
     if not isinstance(value, str) or value.strip().upper() not in ISO_CURRENCIES:
-        raise ValueError("код валюты ISO 4217, например EUR")
+        raise ValueError("an ISO 4217 currency code, e.g. EUR")
     return value.strip().upper()
 
 
-AIRPORTS = real_codes(pattern(r"[A-Z]{3}(,[A-Z]{3}){0,5}", "код аэропорта IATA или несколько через запятую, "
-                              "например AMS или AMS,RTM", upper=True))
-CARRIER = pattern(r"[A-Z0-9]{2}", "код авиакомпании из двух знаков, например LH", upper=True)
+AIRPORTS = real_codes(pattern(r"[A-Z]{3}(,[A-Z]{3}){0,5}", "an IATA airport code or several separated by commas, "
+                              "e.g. AMS or AMS,RTM", upper=True))
+CARRIER = pattern(r"[A-Z0-9]{2}", "a two-character airline code, e.g. LH", upper=True)
 # A place is a few words of Latin script: no digits, no sentence. This string is the only free one in the form.
 PLACE = pattern(r"[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F'.\-]*( [A-Za-z\u00C0-\u024F'.\-]+){0,4}",
-                "название латиницей, до пяти слов и 60 знаков, без цифр, например Springfield или New Haven")
-CLOCK = pattern(r"([01]\d|2[0-3]):[0-5]\d", "время вида 18:00")
-SEARCH_ID = pattern(r"[a-z0-9]{6,16}", "search_id из результата поиска")
-WATCH_ID = pattern(r"w[a-z0-9]{7}", "watch_id из watches")
+                "a name in Latin script, up to five words and 60 characters, no digits, e.g. Springfield or New Haven")
+CLOCK = pattern(r"([01]\d|2[0-3]):[0-5]\d", "a time like 18:00")
+SEARCH_ID = pattern(r"[a-z0-9]{6,16}", "the search_id from a search result")
+WATCH_ID = pattern(r"w[a-z0-9]{7}", "the watch_id from watches")
 CURRENCY = currency
-SOURCE = pattern(r"[a-z0-9]{2,12}", "имя источника, например aviasales")
+SOURCE = pattern(r"[a-z0-9]{2,12}", "a source name, e.g. aviasales")
 AGE = integer(0, 17)
 PARTY = {"adults": integer(1, 9), "children_ages": many(AGE, 9)}
 LIMIT = integer(1, 20)  # cards in one answer: the whole answer goes into the conversation, so not a hundred
@@ -152,8 +152,8 @@ CABIN = choice("economy", "premium_economy", "business", "first")
 MODES = many(choice("train", "bus", "ferry", "van"), 4)
 KINDS = many(choice("hotel", "apartment", "room", "house", "shared_room", "other"), 6)
 # A stay's name as the results gave it (any script); an amenity word for a filter travel-ops applies itself.
-STAY = pattern(r"[^\x00-\x1f]+", "название из выдачи этого поиска, до 100 знаков", longest=100)
-AMENITY = pattern(r"[A-Za-zА-Яа-яЁё]+( [A-Za-zА-Яа-яЁё]+)?", "слово удобства без цифр, например wifi", longest=30)
+STAY = pattern(r"[^\x00-\x1f]+", "a name from this search's results, up to 100 characters", longest=100)
+AMENITY = pattern(r"[A-Za-zА-Яа-яЁё]+( [A-Za-zА-Яа-яЁё]+)?", "an amenity word without digits, e.g. wifi", longest=30)
 
 # Each tool: field -> (check, required). A field travel-ops has and the form lacks is refused: a new field of a new
 # travel-ops version waits until it has a check here.
@@ -214,22 +214,22 @@ FORMS["watch_price"] = {"kind": (choice(*WATCHED), True), "arguments": (obj, Tru
                         "below": (number(0.01, 1e7), False), "drop_percent": (number(1, 90), False),
                         "every_hours": (number(3, 168), False), "currency": (CURRENCY, False)}
 # Not hers: the router takes the alerts and keeps them until they are told (task 9); one she took would be lost to it.
-NOT_HERS = {"watch_alerts": "оповещения о цене забирает Роутер и сам будит тебя, когда цена упала"}
+NOT_HERS = {"watch_alerts": "the router collects the price alerts and wakes you itself when a price drops"}
 
 
 def fill(form: dict[str, tuple[Check, bool]], given: Any, where: str = "", partial: bool = False) -> dict:
     """The given fields, each checked and cleaned, or Refused naming the first wrong one."""
     if not isinstance(given, dict):
-        raise Refused(f"{where or 'аргументы'}: нужен объект с полями")
+        raise Refused(f"{where or 'arguments'}: an object with fields is needed")
     prefix = f"{where}: " if where else ""
     unknown = sorted(str(name) for name in set(given) - set(form))
     if unknown:
         named = ", ".join(name[:40].encode("utf-8", "backslashreplace").decode() for name in unknown[:5])
-        raise Refused(f"{prefix}неизвестное поле {named}. Поля: {', '.join(form)}.")
+        raise Refused(f"{prefix}unknown field {named}. Fields: {', '.join(form)}.")
     missing = [name for name, (_, required) in form.items()
                if required and not partial and given.get(name) is None]  # null where a value is needed: none
     if missing:
-        raise Refused(f"{prefix}нет поля {', '.join(missing)}.")
+        raise Refused(f"{prefix}missing field {', '.join(missing)}.")
     clean = {}
     for name, value in given.items():
         if value is None:
@@ -245,9 +245,9 @@ def check(tool: str, given: Any) -> dict:
     """The checked arguments of a call to travel-ops' `tool`, or Refused. A watch's arguments and filters are
     checked against the search it repeats and that search's refine tool."""
     if tool in NOT_HERS:
-        raise Refused(f"{tool} не для тебя: {NOT_HERS[tool]}")
+        raise Refused(f"{tool} is not for you: {NOT_HERS[tool]}")
     if tool not in FORMS:
-        raise Refused(f"неизвестный инструмент travel-ops: {tool}. Его нет в проверке Роутера, звать его нельзя.")
+        raise Refused(f"unknown travel-ops tool: {tool}. The router's check does not know it, so it may not be called.")
     args = fill(FORMS[tool], given)
     if tool == "watch_price":
         search, refine = WATCHED[args["kind"]]
@@ -278,9 +278,9 @@ def exact(tool: str, given: Any) -> dict:
                 if isinstance(value, dict) and isinstance(sent.get(name), dict):
                     for inner, right in value.items():
                         if sent[name].get(inner) != right:
-                            raise Refused(f"{name}.{inner}: пиши ровно {right!r}")
-                raise Refused(f"{name}: пиши ровно {value!r}")
-        raise Refused("аргументы: пиши ровно так, как требует форма")
+                            raise Refused(f"{name}.{inner}: write exactly {right!r}")
+                raise Refused(f"{name}: write exactly {value!r}")
+        raise Refused("arguments: write them exactly as the form requires")
     return clean
 
 
@@ -353,18 +353,18 @@ class TravelOps:
         try:
             response = await self.http.post(self.url, json=body, headers=headers, timeout=timeout)
         except httpx.HTTPError as exc:
-            raise Unavailable(f"travel-ops недоступен ({type(exc).__name__})") from None
+            raise Unavailable(f"travel-ops is unavailable ({type(exc).__name__})") from None
         if response.status_code != 200:
-            raise Unavailable(f"travel-ops ответил HTTP {response.status_code}.")
+            raise Unavailable(f"travel-ops answered HTTP {response.status_code}.")
         try:
             result = response.json()["result"]
         except (ValueError, KeyError, TypeError):
-            raise Unavailable("travel-ops ответил не по протоколу.") from None
+            raise Unavailable("travel-ops answered off protocol.") from None
         if not isinstance(result, dict):
-            raise Unavailable("travel-ops ответил не по протоколу.")
+            raise Unavailable("travel-ops answered off protocol.")
         if result.get("isError"):
             said = " ".join(c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict))
-            raise Refused(f"travel-ops отказал: {words(said, 300) or 'без причины'}")
+            raise Refused(f"travel-ops refused: {words(said, 300) or 'no reason given'}")
         return result
 
     async def alerts(self) -> list[dict]:

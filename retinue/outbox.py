@@ -2,11 +2,11 @@
 
 The assistant proposes a reply with the bus tool `draft_reply`: the letter or the Telegram message she answers by its
 archive id, or — for a new letter — an address the owner has already written to or heard from, and the text. Code
-does the rest: the address, the subject and the thread from the archive's metadata, never from her; the flags («новый
-получатель», «по просьбе собеседника», Reply-To that is not From, the Telegram window); what is in the text; the
+does the rest: the address, the subject and the thread from the archive's metadata, never from her; the flags («new
+recipient», «at the other person's request», Reply-To that is not From, the Telegram window); what is in the text; the
 envelope and its digest; the card, built by the courier's code (`courier.head`) and shown with the text verbatim.
 
-The owner's «да» is the «Отправить» button under that very card and nothing else — never the word in the chat. The
+The owner's «yes» is the «Send» button under that very card and nothing else — never the word in the chat. The
 button carries only an id; the draft, its digest and its lifetime are in the router's table, and who pressed is
 checked by the channel. The neighbours that hold the keys — the mail sender, the Telegram Business gateway — send
 exactly the envelope whose digest they are given, each key once.
@@ -34,16 +34,20 @@ from .mail import PRIVATE, Unavailable, safe_label
 log = logging.getLogger("retinue.outbox")
 
 TTL_S = 3 * 3600          # a card lives this long: a long meeting or a short flight, not the next day
-HOLD_S = 10               # after «Отправить», this long to «Отменить» before anything leaves
-STALE = "Устарела: пришло новое сообщение."  # a card whose exchange moved on: it never sends
+HOLD_S = 10               # after «Send», this long to «Cancel» before anything leaves
+STALE = "Expired: a new message came in."  # a card whose exchange moved on: it never sends
 WINDOW_MARGIN_S = 600     # a Telegram reply is offered only while the 24-hour window has this much left
 DAY = 86400
 LIVE = ("shown", "hidden", "link")   # a card whose buttons still mean something
+GONE = "The draft is no longer valid."
+RESTARTED = "The router restarted during the hold: not sent."
+# A flagged card's head line; a draft made before the switch to English carries the Russian word.
+WARNING = (courier.WARNING, "Внимание:")
 # How a card names what the run read outside this conversation, in this order: counts, never words.
-SOURCES = {"mail": "почта", "calendar": "календарь", "chat": "другой чат", "owner": "разговор с тобой"}
-HOW = {"link": "Открой чат по ссылке внизу: текст подставится, отправишь сам.",
-       "copy": "У собеседника нет username: открой чат с ним и вставь текст — нажми на него, он скопируется.",
-       "mailto": "Отправь сам из Gmail: адрес и тема выше, текст копируется нажатием."}
+SOURCES = {"mail": "mail", "calendar": "calendar", "chat": "another chat", "owner": "your conversation"}
+HOW = {"link": "Open the chat by the link below: the text is filled in, you send it yourself.",
+       "copy": "The other person has no username: open the chat with them and paste the text — tap it to copy it.",
+       "mailto": "Send it yourself from Gmail: the address and subject are above, tap the text to copy it."}
 
 
 class Neighbour:
@@ -60,10 +64,10 @@ class Neighbour:
                                                headers={"Authorization": f"Bearer {self.token}"})
             data = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            # The name is a noun of any gender («платформа», «линия code», «шлюз Telegram»): it goes after the colon.
-            raise Unavailable(f"недоступно: {self.name} ({type(exc).__name__})") from None
+            # The name is a noun («the platform», «lane code», «Telegram gateway»): it goes after the colon.
+            raise Unavailable(f"unavailable: {self.name} ({type(exc).__name__})") from None
         if response.status_code not in (200, 400) or not isinstance(data, dict):
-            raise Unavailable(f"{self.name}: ответ HTTP {response.status_code}")
+            raise Unavailable(f"{self.name}: HTTP {response.status_code}")
         return data
 
     async def items(self, limit: int = 50) -> list[dict]:
@@ -84,7 +88,7 @@ class Neighbour:
         """A file of the other person's from a chosen chat, by the id its item carried (the gateway downloads it)."""
         data = await self._call("POST", "/file", {"id": file_id}, 300)
         if not isinstance(data.get("data"), str):
-            raise Unavailable(str(data.get("error") or "файла нет"))
+            raise Unavailable(str(data.get("error") or "no file"))
         return base64.b64decode(data["data"])
 
 
@@ -111,7 +115,7 @@ class OutboxStore:
                 reply_to TEXT NOT NULL DEFAULT '',  -- the archive id answered
                 thread TEXT NOT NULL DEFAULT '',    -- where a newer message makes the card stale: mail:<thread>, chat:<id>
                 head TEXT NOT NULL,                 -- the card's header lines, JSON
-                private INTEGER NOT NULL DEFAULT 0, -- about the owner's private matter: the card waits behind «Показать»
+                private INTEGER NOT NULL DEFAULT 0, -- about the owner's private matter: the card waits behind «Show»
                 card TEXT NOT NULL DEFAULT '',      -- the archive id of the card shown
                 expires REAL NOT NULL,
                 send_after REAL,                    -- queued: the end of the hold
@@ -203,19 +207,19 @@ class Outbox:
         try:
             args = lifehub.check(courier.DRAFT_SCHEMA, args)
             if bool(args.get("reply_to")) == bool(args.get("to")):
-                raise Refused("нужен ровно один из reply_to (ответ) и to (новое письмо)")
+                raise Refused("exactly one of reply_to (a reply) and to (a new letter) is needed")
             text = courier.clean(args["text"])
             replaced = self.store.get(args["replaces"]) if args.get("replaces") else None
             if args.get("replaces") and (not replaced or replaced["state"] not in (*LIVE, "fixing")):
-                raise Refused(f"черновика {args['replaces']} нет или он уже не действует")
+                raise Refused(f"draft {args['replaces']} does not exist or is no longer valid")
             built = await (self._reply(str(args["reply_to"]), text, now) if args.get("reply_to") else
                            self._letter(str(args["to"]), str(args.get("subject") or ""), text))
         except (Refused, lifehub.Refused) as exc:
-            return False, f"Не принято: {exc}"
-        flags = list(built.flags) + (["по просьбе собеседника"] if foreign & {"mail", "telegram"} else [])
+            return False, f"Not accepted: {exc}"
+        flags = list(built.flags) + (["at the other person's request"] if foreign & {"mail", "telegram"} else [])
         read, closed, private = self._read_outside(built, reads, others)
         if closed:
-            flags.append(f"читала закрытое: {closed} — проверь, не ушло ли это в текст")
+            flags.append(f"read closed matter: {closed} — check that none of it went into the text")
         built.private = built.private or private
         draft_id = secrets.token_hex(4)
         while self.store.get(draft_id):
@@ -225,7 +229,7 @@ class Outbox:
         if built.window_end:
             expires = min(expires, built.window_end - WINDOW_MARGIN_S)
         if replaced:
-            flags.append(f"вместо черновика {replaced['id']}")
+            flags.append(f"replaces draft {replaced['id']}")
         draft = {"id": draft_id, "created": now, "state": "shown" if built.mode == "send" else "link",
                  "channel": envelope.channel, "envelope": envelope.as_dict(), "digest": courier.digest(envelope),
                  "reply_to": built.reply_to, "thread": built.thread, "private": int(built.private),
@@ -235,17 +239,17 @@ class Outbox:
             draft["head"].insert(1, f"{built.why} {HOW[built.mode]}")
         self.store.add(draft)
         if replaced and self.store.move(replaced["id"], (*LIVE, "fixing"), "replaced", now):
-            await self._retire(replaced, f"Заменён черновиком {draft_id}.")
+            await self._retire(replaced, f"Replaced by draft {draft_id}.")
         await self.show(self.store.get(draft_id), now)
         until = clock.until(expires, now, self.core.tz)
         if built.mode == "send":
-            return True, (f"Черновик {draft_id} показан Владельцу карточкой с текстом целиком. Уйдёт, только если он "
-                          f"нажмёт «Отправить» (до {until}); слово «да» в чате — не согласие. Не пиши, что отправлено.")
-        return True, (f"Черновик {draft_id} показан Владельцу, но отправить его сама система не может: {built.why} "
-                      "Владелец отправит сам, если захочет.")
+            return True, (f"Draft {draft_id} is shown to the owner as a card with the whole text. It leaves only if he "
+                          f"presses «Send» (until {until}); the word «yes» in the chat is not consent. Do not say it was sent.")
+        return True, (f"Draft {draft_id} is shown to the owner, but the system cannot send it itself: {built.why} "
+                      "The owner will send it himself if he wants.")
 
     def _read_outside(self, built: Built, reads: list[dict], others: bool) -> tuple[str, str, bool]:
-        """What the run read outside the exchange this draft answers, counted by source: the card's «Писала, читая»;
+        """What the run read outside the exchange this draft answers, counted by source: the card's «Read while drafting»;
         the closed part of it — the owner's private matter, closed Spaces of the base, and, in a run somebody else
         started, the owner's own conversation; and whether the private matter was among it. A new letter answers no
         exchange: every read is outside."""
@@ -258,12 +262,12 @@ class Outbox:
             if read.get("exchange") == here and read.get("source") != "kb" or read.get("id") in seen:
                 continue
             seen.add(read.get("id"))
-            name = f"База ({read.get('space') or 'корень'})" if read.get("source") == "kb" else \
-                SOURCES.get(read.get("source"), "другое")
+            name = f"Base ({read.get('space') or 'root'})" if read.get("source") == "kb" else \
+                SOURCES.get(read.get("source"), "other")
             counts[name] = counts.get(name, 0) + 1
             if read.get("private"):
                 private = True
-                closed["личное"] = closed.get("личное", 0) + 1
+                closed["private"] = closed.get("private", 0) + 1
             elif read.get("closed") or (others and read.get("source") == "owner"):
                 closed[name] = closed.get(name, 0) + 1
 
@@ -277,15 +281,15 @@ class Outbox:
     async def _reply(self, reply_to: str, text: str, now: float) -> Built:
         event = self.core.archive.get(reply_to)
         if not event or event.kind not in (MAIL, CHAT) or event.meta.get("direction") != "in":
-            raise Refused("reply_to: такого входящего письма или сообщения в архиве нет — возьми id из поиска или "
-                          "из справки")
+            raise Refused("reply_to: no such incoming letter or message in the archive — take the id from a search or "
+                          "from a note")
         meta, said = event.meta, clock.day(event.ts, self.core.tz)
         if event.kind == MAIL:
             sender = str(meta.get("sender") or "").lower()
             address = str(meta.get("reply_to") or sender).lower()
             if not courier.ADDRESS.fullmatch(address):
-                raise Refused(f"адрес ответа «{courier.line(address)}» не годится для отправки")
-            flags = [] if address == sender else [f"ответ уйдёт на Reply-To {address}, а письмо от {sender}"]
+                raise Refused(f"the reply address «{courier.line(address)}» is not fit for sending")
+            flags = [] if address == sender else [f"the reply goes to Reply-To {address}, but the letter is from {sender}"]
             mid = str(meta.get("message_id") or "")
             refs = [r for r in (meta.get("references") or ([meta["in_reply_to"]] if meta.get("in_reply_to") else []))
                     if courier.MESSAGE_ID.fullmatch(str(r))]
@@ -296,33 +300,33 @@ class Outbox:
                                 in_reply_to=mid if courier.MESSAGE_ID.fullmatch(mid) else "",
                                 references=tuple((refs + [mid])[-courier.MAX_REFERENCES:])
                                 if courier.MESSAGE_ID.fullmatch(mid) else ())
-            built = Built(envelope, f"Ответ на письмо от {said}", event.id, f"mail:{thread}",
+            built = Built(envelope, f"Reply to the letter of {said}", event.id, f"mail:{thread}",
                           {sender, address, envelope.account, *(meta.get("to") or []), *(meta.get("cc") or [])}, flags,
                           new=not self._wrote_to(address), private=self._private(event.id))
             built.mode, built.why = await self._mailbox(envelope.account)
             courier.check(envelope)
         else:
             if self.owner_tg is None:
-                raise Refused("Telegram Владельца не подключён к Роутеру")
+                raise Refused("the owner's Telegram is not connected to the router")
             chat = str(meta.get("chat") or "")
             envelope = Envelope(BY_TELEGRAM, str(self.owner_tg), chat, text,
                                 name=courier.line(meta.get("name") or meta.get("username") or ""),
                                 reply_to_message=int(meta.get("message_id") or 0))
             courier.check(envelope)
             last = self._last_in(chat) or event.ts
-            built = Built(envelope, f"Ответ на сообщение от {said}", event.id, f"chat:{chat}", set(),
-                          [f"окно Telegram до {clock.until(last + DAY, now, self.core.tz)}"],
+            built = Built(envelope, f"Reply to the message of {said}", event.id, f"chat:{chat}", set(),
+                          [f"Telegram window until {clock.until(last + DAY, now, self.core.tz)}"],
                           new=not self._chatted(chat), private=self._private(event.id), window_end=last + DAY)
             if built.window_end - now < WINDOW_MARGIN_S + 60:
-                built.mode, built.why = "link", "окно Telegram закрыто: прошло больше суток с её последнего сообщения."
+                built.mode, built.why = "link", "the Telegram window is closed: more than a day since their last message."
             elif not self.gateway:
-                built.mode, built.why = "link", "Business-бот не подключён к Роутеру."
+                built.mode, built.why = "link", "The Business bot is not connected to the router."
             if built.mode == "link":
                 built.window_end = None
                 if not courier.deep_link(str(meta.get("username") or ""), text):
                     built.mode = "copy"
         if built.new:
-            built.flags.insert(0, "новый получатель")
+            built.flags.insert(0, "new recipient")
         return built
 
     async def _letter(self, to: str, subject: str, text: str) -> Built:
@@ -330,37 +334,37 @@ class Outbox:
         talked to it last. A new address is impossible in the first version."""
         address = to.strip().lower()
         if not courier.ADDRESS.fullmatch(address):
-            raise Refused("to: один адрес латиницей, без имени")
+            raise Refused("to: one address in Latin letters, no name")
         rows = self.core.archive.db.execute(
             "SELECT meta FROM events WHERE kind = 'mail' AND (json_extract(meta, '$.sender') = ?1 OR EXISTS (SELECT 1 "
             "FROM json_each(events.meta, '$.to') WHERE value = ?1) OR EXISTS (SELECT 1 FROM json_each(events.meta, "
             "'$.cc') WHERE value = ?1)) ORDER BY ts DESC LIMIT 1", (address,)).fetchall()
         if not rows:
-            raise Refused(f"to: с {address} Владелец не переписывался — писать на новые адреса нельзя")
-        subject = courier.clean(subject, courier.MAX_SUBJECT, "тема")
+            raise Refused(f"to: the owner has never corresponded with {address} — writing to new addresses is not allowed")
+        subject = courier.clean(subject, courier.MAX_SUBJECT, "subject")
         if "\n" in subject:
-            raise Refused("тема: одна строка")
+            raise Refused("subject: one line only")
         envelope = Envelope(BY_MAIL, str(json.loads(rows[0][0]).get("account") or ""), address, text, subject=subject)
         courier.check(envelope)
-        built = Built(envelope, "Новое письмо", "", f"from:{address}", {address, envelope.account},
+        built = Built(envelope, "New letter", "", f"from:{address}", {address, envelope.account},
                       new=not self._wrote_to(address), private=self._private_sender(address))
         built.mode, built.why = await self._mailbox(envelope.account)
         if built.new:
-            built.flags.insert(0, "новый получатель")
+            built.flags.insert(0, "new recipient")
         return built
 
     async def _mailbox(self, account: str) -> tuple[str, str]:
         """Whether the sender can send from this mailbox now; if not, the card says why and the owner sends himself."""
         if not self.sender:
-            return "mailto", "отправка почты не подключена."
+            return "mailto", "sending mail is not connected."
         try:
             status = await self.sender.status()
         except Unavailable:
-            return "mailto", "отправка почты не отвечает."
+            return "mailto", "sending mail does not answer."
         if account not in (status.get("accounts") or []):
-            return "mailto", f"для ящика {account} нет ключа отправки."
+            return "mailto", f"there is no sending key for the mailbox {account}."
         if account in (status.get("dead") or {}):
-            return "mailto", f"Google не пускает отправку из {account}: нужен вход заново (--kind send)."
+            return "mailto", f"Google does not let {account} send: log in again (--kind send)."
         return "send", ""
 
     def _wrote_to(self, address: str) -> bool:
@@ -405,7 +409,7 @@ class Outbox:
         if draft["channel"] == BY_TELEGRAM and draft["state"] == "link":
             username = self._username(draft)
             if url := courier.deep_link(username, envelope["text"]):
-                link = ("Открыть чат с этим текстом", url)
+                link = ("Open the chat with this text", url)
         return CardView(list(draft["head"]), envelope["text"], status, link)
 
     def _username(self, draft: dict) -> str:
@@ -418,21 +422,21 @@ class Outbox:
         envelope = draft["envelope"]
         out = []
         if draft["state"] in ("shown", "hidden"):
-            flagged = any(line.startswith("Внимание:") for line in draft["head"])
+            flagged = any(line.startswith(WARNING) for line in draft["head"])
             whom = envelope.get("name") or envelope["to"]
-            label = safe_label(f"Отправить: {whom}", 60) if flagged else "Отправить"
+            label = safe_label(f"Send: {whom}", 60) if flagged else "Send"
             out.append(Button(label, "courier_send", f"{draft['id']}:{draft['digest']}"))
-        return out + [Button("Поправить", "courier_fix", draft["id"]), Button("Не отвечать", "courier_skip", draft["id"])]
+        return out + [Button("Edit", "courier_fix", draft["id"]), Button("Don't reply", "courier_skip", draft["id"])]
 
     async def show(self, draft: dict, now: float, status: str = "") -> None:
         """The card — or, about the private matter, a line that says no more than that a draft waits, and the card on
-        «Показать»: a notification shows the start of a message on the screen, during a call too."""
+        «Show»: a notification shows the start of a message on the screen, during a call too."""
         ttl = max(60.0, draft["expires"] - now)
         if draft["private"] and draft["state"] in ("shown", "link"):
             if draft["state"] == "shown":
                 self.store.move(draft["id"], ("shown",), "hidden", now)
-            await self.core.tell_owner("Черновик на подтверждение: 1.", ttl_s=ttl, meta={"draft": draft["id"]},
-                                       buttons=[self._button("Показать", "courier_show", draft["id"])])
+            await self.core.tell_owner("Draft to confirm: 1.", ttl_s=ttl, meta={"draft": draft["id"]},
+                                       buttons=[self._button("Show", "courier_show", draft["id"])])
             return
         card = await self.core.tell_card(self.view(draft, status), buttons=self.buttons(draft), ttl_s=ttl,
                                          meta={"draft": draft["id"]})
@@ -446,16 +450,16 @@ class Outbox:
         return Button(label, action, value)
 
     async def _show(self, value: str) -> str:
-        """«Показать»: the card itself, once."""
+        """«Show»: the card itself, once."""
         draft = self.store.get(value)
         now = self.clock()
         if not draft or draft["card"] or draft["state"] not in ("hidden", "link") or draft["expires"] <= now:
-            return "Черновик уже не действует."
+            return GONE
         if draft["state"] == "hidden":
             self.store.move(draft["id"], ("hidden",), "shown", now)
         draft = {**self.store.get(value), "private": 0}
         asyncio.create_task(self.show(draft, now))
-        return "Показываю"
+        return "Showing"
 
     # --- the owner's presses --------------------------------------------------------------------------------------
 
@@ -465,61 +469,61 @@ class Outbox:
         return Pressed(ok, toast, view=self.view(self.store.get(draft["id"]), status), keep=list(keep))
 
     async def _send(self, value: str):
-        """«Отправить». The card is spent already (`Core.press`). Checked again here, in code: the draft is the one
+        """«Send». The card is spent already (`Core.press`). Checked again here, in code: the draft is the one
         on the card and still alive, its envelope has the digest the button was bound to, nothing newer came in the
         thread since (the router kills such a card when the message comes — `supersede`; this is the second line).
-        Then the hold: «Отменить» for HOLD_S seconds, and only then the sender is asked — once, with the draft's
+        Then the hold: «Cancel» for HOLD_S seconds, and only then the sender is asked — once, with the draft's
         id as its key."""
         from .core import Pressed
 
         draft_id, _, digest = value.partition(":")
         draft, now = self.store.get(draft_id), self.clock()
         if not draft or draft["state"] != "shown":
-            return Pressed(False, "Черновик уже не действует.")
+            return Pressed(False, GONE)
         if now >= draft["expires"]:
             self.store.move(draft_id, ("shown",), "expired", now)
-            return self._pressed(False, "Устарел", draft, "Устарел: не отправлено.")
+            return self._pressed(False, "Expired", draft, "Expired: not sent.")
         if courier.digest(Envelope.of(draft["envelope"])) != digest or digest != draft["digest"]:
             log.error("draft %s: the envelope does not match the card's digest; not sent", draft_id)
-            self.store.move(draft_id, ("shown",), "failed", now, result={"error": "конверт не совпал с карточкой"})
-            return self._pressed(False, "Не отправлено", draft, "Не отправлено: черновик изменился после показа.")
+            self.store.move(draft_id, ("shown",), "failed", now, result={"error": "the envelope does not match the card"})
+            return self._pressed(False, "Not sent", draft, "Not sent: the draft changed after it was shown.")
         if self._newer(draft):
             self.store.move(draft_id, ("shown",), "stale", now)
-            return self._pressed(False, "Устарела", draft, STALE)
+            return self._pressed(False, "Expired", draft, STALE)
         if not self.store.move(draft_id, ("shown",), "queued", now, send_after=now + HOLD_S):
-            return Pressed(False, "Черновик уже не действует.")
-        cancel = self.core.store.add_button(draft["card"], "Отменить", "courier_cancel", draft_id,
+            return Pressed(False, GONE)
+        cancel = self.core.store.add_button(draft["card"], "Cancel", "courier_cancel", draft_id,
                                             time.time() + HOLD_S + 60)
         task = asyncio.create_task(self._release(draft_id))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
-        return self._pressed(True, f"Отправлю через {HOLD_S} с", draft, f"Отправлю через {HOLD_S} с — можно отменить.",
-                             [("Отменить", cancel)])
+        return self._pressed(True, f"Sending in {HOLD_S} s", draft, f"Sending in {HOLD_S} s — you can cancel.",
+                             [("Cancel", cancel)])
 
     async def _cancel(self, value: str):
         from .core import Pressed
 
         draft = self.store.get(value)
         if draft and self.store.move(value, ("queued",), "cancelled", self.clock()):
-            return self._pressed(True, "Отменено", draft, "Отменено — не отправлено.")
-        return Pressed(False, "Поздно: уже отправляется.")
+            return self._pressed(True, "Cancelled", draft, "Cancelled — not sent.")
+        return Pressed(False, "Too late: already sending.")
 
     async def _fix(self, value: str):
         from .core import Pressed
 
         draft = self.store.get(value)
         if draft and self.store.move(value, LIVE, "fixing", self.clock()):
-            return self._pressed(True, "Скажи словами, что поправить", draft,
-                                 "Ждёт правки: скажи ей словами, что поменять — придёт новая карточка.")
-        return Pressed(False, "Черновик уже не действует.")
+            return self._pressed(True, "Say in words what to change", draft,
+                                 "Waiting for an edit: tell the assistant in words what to change — a new card will come.")
+        return Pressed(False, GONE)
 
     async def _skip(self, value: str):
         from .core import Pressed
 
         draft = self.store.get(value)
         if draft and self.store.move(value, LIVE, "dropped", self.clock()):
-            return self._pressed(True, "Не отвечаю", draft, "Не отвечаю.")
-        return Pressed(False, "Черновик уже не действует.")
+            return self._pressed(True, "Not replying", draft, "Not replying.")
+        return Pressed(False, GONE)
 
     def _newer(self, draft: dict) -> bool:
         """Has the other side written since the draft was made: the card answers what is no longer the last word."""
@@ -546,18 +550,18 @@ class Outbox:
     # --- sending --------------------------------------------------------------------------------------------------
 
     async def _release(self, draft_id: str) -> None:
-        """The hold is over: unless «Отменить» won, the neighbour that holds the key is asked once. Whatever it
+        """The hold is over: unless «Cancel» won, the neighbour that holds the key is asked once. Whatever it
         answers is the card's last line; a failure or a doubt is also told to the owner as a message."""
         await asyncio.sleep(HOLD_S)
         now = self.clock()
         if not self.store.move(draft_id, ("queued",), "sending", now):
             return  # cancelled
         draft = self.store.get(draft_id)
-        self.core.store.spend_card(draft["card"], time.time())  # «Отменить» is gone
+        self.core.store.spend_card(draft["card"], time.time())  # «Cancel» is gone
         neighbour = self.sender if draft["channel"] == BY_MAIL else self.gateway
         try:
             answer = await neighbour.send(draft_id, draft["envelope"], draft["digest"]) if neighbour else \
-                {"status": "failed", "error": "отправитель не подключён"}
+                {"status": "failed", "error": "the sender is not connected"}
         except Unavailable as exc:  # it may have got the request: never asked again
             answer = {"status": "unknown", "error": str(exc)}
         except Exception as exc:
@@ -573,24 +577,24 @@ class Outbox:
         result = {k: v for k, v in answer.items() if k != "status"}
         if status == "sent":
             self.store.move(draft["id"], ("sending",), "sent", now, result=result)
-            await self._retire(draft, f"Отправлено {clock.until(now, now, core.tz)}.")
-            core.archive.append(SYSTEM, f"Отправлено по карточке {draft['id']}: {whom}.", channel="system",
+            await self._retire(draft, f"Sent {clock.until(now, now, core.tz)}.")
+            core.archive.append(SYSTEM, f"Sent by card {draft['id']}: {whom}.", channel="system",
                                 ref=draft["card"] or None, meta={"draft": draft["id"], "sent": True},
                                 conversation_id=core.store.conversation(core.default_agent))
             if draft["channel"] == BY_TELEGRAM:
                 self._into_exchange(draft, result, now)
         elif status == "unknown":
             self.store.move(draft["id"], ("sending",), "unknown", now, result=result)
-            await self._retire(draft, "Исход неизвестен: повторно не отправляю. Если письмо или сообщение найдётся "
-                                      "в отправленных — скажу.")
-            await core.tell_owner(f"Не знаю, ушло ли: черновик {draft['id']} ({whom}) — {result.get('error', '')}. "
-                                  "Повторно не отправляю; проверь отправленные сам.", meta={"draft": draft["id"]})
+            await self._retire(draft, "Outcome unknown: not sending it again. If the letter or message turns up in Sent, "
+                                      "I will say so.")
+            await core.tell_owner(f"Not sure it went: draft {draft['id']} ({whom}) — {result.get('error', '')}. "
+                                  "Not sending it again; check Sent yourself.", meta={"draft": draft["id"]})
         else:
             self.store.move(draft["id"], ("sending",), "failed", now, result=result)
             why = self._why(draft, str(result.get("error") or status))
-            await self._retire(draft, f"Не отправлено: {why}")
-            await core.tell_owner(f"Не отправлено: черновик {draft['id']} ({whom}) — {why}", meta={"draft": draft["id"]})
-        await core._each(core.channels, "protocol", f"courier: черновик {draft['id']} → {status}")
+            await self._retire(draft, f"Not sent: {why}")
+            await core.tell_owner(f"Not sent: draft {draft['id']} ({whom}) — {why}", meta={"draft": draft["id"]})
+        await core._each(core.channels, "protocol", f"courier: draft {draft['id']} → {status}")
 
     def _into_exchange(self, draft: dict, result: dict, now: float) -> None:
         """The reply that left, into the chat's exchange at once, as the gateway would have put it: Telegram does not
@@ -601,7 +605,7 @@ class Outbox:
 
         envelope = draft["envelope"]
         chat, message_id = str(envelope["to"]), int(result.get("id") or 0)
-        who = defuse(str(envelope.get("name") or "")) or "без имени"
+        who = defuse(str(envelope.get("name") or "")) or "no name"
         self.core.archive.append(
             CHAT, f"Telegram · {who} · {DIRECTIONS['bot']}\n{envelope['text']}", conversation_id=f"chat:{chat}",
             channel="tgb", native_id=f"{chat}/{message_id}" if message_id else f"{chat}/draft-{draft['id']}", ts=now,
@@ -612,10 +616,10 @@ class Outbox:
     def _why(self, draft: dict, error: str) -> str:
         if error == "invalid_grant":
             account = draft["envelope"]["account"]
-            return ("Google не пускает отправку (обычно после смены пароля). Войди заново на Mac, в папке retinue:\n"
+            return ("Google does not let it send (usually after a password change). Log in again on the Mac, in the retinue folder:\n"
                     f"`uv run deploy/mail/login.py --account {account} --kind send`")
         if error == "window":
-            return "окно Telegram закрылось (больше суток с её сообщения): ответь сам."
+            return "the Telegram window closed (more than a day since their message): reply yourself."
         return error + ("" if error.endswith(".") else ".")
 
     async def settle_mail(self, message_id: str, gmail: str) -> None:
@@ -634,7 +638,7 @@ class Outbox:
         draft = self.store.get(draft_id)
         if draft and self.store.move(draft_id, ("unknown",), "sent", self.clock(), result={**draft["result"], **result,
                                                                                          "settled": True}):
-            await self._retire(draft, "Нашлось в отправленных: ушло.")
+            await self._retire(draft, "Found in Sent: it went.")
 
     # --- the clock and a restart ----------------------------------------------------------------------------------
 
@@ -642,7 +646,7 @@ class Outbox:
         """Cards past their time say so; their buttons are dead already."""
         for draft in self.store.in_state(*LIVE):
             if draft["expires"] <= now and self.store.move(draft["id"], LIVE, "expired", now):
-                await self._retire(draft, "Устарел: не отправлено.")
+                await self._retire(draft, "Expired: not sent.")
 
     async def recover(self) -> None:
         """What a restart interrupted. In the hold: not sent — the card comes again, the owner presses again if he
@@ -650,12 +654,12 @@ class Outbox:
         now = self.clock()
         for draft in self.store.in_state("queued"):
             if self.store.move(draft["id"], ("queued",), "shown", now):
-                await self._retire(draft, "Роутер перезапускался во время отсрочки: не отправлено.")
+                await self._retire(draft, RESTARTED)
                 if draft["expires"] > now:
                     await self.show(self.store.get(draft["id"]), now,
-                                    "Роутер перезапускался во время отсрочки: не отправлено. Нажми ещё раз, если нужно.")
+                                    f"{RESTARTED} Press again if you still want it.")
         for draft in self.store.in_state("sending"):
-            await self._outcome(draft, {"status": "unknown", "error": "Роутер перезапустился во время отправки"})
+            await self._outcome(draft, {"status": "unknown", "error": "the router restarted while sending"})
 
     async def _retire(self, draft: dict, status: str) -> None:
         """A card that no longer means anything: its buttons spent, its last line says why."""

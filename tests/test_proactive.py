@@ -40,7 +40,7 @@ def test_the_bases_dates_ahead_and_past_closed_records_left_out(tmp_path):
     record(tmp_path, "misc/journal/2026-10-01-x.md", title="Сделано", deadline=day(2), status="done")
     record(tmp_path, "personal/profile/far.md", title="Далеко", until=day(20))
     record(tmp_path, ".scratch/notes/x.md", title="Черновик", deadline=day(1))
-    record(tmp_path, "sport/profile/old-gym.md", title="Абонемент", until=day(-2))  # closed: no «просрочено»
+    record(tmp_path, "sport/profile/old-gym.md", title="Абонемент", until=day(-2))  # closed: no «overdue»
     record(tmp_path, "personal/profile/broken.md", title="Сломано", until="2026-02-30")
     (tmp_path / "personal/profile/garbled.md").write_text("---\nuntil: [\n---\n", encoding="utf-8")
     items, old = scan(tmp_path, TODAY)
@@ -49,9 +49,9 @@ def test_the_bases_dates_ahead_and_past_closed_records_left_out(tmp_path):
                                                   ("misc/artifacts/form.md", "deadline")]
     assert old == 1, "a check overdue for months is counted, not listed"
     assert [deadline_line(i, TODAY) for i in items] == [
-        "- просрочено 2 дня (13 октября): Правила спортзала — перепроверить · personal/knowledge/rules.md",
-        "- через 3 дня (18 октября): Абонемент — действует до · personal/profile/gym.md",
-        "- через 4 дня (19 октября): Заявка на грант — срок · misc/artifacts/form.md"]
+        "- overdue by 2 days (13 October): Правила спортзала — recheck · personal/knowledge/rules.md",
+        "- in 3 days (18 October): Абонемент — valid until · personal/profile/gym.md",
+        "- in 4 days (19 October): Заявка на грант — deadline · misc/artifacts/form.md"]
     assert scan(tmp_path / "none", TODAY) == ([], 0)
     assert all(i.path != "personal/profile/broken.md" for i in items), "a date that is no date: that file skipped"
 
@@ -69,7 +69,7 @@ def test_a_new_zone_moves_what_recurs_and_keeps_the_moment_of_a_one_off(tmp_path
     assert (pills.local, pills.tz) == ("2026-10-08T09:00", "Asia/Tokyo")
     assert pills.due == datetime(2026, 10, 8, 0, 0, tzinfo=timezone.utc).timestamp(), "9 in Tokyo"
     assert call.due == datetime(2026, 10, 9, 18, 0, tzinfo=timezone.utc).timestamp(), "the same instant"
-    assert jobs.line(call, numbered=False) == "сб 10 октября, 03:00 Asia/Tokyo — позвонить Х", "told in his clock"
+    assert jobs.line(call, numbered=False) == "Sat 10 October, 03:00 Asia/Tokyo — позвонить Х", "told in his clock"
     summary = jobs.db.execute("SELECT tz, due FROM jobs WHERE kind = 'summary'").fetchone()
     assert summary == ("Asia/Tokyo", datetime(2026, 10, 8, 0, 0, tzinfo=timezone.utc).timestamp())
     assert jobs.rezone("Asia/Tokyo", NOW) == (0, 1), "the same zone again moves nothing"
@@ -127,19 +127,19 @@ def test_the_zone_is_changed_in_words_kept_across_restarts_and_checked(tmp_path)
             judged = core.turns.open_root("assistant")
             judged.tree.foreign.add(mark)
             ok, text = await core.proactive.zone_tool(ASSISTANT, judged.id, "Asia/Tokyo")
-            assert not ok and text.startswith(f"Не поменяла: в этом ходе был чужой текст ({mark})"), mark
+            assert not ok and text.startswith(f"Not changed: this turn had someone else's text in it ({mark})"), mark
         chat = core.turns.open_root("assistant")
         chat.tree.exchanges.add("chat:777")
         assert (await core.proactive.zone_tool(ASSISTANT, chat.id, "Asia/Tokyo"))[0] is False, "a run a chat started"
-        assert core.tz == "UTC" and telegram.cards == [], "a letter saying «я в Токио» moves nothing"
+        assert core.tz == "UTC" and telegram.cards == [], "a letter saying «I'm in Tokyo» moves nothing"
         turn = core.turns.open_root("assistant")
         ok, text = await core.proactive.zone_tool(ASSISTANT, turn.id, "Tokyo")
-        assert ok and text.startswith("Пояс теперь Asia/Tokyo: там сейчас ")
+        assert ok and text.startswith("The zone is now Asia/Tokyo: it is ")
         assert core.tz == core.jobs.tz == "Asia/Tokyo"
-        assert telegram.cards[-1][0] == "Пояс: UTC → Asia/Tokyo.", "never silent"
-        assert core.store.get(f"now.{core.store.conversation('assistant')}") == "1", "her «Пояс Владельца» is renewed"
-        assert (await core.proactive.zone_tool(ASSISTANT, turn.id, "Нарния")) == (
-            False, "Не поменяла: «Нарния» — не пояс. Нужно имя IANA, например Asia/Tokyo.")
+        assert telegram.cards[-1][0] == "Zone: UTC → Asia/Tokyo.", "never silent"
+        assert core.store.get(f"now.{core.store.conversation('assistant')}") == "1", "her line with the owner's zone is renewed"
+        assert (await core.proactive.zone_tool(ASSISTANT, turn.id, "Narnia")) == (
+            False, "Not changed: «Narnia» is not a zone. It needs an IANA name, e.g. Asia/Tokyo.")
         assert (await core.proactive.zone_tool(AGENT, turn.id, "Asia/Manila"))[0] is False, "no reminders grant"
         assert (await core.proactive.zone_tool(ASSISTANT, "gone", "Asia/Manila"))[0] is False, "no turn"
         again = make_core(tmp_path)
@@ -195,13 +195,13 @@ def test_the_monday_summary_gets_deadlines_the_trackers_week_and_the_mac(tmp_pat
     core, telegram = asyncio.run(run())
     (card,) = [c[0] for c in telegram.cards]
     parts = card.split("\n\n")
-    assert parts[:4] == ["Доброе утро.", "Сроки, 14 дней:\n- через 8 дней (20 октября): Абонемент — действует до · "
+    assert parts[:4] == ["Доброе утро.", "Deadlines, 14 days:\n- in 8 days (20 October): Абонемент — valid until · "
                          "personal/profile/gym.md",
-                         "Трекер за неделю: 2 (цель 7).",
-                         "Mac не пушил 5 дней: последний его коммит в хабе — 7 октября."], \
+                         "Tracker for the week: 2 (goal 7).",
+                         "Mac has not pushed for 5 days: its last commit in the hub is from 7 October."], \
         "rows 1 and 3 were sent last week; row 4 this Monday morning belongs to this week"
-    assert parts[4].startswith("Здоровье за сутки:")
-    assert asyncio.run(core.proactive.weekly_line(local(12, 9))) == "Трекер за неделю: 1 (цель 7).", \
+    assert parts[4].startswith("Health for the day:")
+    assert asyncio.run(core.proactive.weekly_line(local(12, 9))) == "Tracker for the week: 1 (goal 7).", \
         "the weekly review counts since this Monday"
 
 
@@ -228,16 +228,16 @@ def test_the_heartbeat_speaks_only_when_something_needs_him(tmp_path, monkeypatc
         telegram = FakeChannel("telegram", False)
         await core.start([telegram])
         said = await core.proactive.heartbeat(thursday)
-        assert said == ["В базе (profile/location.md) твой пояс теперь Asia/Tokyo. Поменять?",
-                        "Срок близко:\n- через 2 дня (17 октября): Абонемент — действует до · personal/profile/gym.md",
-                        "Четверг, а в трекере «Трекер» за неделю ноль (цель 7). Одно — сегодня?",
-                        "Бэкап: бэкапа нет 3 сут: repository locked."], "stale knowledge waits for the summary"
+        assert said == ["In the Base (profile/location.md) your zone is now Asia/Tokyo. Change it?",
+                        "Due soon:\n- in 2 days (17 October): Абонемент — valid until · personal/profile/gym.md",
+                        "Thursday, and «Tracker» has zero for the week (goal 7). One today?",
+                        "Backup: no backup for 3 d: repository locked."], "stale knowledge waits for the summary"
         assert await core.proactive.heartbeat(thursday + 900) == [], "each is said once"
         assert await core.proactive.heartbeat(local(15, 23)) == [], "quiet hours"
         (_, buttons, _) = telegram.cards[0]
-        assert [label for label, _ in buttons] == ["Да, Asia/Tokyo", "Нет"]
+        assert [label for label, _ in buttons] == ["Yes, Asia/Tokyo", "No"]
         await core.press(telegram, buttons[0][1])
-        assert core.tz == "Asia/Tokyo" and telegram.cards[-1][0].startswith("Пояс теперь Asia/Tokyo")
+        assert core.tz == "Asia/Tokyo" and telegram.cards[-1][0].startswith("The zone is now Asia/Tokyo")
         return core
 
     asyncio.run(run())
@@ -260,10 +260,10 @@ def test_the_first_heartbeat_after_a_deploy_takes_stock_and_bursts_nothing(tmp_p
         record(tmp_path / "kb", "personal/profile/lease.md", title="Аренда", until="2026-10-21")
         core.proactive.scanned = None
         assert await core.proactive.heartbeat(local(18, 10)) == [
-            "Срок близко:\n- через 3 дня (21 октября): Аренда — действует до · personal/profile/lease.md"], \
+            "Due soon:\n- in 3 days (21 October): Аренда — valid until · personal/profile/lease.md"], \
             "a date that comes due after the deploy is pushed"
         assert await core.proactive.heartbeat(local(22, 13)) == [
-            "Четверг, а в трекере «Трекер» за неделю ноль (цель 7). Одно — сегодня?"], \
+            "Thursday, and «Tracker» has zero for the week (goal 7). One today?"], \
             "the next week's Thursday is told"
 
     asyncio.run(run())
@@ -274,7 +274,7 @@ def test_her_own_thought_is_a_run_of_its_own_rare_braked_by_code_and_may_be_sile
 
     clock = [local(15, 12)]
     monkeypatch.setattr(time, "time", lambda: clock[0])
-    answers, asked = ["«— »", "Кстати, абонемент кончается через неделю: продлить?"], []
+    answers, asked = ["«— »", "By the way, the gym pass ends in a week: renew it?"], []
 
     async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None):
         asked.append((text, context_id, control, turn_id))
@@ -289,7 +289,7 @@ def test_her_own_thought_is_a_run_of_its_own_rare_braked_by_code_and_may_be_sile
         (text, context_id, control, turn_id) = asked[0]
         assert control == "oneshot" and context_id.startswith("initiative-") and turn_id is None, \
             "outside the conversation's session, and with no turn: nothing she could write"
-        assert text.startswith("[Инициатива.") and "Разговор за последние сутки:" in text
+        assert text.startswith("[Initiative.") and "The conversation over the last day:" in text
         assert core.archive.recent(conversation, 10) == [] and telegram.events == [], "«—» leaves no trace"
         assert core.store.get(f"now.{conversation}") is None, "the conversation's session is untouched"
         clock[0] = local(15, 18)
@@ -304,13 +304,13 @@ def test_her_own_thought_is_a_run_of_its_own_rare_braked_by_code_and_may_be_sile
         clock[0] = local(16, 12)
         assert await core.proactive.heartbeat(clock[0]) == ["thought"]
         (event,) = core.archive.recent(conversation, 10)
-        assert telegram.cards[-1][0] == "Кстати, абонемент кончается через неделю: продлить?" and event.meta["initiative"]
-        assert "Ты сама, первой (отдельный запуск): Кстати" in history_line(event), "her next turn sees it as hers"
+        assert telegram.cards[-1][0] == "By the way, the gym pass ends in a week: renew it?" and event.meta["initiative"]
+        assert "You, on your own initiative (a separate run): By the way" in history_line(event), "her next turn sees it as hers"
         core.archive.append("owner", "привет", conversation_id=conversation, channel="telegram", ts=local(18, 11))
         clock[0] = local(18, 12)
         await core.proactive.heartbeat(clock[0])
         assert len(asked) == 2, "he is talking to her: no thought of her own"
-        assert core.proactive.command("/initiative выкл").startswith("Инициатива: выкл — первой не пишу")
+        assert core.proactive.command("/initiative выкл").startswith("Initiative: off — I don't write first")
         clock[0] = local(20, 12)
         await core.proactive.heartbeat(clock[0])
         assert len(asked) == 2, "off is off"
@@ -323,11 +323,40 @@ def test_the_initiative_command(tmp_path):
     core = make_core(tmp_path)
     proactive = core.proactive
     assert proactive.command("!initiative") == (
-        "Инициатива: обычно — пишу первой без повода примерно раз в полтора дня, не чаще раза в сутки. Тихие часы "
-        "22:00–09:00 (UTC): в них не пишу ничего, кроме напоминаний. Поменять: /initiative реже | обычно | чаще | "
-        "выкл, /initiative тихо 23-8.")
-    assert proactive.command("!initiative чаще").startswith("Инициатива: чаще")
-    assert "Тихие часы 23:00–08:00" in proactive.command("!initiative тихо 23-8")
-    assert proactive.command("!initiative тихо завтра").startswith("Тихие часы — так:")
-    assert proactive.command("!initiative громче").startswith("Не поняла.")
-    assert Core([ASSISTANT], core.store, "owner", proactive=Proactive()).proactive.level() == "чаще", "kept"
+        "Initiative: normal — I write first without a reason about once every day and a half, at most once a day. "
+        "Quiet hours 22:00–09:00 (UTC): in them I write nothing but reminders. To change: /initiative less | normal | "
+        "more | off, /initiative quiet 23-8.")
+    assert proactive.command("!initiative чаще").startswith("Initiative: more")
+    assert "Quiet hours 23:00–08:00" in proactive.command("!initiative тихо 23-8")
+    assert proactive.command("!initiative тихо завтра").startswith("Quiet hours go like this:")
+    assert proactive.command("!initiative louder").startswith("Didn't get that.")
+    assert Core([ASSISTANT], core.store, "owner", proactive=Proactive()).proactive.level() == "more", "kept"
+
+
+def test_the_initiative_command_in_english_and_a_level_kept_in_russian(tmp_path):
+    core = make_core(tmp_path)
+    proactive = core.proactive
+    for word, level in (("less", "less"), ("normal", "normal"), ("more", "more"), ("off", "off")):
+        assert proactive.command(f"!initiative {word}").startswith(f"Initiative: {level} — "), word
+        assert core.store.get("initiative.level") == level
+    assert "Quiet hours 23:00–08:00" in proactive.command("!initiative quiet 23-8")
+    assert proactive.command("!initiative quiet tomorrow").startswith("Quiet hours go like this:")
+    core.store.set("initiative.level", "реже")  # a store set before the English
+    assert proactive.level() == "less"
+    assert proactive.command("!initiative").startswith("Initiative: less — I write first without a reason rarely")
+
+
+def test_a_backup_line_is_an_alert_in_either_language(tmp_path):
+    from types import SimpleNamespace
+
+    from retinue.proactive import Proactive as P
+
+    for said, alert in (("no backup for 2 d: x", True), ("backup — 7 h ago, the last run failed: x", True),
+                        ("backup status unreadable", True), ("бэкапа нет 2 сут: x", True),
+                        ("бэкап — 7 ч назад, последний запуск не удался: x", True), ("статус бэкапа не читается", True),
+                        ("backup — 5 h ago", False), ("backup — 5 h ago, with a warning: 1 file unreadable", False)):
+        p = P()
+        store = {}
+        p.core = SimpleNamespace(backup_status=str(tmp_path / "none.json"), backup=lambda now, s=said: s,
+                                 store=SimpleNamespace(get=store.get, set=store.__setitem__))
+        assert bool(p.backup_alert(0.0)) is alert, said

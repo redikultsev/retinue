@@ -6,7 +6,8 @@ refused) — how long the turn took (`took_s`), where it belongs (the session's 
 to three suggested replies.
 
 **The replies are a convention, not a tool.** The lanes' instructions (`deploy/lanes/instructions/common.md`) teach
-the model to end a turn that leaves the owner a choice with one last line `Ответы: «…» · «…»`. Code takes that line
+the model to end a turn that leaves the owner a choice with one last line `Replies: "…" · "…"` (the older Russian
+form `Ответы: «…» · «…»` is read too; either label takes "…", “…” or «…»). Code takes that line
 off the text and parses it strictly (`split`): only the very last line, outside a code fence, each reply one line of
 plain text of at most REPLY_CHARS with a letter or a digit, never one starting with a command character
 (COMMAND_CHARS), three at most, duplicates and empty ones dropped. The line as written goes to the face (`line`),
@@ -49,12 +50,15 @@ BUTTON_TTL_S = 7 * 86400     # as long as a card's buttons
 KEY = "ping/"                # a reply button's `approval`: ping/<seq>, never an approval's 8 hex
 ACTION = "reply:"            # a reply button's action: reply:<n>
 INPUT = "ping:"              # the input a pressed reply goes in as: ping:<seq>
-GONE = "Кнопка больше не действует."
-STALE = "Устарело: в сессию уже написано после этого итога."
+GONE = "The button no longer works."
+STALE = "Expired: the session has been written to since this summary."
 
-# The label, bare or in bold/underline emphasis a model may add, then «…» · «…».
-_LINE = re.compile(r"(?:\*\*|__)?Ответы:(?:\*\*|__)?[ \t]*(«[^«»\n]*»(?:[ \t]*·[ \t]*«[^«»\n]*»)*)[ \t]*")
-_REPLY = re.compile(r"«([^«»\n]*)»")
+# The label — `Replies:`, the instructed one, or the older `Ответы:` — bare or in bold/underline emphasis a model may
+# add, then "…" · "…": each reply in straight quotes, curly ones or guillemets, never nested.
+_QUOTED = r'"[^"\n]*"|“[^“”\n]*”|«[^«»\n]*»'
+_LINE = re.compile(r"(?:\*\*|__)?(?:Replies|Ответы):(?:\*\*|__)?[ \t]*((?:" + _QUOTED + r")(?:[ \t]*·[ \t]*(?:" + _QUOTED +
+                   r"))*)[ \t]*")
+_REPLY = re.compile(r'"([^"\n]*)"|“([^“”\n]*)”|«([^«»\n]*)»')
 _FENCE = re.compile(r"[ \t]{0,3}(`{3,}|~{3,})(.*)")
 # What a reply may not start with: the CLI reads `/…` as a command or a skill and `!`/`#` as its own shortcuts — a
 # button must never put a model-written (maybe page-steered) command in the owner's mouth.
@@ -96,8 +100,8 @@ def parse(text: str) -> tuple[str, list[str], str]:
     if not found or _in_fence(lines[:-1]):
         return text, [], ""
     replies: list[str] = []
-    for raw in _REPLY.findall(found.group(1)):
-        if (reply := _reply(raw)) and reply not in replies:
+    for quoted in _REPLY.findall(found.group(1)):
+        if (reply := _reply("".join(quoted))) and reply not in replies:
             replies.append(reply)
     if not replies:
         return text, [], ""
@@ -124,10 +128,10 @@ def took_words(seconds: object) -> str:
         return ""
     s = int(seconds)
     if s < 60:
-        return f"{s} с"
+        return f"{s} s"
     if s < 3600:
-        return f"{s // 60} мин"
-    return f"{s // 3600} ч {s % 3600 // 60} мин" if s % 3600 >= 60 else f"{s // 3600} ч"
+        return f"{s // 60} min"
+    return f"{s // 3600} h {s % 3600 // 60} min" if s % 3600 >= 60 else f"{s // 3600} h"
 
 
 def header(data: dict) -> str:
@@ -269,9 +273,9 @@ async def press(platform: Platform, session: str, seq: int, n: object) -> str:
         if given == session and data.get("open"):
             _close(store, session, seq, data, answered, platform.clock())
             store.db.commit()
-        return f"Уже отправлено: «{answered}»"
+        return f'Already sent: "{answered}"'
     if not data.get("open"):
-        return f"Уже отправлено: «{data['answered']}»" if data.get("answered") else STALE
+        return f'Already sent: "{data["answered"]}"' if data.get("answered") else STALE
     return await platform.write(input_of(seq), session, replies[n])
 
 

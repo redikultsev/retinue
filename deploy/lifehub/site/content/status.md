@@ -1,4 +1,4 @@
 ---
-title: Статус
+title: Status
 layout: status
 ---

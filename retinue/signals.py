@@ -10,8 +10,8 @@ text, so nothing here needs keeping from anyone:
   run's ask, denied) — and for a deny or a defer the gate's own reason, cut;
 - **tool_error**, **compaction** — read off a session's lines by the engine's adapter (`from_line`): the only place
   that knows the CLI's stream-json. Another engine gets its own adapter, the kinds stay;
-- **run_error** — a turn the platform itself told the owner ended in an error («Ход оборвался ошибкой»), once a run;
-- **owner_stop** — the owner pressed «Стоп» (`Platform.stop`).
+- **run_error** — a turn the platform itself told the owner ended in an error («Turn ended with an error»), once a run;
+- **owner_stop** — the owner pressed «Stop» (`Platform.stop`).
 
 What other tables already keep is read there, not copied: the owner's messages (`inputs`), runs (`runs`), sessions,
 and the cards and how he decided them (`approvals`).

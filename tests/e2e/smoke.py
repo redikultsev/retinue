@@ -35,7 +35,7 @@ def main():
         for event in invite["invite_state"]["events"]:
             if event["type"] == "m.room.name":
                 rooms[event["content"]["name"]] = room_id
-    room = urllib.parse.quote(rooms["Эхо"])
+    room = urllib.parse.quote(rooms["Echo"])
     call(token, "PUT", f"/_matrix/client/v3/rooms/{room}/send/m.room.message/t{time.time_ns()}",
          {"msgtype": "m.text", "body": "ping"})
     for _ in range(30):

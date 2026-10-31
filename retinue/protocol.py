@@ -111,7 +111,7 @@ class Store:
         self.db.execute("CREATE INDEX IF NOT EXISTS runs_session ON runs (session_id, id)")
         self.db.execute("CREATE INDEX IF NOT EXISTS runs_conversation ON runs (conversation_id, id)")
         if "alone" not in {row[1] for row in self.db.execute("PRAGMA table_info(buttons)")}:
-            # 1: pressing it spends this button only, the card's others stay alive (the evening list's «Откатить»)
+            # 1: pressing it spends this button only, the card's others stay alive (the evening list's «Revert»)
             self.db.execute("ALTER TABLE buttons ADD COLUMN alone INTEGER NOT NULL DEFAULT 0")
         # Rooms used to own the conversation; keep those conversations when upgrading.
         self.db.execute("INSERT OR IGNORE INTO conversations SELECT agent_id, context_id FROM rooms"

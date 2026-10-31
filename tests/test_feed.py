@@ -1,4 +1,4 @@
-"""«Ждут тебя» on the platform of `test_platformd` and its face: one queue by action across the sessions and the
+"""«Waiting for you» on the platform of `test_platformd` and its face: one queue by action across the sessions and the
 assistant's digest — question cards to answer, approval and courier cards to decide, a summary that left a choice, an
 unread turn, the router's pushed digest — the digest's checks and caps, and the rows `/wait` takes."""
 
@@ -30,21 +30,21 @@ def test_a_digest_is_taken_whole_with_names_cut_and_any_address_written_as_such(
     items, bot = feed.clean({"items": [item(1, who="Ivan <ivan@corp.example>‮", sphere=None),
                                        item(2, kind="deadline", title="x" * 500)], "bot": "retinue_bot"}, NOW)
     assert bot == "retinue_bot"
-    assert items[0]["who"] == "Ivan <‹адрес›>" and items[0]["sphere"] is None, "no address, no invisible mark"
+    assert items[0]["who"] == "Ivan <‹address›>" and items[0]["sphere"] is None, "no address, no invisible mark"
     assert len(items[1]["title"]) == feed.TITLE_CHARS and items[1]["title"].endswith("…")
     hidden, _ = feed.clean({"items": [item(1, who="ivan@acme\x1f.com", title="пиши ivan＠acme.com"),
                                       item(2, who="ｉｖａｎ@ａｃｍｅ.ｃｏｍ")]}, NOW)
-    assert [(i["who"], i["title"]) for i in hidden] == [("‹адрес›", "пиши ‹адрес›"), ("‹адрес›", item()["title"])], \
+    assert [(i["who"], i["title"]) for i in hidden] == [("‹address›", "пиши ‹address›"), ("‹address›", item()["title"])], \
         "folded and stripped before the scrub"
 
 
 @pytest.mark.parametrize("body, why", [
     ([], "items"),
     ({"items": "x"}, "items"),
-    ({"items": [item(), item()]}, "повторяется"),
-    ({"items": [{**item(), "text": "тело письма"}]}, "поля"),
-    ({"items": [{**item(), "address": "a@b.example"}]}, "поля"),
-    ({"items": [{k: v for k, v in item().items() if k != "who"}]}, "поля"),
+    ({"items": [item(), item()]}, "repeated"),
+    ({"items": [{**item(), "text": "тело письма"}]}, "wrong fields"),
+    ({"items": [{**item(), "address": "a@b.example"}]}, "wrong fields"),
+    ({"items": [{k: v for k, v in item().items() if k != "who"}]}, "wrong fields"),
     ({"items": [item(kind="mail")]}, "kind"),
     ({"items": [item(id="chat 1")]}, "id"),
     ({"items": [item(id="")]}, "id"),
@@ -53,9 +53,9 @@ def test_a_digest_is_taken_whole_with_names_cut_and_any_address_written_as_such(
     ({"items": [item(since=math.inf)]}, "since"),
     ({"items": [item(since=NOW + 2 * 400 * DAY)]}, "since"),
     ({"items": [item(sphere="Путешествия")]}, "sphere"),
-    ({"items": [item(who=["Мария"])]}, "строки"),
+    ({"items": [item(who=["Мария"])]}, "strings"),
     ({"items": [item()], "bot": "@bot"}, "bot"),
-    ({"items": [item(n) for n in range(feed.DIGEST_ITEMS + 1)]}, "больше"),
+    ({"items": [item(n) for n in range(feed.DIGEST_ITEMS + 1)]}, "over"),
 ])
 def test_a_digest_off_the_contract_is_refused_whole(body, why):
     with pytest.raises(feed.Refused, match=why):
@@ -63,8 +63,8 @@ def test_a_digest_off_the_contract_is_refused_whole(body, why):
 
 
 def deadline(n: int = 1, **over) -> dict:
-    return item(n, **{"id": f"deadline:{n:012x}", "kind": "deadline", "who": "База",
-                      "title": "через 5 дней: Абонемент — действует до", "since": NOW + 2 * DAY, "sphere": "personal",
+    return item(n, **{"id": f"deadline:{n:012x}", "kind": "deadline", "who": "The Base",
+                      "title": "in 5 days: Абонемент — valid until", "since": NOW + 2 * DAY, "sphere": "personal",
                       "when": "1970-01-17", "path": "personal/profile/gym.md", **over})
 
 
@@ -79,12 +79,12 @@ def test_a_deadline_carries_its_day_and_its_records_path_and_nothing_else_does()
                       ({"path": "personal/a/b/c/d.md"}, "path"), ({"path": "personal/../x.md"}, "path")]:
         with pytest.raises(feed.Refused, match=why):
             feed.clean({"items": [deadline(**over)]}, NOW)
-    with pytest.raises(feed.Refused, match="поля"):
+    with pytest.raises(feed.Refused, match="wrong fields"):
         feed.clean({"items": [item(when="1970-01-17")]}, NOW)
 
 
 def test_the_hubs_chips_are_taken_by_the_contract_or_the_push_is_refused():
-    chips = [{"key": "backup", "text": "бэкап 3 ч назад", "level": "ok"}, {"key": "limit", "text": "лимит 91 %",
+    chips = [{"key": "backup", "text": "backup 3 h ago", "level": "ok"}, {"key": "limit", "text": "limit 91 %",
                                                                            "level": "bad"}]
     assert feed.clean_chips({"items": [], "chips": chips}) == chips
     assert feed.clean_chips({"items": []}) == [], "a router before chips"
@@ -98,7 +98,7 @@ def test_the_hubs_chips_are_taken_by_the_contract_or_the_push_is_refused():
 def test_a_deadline_ahead_is_under_srokami_only_until_its_time_comes(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
-        chips = [{"key": "build", "text": "хаб собран", "level": "ok"}]
+        chips = [{"key": "build", "text": "hub built", "level": "ok"}]
         later = deadline(1, since=world.clock.now + 2 * DAY, when="1970-01-20")
         due = deadline(2, since=world.clock.now - HOUR, when="1970-01-15", path="work/journal/2025-10-01-report.md",
                        sphere="work")
@@ -168,13 +168,13 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
         world.store.set_sphere(read, "reading")
         world.store.set_sphere(decided, "travel")
         world.cfg.spheres = [Sphere("travel", "Путешествия", "notes", "✈️")]
-        await world.owner("waiting", {"items": [item(1), item(2, kind="deadline", who="База", sphere="work")],
+        await world.owner("waiting", {"items": [item(1), item(2, kind="deadline", who="The Base", sphere="work")],
                                       "bot": "retinue_bot"})
 
         got = await world.get("/api/feed")
         assert got["count"] == 6 and got["bot"] == "retinue_bot" and got["assistant_at"] == world.clock.now
-        assert [g["title"] for g in got["groups"]] == ["Ответить на вопрос", "Решить", "Выбрать", "Прочитать",
-                                                       "От ассистентки"]
+        assert [g["title"] for g in got["groups"]] == ["Answer the question", "Decide", "Choose", "Read",
+                                                       "From the assistant"]
         answer, decide, choose, unread, assistant = (g["rows"] for g in got["groups"])
         [row] = answer
         assert (row["session"], row["source"], row["essence"]) == (question, "question", "Где жить?")
@@ -190,13 +190,13 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
         [row] = unread
         assert (row["session"], row["essence"], row["sphere_title"]) == (read, "Готово: пост в черновиках.", "reading")
         assert [(r["source"], r["title"], r["essence"], r["session"]) for r in assistant] == \
-            [("chat", "Мария", "ответить: нужен ли трансфер", None), ("deadline", "База", item()["title"], None)]
+            [("chat", "Мария", "ответить: нужен ли трансфер", None), ("deadline", "The Base", item()["title"], None)]
 
         status, said, _ = await world.call("POST", f"/api/sessions/{chose}/input",
                                            {"reply": {"seq": choice["summary"], "n": 1}})
-        assert status == 200 and said["say"] == "Принято."
-        assert "Выбрать" not in [g["title"] for g in (await world.get("/api/feed"))["groups"]], \
-            "a pressed reply leaves «Выбрать»"
+        assert status == 200 and said["say"] == "Accepted."
+        assert "Choose" not in [g["title"] for g in (await world.get("/api/feed"))["groups"]], \
+            "a pressed reply leaves «Choose»"
         assert world.lanes["private"].runs()[-1]["prompt"] == "Ещё варианты"
 
     faced(tmp_path, body)
@@ -208,7 +208,7 @@ def test_a_courier_card_waits_a_day_or_until_he_writes_into_its_session(tmp_path
         session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "запушь"}))["session"]
         world.store.add_approval(session, "run", "toolu_push", "courier", "Bash", {"command": "git push origin main"},
                                  "/work/repo", "", "", world.clock.now, state="dropped",
-                                 view={"head": ["Курьер · retinue"], "body": "git push origin main"})
+                                 view={"head": ["Courier · retinue"], "body": "git push origin main"})
         [row] = (await world.get("/api/feed"))["groups"][0]["rows"]
         assert (row["action"], row["source"], row["essence"]) == ("decide", "courier", "git push origin main")
         world.clock.now += DAY + 1
@@ -227,11 +227,11 @@ def test_wait_gets_the_first_ten_rows_without_inputs_and_the_count_of_the_rest(t
         got = await world.owner("feed", {})
         assert got["count"] == 13 and got["more"] == 3 and len(got["rows"]) == feed.TELEGRAM_ROWS
         first = got["rows"][0]
-        assert first == {"action": "decide", "group": "Решить", "source": "approval", "session": decided,
+        assert first == {"action": "decide", "group": "Decide", "source": "approval", "session": decided,
                          "approval": card["approval"], "card": None, "where": "retinue", "title": "почини",
                          "since": first["since"], "essence": "echo ran >> ran.txt"}
         assert "input" not in json.dumps(got), "a card's input stays in the app"
-        assert got["rows"][1]["group"] == "От ассистентки" and got["rows"][1]["session"] is None
+        assert got["rows"][1]["group"] == "From the assistant" and got["rows"][1]["session"] is None
 
     scenario(tmp_path, body)
 

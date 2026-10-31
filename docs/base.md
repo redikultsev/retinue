@@ -2,7 +2,7 @@
 
 Sessions on the server can work in your knowledge base (the Base) as on your Mac: they see all of it, read and edit
 its records, and you commit what they changed with a button. What the Mac's agent did by hand — `git pull` at the
-start, «закоммитить и запушить?» at the end — is the platform's job here: it pulls the hub before each run and
+start, "commit and push?" at the end — is the platform's job here: it pulls the hub before each run and
 commits by your button, with your name, and pushes to the hub itself. That lane is the room, which also reads the
 web ([platform.md](platform.md#the-room): what that gives up and what stands in the way).
 
@@ -38,7 +38,7 @@ base:
 tracks:
   - {name: base, lane: private, kind: private, cwd: base}
 spheres:
-  - {name: travel, title: Путешествия, icon: "✈️", track: base, cwd: base/travel}   # cwd: optional
+  - {name: travel, title: Travel, icon: "✈️", track: base, cwd: base/travel}   # cwd: optional
 ```
 
 The example `platform.yaml` gives spheres no `cwd`: their sessions start in the root of the Base. A sphere's `cwd`
@@ -46,12 +46,12 @@ The example `platform.yaml` gives spheres no `cwd`: their sessions start in the 
 «в Пространстве» — and the repository's rules reach it as on the Mac: `base/CLAUDE.md` and its `@AGENTS.md`
 ([instructions.md](instructions.md)). Every consumer of a session's directory — the run's `cwd`, `out/` and its
 attribution, the face's diff, a fork — uses the directory stored with the session (`sessions.cwd`), not the track's.
-A fork runs where its parent ran; it is refused («трек сессии теперь … в другой папке») only when the configuration
+A fork runs where its parent ran; it is refused («the session's track is now … in another folder») only when the configuration
 would put a new session of that sphere elsewhere.
 
 The lane is told about the Base by `deploy/lanes/instructions/base.md` (baked into lane-private's image): the platform
-pulls before each turn and commits by «В Базу»; never run `git` in `/work/base` (it has no repository), never offer
-«закоммитить и запушить?»; name the changed records in one line of the summary; `python3 scripts/lint.py` is the
+pulls before each turn and commits by «To the Base»; never run `git` in `/work/base` (it has no repository), never offer
+"commit and push?"; name the changed records in one line of the summary; `python3 scripts/lint.py` is the
 Base's check (`just` is not in the image).
 
 ## Who writes the tree, and why this way
@@ -108,7 +108,7 @@ link out, or make it wait:
   a path that check runs, or code at all (`protect`: `scripts/**`, `justfile`, `**/*.py`, `**/*.sh`; and any path
   the policy's `check` command names, whatever `protect` says), nor a hidden
   one (`.gitattributes`, `.claude/…`), nor a name git would take for its own (`.git`, `.GIT.`, `git~1`): those are
-  refused («правится только с Mac»). The lint the hub runs is therefore always the one your Mac pushed. Git, the hook
+  refused («edited only from the Mac»). The lint the hub runs is therefore always the one your Mac pushed. Git, the hook
   and the lint get an environment of `PATH`, `HOME`, `LANG`, `TMPDIR` and git's own variables only — none of the
   platform's secrets.
 - **Writes check what they replace.** A write or a delete in the tree first checks the path is still what was read
@@ -147,15 +147,15 @@ waits on the Base.
    (`out/`, `inbox/`, the policy's `excluded`, untracked files under the Base's `.gitignore`) → `left_out`. Hidden,
    `.git`-ish, protected, not UTF-8, a link, a FIFO, a folder, too big → `refused`. So is a path that is no longer
    what you saw: `expect` maps a path to the digest `snapshot()` gave when the card was made (`''` : no file), and a
-   path whose digest is now another is refused («файл изменился после карточки»), under the lock, before anything
+   path whose digest is now another is refused («the file changed after the card»), under the lock, before anything
    is staged.
 2. **Against the hub's `main` now**, path by path: base = the held base or `HEAD`'s blob. The hub has not changed it
-   → the tree's version; the tree did not change it, or already has the hub's → `left_out` («здесь не менялся», «уже
-   так в Базе»); both changed → `git merge-file`, a conflict → `conflicts` (that path stays uncommitted, the rest
+   → the tree's version; the tree did not change it, or already has the hub's → `left_out` («not changed here», «already
+   so in the Base»); both changed → `git merge-file`, a conflict → `conflicts` (that path stays uncommitted, the rest
    goes).
 3. **Built without touching anything else**: a temporary index from the hub's `main` plus only those paths;
    `commit-tree` with the hub's head as parent; author and committer = `author` from the config; a trailer
-   `Pushed-by: retinue-platform (кнопка Владельца, сессия <id>)`. Other sessions' uncommitted files are not looked at.
+   `Pushed-by: retinue-platform (the owner's button, session <id>)`. Other sessions' uncommitted files are not looked at.
 4. **Checked the hub's way first** (`kbcheck.check`, the owner's role, without the lint): a path it refuses (an `id`
    renamed, a symlink, a name that collides on a Mac) goes to `refused` with its reason and the rest is built again.
 5. **Pushed**, up to four times: when the hub moved meanwhile (the router pushes after the assistant's turns, the
@@ -166,11 +166,11 @@ waits on the Base.
    open, only the committed paths are written: the hub's other changes are held with their base (not listed by
    `changed`, never committed back over the hub's) and come in with the next idle refresh.
 
-A path that would turn a file of the Base into a folder or a folder into a file is refused («на месте папки
-justfile в Базе файл», «на этом месте в Базе папка»): the index would otherwise drop the file under it silently —
+A path that would turn a file of the Base into a folder or a folder into a file is refused («the Base has a file where
+the folder justfile would be», «the Base has a folder in this place»): the index would otherwise drop the file under it silently —
 `justfile/x.md` would delete the protected `justfile`. And after `write-tree` the commit is compared with the hub's
-`main`: if it changes any path no one chose, nothing is built. A push that times out is refused («хаб не ответил,
-проверь и нажми ещё раз»); if it did land, the next press finds those files «уже так в Базе» and commits nothing
+`main`: if it changes any path no one chose, nothing is built. A push that times out is refused («the hub did not answer —
+check and press again»); if it did land, the next press finds those files «already so in the Base» and commits nothing
 twice.
 
 `Committed`: `sha` (None: no commit), `files` (`Change(path, A|M|D)` as committed), `conflicts` (paths),
@@ -179,7 +179,7 @@ check: …»). One commit at a time: `refresh` and `commit` share a lock and run
 `snapshot` and `diff` read and may run at any time. Every call raises `Unavailable` (an `OSError`) when the clone's
 folder is missing or is not the lane's, and `commit` when the hub does not answer.
 
-Because the platform is not uid 10001, the hub takes its push for yours (Р-Б): your rules, not the assistant's —
+Because the platform is not uid 10001, the hub takes its push for yours: your rules, not the assistant's —
 which is why the platform itself refuses what it must never carry from the server. Like the router, the platform
 could write the hub's objects and refs past the hook: it is code you trust; the model never sees the hub.
 
@@ -200,7 +200,7 @@ could write the hub's objects and refs past the hook: it is code you trust; the 
 ## The button
 
 The clone, its refresh and the commit are above (`retinue/base.py`). The button adds **who changed what** and
-**your press**, «В Базу» (`retinue/tobase.py`). Nothing is committed without your press,
+**your press**, «To the Base» (`retinue/tobase.py`). Nothing is committed without your press,
 and the press is yours only: through the bridge (the router's token) or the app (its login) — never from a lane.
 
 - **Who changed what.** Each run on the Base's lane is watched — a session in the clone, and one that is not (a
@@ -216,48 +216,48 @@ and the press is yours only: through the bridge (the router's token) or the app 
   still watched through its file tools. «Uncommitted» is `changed()`'s word: a held path (the hub's change waiting
   for an idle refresh, the file untouched here) is not in it, so it is on no list and is nobody's either.
 - **Nobody's files.** An uncommitted file no session claims (changed before this, or by something no window saw) is
-  «ничей», and never hidden: every card lists such files at its end, turned off, for you to turn on; the feed has a
-  «Решить» row «Ничьи файлы Базы: N» (its button opens the card of the latest session on the lane).
-- **The card.** «В Базу · N» under the ping sends a card: «В Базу · <sphere or track> · сессия <id>», «Тема: …», the
-  files (☑/☐, A/M/D, +/− lines; what does not fit in 2800 characters is «…и ещё N: из Telegram не коммитятся — они в
-  приложении», and the copy's «Закоммитить» commits only the files it lists), how many files
+  «nobody's», and never hidden: every card lists such files at its end, turned off, for you to turn on; the feed has a
+  «Decide» row «Nobody's Base files: N» (its button opens the card of the latest session on the lane).
+- **The card.** «To the Base · N» under the ping sends a card: «To the Base · <sphere or track> · session <id>», «Subject: …», the
+  files (☑/☐, A/M/D, +/− lines; what does not fit in 2800 characters is «…and N more files: not committed from Telegram — they
+  are in the app», and the copy's «Commit» commits only the files it lists), how many files
   other sessions have uncommitted and in how many sessions — never which — and buttons: a toggle per file (the first
-  12; the rest in the app), «Закоммитить», «Открыть дифф» (the diff of the files turned on, a `.diff` file of at most
-  1 MB), «Отмена». The status lines are cut at 700 characters, so a copy stays under 4000. **A reply to the card
-  sets the subject** (a spoken one loses its «(голосом)»; a reply to a card no longer open is taken and answered
-  «Карточка больше не действует — открой «В Базу» заново», never sent into the session); by default it is
-  `<Space of the first file>: <session title>`, the Base's own style. Pressed again, «В Базу» sends a fresh copy of the
+  12; the rest in the app), «Commit», «Open diff» (the diff of the files turned on, a `.diff` file of at most
+  1 MB), «Cancel». The status lines are cut at 700 characters, so a copy stays under 4000. **A reply to the card
+  sets the subject** (a spoken one loses its «(by voice)»; a reply to a card no longer open is taken and answered
+  «This card is no longer active — open «To the Base» again», never sent into the session); by default it is
+  `<Space of the first file>: <session title>`, the Base's own style. Pressed again, «To the Base» sends a fresh copy of the
   same card: every copy and the app show one card (the app's event `base`; a change in either place rewrites the
   other).
-- **«Закоммитить»** commits the files turned on, each only as the card showed it (its digest when the card opened:
+- **«Commit»** commits the files turned on, each only as the card showed it (its digest when the card opened:
   a file changed since brings the card back with what changed, and nothing goes), and only while the session is not
-  running. The card moves to «Коммичу…» once — a second press anywhere gets «Коммичу — подожди.», one after «Уже
-  закоммичено.» — and the Base's `commit()` runs in the background (subject yours; body `Retinue: сессия <id>,
-  карточка <id>.`; `expect`, each path's digest as the card showed it, which the Base checks again under its own lock
+  running. The card moves to «Committing…» once — a second press anywhere gets «Committing — wait.», one after «Already
+  committed.» — and the Base's `commit()` runs in the background (subject yours; body `Retinue: session <id>,
+  card <id>.`; `expect`, each path's digest as the card showed it, which the Base checks again under its own lock
   and refuses a file that moved). No run on the Base's lane starts while a commit is in flight: it stays queued
-  («ждёт места на линии») and goes when the commit ends — so the commit never stages a file a run is writing, and
-  neither the drain nor `busy` waits on the other. The card is rewritten with «Закоммичено: <sha7> · N файлов» or «Ничего не закоммичено», and what
+  («waiting for room on the lane») and goes when the commit ends — so the commit never stages a file a run is writing, and
+  neither the drain nor `busy` waits on the other. The card is rewritten with «Committed: <sha7> · N files» or «Nothing committed», and what
   was refused or conflicted, and why; those files stay on the session's list and on the next ping's button. A card a
-  restart left «Коммичу…» is settled from the clone when the platform is back: the files no longer uncommitted went
-  in, the rest are shown again for one more press («Коммит прервался перезапуском платформы — нажми «Закоммитить» ещё
-  раз.»); while the Base cannot be read, the clock tries again each minute.
+  restart left «Committing…» is settled from the clone when the platform is back: the files no longer uncommitted went
+  in, the rest are shown again for one more press («A platform restart cut the commit off — press «Commit»
+  again.»); while the Base cannot be read, the clock tries again each minute.
 - With no Base configured, rows left from before show nowhere: no count in the app, no feed row, no ping button.
-- A card goes **stale** when the session's next ping comes (the button is on that one), is **cancelled** by «Отмена»
+- A card goes **stale** when the session's next ping comes (the button is on that one), is **cancelled** by «Cancel»
   (its files stay on the list), **expires** after 7 days like an approval. Its buttons are never spent: the card's
   state answers each press.
 
-The feed has a «Решить» row per session with Base files uncommitted («В Базу: N файлов»), in the app with the button
+The feed has a «Decide» row per session with Base files uncommitted («To the Base: N files»), in the app with the button
 in place ([face.md](face.md#the-feed)); `/wait` words it as [platform.md](platform.md) says.
 
 ## Reading the Base in the app
 
-The app's «Пространства» ([face.md](face.md#in-the-app)) read the Base through `GET /api/spaces…` on the face's API,
+The app's «Spaces» ([face.md](face.md#in-the-app)) read the Base through `GET /api/spaces…` on the face's API,
 behind its login (`retinue/spaces.py`). They read **what the Base committed**, never the tree: every read is git on the
 platform's own repository (`/platform/base.git`, through `BaseRepo.repo` and `BaseRepo.env` — no hook, no attributes,
 no config of the tree) at its `main`, the hub's commit the clone is on as of the last refresh. A session's draft in
 `/work/base` is not shown until it is committed; a link, a FIFO or a 10 GB file a session left in the tree is never
 opened, because the tree is never opened. The answers carry `head`, that commit, and are cached by it: a new commit
-(a refresh, a press of «В Базу») drops the cache.
+(a refresh, a press of «To the Base») drops the cache.
 
 - **A Space** is a top-level folder whose `AGENTS.md` is a regular file of the commit and whose name is
   `[a-z0-9][a-z0-9_-]*` (64 at most): so not `.cache`, not a folder of no Showcase, not a Showcase that is a link.
@@ -283,7 +283,7 @@ opened, because the tree is never opened. The answers carry `head`, that commit,
   (`knowledge/acme/x.md`), no segment that starts with a dot, no `..`, `.` or empty segment, no control character
   or backslash, at most 512 characters; a regular file of the commit (mode `100644`/`100755` — never a link, `120000`,
   nor a submodule); at most 512 KB (bigger: 413, and listed with `big`). A Showcase is read up to 256 KB.
-- With no Base configured the API answers 404 «База не подключена.»; while the repository cannot be read (not
+- With no Base configured the API answers 404 «The Base is not connected.»; while the repository cannot be read (not
   cloned yet, git failing), 503.
 
 ## Turning it on

@@ -47,7 +47,7 @@ XLSX_ROWS = 20_000       # rows of a workbook read at most, empty ones included
 PARSE_TIMEOUT_S = 60     # a file the worker has not read by then is refused
 PARSE_MEMORY = 1536 * 1024 * 1024  # the worker's address space; glibc arenas are capped too (MALLOC_ARENA_MAX)
 WORKER = [sys.executable, "-m", "retinue.attachments"]
-OFFICE = {".docx": "документ", ".xlsx": "таблица", ".pptx": "презентация"}
+OFFICE = {".docx": "document", ".xlsx": "spreadsheet", ".pptx": "presentation"}
 TEXT = {".txt", ".md", ".csv", ".tsv", ".json", ".html", ".htm"}
 PICTURES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
 # What the worker inherits of its parent's environment: nothing secret — a token in the router's or the platform's
@@ -56,10 +56,11 @@ WORKER_ENV = ("PATH", "LANG")
 PR_SET_DUMPABLE, PR_GET_DUMPABLE = 4, 3
 # What is sent to speech to text, as (file name, media type, how the mark names it). Telegram calls a voice note
 # .oga; ElevenLabs may judge the format by the name, so the name says .ogg. Audio keeps its own name and type.
-SPEECH = {"voice": ("voice.ogg", "audio/ogg", "голосовое"), "video_note": ("video.mp4", "video/mp4", "видеосообщение"),
-          "video": ("video.mp4", "video/mp4", "видео"), "audio": ("", "", "аудио")}
-NO_SPEECH = "(речи не разобрать)"  # the transcript of a file nobody speaks in
-KINDS = {"photo": "фото", "document": "файл", **{kind: label for kind, (_, _, label) in SPEECH.items()}}
+SPEECH = {"voice": ("voice.ogg", "audio/ogg", "voice message"),
+          "video_note": ("video.mp4", "video/mp4", "video message"),
+          "video": ("video.mp4", "video/mp4", "video"), "audio": ("", "", "audio")}
+NO_SPEECH = "(no speech to make out)"  # the transcript of a file nobody speaks in
+KINDS = {"photo": "photo", "document": "file", **{kind: label for kind, (_, _, label) in SPEECH.items()}}
 TEXT_TYPES = {"text/plain": ".txt", "text/markdown": ".md", "text/csv": ".csv", "text/tab-separated-values": ".tsv",
               "application/json": ".json", "text/html": ".html"}
 
@@ -72,7 +73,7 @@ class Unreadable(Exception):
 class Prepared:
     """One file, ready for the model."""
 
-    what: str                                   # how it is named in the mark: «фото 1280×960», «PDF «a.pdf», 3 стр.»
+    what: str                                   # how it is named in the mark: «photo 1280×960», «PDF "a.pdf", 3 pages»
     files: list[tuple[str, bytes]] = field(default_factory=list)  # (media type, bytes): content blocks — JPEG, PDF
     text: str = ""                              # what the model reads as text: a transcript, a document's text
 
@@ -87,18 +88,18 @@ class Upload:
     media_type: str = ""
     duration: int = 0        # seconds, as the messenger says
     size: int = 0            # bytes, as the messenger announced them before the download
-    refused: str = ""        # the channel could not fetch it: why, finishing «Не прочитано: …»
+    refused: str = ""        # the channel could not fetch it: why, finishing «Not read: …»
     # Downloads the bytes when the core needs them: an album is gathered first, the parts are fetched after.
     fetch: Callable[[], Awaitable[bytes]] | None = field(default=None, compare=False, repr=False)
 
     def label(self) -> str:
-        """«видео «clip.mp4»», «голосовое», «фото»"""
+        """«video "clip.mp4"», «voice message», «photo»"""
         kind = KINDS.get(self.kind, self.kind)
-        return f"{kind} «{self.name}»" if self.name and self.kind != "photo" else kind
+        return f'{kind} "{self.name}"' if self.name and self.kind != "photo" else kind
 
 
 def too_big(upload: Upload) -> str:
-    return f"{upload.label()}, {round(upload.size / 2**20)} МБ: Telegram отдаёт ботам файлы до {MAX_DOWNLOAD // 2**20} МБ"
+    return f"{upload.label()}, {round(upload.size / 2**20)} MB: Telegram gives bots files up to {MAX_DOWNLOAD // 2**20} MB"
 
 
 def mmss(seconds: int) -> str:
@@ -117,7 +118,7 @@ async def prepare(upload: Upload, scribe) -> Prepared:
         try:
             upload.data = await upload.fetch()
         except Exception as exc:  # the channel words its errors without addresses: they carry tokens
-            raise Unreadable(f"{upload.label()}: Telegram не отдал его ({exc})") from exc
+            raise Unreadable(f"{upload.label()}: Telegram did not hand it over ({exc})") from exc
     if upload.kind in ("photo", "document"):
         return await isolated(upload)
     if upload.kind in SPEECH:
@@ -125,35 +126,35 @@ async def prepare(upload: Upload, scribe) -> Prepared:
         what = f"{upload.label()} {mmss(upload.duration)}"
         try:
             if scribe is None:
-                raise SpeechError("расшифровка не настроена")
+                raise SpeechError("transcription is not set up")
             text = await scribe.transcribe(upload.data, filename or upload.name or "audio",
                                            media_type or upload.media_type or "application/octet-stream")
         except SpeechError as exc:
             raise Unreadable(f"{what}: {exc}") from exc
         return Prepared(what, text=cut(text) or NO_SPEECH)
-    raise Unreadable(f"не умею читать такие сообщения: {upload.kind}")
+    raise Unreadable(f"can't read messages like this: {upload.kind}")
 
 
 def read(upload: Upload) -> Prepared:
     """A picture, a PDF or a document -> what the model gets. The worker runs this; raises Unreadable."""
     suffix = PurePosixPath(upload.name.lower()).suffix
     if upload.kind == "photo" or upload.media_type.startswith("image/") or suffix in PICTURES:
-        label = "фото" if upload.kind == "photo" else f"картинка «{upload.name}»"
+        label = "photo" if upload.kind == "photo" else f'picture "{upload.name}"'
         try:
             data, width, height = image(upload.data)
         except Unreadable as exc:
             raise Unreadable(f"{label}: {exc}") from exc
         return Prepared(f"{label}{' ' if upload.kind == 'photo' else ', '}{width}×{height}", [("image/jpeg", data)])
     if upload.media_type == "application/pdf" or suffix == ".pdf":
-        return pdf(upload.data, upload.name or "без имени")
-    return document(upload.data, upload.name or "без имени", upload.media_type)
+        return pdf(upload.data, upload.name or "unnamed")
+    return document(upload.data, upload.name or "unnamed", upload.media_type)
 
 
 def _parsing(upload: Upload) -> str:
-    """How a file is named in a refusal about its parsing: «фото», «картинка «a.heic»», «файл «a.pdf»»."""
+    """How a file is named in a refusal about its parsing: «photo», «picture "a.heic"», «file "a.pdf"»."""
     suffix = PurePosixPath(upload.name.lower()).suffix
     if upload.kind == "document" and (upload.media_type.startswith("image/") or suffix in PICTURES):
-        return f"картинка «{upload.name}»"
+        return f'picture "{upload.name}"'
     return upload.label()
 
 
@@ -194,13 +195,13 @@ async def isolated(upload: Upload, memory: int = PARSE_MEMORY, timeout: float | 
         process.kill()
         await process.wait()
         said = f"{timeout:.0f}" if timeout >= 1 else f"{timeout:g}"
-        raise Unreadable(f"{_parsing(upload)}: разбор не уложился в {said} с") from None
+        raise Unreadable(f"{_parsing(upload)}: parsing did not finish in {said} s") from None
     try:
         answer = json.loads(out)
     except ValueError:
-        raise Unreadable(f"{_parsing(upload)}: разбор упал (код {process.returncode})") from None
+        raise Unreadable(f"{_parsing(upload)}: parsing crashed (code {process.returncode})") from None
     if not answer.get("ok"):
-        raise Unreadable(answer.get("reason") or f"{_parsing(upload)}: разбор не удался")
+        raise Unreadable(answer.get("reason") or f"{_parsing(upload)}: parsing failed")
     return Prepared(answer["what"], [(media_type, base64.b64decode(data)) for media_type, data in answer["files"]],
                     answer["text"])
 
@@ -229,9 +230,9 @@ def worker() -> None:
     except Unreadable as exc:
         answer = {"ok": False, "reason": str(exc)}
     except MemoryError:
-        answer = {"ok": False, "reason": f"{_parsing(upload)}: на разбор не хватило памяти"}
+        answer = {"ok": False, "reason": f"{_parsing(upload)}: parsing ran out of memory"}
     except Exception as exc:
-        answer = {"ok": False, "reason": f"{_parsing(upload)}: ошибка разбора ({type(exc).__name__})"}
+        answer = {"ok": False, "reason": f"{_parsing(upload)}: parsing error ({type(exc).__name__})"}
     sys.stdout.write(json.dumps(answer))
 
 
@@ -239,7 +240,7 @@ def cut(text: str) -> str:
     text = text.strip()
     if len(text) <= TEXT_CHARS:
         return text
-    return f"{text[:TEXT_CHARS]}\n…(обрезано на {TEXT_CHARS} знаках)"
+    return f"{text[:TEXT_CHARS]}\n…(cut at {TEXT_CHARS} characters)"
 
 
 def image(data: bytes) -> tuple[bytes, int, int]:
@@ -249,7 +250,7 @@ def image(data: bytes) -> tuple[bytes, int, int]:
     try:
         with Image.open(io.BytesIO(data)) as img:
             if img.width * img.height > MAX_PIXELS:
-                raise Unreadable(f"картинка слишком большая: {img.width}×{img.height}")
+                raise Unreadable(f"the picture is too big: {img.width}×{img.height}")
             img = ImageOps.exif_transpose(img)
             img.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
             if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
@@ -265,7 +266,7 @@ def image(data: bytes) -> tuple[bytes, int, int]:
     except Unreadable:
         raise
     except Exception as exc:  # not a picture, a broken one, a decompression bomb
-        raise Unreadable("картинку не удалось открыть") from exc
+        raise Unreadable("the picture could not be opened") from exc
 
 
 def pdf(data: bytes, name: str) -> Prepared:
@@ -275,7 +276,7 @@ def pdf(data: bytes, name: str) -> Prepared:
     try:
         reader = PdfReader(io.BytesIO(data))
         if reader.is_encrypted and not reader.decrypt(""):
-            raise Unreadable(f"PDF «{name}» под паролем")
+            raise Unreadable(f'PDF "{name}" is password-protected')
         pages = len(reader.pages)
         layer, chars = [], 0
         for page in reader.pages[:PDF_SCAN_PAGES]:
@@ -291,17 +292,17 @@ def pdf(data: bytes, name: str) -> Prepared:
     except Unreadable:
         raise
     except Exception as exc:
-        raise Unreadable(f"PDF «{name}» не открывается: файл повреждён") from exc
+        raise Unreadable(f'PDF "{name}" does not open: the file is damaged') from exc
     text = cut("\n".join(layer))
     if len(layer) < pages and chars <= TEXT_CHARS and text:
-        text += f"\n…(текст только первых {len(layer)} стр. из {pages})"
-    label = f"PDF «{name}», {pages} стр."
+        text += f"\n…(text of the first {len(layer)} of {pages} pages only)"
+    label = f'PDF "{name}", {pages} page{"" if pages == 1 else "s"}'
     if whole:
         return Prepared(label, [("application/pdf", data)], text)
     if text:
-        return Prepared(f"{label}, только текст", text=text)
-    raise Unreadable(f"PDF «{name}», {pages} стр.: больше {PDF_PAGES} стр. или {PDF_BYTES // 2**20} МБ, а текста в нём "
-                     "нет — это скан. Пришли нужные страницы фотографиями")
+        return Prepared(f"{label}, text only", text=text)
+    raise Unreadable(f"{label}: over {PDF_PAGES} pages or {PDF_BYTES // 2**20} MB, and it has no text — it is a scan. "
+                     "Send the pages you need as photos")
 
 
 def document(data: bytes, name: str, media_type: str) -> Prepared:
@@ -315,17 +316,17 @@ def document(data: bytes, name: str, media_type: str) -> Prepared:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 inside = sum(item.file_size for item in archive.infolist())
             if inside > UNZIPPED_BYTES:
-                raise Unreadable(f"«{name}» распаковывается больше чем в {UNZIPPED_BYTES // 2**20} МБ")
+                raise Unreadable(f'"{name}" unpacks to over {UNZIPPED_BYTES // 2**20} MB')
             text = {".docx": _docx, ".xlsx": _xlsx, ".pptx": _pptx}[suffix](data)
         except Unreadable:
             raise
         except Exception as exc:
-            raise Unreadable(f"«{name}» не открывается: файл повреждён или это не {suffix}") from exc
-        return Prepared(f"{OFFICE[suffix]} «{name}»", text=cut(text))
+            raise Unreadable(f'"{name}" does not open: the file is damaged or not a {suffix}') from exc
+        return Prepared(f'{OFFICE[suffix]} "{name}"', text=cut(text))
     if suffix in TEXT:
         text = _decode(data)
-        return Prepared(f"файл «{name}»", text=cut(_html(text) if suffix in (".html", ".htm") else text))
-    raise Unreadable(f"не умею читать такие файлы: «{name}» ({media_type or 'тип не назван'})")
+        return Prepared(f'file "{name}"', text=cut(_html(text) if suffix in (".html", ".htm") else text))
+    raise Unreadable(f'can\'t read files like this: "{name}" ({media_type or "no type given"})')
 
 
 def _decode(data: bytes) -> str:
@@ -394,12 +395,12 @@ def _xlsx(data: bytes) -> str:
     lines, chars, rows = [], 0, 0
     for sheet in book.worksheets:
         sheet.reset_dimensions()  # the size a sheet claims is not trusted: «A1:XFD1048576» pads every row
-        lines.append(f"## Лист «{sheet.title}»")
+        lines.append(f'## Sheet "{sheet.title}"')
         for row in sheet.iter_rows(values_only=True):
             if chars > TEXT_CHARS:
                 break
             if rows >= XLSX_ROWS:
-                lines.append(f"…(дальше строки не читались: больше {XLSX_ROWS})")
+                lines.append(f"…(no rows read past this: over {XLSX_ROWS})")
                 book.close()
                 return "\n".join(lines)
             rows += 1
@@ -418,14 +419,14 @@ def _pptx(data: bytes) -> str:
 
     lines = []
     for number, slide in enumerate(Presentation(io.BytesIO(data)).slides, 1):
-        lines.append(f"## Слайд {number}")
+        lines.append(f"## Slide {number}")
         for shape in slide.shapes:
             if shape.has_text_frame and shape.text_frame.text.strip():
                 lines.append(shape.text_frame.text.strip())
             elif getattr(shape, "has_table", False) and shape.has_table:
                 lines += [" | ".join(cell.text.strip() for cell in row.cells) for row in shape.table.rows]
         if slide.has_notes_slide and slide.notes_slide.notes_text_frame.text.strip():
-            lines.append(f"Заметки: {slide.notes_slide.notes_text_frame.text.strip()}")
+            lines.append(f"Notes: {slide.notes_slide.notes_text_frame.text.strip()}")
     return "\n".join(lines)
 
 

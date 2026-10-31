@@ -60,13 +60,13 @@ class Attachment:
     id: int                 # the number the model sees: #12
     event_id: str           # the owner message it came with
     kind: str               # photo | document | voice | audio | video | video_note
-    what: str               # «фото 1280×960», «голосовое 0:42»
-    origin: str             # «своё» | «переслано от …»
+    what: str               # «photo 1280×960», «voice message 0:42»
+    origin: str             # «own» | «forwarded from …» (older records: «своё» | «переслано от …»)
     text: str               # a transcript, a document's text, a PDF's text layer
     files: list = field(default_factory=list)  # [[media type, path under the attachments folder], ...]
 
     def mark(self) -> str:
-        return f"[вложение #{self.id}: {self.what} · {self.origin}]"
+        return f"[attachment #{self.id}: {self.what} · {self.origin}]"
 
 
 SUFFIXES = {"image/jpeg": ".jpg", "application/pdf": ".pdf"}
@@ -211,10 +211,11 @@ class Archive:
 
     def unanswered(self, since: float) -> list[Event]:
         """Owner messages since `since` that nobody answered: the router died between the record and the reply.
-        A refused photo and a pressed button are not questions."""
+        A refused photo and a pressed button are not questions: «[button] …», or «[кнопка] …» in older records."""
         rows = self.db.execute(
             f"SELECT {self._COLUMNS} FROM events WHERE kind = ? AND ts >= ?"
-            " AND json_extract(meta, '$.unsupported') IS NULL AND text NOT LIKE '[кнопка] %' ORDER BY seq",
+            " AND json_extract(meta, '$.unsupported') IS NULL AND text NOT LIKE '[button] %'"
+            " AND text NOT LIKE '[кнопка] %' ORDER BY seq",
             (OWNER, since)).fetchall()
         return [event for event in map(self._event, rows) if not self.answered(event.id)]
 

@@ -113,7 +113,7 @@ class Google:
                                                          "refresh_token": self.key.refresh_token,
                                                          "grant_type": "refresh_token"}, timeout=TIMEOUT)
         except httpx.HTTPError as exc:
-            raise GoogleError(f"сеть: {type(exc).__name__}") from None
+            raise GoogleError(f"network: {type(exc).__name__}") from None
         try:
             said = response.json()
         except ValueError:
@@ -122,7 +122,7 @@ class Google:
                                                                           "unauthorized_client"):
             raise InvalidGrant(str(said.get("error")))
         if response.status_code != 200 or not said.get("access_token"):
-            raise GoogleError(f"токен: HTTP {response.status_code}")
+            raise GoogleError(f"token: HTTP {response.status_code}")
         self.access, self.until = str(said["access_token"]), time.time() + float(said.get("expires_in") or 3600)
         return self.access
 
@@ -133,7 +133,7 @@ class Google:
                 response = await self.http.get(url, params=params, timeout=TIMEOUT,
                                                headers={"Authorization": f"Bearer {token}"})
             except httpx.HTTPError as exc:
-                raise GoogleError(f"сеть: {type(exc).__name__}") from None
+                raise GoogleError(f"network: {type(exc).__name__}") from None
             if response.status_code == 401 and attempt == 1:  # the access token died early: a fresh one, once
                 self.access = ""
                 continue
@@ -202,9 +202,9 @@ class Google:
                 response = await self.http.post(f"{GMAIL}/messages/send", json=body, timeout=TIMEOUT,
                                                  headers={"Authorization": f"Bearer {token}"})
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-                raise GoogleError(f"сеть: {type(exc).__name__}") from None
+                raise GoogleError(f"network: {type(exc).__name__}") from None
             except httpx.HTTPError as exc:
-                raise Ambiguous(f"сеть после отправки запроса: {type(exc).__name__}") from None
+                raise Ambiguous(f"network after the request was sent: {type(exc).__name__}") from None
             if response.status_code == 401 and attempt == 1:  # refused before anything was sent: a fresh token, once
                 self.access = ""
                 continue

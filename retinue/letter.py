@@ -189,7 +189,7 @@ def parse(raw: bytes) -> Letter:
     for number, part in _parts(message):
         if _is_attachment(part, [plain, html]):
             payload = part.get_payload(decode=True)
-            letter.attachments.append({"part": number, "name": _line(part.get_filename() or f"вложение {number}"),
+            letter.attachments.append({"part": number, "name": _line(part.get_filename() or f"attachment {number}"),
                                        "type": part.get_content_type(), "size": len(payload or b"")})
     return letter
 
@@ -200,6 +200,6 @@ def attachment(raw: bytes, number: int) -> tuple[str, str, bytes]:
     plain, html = message.get_body(preferencelist=("plain",)), message.get_body(preferencelist=("html",))
     for n, part in _parts(message):
         if n == number and _is_attachment(part, [plain, html]):
-            return (_line(part.get_filename() or f"вложение {number}"), part.get_content_type(),
+            return (_line(part.get_filename() or f"attachment {number}"), part.get_content_type(),
                     part.get_payload(decode=True) or b"")
     raise KeyError(number)

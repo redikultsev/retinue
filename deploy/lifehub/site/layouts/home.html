@@ -1,27 +1,27 @@
 {{ define "main" }}
 {{- $now := partial "data.html" "now.json" -}}
-{{- if not $now.updated }}<p class="empty">Данных ещё нет: Роутер пишет их раз в пять минут.</p>{{ else }}
+{{- if not $now.updated }}<p class="empty">No data yet: the router writes it every five minutes.</p>{{ else }}
 
 {{- /* 1. What is next, with a countdown. */}}
 {{- with $now.next }}
-<section class="card accent" aria-label="Следующее">
-<div class="label"><span>{{ if .going }}Идёт сейчас{{ else }}Следующее{{ end }}</span>
-<time class="countdown" datetime="{{ (time.AsTime (int .start)).UTC.Format "2006-01-02T15:04:05Z" }}" data-in="{{ int .start }}" data-end="{{ int .end }}">{{ if .going }}до {{ .until }}{{ else }}в {{ .time }}{{ end }}</time></div>
+<section class="card accent" aria-label="Next">
+<div class="label"><span>{{ if .going }}On now{{ else }}Next{{ end }}</span>
+<time class="countdown" datetime="{{ (time.AsTime (int .start)).UTC.Format "2006-01-02T15:04:05Z" }}" data-in="{{ int .start }}" data-end="{{ int .end }}">{{ if .going }}until {{ .until }}{{ else }}at {{ .time }}{{ end }}</time></div>
 <div class="big">{{ .title }}</div>
 <div class="sub muted">{{ .time }}–{{ .until }}
 {{- if in (slice "zoom" "meet" "teams" "online") .place }} · {{ partial "icon.html" "video" }} {{ .join_host }}
 {{- else if eq .place "address" }} · {{ partial "icon.html" "map-pin" }} {{ .where }}{{ end }}</div>
-{{- with .join }}<div class="links">{{ partial "link.html" (dict "url" . "ok" true "kind" "meet" "text" (printf "войти · %s" $now.next.join_host) "icon" "video") }}</div>{{ end }}
+{{- with .join }}<div class="links">{{ partial "link.html" (dict "url" . "ok" true "kind" "meet" "text" (printf "join · %s" $now.next.join_host) "icon" "video") }}</div>{{ end }}
 </section>
 {{- else }}
-<section class="card" aria-label="Следующее"><div class="label"><span>Следующее</span></div>
-<div class="big">{{ if $now.calendar }}{{ $now.calendar }}{{ else }}До конца завтра встреч нет{{ end }}</div></section>
+<section class="card" aria-label="Next"><div class="label"><span>Next</span></div>
+<div class="big">{{ if $now.calendar }}{{ $now.calendar }}{{ else }}No meetings until the end of tomorrow{{ end }}</div></section>
 {{- end }}
 
 {{- /* 2. Who waits for an answer: three people at most, the rest folded. */}}
 {{- $mail := $now.mail | default dict }}
 {{- $act := where ($mail.groups | default slice) "action" "ne" "read" }}
-<h2>Ждёт решения{{ with $mail.groups }} <span class="count">{{ len . }}</span>{{ end }}</h2>
+<h2>Waiting for you{{ with $mail.groups }} <span class="count">{{ len . }}</span>{{ end }}</h2>
 {{- with $act }}
 <div class="rows">
 {{- range first 3 . }}{{ partial "waiting.html" . }}{{ end }}
@@ -30,25 +30,25 @@
 {{- $rest := slice }}{{ range after 3 $act }}{{ $rest = $rest | append . }}{{ end }}
 {{- range where ($mail.groups | default slice) "action" "read" }}{{ $rest = $rest | append . }}{{ end }}
 {{- with $rest }}
-<details class="fold"><summary>Ещё {{ len . }}: {{ range $i, $g := first 3 . }}{{ if $i }}, {{ end }}{{ $g.who }}{{ end }}{{ if gt (len .) 3 }}…{{ end }}</summary>
+<details class="fold"><summary>{{ len . }} more: {{ range $i, $g := first 3 . }}{{ if $i }}, {{ end }}{{ $g.who }}{{ end }}{{ if gt (len .) 3 }}…{{ end }}</summary>
 <div class="rows">{{ range . }}{{ partial "waiting.html" . }}{{ end }}</div>
 </details>
 {{- end }}
-{{- if not $mail.groups }}<p class="empty">Ничего не ждёт ответа · проверено в {{ $now.at }}</p>{{ end }}
+{{- if not $mail.groups }}<p class="empty">Nothing is waiting for you · checked at {{ $now.at }}</p>{{ end }}
 
 {{- /* 3. Today, the evening, tomorrow. */}}
-{{- $timeline := slice (dict "name" "Сегодня" "list" $now.today "blocks" $now.blocks) (dict "name" "Вечер" "list" $now.evening) (dict "name" "Завтра" "list" $now.tomorrow) }}
+{{- $timeline := slice (dict "name" "Today" "list" $now.today "blocks" $now.blocks) (dict "name" "Evening" "list" $now.evening) (dict "name" "Tomorrow" "list" $now.tomorrow) }}
 {{- range $timeline }}
-{{- if or .list (eq .name "Сегодня") }}
+{{- if or .list (eq .name "Today") }}
 <h2>{{ .name }}</h2>
-{{- with .blocks }}<p class="blocks">Фоном: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b.title }} {{ $b.time }}–{{ $b.until }}{{ end }}</p>{{ end }}
+{{- with .blocks }}<p class="blocks">In the background: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b.title }} {{ $b.time }}–{{ $b.until }}{{ end }}</p>{{ end }}
 {{- with .list }}<ul class="rows">{{ range . }}{{ partial "event.html" . }}{{ end }}</ul>
-{{- else }}<p class="empty">{{ if $now.calendar }}{{ $now.calendar }}{{ else }}Больше встреч сегодня нет{{ end }}</p>{{ end }}
+{{- else }}<p class="empty">{{ if $now.calendar }}{{ $now.calendar }}{{ else }}No more meetings today{{ end }}</p>{{ end }}
 {{- end }}
 {{- end }}
 
 {{- with $now.reminders }}
-<h2>Напоминания</h2>
+<h2>Reminders</h2>
 <ul class="rows">
 {{- range first 5 . }}
 <li class="row wrap">{{ partial "icon.html" "bell" }}<span class="body"><span class="title">{{ .text }}</span><span class="sub">{{ .day }}, {{ .time }}</span></span></li>
@@ -57,40 +57,40 @@
 {{- end }}
 
 {{- /* 4. Deadlines: what is overdue, then documents, then facts to check again. */}}
-<h2>Сроки</h2>
+<h2>Deadlines</h2>
 {{- with $now.deadlines }}
 {{- $late := where . "overdue" true }}
 {{- $docs := where (where . "overdue" false) "kind" "document" }}
 {{- $checks := where (where . "overdue" false) "kind" "recheck" }}
 <ul class="rows">
 {{- range $late }}
-<li class="row">{{ partial "icon.html" "triangle-alert" }}<span class="body"><span class="title">{{ .title }}</span><span class="sub overdue">{{ .what }} {{ .date }} · просрочено на {{ sub 0 (int .days) }} дн</span></span><span class="side"><span class="chip bad">{{ if eq .kind "document" }}документ{{ else }}перепроверить{{ end }}</span></span></li>
+<li class="row">{{ partial "icon.html" "triangle-alert" }}<span class="body"><span class="title">{{ .title }}</span><span class="sub overdue">{{ .what }} {{ .date }} · {{ sub 0 (int .days) }} d overdue</span></span><span class="side"><span class="chip bad">{{ if eq .kind "document" }}document{{ else }}recheck{{ end }}</span></span></li>
 {{- end }}
 {{- range $docs }}
-<li class="row">{{ partial "icon.html" "file-text" }}<span class="body"><span class="title">{{ .title }}</span><span class="sub">действует до {{ .date }}</span></span><span class="side"><span class="chip{{ if lt (int .days) 31 }} warn{{ end }}">через {{ int .days }} дн</span></span></li>
+<li class="row">{{ partial "icon.html" "file-text" }}<span class="body"><span class="title">{{ .title }}</span><span class="sub">valid until {{ .date }}</span></span><span class="side"><span class="chip{{ if lt (int .days) 31 }} warn{{ end }}">in {{ int .days }} d</span></span></li>
 {{- end }}
 </ul>
 {{- with $checks }}
-<details class="fold"><summary>Перепроверить знания · {{ len . }}</summary>
+<details class="fold"><summary>Knowledge to recheck · {{ len . }}</summary>
 <ul class="rows">{{ range . }}
-<li class="row">{{ partial "icon.html" "refresh-cw" }}<span class="body"><span class="title">{{ .title }}</span><span class="sub">до {{ .date }}</span></span><span class="side"><span class="chip">через {{ int .days }} дн</span></span></li>
+<li class="row">{{ partial "icon.html" "refresh-cw" }}<span class="body"><span class="title">{{ .title }}</span><span class="sub">by {{ .date }}</span></span><span class="side"><span class="chip">in {{ int .days }} d</span></span></li>
 {{- end }}</ul>
 </details>
 {{- end }}
-{{- else }}<p class="empty">без срока</p>{{ end }}
+{{- else }}<p class="empty">no deadlines</p>{{ end }}
 
 {{- with $now.trips }}
-<h2>Поездки</h2>
+<h2>Trips</h2>
 <ul class="rows">
 {{- range . }}{{ $page := site.GetPage (printf "/trips/%s" (path.Base .url)) }}
-<li class="row">{{ partial "icon.html" "plane" }}<span class="body">{{ with $page }}<a class="title" href="{{ .RelPermalink }}">{{ .Title }}</a>{{ else }}<span class="title">{{ .title }}</span>{{ end }}<span class="sub">{{ .start }} — {{ .end }}</span></span>{{ with .days }}{{ if gt (int .) 0 }}<span class="side"><span class="chip">через {{ int . }} дн</span></span>{{ end }}{{ end }}</li>
+<li class="row">{{ partial "icon.html" "plane" }}<span class="body">{{ with $page }}<a class="title" href="{{ .RelPermalink }}">{{ .Title }}</a>{{ else }}<span class="title">{{ .title }}</span>{{ end }}<span class="sub">{{ .start }} — {{ .end }}</span></span>{{ with .days }}{{ if gt (int .) 0 }}<span class="side"><span class="chip">in {{ int . }} d</span></span>{{ end }}{{ end }}</li>
 {{- end }}
 </ul>
 {{- end }}
 
-{{- /* 5. Is everything all right: one row of chips, the details on «Статус». */}}
+{{- /* 5. Is everything all right: one row of chips, the details on «Status». */}}
 {{- with $now.chips }}
-<nav class="chips" aria-label="Состояние">
+<nav class="chips" aria-label="State">
 {{- range . }}{{ $icon := index (dict "health" "activity" "backup" "hard-drive" "limit" "gauge" "build" "hammer") .key }}
 {{ partial "status-chip.html" (dict "icon" ($icon | default "activity") "text" .text "level" .level) }}
 {{- end }}

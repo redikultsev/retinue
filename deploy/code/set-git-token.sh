@@ -18,17 +18,17 @@ if [[ ! $KEY =~ ^[a-z0-9][a-z0-9_]{0,39}$ ]]; then
 fi
 NAME="RETINUE_GIT_TOKEN_$(printf %s "$KEY" | tr a-z A-Z)"
 if [[ -t 0 ]]; then
-  read -r -s -p "Токен для $NAME (ввод не виден): " TOKEN
+  read -r -s -p "Token for $NAME (input hidden): " TOKEN
   echo
 else
   read -r TOKEN                 # piped in: `pass show … | sudo bash set-git-token.sh key`
 fi
 if [[ -z $TOKEN || $TOKEN =~ [[:space:]] || $TOKEN == *=* || ${#TOKEN} -gt 512 ]]; then
-  echo "это не похоже на токен: пусто, пробелы или слишком длинный — ничего не записано" >&2
+  echo "this does not look like a token: empty, has spaces or too long — nothing written" >&2
   exit 1
 fi
 if [[ ! $TOKEN =~ ^(github_pat_|glpat-|ghp_) ]]; then
-  echo "внимание: токен не начинается с github_pat_ (GitHub fine-grained) или glpat- (GitLab) — проверь, тот ли это" >&2
+  echo "warning: the token does not start with github_pat_ (GitHub fine-grained) or glpat- (GitLab) — check it is the right one" >&2
 fi
 install -d -m 755 "$ROOT/code"
 (umask 077; touch "$FILE")
@@ -40,6 +40,6 @@ chmod 600 "$TMP"
 mv -f "$TMP" "$FILE"
 LENGTH=${#TOKEN}
 unset TOKEN
-echo "Записан $NAME ($LENGTH знаков) в $FILE."
-echo "Перезапусти платформу: cd /opt/retinue && sudo docker compose -p retinue --env-file $ROOT/stack.env" \
+echo "Wrote $NAME ($LENGTH characters) to $FILE."
+echo "Restart the platform: cd /opt/retinue && sudo docker compose -p retinue --env-file $ROOT/stack.env" \
   "-f deploy/compose.yml up -d platform"

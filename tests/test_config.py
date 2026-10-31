@@ -12,7 +12,7 @@ import yaml
 
 from retinue.config import AgentConfig, PlatformConfig, RouterConfig, keyterm_problem
 
-AGENT = "agents:\n  - {id: assistant, name: Ассистентка, url: 'http://assistant:9000', trust_class: private, archive: true}\n"
+AGENT = "agents:\n  - {id: assistant, name: Assistant, url: 'http://assistant:9000', trust_class: private, archive: true}\n"
 MATRIX = "matrix:\n  homeserver: http://tuwunel:6167\n  server_name: example.com\n  owner: '@alice:example.com'\n"
 
 
@@ -98,7 +98,7 @@ def test_matrix_adapter_is_built_from_its_section(tmp_path, monkeypatch):
 
 AGENT_YAML = """
 id: assistant
-name: Ассистентка
+name: Assistant
 description: d
 trust_class: private
 skills: [{id: talk, name: Разговор, description: d}]
@@ -184,7 +184,7 @@ def test_the_router_holds_the_knowledge_base_when_the_config_says_so(tmp_path, m
     policy.write_text("{}")
     cfg.memory.policy, cfg.memory.tree, cfg.memory.git_dir = str(policy), str(tmp_path / "t"), str(tmp_path / "g")
     memory, error = build_memory(cfg, sqlite3.connect(":memory:"))
-    assert memory is None and error.startswith("База знаний не подключена: хаб /srv/hub не ответил"), \
+    assert memory is None and error.startswith("The Base is not connected: the hub /srv/hub did not answer"), \
         "a hub that is not there: the router runs on and says why"
 
 
@@ -528,7 +528,7 @@ def test_the_example_turns_the_code_on_by_removing_its_marks(tmp_path, monkeypat
     monkeypatch.delenv("RETINUE_GIT_TOKEN_GROUP_GITLAB", raising=False)
     cfg = load_platform(tmp_path, monkeypatch, on)
     assert [(r.name, r.host, r.off) for r in cfg.code.repos] == [
-        ("retinue", "github.com", ""), ("example-app", "gitlab.com", "нет токена RETINUE_GIT_TOKEN_GROUP_GITLAB")]
+        ("retinue", "github.com", ""), ("example-app", "gitlab.com", "no token RETINUE_GIT_TOKEN_GROUP_GITLAB")]
     assert (cfg.code.lane, cfg.code.track, cfg.code.proxy) == ("private", "code", "http://platform-egress:3128")
     assert load_platform(tmp_path, monkeypatch, example).code is None, "off as written"
 

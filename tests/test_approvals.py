@@ -137,9 +137,9 @@ def approval(tool: str, tool_input: dict) -> dict:
 def test_the_card_shows_the_command_itself_and_what_is_in_it():
     view, actions = approvals.card(approval("Bash", {"command": "curl https://example.com/?q=1", "description": "x"}),
                                    "0badcafe", "retinue")
-    assert view.head[:3] == ["Разрешение · retinue · сессия 0badcafe", "Инструмент: Bash", "Папка: /work/retinue"]
-    assert view.head[-1] == "Ввод, 29 знаков:" and view.body == "curl https://example.com/?q=1"
-    assert any("ссылка https://example.com/?q=1 — с параметрами" in line for line in view.head)
+    assert view.head[:3] == ["Permission · retinue · session 0badcafe", "Tool: Bash", "Folder: /work/retinue"]
+    assert view.head[-1] == "Input, 29 characters:" and view.body == "curl https://example.com/?q=1"
+    assert any("link https://example.com/?q=1 — with parameters" in line for line in view.head)
     assert actions == (approvals.APPROVE, approvals.REJECT)
 
     view, _ = approvals.card(approval("Write", {"file_path": "/work/a", "content": "x"}), "0badcafe", "retinue")
@@ -149,7 +149,7 @@ def test_the_card_shows_the_command_itself_and_what_is_in_it():
 def test_invisible_characters_are_shown_by_their_code():
     view, _ = approvals.card(approval("Bash", {"command": "echo safe‮;rm -rf ~"}), "0badcafe", "retinue")
     assert view.body == "echo safe⟦U+202E⟧;rm -rf ~"
-    assert any("невидимые символы" in line for line in view.head)
+    assert any("invisible characters" in line for line in view.head)
 
 
 @pytest.mark.parametrize("size, open_only", [(3000, False), (approvals.OPEN_LIMIT, True)])
@@ -163,10 +163,10 @@ def test_a_card_over_one_message_offers_only_open(size, open_only):
 def test_the_courier_card_hands_the_whole_command_to_the_owner():
     view = approvals.courier_card(approval("Bash", {"command": "git push origin main"}), "0badcafe", "retinue",
                                   dict(approvals.NEVER)["Bash(git push:*)"])
-    assert view.head == ["Курьер · retinue · сессия 0badcafe", "Хочет: отправить коммиты (git push)",
-                         "Папка: /work/retinue"]
+    assert view.head == ["Courier · retinue · session 0badcafe", "Wants: push commits (git push)",
+                         "Folder: /work/retinue"]
     assert view.body == "git push origin main"
-    assert view.status == "Не выполняю: это делаешь ты сам — команда выше целиком."
+    assert view.status == "Not running it: you do this yourself — the whole command is above."
 
 
 def test_a_bash_card_shows_every_field_of_the_call_not_only_the_command():
@@ -180,26 +180,31 @@ def test_a_bash_card_shows_every_field_of_the_call_not_only_the_command():
 def test_a_card_says_what_a_resume_after_the_prompt_cache_costs():
     assert approvals.idle_line(54 * 60 + 59, 120_000) is None, "the cache still holds"
     assert approvals.idle_line(55 * 60, 183_400) == \
-        "Сессия простаивает 55 мин — продолжение перечитает контекст (~183 тыс. токенов) без кэша"
+        "The session is idle 55 min — resuming re-reads the context (~183k tokens) uncached"
     assert approvals.idle_line(3 * 3600 + 59, None) == \
-        "Сессия простаивает 3 ч — продолжение перечитает контекст без кэша", "no usage known: no number"
+        "The session is idle 3 h — resuming re-reads the context uncached", "no usage known: no number"
     assert approvals.idle_line(2 * 86400, 400) == \
-        "Сессия простаивает больше суток — продолжение перечитает контекст без кэша", "under 500: no «~0 тыс.»"
+        "The session is idle over a day — resuming re-reads the context uncached", "under 500: no «~0k»"
     assert [approvals.idle_words(s) for s in (3300, 7199, 7200, 86399, 86400)] == \
-        ["55 мин", "119 мин", "2 ч", "23 ч", "больше суток"]
+        ["55 min", "119 min", "2 h", "23 h", "over a day"]
     assert [approvals.idle_stamp(s) for s in (3300, 5399, 5400, 7199, 7200, 10800)] == \
-        ["55 мин", "55 мин", "90 мин", "90 мин", "2 ч", "3 ч"], "past the threshold, at 90 min, then hourly"
-    idle = approvals.with_idle({"head": ["Разрешение", "Ввод, 2 знаков:"], "status": ""}, "Сессия простаивает 55 мин",
-                               "55 мин")
-    assert approvals.without_idle(idle) == {"head": ["Разрешение", "Ввод, 2 знаков:"], "status": ""}, \
+        ["55 min", "55 min", "90 min", "90 min", "2 h", "3 h"], "past the threshold, at 90 min, then hourly"
+    idle = approvals.with_idle({"head": ["Permission", "Input, 2 characters:"], "status": ""},
+                               "The session is idle 55 min", "55 min")
+    assert approvals.without_idle(idle) == {"head": ["Permission", "Input, 2 characters:"], "status": ""}, \
         "a decided card drops the line"
+    old = {"head": ["Разрешение", "Сессия простаивает 55 мин — x", "Ввод, 2 знаков:"], "status": "", "idle": "55 мин"}
+    assert approvals.without_idle(old) == {"head": ["Разрешение", "Ввод, 2 знаков:"], "status": ""}, \
+        "a card stored before the switch to English drops its Russian line too"
+    assert approvals.with_idle(old, "The session is idle 2 h — x", "2 h")["head"] == \
+        ["Разрешение", "The session is idle 2 h — x", "Ввод, 2 знаков:"], "and the new line replaces it"
 
 
 def test_the_idle_line_goes_before_the_line_that_names_the_input_and_replaces_an_older_one():
-    view = {"head": ["Разрешение · retinue · сессия ab", "Инструмент: Bash", "Ввод, 9 знаков:"], "body": "make test"}
-    once = approvals.with_idle(view, "Сессия простаивает 55 мин — x", "мин")
-    assert once["head"] == ["Разрешение · retinue · сессия ab", "Инструмент: Bash", "Сессия простаивает 55 мин — x",
-                            "Ввод, 9 знаков:"] and once["idle"] == "мин" and once["body"] == "make test"
-    twice = approvals.with_idle(once, "Сессия простаивает 2 ч — x", "2 ч")
-    assert twice["head"].count("Сессия простаивает 2 ч — x") == 1 and len(twice["head"]) == 4
-    assert view["head"][-1] == "Ввод, 9 знаков:" and "idle" not in view, "the view it was given is not changed"
+    view = {"head": ["Permission · retinue · session ab", "Tool: Bash", "Input, 9 characters:"], "body": "make test"}
+    once = approvals.with_idle(view, "The session is idle 55 min — x", "min")
+    assert once["head"] == ["Permission · retinue · session ab", "Tool: Bash", "The session is idle 55 min — x",
+                            "Input, 9 characters:"] and once["idle"] == "min" and once["body"] == "make test"
+    twice = approvals.with_idle(once, "The session is idle 2 h — x", "2 h")
+    assert twice["head"].count("The session is idle 2 h — x") == 1 and len(twice["head"]) == 4
+    assert view["head"][-1] == "Input, 9 characters:" and "idle" not in view, "the view it was given is not changed"

@@ -5,47 +5,47 @@ written to or heard from, a message in one of the Telegram chats you chose. She 
 envelope from the archive (the address, the subject and the thread come from the letter or the message she
 answers, never from her), and you get a **card**: the channel and the account, to whom, the subject, what it
 answers, flags, what code found in the text, and the text itself, verbatim, in one block. It leaves only when you
-press **«Отправить»** under that very card; then you have 10 seconds for **«Отменить»**. The word «да» in the chat
+press **«Send»** under that very card; then you have 10 seconds for **«Cancel»**. The word «yes» in the chat
 is never a confirmation.
 
 ```
 assistant ── draft_reply (bus) ──▶ router: envelope from the archive, digest, the card ──▶ you
-                                     │  «Отправить» (from your user id, under the card, while it lives)
-                                     ▼  10 s hold · «Отменить»
+                                     │  «Send» (from your user id, under the card, while it lives)
+                                     ▼  10 s hold · «Cancel»
              mail-send (gmail.send, uid 10004) ◀── send-router        tg-router ──▶ tg-business (uid 10003)
                  └── mail-egress (Google's hosts)                                     └── api.telegram.org
 ```
 
 Each sender checks again that the envelope has the digest your button was bound to, and sends each key once: a
 double press, a restart, a second look never send twice. A result it cannot be sure of (a timeout after the request
-left, a 5xx) is never retried; the card says «исход неизвестен», and the router settles it when the letter comes
+left, a 5xx) is never retried; the card says «Outcome unknown», and the router settles it when the letter comes
 back from Sent or the reply comes back from Telegram. There is no daily ceiling: every send is your own press.
 
 ## The card
 
-- **Flags**, only when they fire: «новый получатель» (you have never written to this address or chat), «по просьбе
-  собеседника» (the draft came from a run that someone else's message started, not from your words), «ответ уйдёт
-  на Reply-To …» (Reply-To is not From), «окно Telegram до …», «вместо черновика …». With a flag, the button names
-  the recipient: «Отправить: Анна».
-- **«В тексте найдено»**: every link whole (and whether it carries parameters or a domain not in Latin letters),
-  an address not in the thread, a phone, a number of four digits or more next to «код», «пароль», «паспорт»,
-  «карта», an IBAN, a card number. The end of a path (`/work/x/hello.md`: a name right after `/` or `\`) is not a
+- **Flags** («Warning: …»), only when they fire: «new recipient» (you have never written to this address or chat),
+  «at the other person's request» (the draft came from a run that someone else's message started, not from your
+  words), «the reply goes to Reply-To …» (Reply-To is not From), «Telegram window until …», «replaces draft …». With
+  a flag, the button names the recipient: «Send: Anna».
+- **«Found in the text»**: every link whole (and whether it carries parameters or a domain not in Latin letters),
+  an address not in the thread, a phone, a number of four digits or more next to «code», «password», «passport»,
+  «card» (in English or Russian), an IBAN, a card number. The end of a path (`/work/x/hello.md`: a name right after `/` or `\`) is not a
   link; a bare `hello.md` is, since `.md`, `.rs`, `.sh` are country domains too. What the text says is what you
   approve; this line is what you might not notice.
 - The text is refused, never repaired, if it has a control, bidi or zero-width character; at most 2,000 characters.
-- **«Поправить»** kills the card; tell her in words what to change, a new card comes. «Поправь: …» in words does the
-  same: her new draft replaces the old card at once. **«Не отвечать»** — nothing is sent.
-- A card lives 3 hours (in Telegram, never past the 24-hour window). Then it says «устарел».
+- **«Edit»** kills the card; tell her in words what to change, a new card comes. «Change it: …» in words does the
+  same: her new draft replaces the old card at once. **«Don't reply»** — nothing is sent.
+- A card lives 3 hours (in Telegram, never past the 24-hour window). Then it says «Expired: not sent.»
 - A new message from the other person in the same chat or thread kills the open card at once — rewritten in place
-  as «Устарела: пришло новое сообщение», buttons gone, even during the 10 s hold. She reads the new message with the
+  as «Expired: a new message came in.», buttons gone, even during the 10 s hold. She reads the new message with the
   exchange above it and drafts afresh if a reply is needed.
-- About your private matter (docs/mail.md) the card waits behind «Показать», like the letter it answers.
-- **«Писала, читая»** — what the run that wrote the draft read outside this conversation, counted by code, never
-  quoted: «почта 2, другой чат 1, разговор с тобой 1, База (travel) 1». Code records every search find, every file
+- About your private matter (docs/mail.md) the card waits behind «Show», like the letter it answers.
+- **«Read while drafting»** — what the run that wrote the draft read outside this conversation, counted by code, never
+  quoted: «mail 2, another chat 1, your conversation 1, Base (travel) 1». Code records every search find, every file
   fetched and every read in the knowledge base of the run, and the other letters judged with it. Reading the private
   matter, a closed Space (`/srv/retinue/memory/sensitive.txt`; `*`, the default, closes all of them) or — in a run
-  somebody else's message started — your own conversation adds a flag «читала закрытое: …»; the private matter
-  also hides the card behind «Показать». In a run somebody else's message started the search keeps to that exchange
+  somebody else's message started — your own conversation adds a flag «read closed matter: …»; the private matter
+  also hides the card behind «Show». In a run somebody else's message started the search keeps to that exchange
   unless she widens it, and never returns the private matter outside it.
 - Outside Telegram's window, or with no gateway, the card gives a `t.me/<username>?text=…` link: the chat opens
   with the text in your field and you send it yourself. With no working mail sender the card says so, and you send

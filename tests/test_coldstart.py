@@ -20,13 +20,13 @@ def test_measure_one_cold_run():
         yield SystemMessage(subtype="init", data={"apiKeySource": "none", "tools": [], "model": "claude-x"})
         yield StreamEvent(uuid="u1", session_id="s", event={"type": "message_start"})
         yield StreamEvent(uuid="u2", session_id="s",
-                          event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": "При"}})
+                          event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hel"}})
         yield ResultMessage(subtype="success", duration_ms=900, duration_api_ms=700, is_error=False, num_turns=1,
-                            session_id="s", result="Привет")
+                            session_id="s", result="Hello!")
 
     out = asyncio.run(coldstart.measure(coldstart.EPISODES["2"], run=fake_cli))
     options = seen["options"]
-    assert seen["prompt"] == "Что ты мне советовал по Энску?"
+    assert seen["prompt"] == "What did you advise me about Ensk?"
     assert options.resume is None and options.tools == [] and options.setting_sources == []
     assert seen["config_dir_exists"] and not os.path.exists(options.env["CLAUDE_CONFIG_DIR"]), "fresh dir, then removed"
     assert out["api_key_source"] == "none" and out["tools"] == [] and out["is_error"] is False

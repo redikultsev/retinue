@@ -99,23 +99,23 @@ class Turns:
 def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
     """Raise Denied with a reason the caller (and the owner) can read."""
     if target is None:
-        raise Denied("такого агента нет")
+        raise Denied("no such agent")
     if target.id not in caller.can_call and "*" not in caller.can_call:
-        raise Denied(f"агенту {caller.name} не разрешено обращаться к агенту {target.name}")
+        raise Denied(f"agent {caller.name} may not call agent {target.name}")
     if target.id in turn.chain:
-        raise Denied("петля: этот агент уже участвует в цепочке")
+        raise Denied("a loop: this agent is already in the chain")
     if turn.depth + 1 > MAX_DEPTH:
-        raise Denied(f"цепочка глубже {MAX_DEPTH} не допускается")
+        raise Denied(f"a chain deeper than {MAX_DEPTH} is not allowed")
     if turn.tree.calls >= MAX_CALLS:
-        raise Denied(f"на одно сообщение Владельца не больше {MAX_CALLS} обращений")
+        raise Denied(f"at most {MAX_CALLS} calls per message from the owner")
     if caller.trust_class == "web" and target.trust_class == "private":
-        raise Denied("агент с вебом не пишет свободным текстом агенту с базой")
+        raise Denied("an agent with the web does not write free text to an agent with the Base")
     if caller.trust_class == "private" and target.trust_class == "web":
-        raise Denied("агент с базой не пишет свободным текстом агенту с вебом: нужен типизированный навык")
+        raise Denied("an agent with the Base does not write free text to an agent with the web: a typed skill is needed")
     if turn.tree.tainted and target.trust_class == "private":
-        raise Denied("в цепочке уже был ответ агента с вебом, к агенту с базой она не пойдёт")
+        raise Denied("the chain already has an answer from an agent with the web; it will not go to an agent with the Base")
     if turn.tree.private and target.trust_class == "web":
-        raise Denied("в цепочке уже был ответ агента с базой, к агенту с вебом она не пойдёт")
+        raise Denied("the chain already has an answer from an agent with the Base; it will not go to an agent with the web")
 
 
 class BusServer:
@@ -184,7 +184,7 @@ class BusServer:
         caller = self.caller(request)
         body = await request.json()
         if not self.core.proactive:
-            return web.json_response({"ok": False, "text": "Смена пояса в этом Роутере не включена."})
+            return web.json_response({"ok": False, "text": "Changing the time zone is not enabled in this router."})
         ok, text = await self.core.proactive.zone_tool(caller, str(body.get("turn", "")), str(body.get("zone", "")))
         return web.json_response({"ok": ok, "text": text})
 
@@ -204,14 +204,14 @@ class BusServer:
         body = await request.json()
         ok = await self.core.kb_log(caller, str(body.get("turn", "")), str(body.get("tool", "")),
                                     str(body.get("decision", "")), str(body.get("path", "")), str(body.get("reason", "")))
-        return web.json_response({"ok": ok, "text": "" if ok else "Нет активного запроса."})
+        return web.json_response({"ok": ok, "text": "" if ok else "No active request."})
 
     async def travel_log(self, request: web.Request) -> web.Response:
         caller = self.caller(request)
         body = await request.json()
         ok = await self.core.travel_log(caller, str(body.get("turn", "")), str(body.get("tool", "")),
                                         str(body.get("decision", "")), body.get("chars"), str(body.get("reason", "")))
-        return web.json_response({"ok": ok, "text": "" if ok else "Нет активного запроса."})
+        return web.json_response({"ok": ok, "text": "" if ok else "No active request."})
 
     async def draft_reply(self, request: web.Request) -> web.Response:
         caller = self.caller(request)

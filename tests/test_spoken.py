@@ -7,7 +7,11 @@ from retinue.tobase import subject_of
 
 
 def test_both_marks_come_off_and_nothing_else():
-    assert unmarked("(голосом) Почини вход") == unmarked("(голосом, дословно) Почини вход") == "Почини вход"
+    assert SPOKEN_MARK == "(by voice) " and VERBATIM_MARK == "(by voice, verbatim) "
+    assert unmarked("(by voice) Fix the login") == unmarked("(by voice, verbatim) Fix the login") == "Fix the login"
+    assert unmarked("(by voice, verbatim) (by voice) x") == "(by voice) x", "one mark, once"
+    assert unmarked("(голосом) Почини вход") == unmarked("(голосом, дословно) Почини вход") == "Почини вход", \
+        "the old marks of persisted inputs come off too"
     assert unmarked("Почини (голосом) вход") == "Почини (голосом) вход", "only at the start"
     assert unmarked("(голосом, дословно) (голосом) x") == "(голосом) x", "one mark, once"
     assert subject_of(VERBATIM_MARK + "So, um, fix the login") == "So, um, fix the login"

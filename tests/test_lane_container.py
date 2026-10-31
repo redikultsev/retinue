@@ -187,6 +187,6 @@ def test_the_lane_runs_the_pinned_cli_logged_in_with_the_login_the_run_brought(l
     name, _ = lane
     docker("exec", name, "test", "-r", "/etc/claude-code/managed-settings.json")   # else the CLI runs without them
     managed = docker("exec", name, "cat", "/etc/claude-code/CLAUDE.md")  # the lane's instructions, common part first
-    assert managed.startswith("# Сессия на сервере Владельца") and "`out/`" in managed
+    assert managed.startswith("# A session on the owner's server") and "`out/`" in managed
     assert docker("exec", name, "stat", "-c", "%U %a", "/etc/claude-code/CLAUDE.md") == "root 644"
     assert "sk-ant-" not in docker("exec", name, "cat", "/proc/1/environ"), "not in Docker init's environment"

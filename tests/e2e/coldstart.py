@@ -22,11 +22,11 @@ from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, StreamEvent, Sys
 
 # Episodes 1, 2 and 4 from the design review: short requests of the kind the owner writes.
 EPISODES = {
-    "1": "в лукоморье из энска на 22 мая найди билеты",
-    "2": "Что ты мне советовал по Энску?",
-    "4": "Напомни в пятницу позвонить Х",
+    "1": "find tickets to lukomorye from ensk for may 22",
+    "2": "What did you advise me about Ensk?",
+    "4": "Remind me on Friday to call X",
 }
-SYSTEM_PROMPT = "Ты ассистентка Владельца. Отвечай по-русски, в два-три предложения."
+SYSTEM_PROMPT = "You are the owner's assistant. Answer in English, in two or three sentences."
 
 
 async def measure(prompt: str, run=query) -> dict:

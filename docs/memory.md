@@ -60,10 +60,10 @@ any key but these three. Without the file every key keeps its neutral default.
 location: profile/location.md          # the Record whose header field `tz` names your zone
 private:
   about: a private negotiation — letters from the other side, meetings about it   # in your words
-  sphere: work                         # the sphere its row of «Ждут тебя» belongs to; '' — none
+  sphere: work                         # the sphere its row of «Waiting for you» belongs to; '' — none
 tracker:
   path: profile/tracker.md             # all keys: proactive.md, «The tracker»
-  title: Трекер
+  title: Tracker
 ```
 
 Run `setup.sh` again and restart the router after changing it. The file is yours and never in the repository.
@@ -90,12 +90,12 @@ directly, past the hook — the router is trusted code; the model never sees the
 ## In the server's sessions
 
 Sessions of the platform can work in the base too: a clone in `lane-private`, pulled by the platform before each run
-and committed by your «В Базу» button with your rights — the hub sees a uid other than the router's. See
+and committed by your «To the Base» button with your rights — the hub sees a uid other than the router's. See
 [base.md](base.md).
 
 ## Every day
 
 At 21:00 (`digest_at` in the `memory:` section of `router.yaml`) a message lists her commits of the day: the files,
 your own records she changed or deleted first, and whether someone else's text was on her input (a forward, an
-attachment, travel results). Each commit has an «Откатить» button for a day; later, `git revert <commit>` on your
+attachment, travel results). Each commit has a «Revert» button for a day; later, `git revert <commit>` on your
 computer. What a refused turn wrote is kept in `/srv/retinue/memory/git/refused/`.

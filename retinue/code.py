@@ -1,6 +1,6 @@
 """The owner's repositories in the room (docs/code.md): a clean mirror of each here, fetched with his token; the
 room's working clone of it at `/work/<root>/<name>`, whose `origin` is that mirror read-only; and what his button
-«Запушить» needs — what the session's branch holds, and the push of exactly that as a branch and a pull request.
+«Push» needs — what the session's branch holds, and the push of exactly that as a branch and a pull request.
 
 The room's repository is the session's, so here it is **hostile input**. Git never opens it as a repository: no
 config, hook, `HEAD`, ref, index, attribute or alternate of it is ever read by git. What the platform needs of it is
@@ -118,7 +118,7 @@ class Look:
     partial: bool = False             # the work tree was not checked whole (size, entry or time bounds)
     objects: int = 0                  # the objects a push carries
     bytes: int = 0                    # and their size
-    digest: str = ""                  # of the commits and objects that leave: checked again at «Отправить»
+    digest: str = ""                  # of the commits and objects that leave: checked again at «Send»
 
 
 @dataclass
@@ -156,15 +156,15 @@ class _Room:
         self.fds: list[int] = []
         try:
             top = self._open(os.open(room.parent, _DIR & ~os.O_NOFOLLOW), "")   # the lane's /work: a mount point
-            here = self._open(top, room.name, "папки кода")
-            self.tree = self._open(here, name, f"папки {name}")
-            self.git = self._open(self.tree, ".git", ".git — не папка (рабочее дерево другого репозитория?)")
+            here = self._open(top, room.name, "the code folder")
+            self.tree = self._open(here, name, f"the folder {name}")
+            self.git = self._open(self.tree, ".git", ".git (not a folder: the work tree of another repository?)")
             self.objects = self._open(self.git, "objects", ".git/objects")
             for parent, bad in ((self.git, "commondir"), (self.objects, "info/alternates"),
                                 (self.objects, "info/http-alternates")):
                 if _exists(parent, bad):
-                    raise Refused(f"в репозитории есть .git/{'objects/' if parent != self.git else ''}{bad}: так он "
-                                  "не пушится — объекты могли бы прийти из чужого места")
+                    raise Refused(f"the repository has .git/{'objects/' if parent != self.git else ''}{bad}: it is not "
+                                  "pushed so — objects could come from somewhere else")
         except BaseException:
             self.close()
             raise
@@ -176,9 +176,9 @@ class _Room:
         try:
             fd = os.open(name, _DIR, dir_fd=parent)
         except FileNotFoundError:
-            raise Absent(f"нет {what}") from None
+            raise Absent(f"{what}: missing") from None
         except OSError as exc:  # ELOOP / ENOTDIR: a link or a file where a folder must be
-            raise Refused(f"{what}: {'ссылка' if exc.errno in (40, 62) else 'не папка'}") from None
+            raise Refused(f"{what}: {'a link' if exc.errno in (40, 62) else 'not a folder'}") from None
         self.fds.append(fd)
         return fd
 
@@ -194,13 +194,13 @@ class _Room:
         """(branch, tip): the branch `.git/HEAD` names and its commit, from the loose ref or `packed-refs`."""
         text = _read(self.git, "HEAD", 4096)
         if text is None:
-            raise Refused("нет .git/HEAD")
+            raise Refused("no .git/HEAD")
         text = text.decode("ascii", "replace").strip()
         if not text.startswith("ref: refs/heads/"):
-            raise Refused("сессия не на ветке (detached HEAD) — попроси её создать ветку и закоммитить")
+            raise Refused("the session is not on a branch (detached HEAD) — ask it to create a branch and commit")
         branch = text.removeprefix("ref: refs/heads/")
         if not BRANCH.fullmatch(branch):
-            raise Refused(f"ветка с необычным именем: {branch[:80]!r}")
+            raise Refused(f"a branch with an unusual name: {branch[:80]!r}")
         loose = _read(self.git, f"refs/heads/{branch}", 256)
         if loose is not None:
             sha = loose.decode("ascii", "replace").strip()
@@ -212,9 +212,9 @@ class _Room:
                     sha = parts[0]
                     break
         if not sha:
-            raise Absent(f"на ветке {branch} нет ни одного коммита")
+            raise Absent(f"the branch {branch} has no commits")
         if not SHA.fullmatch(sha):
-            raise Refused(f"ветка {branch}: не тот формат ссылки (sha256-репозитории не поддерживаются)")
+            raise Refused(f"branch {branch}: wrong ref format (sha256 repositories are not supported)")
         return branch, sha
 
     def check(self) -> None:
@@ -236,7 +236,7 @@ class _Room:
                             for entry in found:
                                 entries += 1
                                 if entries > MAX_ROOM_ENTRIES:
-                                    raise Refused(f"в .git больше {MAX_ROOM_ENTRIES} записей — так не читается")
+                                    raise Refused(f".git has over {MAX_ROOM_ENTRIES} entries — not read so")
                                 info = entry.stat(follow_symlinks=False)
                                 if stat.S_ISDIR(info.st_mode) and depth < 8:
                                     stack.append((self._sub(fd, entry.name, f"{where}/{entry.name}"),
@@ -245,15 +245,15 @@ class _Room:
                                     size += info.st_size
                                 else:
                                     raise Refused(f".git/{where}/{entry.name[:60]}: "
-                                                  f"{'ссылка' if stat.S_ISLNK(info.st_mode) else 'не файл'} — так "
-                                                  "не читается")
+                                                  f"{'a link' if stat.S_ISLNK(info.st_mode) else 'not a file'} — not "
+                                                  "read so")
                     finally:
                         os.close(fd)
         finally:
             for fd, _, _ in stack:
                 os.close(fd)
         if size > MAX_ROOM_BYTES:
-            raise Refused(f"объекты репозитория больше {MAX_ROOM_BYTES >> 30} ГБ")
+            raise Refused(f"the repository's objects are over {MAX_ROOM_BYTES >> 30} GB")
 
     @staticmethod
     def _sub(parent: int, name: str, where: str) -> int:
@@ -261,7 +261,7 @@ class _Room:
         try:
             return os.open(name, _DIR, dir_fd=parent)
         except OSError:
-            raise Refused(f".git/{where[:80]}: ссылка или не папка — так не читается") from None
+            raise Refused(f".git/{where[:80]}: a link or not a folder — not read so") from None
 
     def info_exclude(self) -> str:
         return (_read(self.git, "info/exclude", 1 << 20) or b"").decode("utf-8", "replace")
@@ -417,26 +417,26 @@ def _commit(sha: str, raw: bytes) -> Commit:
     keys = [row.partition(b" ")[0] for row in rows]
     if keys != order or any(row.startswith(b" ") for row in rows):
         odd = next((k for k, want in zip(keys + [b""] * len(order), order + [b""] * len(keys)) if k != want), b"")
-        name = shown(odd.decode("utf-8", "replace"), 40) or "порядок"
-        raise Refused(f"коммит {sha[:7]}: заголовок «{name}» не на своём месте, лишний или повторён (подпись, "
-                      "вложенный тег, второй автор) — Владелец его не проверит, так не пушу")
+        name = shown(odd.decode("utf-8", "replace"), 40) or "order"
+        raise Refused(f"commit {sha[:7]}: header «{name}» is out of place, extra or repeated (a signature, "
+                      "an embedded tag, a second author) — you would not check it, not pushing")
     values = [row.partition(b" ")[2] for row in rows]
     if len(values) > len(order) - 1 and keys[-1] == b"encoding" and \
             values[-1].strip().lower() not in (b"utf-8", b"utf8"):
-        raise Refused(f"коммит {sha[:7]}: кодировка не UTF-8 — так не пушу")
+        raise Refused(f"commit {sha[:7]}: encoding is not UTF-8 — not pushing")
     if any(len(v) > MAX_IDENTITY for k, v in zip(keys, values) if k in (b"author", b"committer")):
-        raise Refused(f"коммит {sha[:7]}: автор или коммиттер длиннее {MAX_IDENTITY} байт — так не пушу")
+        raise Refused(f"commit {sha[:7]}: author or committer longer than {MAX_IDENTITY} bytes — not pushing")
     texts = [v.decode("utf-8", "replace") for v in values]
     n = len(order) - (2 if keys[-1] == b"encoding" else 1)   # the committer's place
     tree, parents, author, committer = texts[0], texts[1:n - 1], _identity(texts[n - 1]), _identity(texts[n])
     if len(message) > MAX_MESSAGE:
-        raise Refused(f"коммит {sha[:7]}: сообщение больше {MAX_MESSAGE >> 10} КБ — так не пушу")
+        raise Refused(f"commit {sha[:7]}: message over {MAX_MESSAGE >> 10} KB — not pushing")
     try:
         text = message.decode("utf-8")
     except UnicodeDecodeError:
-        raise Refused(f"коммит {sha[:7]}: сообщение не в UTF-8 — так не пушу") from None
+        raise Refused(f"commit {sha[:7]}: message is not UTF-8 — not pushing") from None
     if not (sep and SHA.fullmatch(tree) and all(SHA.fullmatch(x) for x in parents)):
-        raise Refused(f"коммит {sha[:7]} собран не по правилам git — так не пушу")
+        raise Refused(f"commit {sha[:7]} is not built by git's rules — not pushing")
     return Commit(tree, parents, author, committer, text.rstrip("\n"))
 
 
@@ -469,13 +469,13 @@ def _idx_names(idx: Path, out: Path) -> int:
     with open(idx, "rb") as f, open(out, "w") as names:
         head = f.read(8 + 1024)
         if head[:8] != b"\xfftOc\x00\x00\x00\x02" or len(head) < 8 + 1024:
-            raise Refused("индекс пака не той версии — так не читается")
+            raise Refused("the pack index has the wrong version — not read so")
         count = int.from_bytes(head[8 + 255 * 4:8 + 1024], "big")
         left = count
         while left:
             chunk = f.read(20 * min(left, 4096))
             if len(chunk) < 20 or len(chunk) % 20:
-                raise Refused("индекс пака обрезан — так не читается")
+                raise Refused("the pack index is truncated — not read so")
             names.write("".join(f"{chunk[i:i + 20].hex()}\n" for i in range(0, len(chunk), 20)))
             left -= len(chunk) // 20
     return count
@@ -486,11 +486,11 @@ def _copy(parent: int, name: str, into: Path, size: int) -> None:
     try:
         fd = os.open(name, _FILE, dir_fd=parent)
     except OSError:
-        raise Refused(f".git/objects/pack/{name[:13]}…: не открылся") from None
+        raise Refused(f".git/objects/pack/{name[:13]}…: did not open") from None
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_size != size:
-            raise Refused(f".git/objects/pack/{name[:13]}…: изменился, пока читался")
+            raise Refused(f".git/objects/pack/{name[:13]}…: changed while being read")
         copied = 0
         with open(into, "wb") as out:
             while chunk := os.read(fd, 1 << 20):
@@ -499,7 +499,7 @@ def _copy(parent: int, name: str, into: Path, size: int) -> None:
                     break
                 out.write(chunk)
         if copied != size:
-            raise Refused(f".git/objects/pack/{name[:13]}…: изменился, пока читался")
+            raise Refused(f".git/objects/pack/{name[:13]}…: changed while being read")
     finally:
         os.close(fd)
 
@@ -647,16 +647,16 @@ class CodeRepos:
         try:
             rc, out, err = _bounded(argv, self._env(extra), keep, timeout, cap, stdin, cut)
         except TimeoutError:
-            raise Unavailable(f"{what}: нет ответа за {int(timeout)} с") from None
+            raise Unavailable(f"{what}: no answer in {int(timeout)} s") from None
         except OverflowError:
-            raise Unavailable(f"{what}: ответ больше {cap >> 20} МБ — так не читается") from None
+            raise Unavailable(f"{what}: answer over {cap >> 20} MB — not read so") from None
         finally:
             if read is not None:
                 os.close(read)
         done = subprocess.CompletedProcess(argv, rc, out.decode("utf-8", "replace") if text else out,
                                            err.decode("utf-8", "replace") if text else err)
         if check and rc != 0:
-            raise Unavailable(plain(err.decode("utf-8", "replace"), auth.secret if auth else "") or f"git: код {rc}")
+            raise Unavailable(plain(err.decode("utf-8", "replace"), auth.secret if auth else "") or f"git: code {rc}")
         return done
 
     def _scheme(self, repo: CodeRepo) -> tuple[str, ...]:
@@ -776,7 +776,7 @@ class CodeRepos:
             if is_dir and re.fullmatch(r"[0-9a-f]{2}", entry):
                 loose += self._copy_loose(room, entry, objects / entry, budget)
         if loose > 100_000:
-            raise Refused("в репозитории сессии больше 100 000 несжатых объектов — пусть сделает git gc")
+            raise Refused("the session's repository has over 100,000 loose objects — let it run git gc")
         if any(e == "pack" and d for e, d in found):
             self._copy_packs(name, room, objects / "pack", budget)
         return store
@@ -792,12 +792,12 @@ class CodeRepos:
                     continue
                 data = _read(fd, leaf, MAX_LOOSE)
                 if data is None:
-                    raise Refused(f".git/objects/{prefix}/{leaf[:8]}…: не файл или больше {MAX_LOOSE >> 20} МБ")
+                    raise Refused(f".git/objects/{prefix}/{leaf[:8]}…: not a file or over {MAX_LOOSE >> 20} MB")
                 budget[0] -= len(data)
                 if budget[0] < 0:
-                    raise Refused(f"новых объектов в репозитории сессии больше {MAX_PACK_COPY >> 20} МБ")
+                    raise Refused(f"the session's repository has over {MAX_PACK_COPY >> 20} MB of new objects")
                 if _loose_sha(data) != prefix + leaf:
-                    raise Refused(f".git/objects/{prefix}/{leaf[:8]}…: содержимое не сходится с именем")
+                    raise Refused(f".git/objects/{prefix}/{leaf[:8]}…: the content does not match the name")
                 tmp = into / f".{leaf}.{secrets.token_hex(4)}"
                 tmp.write_bytes(data)
                 os.replace(tmp, into / leaf)
@@ -824,7 +824,7 @@ class CodeRepos:
                 stem = found.group(1)
                 idx_info = listed[f"{stem}.idx"]
                 if not (stat.S_ISREG(info.st_mode) and stat.S_ISREG(idx_info.st_mode)):
-                    raise Refused(f".git/objects/pack/{stem[:13]}…: не файл")
+                    raise Refused(f".git/objects/pack/{stem[:13]}…: not a file")
                 key = [info.st_size, info.st_mtime_ns, info.st_ino, idx_info.st_size]
                 known = verdicts.get(stem)
                 if known and known.get("key") == key:
@@ -834,12 +834,12 @@ class CodeRepos:
                         kept.add(stem)
                         continue
                     if known.get("state") == "failed":  # the room's own fault: the same pack, the same answer
-                        raise Refused(known.get("why") or f"пак {stem[5:12]} не копируется")
+                        raise Refused(known.get("why") or f"pack {stem[5:12]} is not copied")
                     if known.get("state") == "copying" and known.get("tries", 1) >= COPY_TRIES:
-                        raise Refused(f"пак {stem[5:12]} не скопировался {COPY_TRIES} раза подряд (платформа падала "
-                                      "посреди копии) — так не пушу; пусть сессия сделает git gc")
+                        raise Refused(f"pack {stem[5:12]} failed to copy {COPY_TRIES} times in a row (the platform went down "
+                                      "mid-copy) — not pushing; let the session run git gc")
                 if idx_info.st_size > 128 * 2**20:
-                    raise Refused(f".git/objects/pack/{stem[:13]}….idx больше 128 МБ — так не читается")
+                    raise Refused(f".git/objects/pack/{stem[:13]}….idx is over 128 MB — not read so")
                 tries = known.get("tries", 1) + 1 if known and known.get("key") == key and \
                     known.get("state") == "copying" else 1
                 verdicts[stem] = {"key": key, "state": "copying", "tries": tries}
@@ -856,8 +856,8 @@ class CodeRepos:
                         continue
                     budget[0] -= info.st_size + idx_info.st_size
                     if budget[0] < 0:
-                        raise Refused(f"новых объектов в репозитории сессии больше {MAX_PACK_COPY >> 20} МБ (пак "
-                                      "после git gc?) — так не пушу")
+                        raise Refused(f"the session's repository has over {MAX_PACK_COPY >> 20} MB of new objects (a pack "
+                                      "after git gc?) — not pushing")
                     _copy(fd, pack, tmp_pack, info.st_size)
                     os.replace(tmp_pack, into / pack)
                     os.replace(tmp_idx, into / f"{stem}.idx")
@@ -911,7 +911,7 @@ class CodeRepos:
                           "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
                           str(store), f"+refs/heads/tip:{ref}", protocols=("file",))
             if self._rev(outbox, ref) != sha:
-                raise Refused("ветка прочиталась не той, что в репозитории сессии")
+                raise Refused("the branch read is not the one in the session's repository")
             return branch, sha, room
         except BaseException:
             room.close()
@@ -922,7 +922,7 @@ class CodeRepos:
         with its whole message and its own files, checked to account for every object that would leave. `tree`: also
         what in the work tree is not committed. Raises `Refused` (the room's repository as it is) or `Unavailable`."""
         if not self.ready(name):
-            raise Unavailable("зеркало ещё не подтянуто с удалённого репозитория")
+            raise Unavailable("the mirror has not been fetched from the remote yet")
         with self._outbox_locks[name]:
             branch, sha, room = self._take(name, ref)
             try:
@@ -930,12 +930,12 @@ class CodeRepos:
                 base = self.default_branch(name)
                 base_sha = self._rev(self.mirror(name), f"refs/heads/{base}")
                 if base_sha is None:
-                    raise Unavailable(f"в зеркале нет ветки {base}")
+                    raise Unavailable(f"the mirror has no branch {base}")
                 git = f"--git-dir={outbox}"
                 done = self._git(git, "merge-base", base_sha, sha, check=False)
                 merge_base = done.stdout.strip()
                 if done.returncode != 0 or not SHA.fullmatch(merge_base):
-                    raise Refused(f"ветка {branch} не растёт из {base} — у них нет общего коммита")
+                    raise Refused(f"branch {branch} does not grow from {base} — they have no common commit")
                 ahead = int(self._git(git, "rev-list", "--count", f"{base_sha}..{sha}").stdout.strip() or 0)
                 commits, objects, size, digest = self._leaving(git, sha)
                 files = self._files(git, merge_base, sha)
@@ -955,10 +955,10 @@ class CodeRepos:
                          "--alternate-refs").stdout.split("\n")
         new = [row.split() for row in rows if row.strip()]
         if len(new) > MAX_COMMITS:
-            raise Refused(f"новых коммитов больше {MAX_COMMITS} — так не пушу, раздели работу")
+            raise Refused(f"over {MAX_COMMITS} new commits — not pushing, split the work")
         if roots := [c[0] for c in new if len(c) == 1]:
-            raise Refused(f"новый корневой коммит {roots[0][:7]}: история не из удалённого репозитория — так не "
-                          "пушу")
+            raise Refused(f"new root commit {roots[0][:7]}: the history is not from the remote repository — not "
+                          "pushing")
         return new
 
     def _raw(self, git: str, shas: list[str]) -> dict[str, Commit]:
@@ -973,7 +973,7 @@ class CodeRepos:
         for row in sizes:
             parts = row.split()
             if len(parts) == 3 and (parts[1] != "commit" or int(parts[2]) > MAX_MESSAGE + 64 * 1024):
-                raise Refused(f"коммит {parts[0][:7]} больше {(MAX_MESSAGE >> 10) + 64} КБ — так не пушу")
+                raise Refused(f"commit {parts[0][:7]} is over {(MAX_MESSAGE >> 10) + 64} KB — not pushing")
         out = self._git(git, "cat-file", "--batch", text=False, stdin="".join(f"{c}\n" for c in shas).encode(),
                         cap=len(shas) * (MAX_MESSAGE + 64 * 1024 + 128)).stdout
         commits, at = {}, 0
@@ -981,7 +981,7 @@ class CodeRepos:
             end = out.index(b"\n", at)
             head = out[at:end].decode("ascii", "replace").split()
             if len(head) != 3 or head[1] != "commit" or not head[2].isdigit():
-                raise Unavailable("git cat-file ответил не так")
+                raise Unavailable("git cat-file answered wrong")
             size = int(head[2])
             commits[head[0]] = _commit(head[0], out[end + 1:end + 1 + size])
             at = end + 1 + size + 1
@@ -1001,7 +1001,7 @@ class CodeRepos:
         for commit, *parents in new:
             body = raw.get(commit)
             if body is None or body.parents != parents:
-                raise Refused(f"коммит {commit[:7]} прочитался не так, как его родители — так не пушу")
+                raise Refused(f"commit {commit[:7]} reads differently from its parents — not pushing")
             accounted |= {commit, body.tree}
             files: list[dict] = []
             for n, parent in enumerate(parents):
@@ -1020,31 +1020,31 @@ class CodeRepos:
         listed = self._git(git, "rev-list", "--objects", "--no-object-names", sha, "--not", "--alternate-refs",
                            cap=48 * (MAX_NEW_OBJECTS + 1)).stdout.split()
         if len(listed) > MAX_NEW_OBJECTS:
-            raise Refused(f"в пуше больше {MAX_NEW_OBJECTS} объектов — так не пушу")
+            raise Refused(f"the push has over {MAX_NEW_OBJECTS} objects — not pushing")
         if unaccounted := set(listed) - accounted:
-            raise Refused(f"в пуше {len(unaccounted)} объектов, которых нет в изменениях показанных коммитов — так "
-                          "не пушу")
+            raise Refused(f"the push has {len(unaccounted)} objects that are not in the changes of the commits shown — "
+                          "not pushing")
         sizes = self._git(git, "cat-file", "--batch-check=%(objectsize)",
                           stdin="".join(f"{o}\n" for o in listed).encode()).stdout.split()
         size = sum(int(n) for n in sizes if n.isdigit())
         if size > MAX_PUSH_BYTES:
-            raise Refused(f"в пуше {size >> 20} МБ — больше {MAX_PUSH_BYTES >> 20} МБ, так не пушу")
+            raise Refused(f"the push is {size >> 20} MB — over {MAX_PUSH_BYTES >> 20} MB, not pushing")
         digest = hashlib.sha256("\n".join([*(c[0] for c in new), "", *sorted(listed)]).encode()).hexdigest()
         return commits, len(listed), size, digest
 
     def leaving(self, name: str, ref: str, sha: str) -> str:
-        """The digest of what a push of `sha` (under `ref`) would carry against the mirror as it is now: «Отправить»
+        """The digest of what a push of `sha` (under `ref`) would carry against the mirror as it is now: «Send»
         compares it with the card's after fetching the mirror, so nothing the card did not list can leave."""
         with self._outbox_locks[name]:
             outbox = self._outbox(name)
             if self._rev(outbox, ref) != sha:
-                raise Refused("коммиты карточки потерялись у платформы — открой карточку заново")
+                raise Refused("the platform lost the card's commits — open the card again")
             return self._leaving(f"--git-dir={outbox}", sha)[3]
 
     def count(self, name: str, ref: str) -> tuple[str, str, int]:
         """(branch, tip, unpushed) for a ping's button: the branch fetched under `ref`, nothing more read."""
         if not self.ready(name):
-            raise Unavailable("зеркало ещё не подтянуто")
+            raise Unavailable("the mirror has not been fetched yet")
         with self._outbox_locks[name]:
             branch, sha, room = self._take(name, ref)
             room.close()
@@ -1255,12 +1255,12 @@ class CodeRepos:
     def branch_ok(self, name: str, branch: str) -> str:
         """'' when `branch` may be pushed to: a plain name the remote takes, never its default branch."""
         if not BRANCH.fullmatch(branch or "") or branch.startswith(("refs/", "heads/", "tags/", "remotes/")):
-            return "имя ветки: латиница, цифры и . _ / -, без .. и пробелов, не refs/…"
+            return "a branch name: Latin letters, digits and . _ / -, no .. or spaces, not refs/…"
         default = self.default_branch(name)
         if branch.casefold() in {default.casefold(), "main", "master", "head"}:
-            return f"в {branch} напрямую не пушу — только новая ветка и PR"
+            return f"not pushing to {branch} directly — only a new branch and a PR"
         done = self._git("check-ref-format", f"refs/heads/{branch}", check=False)
-        return "" if done.returncode == 0 else "такое имя ветки git не примет"
+        return "" if done.returncode == 0 else "git will not take such a branch name"
 
     def remote_sha(self, name: str, branch: str) -> str | None:
         """The remote's refs/heads/<branch> now (`ls-remote`): None when it has none."""
@@ -1278,13 +1278,13 @@ class CodeRepos:
         never forced, never a tag, never the default branch. On GitLab the merge request comes with the push."""
         repo = self.repos[name]
         if repo.off:
-            return Pushed(False, said=f"Репозиторий выключен: {repo.off}.")
+            return Pushed(False, said=f"The repository is off: {repo.off}.")
         if why := self.branch_ok(name, branch):
-            return Pushed(False, said=f"Не пушу: {why}.")
+            return Pushed(False, said=f"Not pushing: {why}.")
         with self._outbox_locks[name]:
             outbox = self.outbox / f"{name}.git"
             if self._rev(outbox, ref) != sha:
-                return Pushed(False, said="Коммиты карточки потерялись у платформы — открой карточку заново.")
+                return Pushed(False, said="The platform lost the card's commits — open the card again.")
             options: list[str] = []
             if repo.host == "gitlab.com":
                 base = self.default_branch(name)
@@ -1304,12 +1304,12 @@ class CodeRepos:
                 url = found.group(0) if found else ""
             return Pushed(True, url=url)
         if mark == "!" or "non-fast-forward" in out or "fetch first" in out:
-            return Pushed(False, said=f"На удалённом ветка {branch} уже другая — ответь на карточку другим именем "
-                                      "ветки.")
+            return Pushed(False, said=f"The branch {branch} on the remote is already different — reply to the card with "
+                                      "another branch name.")
         if "workflow" in err and "scope" in err:
-            return Pushed(False, said="Токен не пускает правки .github/workflows — их пушит Владелец сам.")
+            return Pushed(False, said="The token does not let edits to .github/workflows through — you push those yourself.")
         log.warning("push of %s to %s refused: %s", name, branch, err or out)
-        return Pushed(False, said=f"Пуш не прошёл: {(err or out or f'код {done.returncode}')[-300:]}")
+        return Pushed(False, said=f"The push failed: {(err or out or f'code {done.returncode}')[-300:]}")
 
     async def open_pr(self, name: str, branch: str, title: str, body: str) -> tuple[str, str]:
         """(url, said) of a pull request from `branch` into the default branch on GitHub: opened, or the open one
@@ -1334,14 +1334,14 @@ class CodeRepos:
                     exists = res.status == 422 and "already exists" in json.dumps(data)
                     if not exists:
                         said = plain(str(data.get("message") or res.reason or ""), repo.secret)[:200]
-                        return "", f"PR не открылся: GitHub ответил {res.status} {said}".strip()
+                        return "", f"The PR did not open: GitHub answered {res.status} {said}".strip()
                 async with http.get(f"{api}/repos/{repo.path}/pulls", headers=headers, proxy=proxy,
                                     params={"head": f"{owner}:{branch}", "state": "open"}) as res:
                     data = await _json(res, list)
                     found = next((p.get("html_url") for p in data if isinstance(p, dict)), None)
-                    return (found, "") if isinstance(found, str) else ("", "PR уже есть, но ссылку GitHub не дал.")
+                    return (found, "") if isinstance(found, str) else ("", "The PR already exists, but GitHub gave no link.")
         except (aiohttp.ClientError, TimeoutError) as exc:
-            return "", f"GitHub не ответил ({type(exc).__name__}) — ветка запушена, PR открой на GitHub."
+            return "", f"GitHub did not answer ({type(exc).__name__}) — the branch is pushed, open the PR on GitHub."
 
 
 def _one_line(text: str, cap: int) -> str:

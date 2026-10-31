@@ -71,7 +71,7 @@ def test_a_token_goes_to_the_server_through_stdin_and_only_names_are_printed(cap
     assert "-o 10002 -g 10002 /srv/retinue/mail/keys" in command[2] and "chmod 600" in command[2]
     assert command[2].endswith("sudo mv /srv/retinue/mail/keys/owner@example.org.gmail.json.new "
                                "/srv/retinue/mail/keys/owner@example.org.gmail.json"), "replaced at once"
-    assert capsys.readouterr().out == "Сервер server: /srv/retinue/mail/keys/owner@example.org.gmail.json (600, uid 10002)\n"
+    assert capsys.readouterr().out == "Server server: /srv/retinue/mail/keys/owner@example.org.gmail.json (600, uid 10002)\n"
     with pytest.raises(login.Refused):
         login.remote("a'; reboot; '.json")
 
@@ -84,15 +84,15 @@ def test_a_token_goes_to_the_server_through_stdin_and_only_names_are_printed(cap
     assert login.main(["--account", "owner@example.org", "--kind", "gmail", "--client", str(client),
                        "--host", "server"]) == 1
     out = capsys.readouterr()
-    assert "вход выполнен в someone@else.org, а не в owner@example.org: токен не записан" in out.err
+    assert "signed in to someone@else.org, not to owner@example.org: the token was not written" in out.err
     assert len(ran) == 1, "the wrong account: nothing is put on the server"
     monkeypatch.setattr(login, "who", lambda kind, token: "owner@example.org")
     assert login.main(["--account", "owner@example.org", "--kind", "gmail", "--client", str(client),
                        "--host", "server"]) == 0
     assert [a[1] for a in ran[1:]] == ["client.json", "owner@example.org.gmail.json"]
     out = capsys.readouterr()
-    assert "secret-rt" not in out.out + out.err and out.out.endswith("Готово: owner@example.org, gmail. Сборщик возьмёт "
-                                                                     "ключ при следующем опросе (до 10 минут).\n")
+    assert "secret-rt" not in out.out + out.err and out.out.endswith("Done: owner@example.org, gmail. The collector picks "
+                                                                     "up the key at its next poll (within 10 minutes).\n")
 
 
 def id_token(**claims) -> str:
@@ -120,7 +120,7 @@ def test_a_send_token_is_checked_by_its_id_token_and_kept_apart_from_the_collect
     assert login.main(["--account", "owner@example.org", "--kind", "send", "--client", str(client),
                        "--host", "server"]) == 0
     assert put == [("client.json", {"kind": "send"}), ("owner@example.org.send.json", {"kind": "send"})]
-    assert capsys.readouterr().out.endswith("Готово: owner@example.org, send. Отправка возьмёт ключ при следующем письме.\n")
+    assert capsys.readouterr().out.endswith("Done: owner@example.org, send. The sender picks up the key with the next letter.\n")
     keys = tmp_path / "keys"
     keys.mkdir()
     (keys / "client.json").write_text(json.dumps({"client_id": "cid", "client_secret": "cs"}))

@@ -64,12 +64,12 @@ def test_busy_is_waited_out_and_a_failed_delete_does_not_lose_the_text():
 
 
 @pytest.mark.parametrize("status, detail, reason", [
-    (429, "rate_limit_exceeded", "ElevenLabs перегружен"),
-    (402, "insufficient_credits", "кончились кредиты ElevenLabs"),
-    (401, "quota_exceeded", "кончились кредиты ElevenLabs"),
-    (401, "invalid_api_key", "ElevenLabs не принял ключ"),
-    (422, "invalid_file", "ElevenLabs не принял файл"),
-    (500, "", "ElevenLabs ответил 500"),
+    (429, "rate_limit_exceeded", "ElevenLabs is overloaded"),
+    (402, "insufficient_credits", "ElevenLabs is out of credits"),
+    (401, "quota_exceeded", "ElevenLabs is out of credits"),
+    (401, "invalid_api_key", "ElevenLabs did not accept the key"),
+    (422, "invalid_file", "ElevenLabs did not accept the file"),
+    (500, "", "ElevenLabs answered 500"),
 ])
 def test_failures_are_told_with_the_reason(status, detail, reason):
     s, seen, pauses = scribe(lambda request, attempt: httpx.Response(status, json={"detail": {"status": detail}}))
@@ -80,7 +80,7 @@ def test_failures_are_told_with_the_reason(status, detail, reason):
 
 def test_no_key_no_request_and_no_network():
     s, seen, _ = scribe(ok, key="")
-    with pytest.raises(SpeechError, match="нет ключа ElevenLabs"):
+    with pytest.raises(SpeechError, match="no ElevenLabs key"):
         asyncio.run(s.transcribe(b"x", "voice.ogg", "audio/ogg"))
     assert seen == []
 
@@ -88,13 +88,13 @@ def test_no_key_no_request_and_no_network():
         raise httpx.ConnectError("connection refused")
 
     s, _, _ = scribe(down)
-    with pytest.raises(SpeechError, match="ElevenLabs недоступен"):
+    with pytest.raises(SpeechError, match="ElevenLabs is unavailable"):
         asyncio.run(s.transcribe(b"x", "voice.ogg", "audio/ogg"))
 
 
 def test_a_200_that_is_not_json_is_an_error_not_a_crash():
     s, _, _ = scribe(lambda request, attempt: httpx.Response(200, content=b"<html>proxy</html>"))
-    with pytest.raises(SpeechError, match="ElevenLabs ответил не JSON"):
+    with pytest.raises(SpeechError, match="ElevenLabs answered with no JSON"):
         asyncio.run(s.transcribe(b"x", "voice.ogg", "audio/ogg"))
 
 

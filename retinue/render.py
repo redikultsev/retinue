@@ -68,7 +68,7 @@ def tables_to_lists(text: str) -> str:
 
 def render(text: str) -> tuple[str, str]:
     """Return (body, formatted_body) for an m.room.message."""
-    body = tables_to_lists(text).strip() or "(пусто)"
+    body = tables_to_lists(text).strip() or "(empty)"
     return body, _md.render(body).strip()
 
 
@@ -274,4 +274,4 @@ def render_telegram(text: str, hosts: Collection[str] = ()) -> list[str]:
             current = f"{current}\n\n{piece}" if current else piece
     if current:
         messages.append(current)
-    return messages or ["(пусто)"]
+    return messages or ["(empty)"]

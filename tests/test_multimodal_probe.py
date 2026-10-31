@@ -22,14 +22,15 @@ class Engine:
 
     async def run(self, prompt, session_id, on_text=None, turn_id=None):
         self.runs.append((prompt, session_id))
-        answers = {"Какое число": "7314", "Какого цвета": "Жёлтый", "Какой номер": "4711", "Какое число было": "7314 и 4711"}
+        answers = {"What number is": "7314", "What colour": "Yellow", "What is the invoice": "4711",
+                   "What number was": "7314 and 4711"}
         last = prompt if isinstance(prompt, str) else prompt[-1]["text"]
-        answer = next((a for q, a in sorted(answers.items(), key=lambda x: -len(x[0])) if last.startswith(q)), "не вижу")
+        answer = next((a for q, a in sorted(answers.items(), key=lambda x: -len(x[0])) if last.startswith(q)), "I can't see it")
         return EngineResult(text=answer, is_error=False, session_id=session_id or f"s{len(self.runs)}")
 
     async def compact(self, session_id):
         self.runs.append(("/compact", session_id))
-        return EngineResult(text="Контекст сжат.", is_error=False, session_id=session_id, compacted=True)
+        return EngineResult(text="Context compacted.", is_error=False, session_id=session_id, compacted=True)
 
 
 def test_the_probe_sends_a_real_photo_and_pdf_and_resumes_one_session():

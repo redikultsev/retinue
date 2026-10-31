@@ -1,25 +1,25 @@
-"""The owner's one queue «Ждут тебя»: what waits for him across the sessions and the assistant's world, grouped by what
+"""The owner's one queue «Waiting for you»: what waits for him across the sessions and the assistant's world, grouped by what
 he does about it, not by where it came from. The face shows it on its home screen (`GET /api/feed`),
 the router as text for `/wait` (`POST /owner/feed`).
 
 Built by code on every read from the platform's own rows — never a copy kept beside them that could drift:
 
-- «Ответить на вопрос»: a question card (AskUserQuestion) shown and not answered;
-- «Решить»: an approval card shown, a courier card of the last day whose session he has not written to since, and a
-  session with Base files not committed yet («В Базу», `tobase`);
-- «Выбрать»: a ping (`pings`) whose suggested replies are still open — none pressed, no message of his after it, no
+- «Answer the question»: a question card (AskUserQuestion) shown and not answered;
+- «Decide»: an approval card shown, a courier card of the last day whose session he has not written to since, and a
+  session with Base files not committed yet («To the Base», `tobase`);
+- «Choose»: a ping (`pings`) whose suggested replies are still open — none pressed, no message of his after it, no
   newer ping; or a session waiting with no card shown;
-- «Прочитать»: a session whose finished turn he has not read (the session's `unread`; nothing without it);
-- «От ассистентки»: the assistant's digest.
+- «Read»: a session whose finished turn he has not read (the session's `unread`; nothing without it);
+- «From the assistant»: the assistant's digest.
 
 The digest is the one thing kept. The router knows what waits in her world — a letter or a chat she judged to ask
-something of him, a draft waiting for «Отправить», a deadline of the base — and pushes it here (`POST /owner/waiting`)
+something of him, a draft waiting for «Send», a deadline of the base — and pushes it here (`POST /owner/waiting`)
 whole each time it changes and at least hourly; the platform never calls the router. It is minimal by contract:
 an id, a kind, a display name, a one-line title, a time, a sphere — no text of a letter, no address; a deadline also
 its day and its Record's path. What the face does with it is one link to the bot's chat: sending and deciding stay
 in Telegram, where an outward action is a button under its card. A deadline whose time has not come yet (`since`
-ahead) is no one's queue: the face shows it only under «Сроки». The same push carries the hub's status chips
-(`chips`: the backup, the limit, the hub's build), for the face's «Сегодня».
+ahead) is no one's queue: the face shows it only under «Deadlines». The same push carries the hub's status chips
+(`chips`: the backup, the limit, the hub's build), for the face's «Today».
 """
 
 from __future__ import annotations
@@ -38,16 +38,16 @@ from .tobase import files_word
 if TYPE_CHECKING:
     from .sessions import PlatformStore
 
-ACTIONS = (("answer", "Ответить на вопрос"), ("decide", "Решить"), ("choose", "Выбрать"), ("read", "Прочитать"),
-           ("assistant", "От ассистентки"))
-COURIER_S = 86400            # a courier card waits in «Решить» this long, unless he wrote into its session after it
+ACTIONS = (("answer", "Answer the question"), ("decide", "Decide"), ("choose", "Choose"), ("read", "Read"),
+           ("assistant", "From the assistant"))
+COURIER_S = 86400            # a courier card waits in «Decide» this long, unless he wrote into its session after it
 RECENT_S = 7 * 86400         # a summary older than this leaves no choice and nothing to read in the feed
 ESSENCE_CHARS = 200          # the one line a row says
-REPLIES, REPLY_CHARS = 3, 80  # suggested replies shown under a «Выбрать» row
+REPLIES, REPLY_CHARS = 3, 80  # suggested replies shown under a «Choose» row
 TELEGRAM_ROWS = 10           # `/wait` names this many rows; the rest are counted
-BASE_HINT = "Нажми «В Базу» под её итогом или открой в приложении."
-NOBODY_HINT = "Они в карточке «В Базу» любой сессии Базы, выключенными: включи нужные и закоммить."
-PUSH_HINT = "Нажми «Запушить» под её итогом или открой в приложении."
+BASE_HINT = "Press «To the Base» under its result or open it in the app."
+NOBODY_HINT = "They are on the «To the Base» card of any Base session, turned off: turn on the ones you want and commit."
+PUSH_HINT = "Press «Push» under its result or open it in the app."
 
 # The digest: what the router may push, and nothing more.
 DIGEST_KINDS = ("letter", "chat", "draft", "deadline")
@@ -68,7 +68,7 @@ CHIP_KEYS = ("health", "backup", "limit", "build")
 CHIP_LEVELS = ("ok", "warn", "bad")
 CHIP_CHARS = 60
 EMAIL = re.compile(r"[^\s@<>()\[\]\"',;]+@[^\s@<>()\[\]\"',;]+\.[^\s@<>()\[\]\"',;]+")
-ADDRESS = "‹адрес›"
+ADDRESS = "‹address›"
 
 
 class Refused(ValueError):
@@ -77,7 +77,7 @@ class Refused(ValueError):
 
 def _text(value: object, cap: int) -> str:
     """Somebody's words for one line: folded (NFKC: a fullwidth ＠ is an @) and invisible characters dropped before
-    anything shaped as an e-mail address is written as ‹адрес› — the digest carries a display name, never an
+    anything shaped as an e-mail address is written as ‹address› — the digest carries a display name, never an
     address — then one line, cut."""
     return line(EMAIL.sub(ADDRESS, line(unicodedata.normalize("NFKC", str(value)), 4 * DIGEST_BYTES)), cap)
 
@@ -86,30 +86,30 @@ def clean(body: object, now: float) -> tuple[list[dict], str]:
     """The router's digest, checked: `{items: [{id, kind, who, title, since, sphere?}], bot?}`. Every item must fit,
     or none is taken (`Refused`): it replaces the one on record whole, so half of it would read as the rest done."""
     if not isinstance(body, dict) or not isinstance(body.get("items"), list):
-        raise Refused("items: не список")
+        raise Refused("items: not a list")
     bot = body.get("bot") or ""
     if not isinstance(bot, str) or (bot and not BOT.fullmatch(bot)):
-        raise Refused("bot: не имя бота")
+        raise Refused("bot: not a bot name")
     if len(body["items"]) > DIGEST_ITEMS:
-        raise Refused(f"items: больше {DIGEST_ITEMS}")
+        raise Refused(f"items: over {DIGEST_ITEMS}")
     items, seen = [], set()
     for n, item in enumerate(body["items"]):
         allowed = DIGEST_KEYS | DEADLINE_KEYS if isinstance(item, dict) and item.get("kind") == "deadline" \
             else DIGEST_KEYS
         if not isinstance(item, dict) or not allowed >= set(item) or not DIGEST_KEYS - {"sphere"} <= set(item):
-            raise Refused(f"items[{n}]: поля не те")
+            raise Refused(f"items[{n}]: wrong fields")
         if not isinstance(item["id"], str) or not DIGEST_ID.fullmatch(item["id"]) or item["id"] in seen:
-            raise Refused(f"items[{n}].id: не тот или повторяется")
+            raise Refused(f"items[{n}].id: invalid or repeated")
         if item["kind"] not in DIGEST_KINDS:
-            raise Refused(f"items[{n}].kind: не из {', '.join(DIGEST_KINDS)}")
+            raise Refused(f"items[{n}].kind: not one of {', '.join(DIGEST_KINDS)}")
         since = item["since"]
         if type(since) not in (int, float) or not math.isfinite(since) or not 0 < since <= now + FUTURE_S:
-            raise Refused(f"items[{n}].since: не время")
+            raise Refused(f"items[{n}].since: not a time")
         sphere = item.get("sphere")
         if sphere is not None and (not isinstance(sphere, str) or not SPHERE.fullmatch(sphere)):
-            raise Refused(f"items[{n}].sphere: не имя сферы")
+            raise Refused(f"items[{n}].sphere: not a sphere name")
         if not isinstance(item["who"], str) or not isinstance(item["title"], str):
-            raise Refused(f"items[{n}]: who и title — строки")
+            raise Refused(f"items[{n}]: who and title must be strings")
         seen.add(item["id"])
         items.append({"id": item["id"], "kind": item["kind"], "who": _text(item["who"], WHO_CHARS),
                       "title": _text(item["title"], TITLE_CHARS), "since": float(since), "sphere": sphere,
@@ -127,11 +127,11 @@ def _deadline(item: dict, n: int) -> dict:
         except ValueError:
             ok = False
         if not ok:
-            raise Refused(f"items[{n}].when: не дата")
+            raise Refused(f"items[{n}].when: not a date")
         out["when"] = when
     if "path" in item:
         if not isinstance(item["path"], str) or not RECORD.fullmatch(item["path"]):
-            raise Refused(f"items[{n}].path: не путь Записи")
+            raise Refused(f"items[{n}].path: not a Record path")
         out["path"] = item["path"]
     return out
 
@@ -141,12 +141,12 @@ def clean_chips(body: object) -> list[dict]:
     off the contract refuses the whole push (`Refused`), as an item does."""
     chips = body.get("chips", []) if isinstance(body, dict) else []
     if not isinstance(chips, list) or len(chips) > len(CHIP_KEYS):
-        raise Refused("chips: не список")
+        raise Refused("chips: not a list")
     out, seen = [], set()
     for n, chip in enumerate(chips):
         if not isinstance(chip, dict) or set(chip) != {"key", "text", "level"} or chip["key"] not in CHIP_KEYS or \
                 chip["key"] in seen or chip["level"] not in CHIP_LEVELS or not isinstance(chip["text"], str):
-            raise Refused(f"chips[{n}]: не тот")
+            raise Refused(f"chips[{n}]: invalid")
         seen.add(chip["key"])
         out.append({"key": chip["key"], "text": _text(chip["text"], CHIP_CHARS), "level": chip["level"]})
     return out
@@ -245,27 +245,27 @@ class Feed:
                 {**self._row(f"card:{approval_id}", "answer" if question else "decide", approval["kind"], session,
                              approval["created"], essence),
                  "approval": approval, "card": questions.key(approval_id, n) if question else None})
-        for session in sessions.values():  # «В Базу»: its files wait for the owner's commit, since the first of them
+        for session in sessions.values():  # «To the Base»: its files wait for the owner's commit, since the first of them
             if session.get("base"):
                 since = db.execute("SELECT MIN(at) FROM base_files WHERE session = ?", (session["id"],)).fetchone()[0]
                 out["decide"].append({**self._row(f"base:{session['id']}", "decide", "base", session,
-                                                  since or session["at"], f"В Базу: {files_word(session['base'])}"),
+                                                  since or session["at"], f"To the Base: {files_word(session['base'])}"),
                                       "base": session["base"], "hint": BASE_HINT})
-        topush = getattr(self, "topush", None)  # «Запушить»: commits no branch of the remote has yet
+        topush = getattr(self, "topush", None)  # «Push»: commits no branch of the remote has yet
         for session in sessions.values():
             if session.get("push") and topush is not None and (repos := topush.unpushed(session["id"])):
                 since = db.execute("SELECT MIN(at) FROM push_touched WHERE session = ?", (session["id"],)).fetchone()[0]
                 named = ", ".join(f"{repo} · {n}" for repo, n in repos)
                 out["decide"].append({**self._row(f"push:{session['id']}", "decide", "push", session,
-                                                  since or session["at"], f"Запушить: {named}"),
+                                                  since or session["at"], f"Push: {named}"),
                                       "push": sum(n for _, n in repos), "repos": [r for r, _ in repos],
                                       "hint": PUSH_HINT})
         tobase = getattr(self, "tobase", None)  # set by the platform; nobody's files are never left unseen
         if tobase is not None and (nobodys := tobase.nobodys()) and \
                 (carrier := sessions.get(tobase.carrier() or "")) is not None:
             out["decide"].append({**self._row("base:nobody", "decide", "base", carrier, now,
-                                              f"Ничьи файлы Базы: {files_word(len(nobodys))} — изменены, но ни одной "
-                                              "сессией"), "title": "Ничьи файлы Базы", "base": len(nobodys),
+                                              f"Nobody's Base files: {files_word(len(nobodys))} — changed, but by no "
+                                              "session"), "title": "Nobody's Base files", "base": len(nobodys),
                                   "hint": NOBODY_HINT})
         said = {session: (seq, json.loads(data)) for session, seq, data in db.execute(
             "SELECT n.session, n.seq, n.data FROM notes n JOIN (SELECT MAX(seq) AS seq FROM notes WHERE kind = "
@@ -292,7 +292,7 @@ class Feed:
         out["assistant"] = [{"key": f"assistant:{i['id']}", "action": "assistant", "source": i["kind"],
                              "session": None, "track": None, **self._sphere(i.get("sphere")), "title": i["who"],
                              "since": i["since"], "essence": i["title"], "ref": i["id"]}
-                            for i in items if i["since"] <= now]  # a deadline days ahead waits under «Сроки» only
+                            for i in items if i["since"] <= now]  # a deadline days ahead waits under «Deadlines» only
         return [row for action, _ in ACTIONS for row in out[action]]
 
     def _row(self, key: str, action: str, source: str, session: dict, since: float, essence: str) -> dict:
@@ -308,7 +308,7 @@ class Feed:
 
     def face(self, now: float) -> dict:
         """`GET /api/feed`: the rows by group, each card whole (the face decides it in place), the digest's age and
-        the bot's name for «Открыть в Telegram»."""
+        the bot's name for «Open in Telegram»."""
         rows = self.rows(now)
         items, bot, at = self.digest()
         groups = [{"action": action, "title": title, "rows": [r for r in rows if r["action"] == action]}

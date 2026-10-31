@@ -24,8 +24,8 @@ ACTIVE, RUNNING, SENT, CANCELLED = "active", "running", "sent", "cancelled"
 MAX_TEXT = 500
 SUMMARY_AT = "09:00"  # the morning summary, the owner's wall time
 WEEKLY_AT = (6, "18:00")  # the weekly review of his goals: Sunday (Monday is 0), his wall time
-ID_NOTE = "id — для отмены и переноса; Владельцу его не называй, говори, о чём и когда."
-REPEATS = {"daily": "каждый день", "weekdays": "по будням", "weekly": "каждую неделю", "monthly": "каждый месяц"}
+ID_NOTE = "The id is for cancelling and moving; do not tell it to the owner, say what and when."
+REPEATS = {"daily": "every day", "weekdays": "on weekdays", "weekly": "every week", "monthly": "every month"}
 _COLUMNS = "id, kind, text, local, tz, due, status, data"
 
 
@@ -94,42 +94,42 @@ class Scheduler:
         try:
             moment = clock.parse(when, self.tz)
         except ValueError as exc:
-            return None, f"Не поставила: {exc}. Время — по {clock.label(self.tz)}."
+            return None, f"Not set: {exc}. The time is in {clock.label(self.tz)}."
         if weekday.strip():
             said = clock.weekday(weekday)
             if said is None:
-                return None, f"Не поставила: «{weekday}» — не день недели."
+                return None, f"Not set: «{weekday}» is not a day of the week."
             if said != moment.weekday():
-                return None, (f"Не поставила: {moment:%Y-%m-%d} — {clock.WEEKDAYS[moment.weekday()]}, "
-                              f"а не {clock.WEEKDAYS[said]}. Проверь дату.")
+                return None, (f"Not set: {moment:%Y-%m-%d} is a {clock.WEEKDAYS[moment.weekday()]}, "
+                              f"not a {clock.WEEKDAYS[said]}. Check the date.")
         if moment.timestamp() <= now:
-            return None, (f"Не поставила: {clock.day(moment.timestamp(), self.tz)} уже прошло. "
-                          f"Сейчас {clock.stamp(now, self.tz)}.")
+            return None, (f"Not set: {clock.day(moment.timestamp(), self.tz)} has already passed. "
+                          f"It is now {clock.stamp(now, self.tz)}.")
         return moment, ""
 
     def add(self, text: str, when: str, weekday: str, now: float, repeat: str = "") -> tuple[bool, str]:
         text = " ".join(text.split())[:MAX_TEXT]
         repeat = repeat.strip().lower()
         if not text:
-            return False, "Не поставила: нет текста напоминания."
+            return False, "Not set: the reminder has no text."
         if repeat and repeat not in REPEATS:
-            return False, f"Не поставила: повтор «{repeat}» не знаю. Можно: {', '.join(REPEATS)} или пусто."
+            return False, f"Not set: unknown repeat «{repeat}». Allowed: {', '.join(REPEATS)} or empty."
         moment, refusal = self.when(when, weekday, now)
         if moment is None:
             return False, refusal
         if repeat == "weekdays" and moment.weekday() >= 5:
-            return False, "Не поставила: повтор по будням, а первый раз выпадает на выходной. Начни с буднего дня."
+            return False, "Not set: it repeats on weekdays, but the first time falls on a weekend. Start on a weekday."
         due = moment.timestamp()
         for job in self.reminders():
             if job.due == due and job.text.casefold() == text.casefold():
-                return True, f"Уже стоит: {self.line(job)}. {ID_NOTE}"
+                return True, f"Already set: {self.line(job)}. {ID_NOTE}"
         data = {"repeat": repeat, "day": moment.day} if repeat else {}
         cursor = self.db.execute("INSERT INTO jobs (kind, text, local, tz, due, status, data, created)"
                                  " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                  (REMINDER, text, f"{moment:%Y-%m-%dT%H:%M}", self.tz, due, ACTIVE, json.dumps(data),
                                   now))
         self.db.commit()
-        return True, f"Поставила: {self.line(self.get(cursor.lastrowid))}. {ID_NOTE}"
+        return True, f"Set: {self.line(self.get(cursor.lastrowid))}. {ID_NOTE}"
 
     def get(self, job_id: int) -> Job | None:
         row = self.db.execute(f"SELECT {_COLUMNS} FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -144,8 +144,8 @@ class Scheduler:
     def listing(self) -> str:
         jobs = self.reminders()
         if not jobs:
-            return "Активных напоминаний нет."
-        return "Активные напоминания, ближайшие первыми:\n" + "\n".join(self.line(job) for job in jobs) + f"\n{ID_NOTE}"
+            return "No active reminders."
+        return "Active reminders, nearest first:\n" + "\n".join(self.line(job) for job in jobs) + f"\n{ID_NOTE}"
 
     def _active_reminder(self, job_id: int) -> Job | None:
         job = self.get(job_id)
@@ -154,10 +154,10 @@ class Scheduler:
     def cancel(self, job_id: int) -> tuple[bool, str]:
         job = self._active_reminder(job_id)
         if job is None:
-            return False, f"Нет активного напоминания с id {job_id}. Список — list_reminders."
+            return False, f"No active reminder with id {job_id}. The list is list_reminders."
         self.db.execute("UPDATE jobs SET status = ? WHERE id = ? AND status = ?", (CANCELLED, job.id, ACTIVE))
         self.db.commit()
-        return True, f"Отменила: {self.line(job)}."
+        return True, f"Cancelled: {self.line(job)}."
 
     def today(self, now: float) -> list[Job]:
         """Active reminders that fire before the owner's day is over."""
@@ -300,17 +300,17 @@ class Scheduler:
     def move(self, job_id: int, when: str, weekday: str, now: float) -> tuple[bool, str]:
         job = self._active_reminder(job_id)
         if job is None:
-            return False, f"Нет активного напоминания с id {job_id}. Список — list_reminders."
+            return False, f"No active reminder with id {job_id}. The list is list_reminders."
         moment, refusal = self.when(when, weekday, now)
         if moment is None:
-            return False, refusal.replace("Не поставила", "Не перенесла")
+            return False, refusal.replace("Not set:", "Not moved:", 1)
         if job.data.get("repeat") == "weekdays" and moment.weekday() >= 5:
-            return False, "Не перенесла: повтор по будням, а новая дата — выходной. Выбери будний день."
+            return False, "Not moved: it repeats on weekdays, but the new date is a weekend. Choose a weekday."
         data = {**job.data, "day": moment.day} if job.data.get("repeat") else job.data  # a series moves whole
         self.db.execute("UPDATE jobs SET local = ?, tz = ?, due = ?, data = ? WHERE id = ? AND status = ?",
                         (f"{moment:%Y-%m-%dT%H:%M}", self.tz, moment.timestamp(), json.dumps(data), job.id, ACTIVE))
         self.db.commit()
-        return True, f"Перенесла: {self.line(self.get(job.id))}."
+        return True, f"Moved: {self.line(self.get(job.id))}."
 
 
 def following(job: Job, after: float) -> datetime | None:

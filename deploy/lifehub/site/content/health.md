@@ -1,5 +1,5 @@
 ---
-title: Здоровье
+title: Health
 soon: true
 ---
-Когда будет решено, какому Пространству базы это соответствует.
+Once it is decided which Space of the Base this matches.

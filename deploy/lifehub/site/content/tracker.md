@@ -1,4 +1,4 @@
 ---
-title: Трекер
+title: Tracker
 layout: tracker
 ---

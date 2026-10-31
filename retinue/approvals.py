@@ -27,25 +27,25 @@ from . import cliengine, courier, instructions, transcript
 from .config import LaneRef, Track
 
 NEVER: list[tuple[str, str]] = [
-    ("Bash(git push:*)", "отправить коммиты (git push)"),
-    ("Bash(gh pr create:*)", "открыть пулл-реквест (gh pr create)"),
-    ("Bash(gh pr merge:*)", "влить пулл-реквест (gh pr merge)"),
-    ("Bash(gh release create:*)", "выпустить релиз (gh release create)"),
-    ("Bash(npm publish:*)", "опубликовать пакет npm (npm publish)"),
-    ("Bash(pnpm publish:*)", "опубликовать пакет npm (pnpm publish)"),
-    ("Bash(yarn publish:*)", "опубликовать пакет npm (yarn publish)"),
-    ("Bash(uv publish:*)", "опубликовать пакет PyPI (uv publish)"),
-    ("Bash(twine upload:*)", "опубликовать пакет PyPI (twine upload)"),
-    ("Bash(cargo publish:*)", "опубликовать крейт (cargo publish)"),
-    ("Bash(docker push:*)", "отправить образ (docker push)"),
-    ("Bash(kubectl apply:*)", "выкатить в кластер (kubectl apply)"),
-    ("Bash(ssh:*)", "зайти на другую машину (ssh)"),
-    ("Bash(scp:*)", "скопировать на другую машину (scp)"),
-    ("Bash(sftp:*)", "скопировать на другую машину (sftp)"),
-    ("Bash(rsync:*)", "синхронизировать с другой машиной (rsync)"),
-    ("Bash(sendmail:*)", "отправить письмо (sendmail)"),
-    ("Bash(mail:*)", "отправить письмо (mail)"),
-    ("Bash(mailx:*)", "отправить письмо (mailx)"),
+    ("Bash(git push:*)", "push commits (git push)"),
+    ("Bash(gh pr create:*)", "open a pull request (gh pr create)"),
+    ("Bash(gh pr merge:*)", "merge a pull request (gh pr merge)"),
+    ("Bash(gh release create:*)", "publish a release (gh release create)"),
+    ("Bash(npm publish:*)", "publish an npm package (npm publish)"),
+    ("Bash(pnpm publish:*)", "publish an npm package (pnpm publish)"),
+    ("Bash(yarn publish:*)", "publish an npm package (yarn publish)"),
+    ("Bash(uv publish:*)", "publish a PyPI package (uv publish)"),
+    ("Bash(twine upload:*)", "publish a PyPI package (twine upload)"),
+    ("Bash(cargo publish:*)", "publish a crate (cargo publish)"),
+    ("Bash(docker push:*)", "push an image (docker push)"),
+    ("Bash(kubectl apply:*)", "deploy to a cluster (kubectl apply)"),
+    ("Bash(ssh:*)", "log in to another machine (ssh)"),
+    ("Bash(scp:*)", "copy to another machine (scp)"),
+    ("Bash(sftp:*)", "copy to another machine (sftp)"),
+    ("Bash(rsync:*)", "sync with another machine (rsync)"),
+    ("Bash(sendmail:*)", "send an email (sendmail)"),
+    ("Bash(mail:*)", "send an email (mail)"),
+    ("Bash(mailx:*)", "send an email (mailx)"),
 ]
 # The never list read the gate's own way too, for what the CLI's matcher misses: `git -C . push`, `env git push`,
 # `sh -c 'git push'`, `/usr/bin/ssh`. Each entry's words, in order, anywhere in one command of the text (no `;`, `&`,
@@ -76,7 +76,7 @@ def never_in(command: str) -> str:
 
 def never_why(label: str) -> str:
     """The card's line for a command whose text names a never-list action no never rule caught."""
-    return f"Похоже на действие только для Владельца: {label} — проверь команду целиком"
+    return f"Looks like an action only you take: {label} — check the whole command"
 
 
 # Always a card, on every lane and track, whatever the classifier would say. Empty: what leaves the system is the never
@@ -94,7 +94,7 @@ BASE_DENY = ["CronCreate", "CronDelete", "ScheduleWakeup", "RemoteTrigger", "Ent
 WEB = ["WebSearch", "WebFetch"]
 
 WORK = "/work"  # the lane's own view of its work volume; the platform reads it at `LaneRef.work_mount`
-OPEN_LIMIT = 4096  # one Telegram message: a longer card offers only «Открыть»
+OPEN_LIMIT = 4096  # one Telegram message: a longer card offers only «Open»
 APPROVE, REJECT, OPEN = "approve", "reject", "open"
 
 
@@ -216,10 +216,10 @@ def digest(tool: str, tool_input: dict, cwd: str, file_hash: str) -> str:
 # there. A shape check is a speed bump against a token written out whole, not against one the model encodes; the
 # lock is that no lane holds the token but in a pipe to its CLI (`lane_host.token_pipe`; the platform hands it over).
 TOKEN_SHAPE = re.compile(r"sk-ant-[a-z]{2,8}[0-9]{0,4}-[A-Za-z0-9_-]{16,}", re.IGNORECASE)
-SECRET = ("Отказано: во входе вызова то, что похоже на токен Anthropic (sk-ant-…). Такое не уходит никуда — ни в адрес, "
-          "ни в поиск, ни в команду, ни в файл.")
-OUTSIDE = ("Отказано: файловые инструменты работают только внутри /work, а этот путь ведёт наружу — сам или по "
-           "ссылке. Снаружи окружение CLI, его настройки и записи линии; свои файлы держи в рабочей папке.")
+SECRET = ("Denied: the call's input holds what looks like an Anthropic token (sk-ant-…). That goes nowhere — not into "
+          "an address, a search, a command or a file.")
+OUTSIDE = ("Denied: file tools work only inside /work, and this path leads outside — by itself or through a link. "
+           "Outside are the CLI's environment, its settings and the lane's records; keep your files in the work folder.")
 HOME = "/lane/config"  # the CLI's HOME in every lane: `~` in a path is here
 SPILL = re.compile(r"/lane/config/claude/projects/[^/]+/[^/]+/tool-results/[^/]+")
 SPILL_TOOLS = {"Read", "Grep"}
@@ -354,48 +354,48 @@ def input_text(approval: dict) -> str:
 
 def card(approval: dict, session: str, track: str) -> tuple[courier.CardView, tuple[str, ...]]:
     """The approval card and the buttons it offers: approve and reject, or — for an input too long for one
-    message — only «Открыть», which sends it whole."""
+    message — only «Open», which sends it whole."""
     text = input_text(approval)
     body, hidden = _shown(text)
-    head = [f"Разрешение · {courier.line(track)} · сессия {session}", f"Инструмент: {courier.line(approval['tool'])}",
-            f"Папка: {courier.line(approval['cwd'], 200)}"]
+    head = [f"Permission · {courier.line(track)} · session {session}", f"Tool: {courier.line(approval['tool'])}",
+            f"Folder: {courier.line(approval['cwd'], 200)}"]
     if why := approval.get("why"):
         head.append(courier.line(why, 300))
     if hidden:
-        head.append("Внимание: во вводе невидимые символы — они показаны кодами ⟦U+…⟧")
+        head.append("Warning: the input has invisible characters — they are shown as codes ⟦U+…⟧")
     if found := courier.findings(text):
-        head.append("В тексте найдено: " + "; ".join(found))
-    head.append(f"Ввод, {len(text)} знаков:")
+        head.append("Found in the text: " + "; ".join(found))
+    head.append(f"Input, {len(text)} characters:")
     view = courier.CardView(head=head, body=body)
     if len(view.plain()) <= OPEN_LIMIT:
         return view, (APPROVE, REJECT)
-    view.body = "Ввод длинный — целиком он придёт файлом по кнопке «Открыть»."
+    view.body = "The input is long — «Open» sends it whole as a file."
     return view, (OPEN,)
 
 
 def classifier_why(reason: str) -> str:
     """The card's line for a call auto mode's classifier stopped: its reason as the CLI gave it (`[Remote Repoint]`)."""
-    return f"Классификатор остановил: {reason or 'без причины'}"
+    return f"Stopped by the classifier: {reason or 'no reason given'}"
 
 
 def rule_why(rule: str) -> str:
     """The card's line for a call under a card rule: it comes to the owner whatever the classifier would say."""
-    return f"Всегда спрашивать: правило {rule}"
+    return f"Always ask: rule {rule}"
 
 
 def blocked_card(approval: dict, session: str, track: str, why: str) -> courier.CardView:
     """A call auto's classifier blocked and that did not come back as a card (no retry, or the model went on): the
     owner sees it anyway, with no button — the session has moved past it."""
     body, hidden = _shown(input_text(approval))
-    head = [f"Заблокировано · {courier.line(track)} · сессия {session}", f"Инструмент: {courier.line(approval['tool'])}",
-            f"Папка: {courier.line(approval['cwd'], 200)}", courier.line(why, 300)]
+    head = [f"Blocked · {courier.line(track)} · session {session}", f"Tool: {courier.line(approval['tool'])}",
+            f"Folder: {courier.line(approval['cwd'], 200)}", courier.line(why, 300)]
     if hidden:
-        head.append("Внимание: во вводе невидимые символы — они показаны кодами ⟦U+…⟧")
-    return courier.CardView(head=head, body=body, status="Не выполнено: сессия пошла дальше без этого вызова. Нужен — "
-                                                         "напиши в сессию.")
+        head.append("Warning: the input has invisible characters — they are shown as codes ⟦U+…⟧")
+    return courier.CardView(head=head, body=body, status="Not run: the session went on without this call. If you need "
+                                                         "it, write to the session.")
 
 
-# A push or a pull request in the room is the owner's button «Запушить» (topush): a branch and a PR, by the platform.
+# A push or a pull request in the room is the owner's button «Push» (topush): a branch and a PR, by the platform.
 BY_BUTTON = {label for rule, label in NEVER if rule in ("Bash(git push:*)", "Bash(gh pr create:*)")}
 
 
@@ -405,14 +405,15 @@ def pushed_by_button(label: str, button: bool) -> bool:
 
 def courier_card(approval: dict, session: str, track: str, label: str, button: bool = False) -> courier.CardView:
     """A never-list call: not run, handed to the owner whole — the command, the session, the directory. `button`: the
-    session's lane has «Запушить», which a push or a PR goes by instead."""
+    session's lane has «Push», which a push or a PR goes by instead."""
     body, hidden = _shown(input_text(approval))
-    head = [f"Курьер · {courier.line(track)} · сессия {session}", f"Хочет: {label}",
-            f"Папка: {courier.line(approval['cwd'], 200)}"]
+    head = [f"Courier · {courier.line(track)} · session {session}", f"Wants: {label}",
+            f"Folder: {courier.line(approval['cwd'], 200)}"]
     if hidden:
-        head.append("Внимание: в команде невидимые символы — они показаны кодами ⟦U+…⟧")
-    status = ("Не выполняю: нажми «Запушить» под итогом сессии — платформа запушит ветку и откроет PR, не в main."
-              if pushed_by_button(label, button) else "Не выполняю: это делаешь ты сам — команда выше целиком.")
+        head.append("Warning: the command has invisible characters — they are shown as codes ⟦U+…⟧")
+    status = ("Not running it: press «Push» under the session's result — the platform pushes a branch and opens a PR, "
+              "not into main." if pushed_by_button(label, button)
+              else "Not running it: you do this yourself — the whole command is above.")
     return courier.CardView(head=head, body=body, status=status)
 
 
@@ -422,15 +423,17 @@ def courier_card(approval: dict, session: str, track: str, label: str, button: b
 # and on a subscription that is a noticeable share of the 5-hour window. A card left this long says so: pressing it is
 # such a resume.
 IDLE_WARN_S = 55 * 60
-IDLE_PREFIX = "Сессия простаивает"
+IDLE_PREFIX = "The session is idle"
+# Cards persisted before the switch to English carry the Russian line; it is taken out the same way.
+IDLE_PREFIXES = (IDLE_PREFIX, "Сессия простаивает")
 
 
 def idle_words(idle_s: float) -> str:
-    """«57 мин» under two hours, «3 ч» under a day, then «больше суток»."""
+    """«57 min» under two hours, «3 h» under a day, then «over a day»."""
     minutes = int(idle_s // 60)
     if minutes < 120:
-        return f"{minutes} мин"
-    return f"{minutes // 60} ч" if minutes < 24 * 60 else "больше суток"
+        return f"{minutes} min"
+    return f"{minutes // 60} h" if minutes < 24 * 60 else "over a day"
 
 
 def idle_line(idle_s: float, tokens: int | None) -> str | None:
@@ -439,28 +442,28 @@ def idle_line(idle_s: float, tokens: int | None) -> str | None:
     if idle_s < IDLE_WARN_S:
         return None
     thousands = round(tokens / 1000) if tokens else 0
-    size = f" (~{thousands} тыс. токенов)" if thousands else ""
-    return f"{IDLE_PREFIX} {idle_words(idle_s)} — продолжение перечитает контекст{size} без кэша"
+    size = f" (~{thousands}k tokens)" if thousands else ""
+    return f"{IDLE_PREFIX} {idle_words(idle_s)} — resuming re-reads the context{size} uncached"
 
 
 def idle_stamp(idle_s: float) -> str:
     """When the Telegram card is rewritten: past the threshold, at an hour and a half, then as the hours change — not
     every minute, and never saying fewer minutes than have passed by much."""
     if idle_s < 90 * 60:
-        return "55 мин"
-    return "90 мин" if idle_s < 7200 else idle_words(idle_s)
+        return "55 min"
+    return "90 min" if idle_s < 7200 else idle_words(idle_s)
 
 
 def without_idle(view: dict) -> dict:
     """A card no longer asking (decided, stale, expired): its idle line and stamp go — a resume's cost is moot."""
-    out = {**view, "head": [h for h in view.get("head", []) if not h.startswith(IDLE_PREFIX)]}
+    out = {**view, "head": [h for h in view.get("head", []) if not h.startswith(IDLE_PREFIXES)]}
     out.pop("idle", None)
     return out
 
 
 def with_idle(view: dict, line: str, stamp: str) -> dict:
-    """The card's view with `line` among its header lines — in place of an older one, before «Ввод, N знаков:» that
+    """The card's view with `line` among its header lines — in place of an older one, before «Input, N characters:» that
     names the body — and `stamp`, which says when it was last written."""
-    head = [h for h in view.get("head", []) if not h.startswith(IDLE_PREFIX)]
-    at = len(head) - 1 if head and head[-1].startswith("Ввод") else len(head)
+    head = [h for h in view.get("head", []) if not h.startswith(IDLE_PREFIXES)]
+    at = len(head) - 1 if head and head[-1].startswith(("Input", "Ввод")) else len(head)
     return {**view, "head": [*head[:at], line, *head[at:]], "idle": stamp}

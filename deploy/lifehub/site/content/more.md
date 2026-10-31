@@ -1,4 +1,4 @@
 ---
-title: Ещё
+title: More
 layout: more
 ---

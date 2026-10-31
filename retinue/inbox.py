@@ -49,7 +49,7 @@ LAST_READ_S = 5                         # a file is not started with less than t
 UNSHOWN = re.compile(r"[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]")
 # A worker's address space here: the platform's container is smaller than the router's (deploy/compose.yml).
 READER_MEMORY = 1024 * 1024 * 1024
-NOT_PASSED = "Не передано в сессию"
+NOT_PASSED = "Not passed to the session"
 # Pictures the reader re-encodes; any other image type (SVG, PSD, an icon) is a file like any other.
 RASTER = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp", "image/tiff", "image/heic", "image/heif"}
 EXTENSIONS = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
@@ -74,7 +74,7 @@ def clean(name: str) -> str:
 
 
 class Refused(Exception):
-    """Nothing of this message goes in. The text finishes «Не передано в сессию: …»."""
+    """Nothing of this message goes in. The text finishes «Not passed to the session: …»."""
 
 
 @dataclass
@@ -109,27 +109,27 @@ def given(raw: object) -> list[Given]:
     if raw is None:
         return []
     if not isinstance(raw, list) or len(raw) > MAX_FILES:
-        raise Refused(f"вложений больше {MAX_FILES} в одном сообщении")
+        raise Refused(f"more than {MAX_FILES} attachments in one message")
     out, total = [], 0
     for item in raw:
         if not isinstance(item, dict) or not all(isinstance(item.get(k), str) for k in
                                                  ("name", "media_type", "data", "sha256")):
-            raise Refused("вложение пришло не того вида")
+            raise Refused("an attachment came in the wrong shape")
         name = clean(item["name"])[:255]
-        label = f"«{name}»" if name else "фото"
+        label = f'"{name}"' if name else "photo"
         if len(item["data"]) > MAX_FILE * 4 // 3 + 4:
-            raise Refused(f"{label}: больше {MAX_FILE // 2**20} МБ")
+            raise Refused(f"{label}: over {MAX_FILE // 2**20} MB")
         try:
             data = base64.b64decode(item["data"], validate=True)
         except (binascii.Error, ValueError):
-            raise Refused(f"{label}: не base64") from None
+            raise Refused(f"{label}: not base64") from None
         if hashlib.sha256(data).hexdigest() != item["sha256"].lower():
-            raise Refused(f"{label}: пришло не целым — sha256 не сходится")
+            raise Refused(f"{label}: arrived incomplete — sha256 does not match")
         if not data:
-            raise Refused(f"{label}: пустой файл")
+            raise Refused(f"{label}: empty file")
         total += len(data)
         if total > MAX_TOTAL:
-            raise Refused(f"вложения вместе больше {MAX_TOTAL // 2**20} МБ")
+            raise Refused(f"attachments together over {MAX_TOTAL // 2**20} MB")
         out.append(Given(name, item["media_type"][:100], data))
     return out
 
@@ -187,15 +187,15 @@ async def prepare(text: str, items: list[Given]) -> Ready:
         else:
             ready.files.append({"name": name, "data": base64.b64encode(item.data).decode(),
                                 "sha256": hashlib.sha256(item.data).hexdigest()})
-            what = f"файл «{name}»"
-        named.append(f"{what} (в папке inbox/, путь ниже)" if kind == "file" else what)
+            what = f'file "{name}"'
+        named.append(f"{what} (in the inbox/ folder, path below)" if kind == "file" else what)
         thumb = await asyncio.to_thread(thumbnail, data) if kind == "image" else None
         ready.meta.append({"kind": kind, "name": item.name or name, "size": len(item.data), "what": what,
                            "thumb": thumb is not None})
         ready.thumbs.append(thumb)
     if not ready.meta:
         return ready
-    head = "\n\n".join(filter(None, [text, f"Приложено: {'; '.join(named)}."]))
+    head = "\n\n".join(filter(None, [text, f"Attached: {'; '.join(named)}."]))
     ready.prompt = [{"type": "text", "text": head}, *blocks]
     return ready
 
@@ -212,8 +212,8 @@ async def _one(item: Given, n: int, deadline: float) -> tuple[str, str, bytes]:
         async with _reading():
             left = deadline - asyncio.get_running_loop().time()
             if left < LAST_READ_S:
-                return "refused", (f"{attachments._parsing(upload)}: не дошла очередь — на разбор файлов одного "
-                                   f"сообщения {PARSE_BUDGET_S} с; пришли его отдельно"), b""
+                return "refused", (f"{attachments._parsing(upload)}: its turn did not come — the files of one message get "
+                                   f"{PARSE_BUDGET_S} s to parse; send it separately"), b""
             read = await attachments.isolated(upload, READER_MEMORY, left)
     except Unreadable as exc:
         if kind == "pdf":  # a locked or broken PDF is still the owner's file: the session may say what it sees
@@ -224,7 +224,7 @@ async def _one(item: Given, n: int, deadline: float) -> tuple[str, str, bytes]:
     media, data = read.files[0]
     expected = "image/jpeg" if kind == "image" else "application/pdf"
     if media != expected:
-        return "refused", f"{upload.label()}: прочитано как {media}", b""
+        return "refused", f"{upload.label()}: read as {media}", b""
     return kind, read.what, data
 
 

@@ -6,17 +6,21 @@ time, so whatever it is told about «now», «Friday» or «18:00» comes from h
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, available_timezones
 
 DEFAULT_TZ = "UTC"  # the owner's own zone comes from the config (owner_tz); UTC until he names one
-WEEKDAYS = ("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
-SHORT = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
-MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября",
-          "ноября", "декабря")
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+SHORT = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
 # How a weekday may be named: short Russian, the start of the Russian word in any case, the start of the English.
 _NAMES = (("пн", "понед", "mon"), ("вт", "вторн", "tue"), ("ср", "сред", "wed"), ("чт", "четв", "thu"),
           ("пт", "пятн", "fri"), ("сб", "субб", "sat"), ("вс", "воскр", "sun"))
+
+# «I'm in Tokyo» / «я в Tokyo»: the owner's words around a city, English and the Russian he may still use.
+_SAYING = re.compile(r"^(?:i['’]?m|i am|я)\s+(?:in|at|в|во)\s+", re.IGNORECASE)
 
 
 def zone(tz: str) -> ZoneInfo:
@@ -39,9 +43,10 @@ def valid_zone(tz: str) -> bool:
 
 def find_zone(name: str) -> str | None:
     """An IANA zone from what the model passes: «Asia/Tokyo», or a city as the zone names it («Tokyo», «new
-    york», «Singapore» → Asia/Singapore). None when nothing matches — the model is told to give the zone itself.
+    york», «Singapore» → Asia/Singapore). The owner's own words around a city are dropped: «I'm in Tokyo», «I am
+    in Tokyo», «я в Tokyo». None when nothing matches — the model is told to give the zone itself.
     Whatever it returns passes `valid_zone`."""
-    text = name.strip().replace(" ", "_")
+    text = _SAYING.sub("", name.strip()).strip().replace(" ", "_")
     if not text:
         return None
     zones = available_timezones()
@@ -61,13 +66,13 @@ def local(ts: float, tz: str = DEFAULT_TZ) -> datetime:
 
 
 def stamp(ts: float, tz: str = DEFAULT_TZ) -> str:
-    """2026-10-07 14:05 UTC, среда"""
+    """2026-10-07 14:05 UTC, Wednesday"""
     moment = local(ts, tz)
     return f"{moment:%Y-%m-%d %H:%M} {label(tz)}, {WEEKDAYS[moment.weekday()]}"
 
 
 def day(ts: float, tz: str = DEFAULT_TZ) -> str:
-    """пт 9 октября, 18:00 UTC — how a reminder is named back to the owner"""
+    """Fri 9 October, 18:00 UTC — how a reminder is named back to the owner"""
     moment = local(ts, tz)
     return f"{SHORT[moment.weekday()]} {moment.day} {MONTHS[moment.month - 1]}, {moment:%H:%M} {label(tz)}"
 
@@ -93,7 +98,7 @@ def parse(when: str, tz: str = DEFAULT_TZ) -> datetime:
     A time with an offset is moved into the zone. Raises ValueError for anything else, a bare date included."""
     text = when.strip()
     if len(text) < 16 or text[10] not in "T ":
-        raise ValueError(f"нужны дата и время вида 2026-10-09T18:00, а пришло «{when}»")
+        raise ValueError(f"need a date and time like 2026-10-09T18:00, got «{when}»")
     moment = datetime.fromisoformat(text)
     moment = moment.astimezone(zone(tz)) if moment.tzinfo else moment.replace(tzinfo=zone(tz))
     return moment.replace(second=0, microsecond=0)
@@ -107,12 +112,12 @@ def next_at(hhmm: str, now: float, tz: str = DEFAULT_TZ) -> datetime:
 
 
 def ago(seconds: float) -> str:
-    """How late, in words: 7 мин, 2 ч 5 мин, 3 дн 4 ч."""
+    """How late, in words: 7 min, 2 h 5 min, 3 d 4 h."""
     minutes = max(1, round(seconds / 60))
     if minutes < 60:
-        return f"{minutes} мин"
+        return f"{minutes} min"
     hours, minutes = divmod(minutes, 60)
     if hours < 24:
-        return f"{hours} ч {minutes} мин" if minutes else f"{hours} ч"
+        return f"{hours} h {minutes} min" if minutes else f"{hours} h"
     days, hours = divmod(hours, 24)
-    return f"{days} дн {hours} ч" if hours else f"{days} дн"
+    return f"{days} d {hours} h" if hours else f"{days} d"

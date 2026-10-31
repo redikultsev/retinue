@@ -12,17 +12,26 @@ NOW = datetime(2026, 10, 7, 14, 5, tzinfo=timezone.utc).timestamp()  # Wednesday
 
 
 def test_stamp_is_the_owners_time_with_the_weekday():
-    assert clock.stamp(NOW) == "2026-10-07 14:05 UTC, среда"
-    assert clock.stamp(100.0) == "1970-01-01 00:01 UTC, четверг"
-    assert clock.stamp(NOW, "Europe/Berlin") == "2026-10-07 16:05 Europe/Berlin, среда"
-    assert clock.stamp(NOW, "Asia/Tokyo") == "2026-10-07 23:05 Asia/Tokyo, среда", "any zone by its IANA name"
-    assert clock.day(NOW + 2 * 86400 + 3 * 3600 + 55 * 60) == "пт 9 октября, 18:00 UTC"
-    assert clock.until(NOW + 3600, NOW) == "15:05 UTC" and clock.until(NOW + 86400, NOW) == "чт 8 октября, 14:05 UTC"
+    assert clock.stamp(NOW) == "2026-10-07 14:05 UTC, Wednesday"
+    assert clock.stamp(100.0) == "1970-01-01 00:01 UTC, Thursday"
+    assert clock.stamp(NOW, "Europe/Berlin") == "2026-10-07 16:05 Europe/Berlin, Wednesday"
+    assert clock.stamp(NOW, "Asia/Tokyo") == "2026-10-07 23:05 Asia/Tokyo, Wednesday", "any zone by its IANA name"
+    assert clock.day(NOW + 2 * 86400 + 3 * 3600 + 55 * 60) == "Fri 9 October, 18:00 UTC"
+    assert clock.until(NOW + 3600, NOW) == "15:05 UTC" and clock.until(NOW + 86400, NOW) == "Thu 8 October, 14:05 UTC"
 
 
 def test_weekday_names():
     assert [clock.weekday(w) for w in ("пт", "Пятница", "пятницу", "fri", "Friday", "ПТ.")] == [4] * 6
     assert clock.weekday("среду") == 2 and clock.weekday("вс") == 6 and clock.weekday("завтра") is None
+    assert [clock.weekday(w) for w in ("Mon", "Wednesday", "thu.", "SUNDAY")] == [0, 2, 3, 6], "English first"
+    assert clock.weekday("tomorrow") is None
+
+
+def test_a_zone_from_the_owners_words_in_either_language():
+    for said in ("Tokyo", "I'm in Tokyo", "I am in tokyo", "im in Tokyo", "я в Tokyo", "Asia/Tokyo"):
+        assert clock.find_zone(said) == "Asia/Tokyo", said
+    assert clock.find_zone("I'm in New York") == "America/New_York"
+    assert clock.find_zone("I'm in Atlantis") is None and clock.find_zone("I'm in") is None
 
 
 def test_parse_local_wall_time():
@@ -42,7 +51,7 @@ def test_next_morning_and_lateness():
     assert clock.next_at("09:00", early).isoformat() == "2026-10-07T09:00:00+00:00"
     assert clock.next_at("09:00", early, "Asia/Tokyo").isoformat() == "2026-10-08T09:00:00+09:00", "17:00 in Tokyo"
     assert [clock.ago(s) for s in (30, 7 * 60, 125 * 60, 120 * 60, 3 * 86400 + 4 * 3600, 2 * 86400)] == [
-        "1 мин", "7 мин", "2 ч 5 мин", "2 ч", "3 дн 4 ч", "2 дн"]
+        "1 min", "7 min", "2 h 5 min", "2 h", "3 d 4 h", "2 d"]
 
 
 def test_zone_data_ships_with_the_image():

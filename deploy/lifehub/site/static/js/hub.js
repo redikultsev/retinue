@@ -33,18 +33,18 @@
   // --- relative times -----------------------------------------------------------------------------------------
   function span(seconds) {
     var minutes = Math.max(1, Math.round(seconds / 60));
-    if (minutes < 60) { return minutes + " мин"; }
+    if (minutes < 60) { return minutes + " min"; }
     var hours = Math.floor(minutes / 60), rest = minutes % 60;
-    if (hours < 24) { return rest && hours < 6 ? hours + " ч " + rest + " мин" : hours + " ч"; }
+    if (hours < 24) { return rest && hours < 6 ? hours + " h " + rest + " min" : hours + " h"; }
     var days = Math.floor(hours / 24), left = hours % 24;
-    return left && days < 3 ? days + " дн " + left + " ч" : days + " дн";
+    return left && days < 3 ? days + " d " + left + " h" : days + " d";
   }
   function ago(seconds) {
-    return seconds < 60 ? "только что" : span(seconds) + " назад";
+    return seconds < 60 ? "just now" : span(seconds) + " ago";
   }
   function tick() {
     var now = Date.now() / 1000, i, el, at;
-    // data-ago="<unix>": «12 мин назад»; with data-stale="<seconds>" it turns into a warning past that age.
+    // data-ago="<unix>": «12 min ago»; with data-stale="<seconds>" it turns into a warning past that age.
     var past = document.querySelectorAll("[data-ago]");
     for (i = 0; i < past.length; i++) {
       el = past[i];
@@ -54,19 +54,19 @@
       if (el.hasAttribute("data-stale")) {
         var old = now - at > Number(el.getAttribute("data-stale"));
         el.classList.toggle("stale", old);
-        if (old) { el.textContent = "данные устарели · " + ago(now - at); }
+        if (old) { el.textContent = "data out of date · " + ago(now - at); }
       }
     }
-    // data-in="<unix start>" data-end="<unix end>": «через 42 мин», «идёт · ещё 20 мин», «закончилось».
+    // data-in="<unix start>" data-end="<unix end>": «in 42 min», «on now · 20 min left», «ended».
     var ahead = document.querySelectorAll("[data-in]");
     for (i = 0; i < ahead.length; i++) {
       el = ahead[i];
       at = Number(el.getAttribute("data-in"));
       var end = Number(el.getAttribute("data-end")) || at;
       if (!at) { continue; }
-      if (now < at) { el.textContent = "через " + span(at - now); }
-      else if (now < end) { el.textContent = "идёт · ещё " + span(end - now); }
-      else { el.textContent = "закончилось"; }
+      if (now < at) { el.textContent = "in " + span(at - now); }
+      else if (now < end) { el.textContent = "on now · " + span(end - now) + " left"; }
+      else { el.textContent = "ended"; }
     }
   }
   tick();

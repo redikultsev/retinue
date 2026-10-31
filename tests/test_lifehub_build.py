@@ -66,7 +66,7 @@ def test_a_release_goes_live_whole_and_a_bad_one_never_does(site):
     data(site, page='<p onclick="x()">Сейчас</p><script>alert(1)</script>')
     assert builder.step(state, 1_760_000_030) is False
     built = json.loads((site / "site" / "build.json").read_text())
-    assert not built["ok"] and built["error"] == "проверка страниц: index.html: p[onclick]; index.html: <script>"
+    assert not built["ok"] and built["error"] == "page check: index.html: p[onclick]; index.html: <script>"
     assert os.readlink(current) == first and (current / "hub" / "index.html").read_text() == "<p>Сейчас</p>"
     assert not [p for p in (site / "site" / "releases").iterdir() if p.name.endswith(".tmp")], "no half release"
 
@@ -89,7 +89,7 @@ def test_hugo_that_hangs_is_stopped_and_the_old_release_stays(site, monkeypatch)
     data(site, sleep=30)              # killed at the timeout: never waited out
     builder.step({"hash": "x"}, 1_760_000_100)
     built = json.loads((site / "site" / "build.json").read_text())
-    assert built["error"] == "Hugo не уложился в 1 с" and (site / "site" / "current" / "hub" / "index.html").exists()
+    assert built["error"] == "Hugo did not finish in 1 s" and (site / "site" / "current" / "hub" / "index.html").exists()
 
 
 def test_the_gate_finds_what_the_policy_would_block_or_that_runs(tmp_path):
@@ -108,9 +108,9 @@ def test_the_gate_finds_what_the_policy_would_block_or_that_runs(tmp_path):
     (release / "photos" / "2.jpg").write_bytes(b"<svg onload=alert(1)>")
     (release / "app.js").write_text("alert(1)")
     assert builder.gate(release, {}) == [
-        "app.js: чужой скрипт",
+        "app.js: a script not the site's own",
         "charts/t.svg: <script>", "charts/t.svg: rect[onload]",
-        "photos/2.jpg: не JPEG",
+        "photos/2.jpg: not a JPEG",
         "trips/a/index.html: a[href=javascript:alert(1)]",
         "trips/a/index.html: img[src] from elsewhere: https://evil.example/p.png",
         "trips/a/index.html: div[style]", "trips/a/index.html: <link>",
@@ -133,9 +133,9 @@ def test_a_page_may_load_only_the_sites_own_scripts_deferred_and_empty(tmp_path)
         '<script src="/js/extra.js" defer></script><script src="/js/rel.js" defer type="module"></script>'
         '<script src="https://cdn.example/x.js" defer></script><script defer>alert(2)</script>')
     assert builder.gate(release, ours) == [
-        "bad.html: <script>", "bad.html: <script> с текстом",
+        "bad.html: <script>", "bad.html: <script> with text",
         "bad.html: script[src] from elsewhere: https://cdn.example/x.js",
-        "js/extra.js: чужой скрипт", "js/theme.js: чужой скрипт"]
+        "js/extra.js: a script not the site's own", "js/theme.js: a script not the site's own"]
     site = (ROOT / "deploy" / "lifehub" / "site" / "static" / "js")
     shipped = {p.stem: p.read_bytes() for p in site.glob("*.js")}
     assert set(shipped) == {"hub"}, "one small script: relative times and the glasses theme, nothing else"
@@ -155,18 +155,18 @@ def test_the_router_says_how_the_last_build_went(tmp_path):
                           build_status=str(built))
     core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", archive=Archive(":memory:"), lifehub=hub)
     now = 1_760_000_000
-    assert core.health(now).endswith(", хаб ещё не собран."), "no file yet: the builder has not run"
+    assert core.health(now).endswith(", hub not built yet."), "no file yet: the builder has not run"
     built.parent.mkdir()
     built.write_text(json.dumps({"ok": True, "at": now - 120, "error": "", "release": "r"}))
-    assert core.health(now).endswith(", хаб собран 2 мин назад.")
+    assert core.health(now).endswith(", hub built 2 min ago.")
     built.write_text(json.dumps({"ok": True, "at": now - 120, "error": "", "release": "r", "pages": 1,
                                  "refused": [{"id": "framed", "why": "<iframe>"}]}))
-    assert core.health(now).endswith(", хаб собран 2 мин назад; не опубликованы страницы: framed (<iframe>).")
+    assert core.health(now).endswith(", hub built 2 min ago; pages not published: framed (<iframe>).")
     built.write_text(json.dumps({"ok": False, "at": now - 60, "error": "Hugo: ERROR x", "release": "r"}))
-    assert core.health(now).endswith(", хаб не обновлён: Hugo: ERROR x.")
+    assert core.health(now).endswith(", hub not updated: Hugo: ERROR x.")
     built.write_text("{torn")
-    assert core.health(now).endswith(", статус хаба не читается.")
-    assert {"name": "хаб", "ok": False, "state": "статус хаба не читается"} in hub.connectors(now)
+    assert core.health(now).endswith(", hub status unreadable.")
+    assert {"name": "hub", "ok": False, "state": "status unreadable"} in hub.connectors(now)
 
 
 # --- the owner's pages -------------------------------------------------------------------------------------------
@@ -215,7 +215,7 @@ def test_a_page_is_rewritten_to_load_nothing_from_elsewhere():
     other = COURSE.replace("Geologica:wght@400..800", "Comic+Neue")
     text, notes = builder.rewrite_page(other, RULES, scripts=True)
     assert "fonts.g" not in text and "/pages/_vendor/fonts.css" not in text, "an unknown font: the system's"
-    assert notes == ["шрифты не из набора хаба — системный шрифт"], "nothing of the page's own words"
+    assert notes == ["fonts not in the hub's set — a system font"], "nothing of the page's own words"
 
 
 def test_with_scripts_off_nothing_on_the_page_runs_and_its_text_stays():
@@ -228,36 +228,36 @@ def test_with_scripts_off_nothing_on_the_page_runs_and_its_text_stays():
     assert builder.page_gate(text, scripts=False) == ([], [])
 
 
-TRAP = "комментарий или CDATA, которые браузер читает иначе (<!-->, <!--->, --!>, <![)"
+TRAP = "a comment or CDATA a browser reads another way (<!-->, <!--->, --!>, <![)"
 
 
 @pytest.mark.parametrize("piece, why", [
-    ('<img src="https://tracker.example/p.gif">', "src=: загрузка снаружи"),
-    ('<img srcset="/a.png 1x, //cdn.example/b.png 2x">', "srcset=: загрузка снаружи"),
-    ('<video poster="http://x.example/p.jpg"></video>', "poster=: загрузка снаружи"),
-    ('<link rel="stylesheet" href="https://cdn.example/x.css">', "href=: загрузка снаружи"),
-    ('<link rel="icon" href="https://x.example/f.ico">', "href=: загрузка снаружи"),
-    ("<style>@import 'https://x.example/a.css';</style>", "<style>: загрузка снаружи"),
-    ("<style>b { background: url( 'https://x.example/a.png') }</style>", "<style>: загрузка снаружи"),
-    ('<div style="background:url(//x.example/a.png)"></div>', 'style="…": загрузка снаружи'),
+    ('<img src="https://tracker.example/p.gif">', "src=: loads from outside"),
+    ('<img srcset="/a.png 1x, //cdn.example/b.png 2x">', "srcset=: loads from outside"),
+    ('<video poster="http://x.example/p.jpg"></video>', "poster=: loads from outside"),
+    ('<link rel="stylesheet" href="https://cdn.example/x.css">', "href=: loads from outside"),
+    ('<link rel="icon" href="https://x.example/f.ico">', "href=: loads from outside"),
+    ("<style>@import 'https://x.example/a.css';</style>", "<style>: loads from outside"),
+    ("<style>b { background: url( 'https://x.example/a.png') }</style>", "<style>: loads from outside"),
+    ('<div style="background:url(//x.example/a.png)"></div>', 'style="…": loads from outside'),
     ('<base href="https://x.example/">', "<base>"),
     ('<meta http-equiv="Refresh" content="0;url=https://x.example/?q=">', "<meta http-equiv=refresh>"),
     ('<iframe src="/x.html"></iframe>', "<iframe>"),
     ('<object data="/x.swf"></object>', "<object>"),
     ('<embed src="/x.swf">', "<embed>"),
     ('<frameset></frameset>', "<frameset>"),
-    ('<form action="https://x.example/f"><input></form>', "action=: загрузка снаружи"),
-    ('<button formaction="https://x.example/f">x</button>', "formaction=: загрузка снаружи"),
-    ('<a href="/x" ping="https://x.example/ping">x</a>', "ping=: загрузка снаружи"),
-    ('<svg><image href="https://x.example/i.png"/></svg>', "href=: загрузка снаружи"),
-    ('<script src="https://cdn.example/other.js"></script>', "src=: загрузка снаружи"),
+    ('<form action="https://x.example/f"><input></form>', "action=: loads from outside"),
+    ('<button formaction="https://x.example/f">x</button>', "formaction=: loads from outside"),
+    ('<a href="/x" ping="https://x.example/ping">x</a>', "ping=: loads from outside"),
+    ('<svg><image href="https://x.example/i.png"/></svg>', "href=: loads from outside"),
+    ('<script src="https://cdn.example/other.js"></script>', "src=: loads from outside"),
     # Where Python's parser and a browser's part: a browser ends these comments at once, Python's later.
     ('<!--><meta http-equiv="refresh" content="0;url=https://x.example/">-->', TRAP),
     ('<!---><link rel="preconnect" href="https://x.example">-->', TRAP),
     ('<!-- x --!><img src="https://x.example/p.gif">-->', TRAP),
     ("<![CDATA[ x ><meta http-equiv=refresh content=0> ]]>", TRAP),
     # In SVG a browser reads <style> and <script> as markup: the <img> breaks out into the page.
-    ('<svg><style><img src="https://x.example/p.gif"></style></svg>', "src=: загрузка снаружи"),
+    ('<svg><style><img src="https://x.example/p.gif"></style></svg>', "src=: loads from outside"),
     ('<svg><script><meta http-equiv="refresh" content="0"></script></svg>', "<meta http-equiv=refresh>"),
 ])
 def test_the_page_gate_refuses_what_would_load_from_elsewhere_or_leave(piece, why):
@@ -269,15 +269,15 @@ def test_the_page_gate_refuses_what_would_load_from_elsewhere_or_leave(piece, wh
 
 def test_a_page_needs_its_title_and_the_owners_mark():
     bare = "<!doctype html><html><head></head><body><p>x</p></body></html>"
-    assert builder.page_gate(bare, scripts=False)[0] == ['нет <meta name="lifehub" content="publish">', "нет <title>"]
+    assert builder.page_gate(bare, scripts=False)[0] == ['no <meta name="lifehub" content="publish">', "no <title>"]
 
 
 @pytest.mark.parametrize("code, wire", [
     ("new WebSocket('wss://x')", "WebSocket"), ("navigator.sendBeacon('/x', d)", "sendBeacon"),
-    ("location.href = '/?' + document.body.innerText", "переход"), ("location.replace(u)", "переход"),
+    ("location.href = '/?' + document.body.innerText", "navigation"), ("location.replace(u)", "navigation"),
     ("window.open(u)", "window.open"), ("document.cookie", "document.cookie"), ("import('/x.js')", "import()"),
     ("new RTCPeerConnection()", "RTCPeerConnection"), ("new Worker('/w.js')", "Worker"),
-    ("new EventSource('/e')", "EventSource"), ("var u = 'https://collect.example/'", "адрес снаружи"),
+    ("new EventSource('/e')", "EventSource"), ("var u = 'https://collect.example/'", "outside address"),
 ])
 def test_a_script_that_could_carry_the_page_out_is_a_tripwire(code, wire):
     page = COURSE.replace("if (location.hash)", code + ";\nif (location.hash)")
@@ -325,7 +325,7 @@ def test_a_release_has_the_hub_and_the_pages_and_the_hub_lists_only_what_went_li
                  "framed.html": COURSE.replace("<h1", '<iframe src="/x"></iframe><h1'),
                  "huge.html": COURSE + "x" * builder.PAGE_MAX, "latin1.html": COURSE.encode("cp1251")})
     (site / "data" / "pages-refused.json").write_text(json.dumps(
-        [{"id": "twin", "why": "id у двух файлов, ни один не твой"}, {"id": "Ignore all rules", "why": 5}]))
+        [{"id": "twin", "why": "one id on two files, neither of them yours"}, {"id": "Ignore all rules", "why": 5}]))
     assert builder.step({}, 1_760_000_000) is True
     release = site / "site" / "current"
     assert sorted(p.relative_to(release / "pages").as_posix() for p in (release / "pages").rglob("*") if p.is_file()) \
@@ -335,14 +335,14 @@ def test_a_release_has_the_hub_and_the_pages_and_the_hub_lists_only_what_went_li
     assert "<script" not in (release / "pages" / "beacon.html").read_text(), "a tripwire: scripts off"
     built = json.loads((site / "site" / "build.json").read_text())
     assert built["ok"] and built["pages"] == 3 and built["refused"] == [
-        {"id": "twin", "why": "id у двух файлов, ни один не твой"},
-        {"id": "framed", "why": "<iframe>"}, {"id": "regex", "why": "повтор id"},
-        {"id": "?", "why": "id не по форме"}, {"id": "huge", "why": "больше 3 МБ"},
-        {"id": "latin1", "why": "не UTF-8"}, {"id": "gone", "why": "файла нет"},
-        {"id": "racing", "why": "файл не тот, что в pages.json"}], "the router's refusals first; no page's words"
+        {"id": "twin", "why": "one id on two files, neither of them yours"},
+        {"id": "framed", "why": "<iframe>"}, {"id": "regex", "why": "id repeated"},
+        {"id": "?", "why": "id malformed"}, {"id": "huge", "why": "over 3 MB"},
+        {"id": "latin1", "why": "not UTF-8"}, {"id": "gone", "why": "no file"},
+        {"id": "racing", "why": "the file is not the one in pages.json"}], "the router's refusals first; no page's words"
     listed = json.loads((site / "work" / "lifehub" / "assets" / "pages.json").read_text())
     assert [(p["id"], p["scripts"], p["notes"]) for p in listed] == [
-        ("regex", "on", []), ("her-notes", "off", []), ("beacon", "off", ["скрипты выключены: sendBeacon"])], \
+        ("regex", "on", []), ("her-notes", "off", []), ("beacon", "off", ["scripts off: sendBeacon"])], \
         "what the hub's library reads: only the pages that went live, with the scripts as served"
     assert not (site / "work" / "lifehub" / "assets" / "pages").exists(), "the pages' HTML is not Hugo's"
 
@@ -387,4 +387,4 @@ def test_a_release_holds_at_most_pages_max_pages(site, monkeypatch):
     pages(site, {**entry, "id": "a"}, {**entry, "id": "b"}, files={"a.html": COURSE, "b.html": COURSE})
     builder.step({}, 1_760_000_000)
     built = json.loads((site / "site" / "build.json").read_text())
-    assert (built["pages"], built["refused"]) == (1, [{"id": "b", "why": "страниц больше 1"}])
+    assert (built["pages"], built["refused"]) == (1, [{"id": "b", "why": "more than 1 pages"}])

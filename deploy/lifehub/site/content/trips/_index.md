@@ -1,3 +1,3 @@
 ---
-title: Поездки
+title: Trips
 ---

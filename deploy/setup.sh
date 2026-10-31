@@ -216,15 +216,15 @@ owner_tz: $OWNER_TZ
 default_agent: assistant
 agents:
   - id: assistant
-    name: Ассистентка
+    name: Assistant
     url: http://assistant:9000
-    description: Единственное лицо системы
+    description: The system's one face
     trust_class: private
     archive: true     # may search the raw archive through the bus
     reminders: true   # may set, list, move and cancel the owner's reminders through the bus
     attachments: true # may fetch what the owner sent (#N) again through the bus
     trips: true       # may publish a trip page in the life hub (refused while there is no hub)
-    drafts: true      # may propose a reply to a person; it leaves only by your «Отправить» (refused with no sender)
+    drafts: true      # may propose a reply to a person; it leaves only by your «Send» (refused with no sender)
     can_call: []      # no other agents at this stage
 YAML
   if [[ $TRAVEL_ON == 1 ]]; then
@@ -413,7 +413,7 @@ if [[ $PLATFORM_ON == 1 ]]; then
   chmod 600 "$ROOT/code/tokens.env"
   [[ -f $ROOT/egress/platform-hosts.txt ]] || \
     install -m 644 "$REPO/deploy/egress/platform-hosts.txt" "$ROOT/egress/platform-hosts.txt"
-  # The owner's voice in the app (docs/face.md «Голос»): ElevenLabs' API added to a list written before it — once,
+  # The owner's voice in the app (docs/face.md «Voice»): ElevenLabs' API added to a list written before it — once,
   # remembered by a marker, so a line the owner removes later stays removed. A last line without its newline gets one.
   HOSTS=$ROOT/egress/platform-hosts.txt
   if [[ ! -e $ROOT/egress/.platform-hosts-speech ]]; then
@@ -656,7 +656,7 @@ if [[ $LIFEHUB_ON == 1 ]]; then
   echo "Lifehub: on — https://$LIFEHUB_HOST for $(paste -sd' ' "$LIFEHUB_DIR/devices.txt");" \
        "check the DNS record and your devices' DNS (docs/lifehub.md)"
   echo "Lifehub pages: https://$LIFEHUB_HOST/pages/<id>.html; the base's policy.json must let */artifacts/**/*.html" \
-       "through for pages sent to the bot (docs/lifehub.md, «Страницы»)"
+       "through for pages sent to the bot (docs/lifehub.md, «Pages»)"
 fi
 [[ $TG_ON == 1 ]] && echo "Telegram Business: on — connect the bot in Telegram → Settings → Chat Automation, only" \
   "the chats you choose, only «reply on your behalf» (docs/courier.md)"

@@ -7,8 +7,8 @@ card's, a handed-over page's), whose address is the face's own, from the router'
 
 Files the owner sends are downloaded here (getFile, up to 20 MB) and handed to the core as they are; reading them
 is the core's work. A file URL carries the bot token: it is never logged and never put into an error text. One
-exception: an HTML file captioned «в хаб <Пространство>» goes to the life hub's code, which puts it in the base as
-a page (`Lifehub.upload`); the model never sees it.
+exception: an HTML file captioned «to hub <Space>» (the Russian «в хаб <Space>» too) goes to the life hub's code,
+which puts it in the base as a page (`Lifehub.upload`); the model never sees it.
 """
 
 from __future__ import annotations
@@ -39,32 +39,33 @@ SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/check": "!check", "/
                   "/initiative": "!initiative"}
 # Files a message may carry; the core reads them. A GIF (animation) also carries `document`: it is checked first.
 MEDIA = ("photo", "document", "voice", "audio", "video", "video_note")
-# What is still refused aloud: the value finishes the phrase «Пока не умею принимать …».
-UNSUPPORTED = {"animation": "гифки", "poll": "опросы", "dice": "кубики", "game": "игры", "story": "истории"}
-LOST = "Сообщение не обработано: ошибка на стороне Роутера. Повтори его, пожалуйста."
-POISON = ("Сообщение с файлом не обработано: пока Роутер его разбирал, он перезапустился. Пришли файл ещё раз — "
-          "лучше в другом формате.")
-NOT_FOR_SESSION = "В сессии принимаю текст, голосовые, фото и файлы."
+# What is still refused aloud: the value finishes the phrase «I can't take … yet» (`Core.unsupported`).
+UNSUPPORTED = {"animation": "GIFs", "poll": "polls", "dice": "dice", "game": "games", "story": "stories"}
+LOST = "The message was not handled: an error on the router's side. Please send it again."
+POISON = ("The message with a file was not handled: the router restarted while reading it. Send the file again — "
+          "better in another format.")
+NOT_FOR_SESSION = "A session takes text, voice messages, photos and files."
 SPEECH_KINDS = ("voice", "audio", "video_note")  # what a session takes besides text: its transcript (`bridge.spoken`)
 FILE_KINDS = ("photo", "document")  # and these as they are: the platform makes them the session's (`bridge.files`)
 # A file with this caption is a page for the life hub: code puts it in the base (`Lifehub.upload`), not the model.
-TO_HUB = re.compile(r"\s*в\s+хаб\s+(\S+)\s*", re.I)
-NO_PAGES = "Хаб не подключён: страницы публиковать некуда (docs/lifehub.md)."
+# «to hub <Space>»; the Russian «в хаб <Space>» still works.
+TO_HUB = re.compile(r"\s*(?:to\s+hub|в\s+хаб)\s+(\S+)\s*", re.I)
+NO_PAGES = "The hub is not connected: there is nowhere to publish pages (docs/lifehub.md)."
 # Any trace of a forward, his own included: a forwarded file is never his page, whoever's name it hides behind.
 FORWARDED = ("forward_origin", "forward_date", "forward_from", "forward_from_chat", "forward_sender_name",
              "is_automatic_forward")
 # The bot's menu; the platform's spheres follow it (`set_menu`).
-MENU = ({"command": "new", "description": "новый разговор"},
-        {"command": "compact", "description": "сжать разговор"},
-        {"command": "check", "description": "проверка канала"},
-        {"command": "mail", "description": "почта: ящики и правила"},
-        {"command": "initiative", "description": "как часто ассистентка пишет первой"},
-        {"command": "help", "description": "справка"})
-WAIT = {"command": "wait", "description": "что ждёт тебя"}  # «Ждут тебя» as text (`bridge.wait`), with the platform
-APP_BUTTON = "Открыть"        # the menu button beside the input: the face as a Mini App (`set_app_button`)
-START = ("Пиши сюда — ответит ассистентка. Команды: /new — новый разговор, /compact — сжать разговор, "
-         "/check — проверка канала, /mail — почта: ящики и твои правила, /initiative — как часто ассистентка "
-         "пишет первой: реже, обычно, чаще, выкл; тихие часы, /help — справка.")
+MENU = ({"command": "new", "description": "new conversation"},
+        {"command": "compact", "description": "compact the conversation"},
+        {"command": "check", "description": "check the channel"},
+        {"command": "mail", "description": "mail: inboxes and rules"},
+        {"command": "initiative", "description": "how often the assistant writes first"},
+        {"command": "help", "description": "help"})
+WAIT = {"command": "wait", "description": "what is waiting for you"}  # «Waiting for you» as text (`bridge.wait`), with the platform
+APP_BUTTON = "Open"        # the menu button beside the input: the face as a Mini App (`set_app_button`)
+START = ("Write here — the assistant answers. Commands: /new — new conversation, /compact — compact the conversation, "
+         "/check — check the channel, /mail — mail: inboxes and your rules, /initiative — how often the assistant "
+         "writes first: less, normal, more, off; quiet hours, /help — help.")
 
 
 class TelegramError(Exception):
@@ -77,7 +78,7 @@ def forwarded(message: dict) -> bool:
     """Any trace of a forward, the owner's own forward included."""
     return any(key in message for key in FORWARDED)
 
-BUTTONS_PER_ROW = 4  # Telegram takes at most 8 in a row; four labels like «Откатить 10» still read
+BUTTONS_PER_ROW = 4  # Telegram takes at most 8 in a row; four labels like «Revert 10» still read
 
 
 def keyboard_of(buttons) -> dict | None:
@@ -89,7 +90,7 @@ def keyboard_of(buttons) -> dict | None:
 
 
 def rows_of(buttons) -> dict | None:
-    """A courier's card: one button per row — «Отправить» never sits next to «Поправить» under a thumb."""
+    """A courier's card: one button per row — «Send» never sits next to «Edit» under a thumb."""
     return {"inline_keyboard": [[{"text": label, "callback_data": button_id}] for label, button_id in buttons]} \
         if buttons else None
 
@@ -98,7 +99,7 @@ class TelegramChannel:
     name = "telegram"
     is_record = False
     typing_refresh_s = 4.0  # a chat action lasts 5 s
-    username = ""           # the bot's own, from getMe: the face's «Открыть в Telegram» (`bridge.push_waiting`)
+    username = ""           # the bot's own, from getMe: the face's «Open in Telegram» (`bridge.push_waiting`)
 
     def __init__(self, cfg: TelegramConfig, store: Store, link_hosts: list[str] | tuple = (),
                  bridge: PlatformBridge | None = None) -> None:
@@ -203,7 +204,7 @@ class TelegramChannel:
     def _for_session(self, message: dict) -> bool:
         """The owner's voice, photo or file in reply to a session's message. It gets no mark: nothing parses it in the
         router (the bytes go to the scribe or to the platform as they are), and a second delivery is to be read again
-        and input under the same `input_id`, which the platform takes once — not refused with «пришли ещё раз»."""
+        and input under the same `input_id`, which the platform takes once — not refused with «send it again»."""
         reply = (message.get("reply_to_message") or {}).get("message_id")
         return bool(self.bridge and reply is not None and not forwarded(message) and "animation" not in message
                     and not TO_HUB.fullmatch(message.get("caption") or "")  # a page for the hub is read here
@@ -239,7 +240,7 @@ class TelegramChannel:
 
     async def on_platform_message(self, message: dict, text: str, native_id: str, reply_to: str | None) -> bool:
         """The owner's own message that belongs to the platform: a reply to a session's message, `/new <track|sphere>
-        [text]`, `/<sphere> [text]`, `/wait` («Ждут тебя» as text), or `/app` (a login to the face) when the router knows
+        [text]`, `/<sphere> [text]`, `/wait` («Waiting for you» as text), or `/app` (a login to the face) when the router knows
         the face. A spoken reply goes in as its transcript; a photo or a file goes as it is, an album as one message;
         anything else is refused. True when it was the platform's; everything else, bare `/new` too, stays the
         assistant's."""
@@ -266,7 +267,7 @@ class TelegramChannel:
             await self.bridge.new(words[1], words[2] if len(words) > 2 else "", native_id)
             return True
         name = words[0].split("@")[0].lower().removeprefix("/") if words and words[0].startswith("/") else ""
-        if name and message.get("text") and name in self.bridge.spheres():  # `/travel найди жильё…`
+        if name and message.get("text") and name in self.bridge.spheres():  # `/travel find a place to stay…`
             await self.bridge.sphere(name, text.split(maxsplit=1)[1] if len(words) > 1 else "", native_id)
             return True
         return False
@@ -300,7 +301,7 @@ class TelegramChannel:
                                         native_id=native_id, reply_to=reply_to, forwarded_from=forwarded_from,
                                         group=message.get("media_group_id"))
                 return
-            what = next((name for key, name in UNSUPPORTED.items() if key in message), "такие сообщения")
+            what = next((name for key, name in UNSUPPORTED.items() if key in message), "messages like this")
             await self.core.unsupported(self, what, native_id=native_id, caption=message.get("caption") or "")
             return
         command = text.split()[0].split("@")[0].lower()
@@ -318,16 +319,16 @@ class TelegramChannel:
     def _as_text(message: dict) -> str:
         """A sticker, a place or a contact is said in words: the model needs no file for them."""
         if sticker := message.get("sticker"):
-            return f"[стикер {sticker.get('emoji') or ''}]".replace(" ]", "]")
+            return f"[sticker {sticker.get('emoji') or ''}]".replace(" ]", "]")
         if venue := message.get("venue"):
             place = venue.get("location") or {}
-            return (f"[место: {venue.get('title', '')}, {venue.get('address', '')} "
+            return (f"[place: {venue.get('title', '')}, {venue.get('address', '')} "
                     f"({place.get('latitude')}, {place.get('longitude')})]")
         if place := message.get("location"):
-            return f"[геопозиция: {place.get('latitude')}, {place.get('longitude')}]"
+            return f"[location: {place.get('latitude')}, {place.get('longitude')}]"
         if contact := message.get("contact"):
             name = " ".join(filter(None, [contact.get("first_name"), contact.get("last_name")]))
-            return f"[контакт: {name}, {contact.get('phone_number', '')}]"
+            return f"[contact: {name}, {contact.get('phone_number', '')}]"
         return ""
 
     def _upload(self, message: dict) -> Upload:
@@ -374,7 +375,7 @@ class TelegramChannel:
         name = (" ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or user.get("username")
                 or origin.get("sender_user_name")
                 or (origin.get("sender_chat") or {}).get("title") or (origin.get("chat") or {}).get("title"))
-        return name or "неизвестный отправитель"
+        return name or "unknown sender"
 
     # --- outbound ----------------------------------------------------------------------------
 

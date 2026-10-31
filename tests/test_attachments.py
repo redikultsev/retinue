@@ -43,10 +43,10 @@ def test_any_picture_becomes_jpeg_and_garbage_is_refused(monkeypatch):
     assert attachments.image(picture(64, 64, "WEBP"))[1:] == (64, 64)
     heic, w, h = attachments.image(picture(300, 200, "HEIF"))  # an iPhone photo sent as a file
     assert (w, h) == (300, 200) and Image.open(io.BytesIO(heic)).format == "JPEG"
-    with pytest.raises(Unreadable, match="картинку не удалось открыть"):
+    with pytest.raises(Unreadable, match="the picture could not be opened"):
         attachments.image(b"GIF89a not really")
     monkeypatch.setattr(attachments, "MAX_PIXELS", 100 * 100)
-    with pytest.raises(Unreadable, match="слишком большая: 200×200"):
+    with pytest.raises(Unreadable, match="too big: 200×200"):
         attachments.image(picture(200, 200, "PNG"))
 
 
@@ -79,7 +79,7 @@ def scan(pages: int) -> bytes:
 def test_a_small_pdf_goes_to_the_model_whole():
     data = make_pdf(["Invoice 4711", "Total 99 EUR"])
     ready = attachments.pdf(data, "invoice.pdf")
-    assert ready.what == "PDF «invoice.pdf», 2 стр." and ready.files == [("application/pdf", data)]
+    assert ready.what == 'PDF "invoice.pdf", 2 pages' and ready.files == [("application/pdf", data)]
     assert "Invoice 4711" in ready.text and "Total 99 EUR" in ready.text, "the text layer is kept: for get_attachment"
     assert attachments.pdf(scan(2), "scan.pdf").files, "a short scan goes whole too: the model reads the pictures"
 
@@ -87,12 +87,12 @@ def test_a_small_pdf_goes_to_the_model_whole():
 def test_a_long_pdf_is_read_as_text_and_a_long_scan_is_refused(monkeypatch):
     monkeypatch.setattr(attachments, "PDF_PAGES", 2)
     long = attachments.pdf(make_pdf(["one", "two", "three"]), "book.pdf")
-    assert long.what == "PDF «book.pdf», 3 стр., только текст" and long.files == [] and "three" in long.text
-    with pytest.raises(Unreadable, match="«scan.pdf», 3 стр.: больше 2 стр. или 5 МБ, а текста в нём нет"):
+    assert long.what == 'PDF "book.pdf", 3 pages, text only' and long.files == [] and "three" in long.text
+    with pytest.raises(Unreadable, match='"scan.pdf", 3 pages: over 2 pages or 5 MB, and it has no text'):
         attachments.pdf(scan(3), "scan.pdf")
     monkeypatch.setattr(attachments, "TEXT_CHARS", 20)
     cut = attachments.pdf(make_pdf(["0123456789ABCDEF"] * 3), "long.pdf").text
-    assert cut.startswith("0123456789ABCDEF") and cut.endswith("\n…(обрезано на 20 знаках)")
+    assert cut.startswith("0123456789ABCDEF") and cut.endswith("\n…(cut at 20 characters)")
 
 
 def test_a_locked_or_broken_pdf():
@@ -104,12 +104,12 @@ def test_a_locked_or_broken_pdf():
         writer.write(out)
         return out.getvalue()
 
-    with pytest.raises(Unreadable, match="PDF «a.pdf» под паролем"):
+    with pytest.raises(Unreadable, match='PDF "a.pdf" is password-protected'):
         attachments.pdf(locked("secret"), "a.pdf")
     # A bank statement: anyone may open it, only editing is locked. The model gets an unlocked copy.
     ((media_type, copy),) = attachments.pdf(locked(""), "statement.pdf").files
     assert media_type == "application/pdf" and not PdfReader(io.BytesIO(copy)).is_encrypted
-    with pytest.raises(Unreadable, match="PDF «b.pdf» не открывается"):
+    with pytest.raises(Unreadable, match='PDF "b.pdf" does not open'):
         attachments.pdf(b"%PDF-1.4 not really", "b.pdf")
 
 
@@ -145,19 +145,19 @@ def office(kind: str) -> bytes:
 
 def test_office_files_are_read_as_text():
     docx = attachments.document(office("docx"), "договор.docx", "")
-    assert docx.what == "документ «договор.docx»" and docx.files == []
+    assert docx.what == 'document "договор.docx"' and docx.files == []
     assert docx.text == "Договор аренды № 17\nСумма | 900 EUR\nПодписано в Энске", "tables in their place"
     xlsx = attachments.document(office("xlsx"), "расходы.xlsx", "")
-    assert xlsx.what == "таблица «расходы.xlsx»"
-    assert xlsx.text == "## Лист «Расходы»\nДата | Сумма\n2026-10-01 | 1250.5\n## Лист «Пустой»"
+    assert xlsx.what == 'spreadsheet "расходы.xlsx"'
+    assert xlsx.text == '## Sheet "Расходы"\nДата | Сумма\n2026-10-01 | 1250.5\n## Sheet "Пустой"'
     pptx = attachments.document(office("pptx"), "план.pptx", "")
-    assert pptx.what == "презентация «план.pptx»"
-    assert pptx.text == "## Слайд 1\nПлан на квартал\nЗапустить почту\nЗаметки: сказать про сроки"
+    assert pptx.what == 'presentation "план.pptx"'
+    assert pptx.text == "## Slide 1\nПлан на квартал\nЗапустить почту\nNotes: сказать про сроки"
 
 
 def test_text_files_in_any_usual_encoding():
     csv = attachments.document("имя;сумма\nАня;10\n".encode("cp1251"), "список.csv", "text/csv")
-    assert csv.what == "файл «список.csv»" and csv.text == "имя;сумма\nАня;10", "a Russian Excel export is cp1251"
+    assert csv.what == 'file "список.csv"' and csv.text == "имя;сумма\nАня;10", "a Russian Excel export is cp1251"
     assert attachments.document("\ufeffзаметка".encode(), "a.txt", "").text == "заметка", "the BOM is dropped"
     page = "<html><head><style>p{}</style><script>alert(1)</script></head><body><h1>Билет</h1><p>Рейс&nbsp;LH 680</p></body></html>"
     assert attachments.document(page.encode(), "билет.html", "text/html").text == "Билет\nРейс\xa0LH 680"
@@ -165,12 +165,12 @@ def test_text_files_in_any_usual_encoding():
 
 
 def test_unknown_broken_and_swollen_files_are_refused(monkeypatch):
-    with pytest.raises(Unreadable, match="не умею читать такие файлы: «setup.exe» \\(application/x-msdownload\\)"):
+    with pytest.raises(Unreadable, match='can\'t read files like this: "setup.exe" \\(application/x-msdownload\\)'):
         attachments.document(b"MZ", "setup.exe", "application/x-msdownload")
-    with pytest.raises(Unreadable, match="«отчёт.docx» не открывается"):
+    with pytest.raises(Unreadable, match='"отчёт.docx" does not open'):
         attachments.document(b"PK not a zip", "отчёт.docx", "")
     monkeypatch.setattr(attachments, "UNZIPPED_BYTES", 1000)
-    with pytest.raises(Unreadable, match="«договор.docx» распаковывается больше чем в 0 МБ"):
+    with pytest.raises(Unreadable, match='"договор.docx" unpacks to over 0 MB'):
         attachments.document(office("docx"), "договор.docx", "")
 
 
@@ -193,22 +193,22 @@ def ready(upload, scribe=None):
 
 def test_each_kind_of_upload_becomes_blocks_or_text():
     photo = ready(Upload("photo", picture(1280, 960)))
-    assert photo.what == "фото 1280×960" and [t for t, _ in photo.files] == ["image/jpeg"] and photo.text == ""
+    assert photo.what == "photo 1280×960" and [t for t, _ in photo.files] == ["image/jpeg"] and photo.text == ""
     drawing = ready(Upload("document", picture(3000, 2000, "PNG"), "схема.png", "image/png"))
-    assert drawing.what == "картинка «схема.png», 1568×1045" and drawing.files[0][0] == "image/jpeg", "a file, then a photo"
+    assert drawing.what == 'picture "схема.png", 1568×1045' and drawing.files[0][0] == "image/jpeg", "a file, then a photo"
     paper = ready(Upload("document", make_pdf(["Invoice 4711"]), "invoice", "application/pdf"))
-    assert paper.what == "PDF «invoice», 1 стр." and paper.files[0][0] == "application/pdf"
+    assert paper.what == 'PDF "invoice", 1 page' and paper.files[0][0] == "application/pdf"
     assert ready(Upload("document", office("docx"), "договор.docx")).text.startswith("Договор аренды")
 
     scribe = FakeScribe(" купи хлеб ")
     voice = ready(Upload("voice", b"OggS", media_type="audio/ogg", duration=42), scribe)
-    assert (voice.what, voice.text, voice.files) == ("голосовое 0:42", "купи хлеб", [])
+    assert (voice.what, voice.text, voice.files) == ("voice message 0:42", "купи хлеб", [])
     ready(Upload("video_note", b"mp4", duration=15), scribe)
     ready(Upload("audio", b"ID3", "lecture.mp3", "audio/mpeg", duration=190), scribe)
     assert [c[:2] for c in scribe.calls] == [("voice.ogg", "audio/ogg"), ("video.mp4", "video/mp4"),
                                              ("lecture.mp3", "audio/mpeg")], "Telegram's .oga is sent as voice.ogg"
-    assert ready(Upload("audio", b"ID3", "lecture.mp3", "audio/mpeg", duration=190), scribe).what == "аудио «lecture.mp3» 3:10"
-    assert ready(Upload("voice", b"OggS", duration=3), FakeScribe("")).text == "(речи не разобрать)"
+    assert ready(Upload("audio", b"ID3", "lecture.mp3", "audio/mpeg", duration=190), scribe).what == 'audio "lecture.mp3" 3:10'
+    assert ready(Upload("voice", b"OggS", duration=3), FakeScribe("")).text == "(no speech to make out)"
 
 
 def test_what_cannot_be_read_says_why():
@@ -219,12 +219,12 @@ def test_what_cannot_be_read_says_why():
 
     huge = Upload("video", name="clip.mp4", size=35 * 2**20)
     huge.refused = too_big(huge)
-    assert why(huge) == "видео «clip.mp4», 35 МБ: Telegram отдаёт ботам файлы до 20 МБ"
-    assert why(Upload("voice", b"OggS", duration=42), FakeScribe(error="кончились кредиты ElevenLabs")) == \
-        "голосовое 0:42: кончились кредиты ElevenLabs"
-    assert why(Upload("voice", b"OggS", duration=5)) == "голосовое 0:05: расшифровка не настроена"
-    assert why(Upload("photo", b"broken")) == "фото: картинку не удалось открыть"
-    assert why(Upload("document", b"MZ", "setup.exe", "application/x-msdownload")).startswith("не умею читать такие файлы")
+    assert why(huge) == 'video "clip.mp4", 35 MB: Telegram gives bots files up to 20 MB'
+    assert why(Upload("voice", b"OggS", duration=42), FakeScribe(error="ElevenLabs is out of credits")) == \
+        "voice message 0:42: ElevenLabs is out of credits"
+    assert why(Upload("voice", b"OggS", duration=5)) == "voice message 0:05: transcription is not set up"
+    assert why(Upload("photo", b"broken")) == "photo: the picture could not be opened"
+    assert why(Upload("document", b"MZ", "setup.exe", "application/x-msdownload")).startswith("can't read files like this")
 
 
 # --- review 2026-10-07 --------------------------------------------------------------------------------------------
@@ -251,7 +251,7 @@ def stretched_xlsx(rows: int) -> bytes:
 
 
 def test_a_sheet_that_lies_about_its_size_is_read_by_its_cells(monkeypatch):
-    assert attachments.document(stretched_xlsx(3000), "a.xlsx", "").text == "## Лист «Sheet»\ny", \
+    assert attachments.document(stretched_xlsx(3000), "a.xlsx", "").text == '## Sheet "Sheet"\ny', \
         "the claimed width is ignored, empty cells at the end of a row are dropped"
     monkeypatch.setattr(attachments, "XLSX_ROWS", 2)
     many = io.BytesIO()
@@ -261,7 +261,7 @@ def test_a_sheet_that_lies_about_its_size_is_read_by_its_cells(monkeypatch):
         book.active.append([number])
     book.save(many)
     assert attachments.document(many.getvalue(), "b.xlsx", "").text == \
-        "## Лист «Sheet»\n0\n1\n…(дальше строки не читались: больше 2)"
+        '## Sheet "Sheet"\n0\n1\n…(no rows read past this: over 2)'
     assert attachments.UNZIPPED_BYTES == 50 * 2**20
 
 
@@ -269,7 +269,7 @@ def test_a_long_pdf_is_read_only_so_far(monkeypatch):
     monkeypatch.setattr(attachments, "PDF_PAGES", 1)
     monkeypatch.setattr(attachments, "PDF_SCAN_PAGES", 2)
     text = attachments.pdf(make_pdf(["one", "two", "three"]), "book.pdf").text
-    assert "three" not in text and text.endswith("…(текст только первых 2 стр. из 3)")
+    assert "three" not in text and text.endswith("…(text of the first 2 of 3 pages only)")
 
 
 def test_an_aes_pdf_and_a_failing_unlock(monkeypatch):
@@ -286,17 +286,17 @@ def test_an_aes_pdf_and_a_failing_unlock(monkeypatch):
             raise ValueError("cannot clone")
 
     monkeypatch.setattr(attachments, "PdfWriter", Broken)
-    with pytest.raises(Unreadable, match="PDF «aes.pdf» не открывается"):
+    with pytest.raises(Unreadable, match='PDF "aes.pdf" does not open'):
         attachments.pdf(out.getvalue(), "aes.pdf")
 
 
 def test_files_are_read_in_a_separate_process_with_a_deadline(monkeypatch):
     photo = ready(Upload("photo", picture(640, 480)))
-    assert photo.what == "фото 640×480" and photo.files[0][0] == "image/jpeg", "the worker answers as before"
+    assert photo.what == "photo 640×480" and photo.files[0][0] == "image/jpeg", "the worker answers as before"
     monkeypatch.setattr(attachments, "PARSE_TIMEOUT_S", 0.5)
     monkeypatch.setattr(attachments, "WORKER", [sys.executable, "-c", "import time; time.sleep(30)"])
-    with pytest.raises(Unreadable, match="фото: разбор не уложился в 0.5 с"):
+    with pytest.raises(Unreadable, match="photo: parsing did not finish in 0.5 s"):
         ready(Upload("photo", picture(10, 10)))
     monkeypatch.setattr(attachments, "WORKER", [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGSEGV)"])
-    with pytest.raises(Unreadable, match="картинка «a.heic»: разбор упал"):
+    with pytest.raises(Unreadable, match='picture "a.heic": parsing crashed'):
         ready(Upload("document", b"x", "a.heic"))

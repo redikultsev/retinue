@@ -1,3 +1,3 @@
 ---
-title: Сейчас
+title: Now
 ---

@@ -43,7 +43,7 @@ IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}  # what the
 
 def prompt_of(message) -> Prompt:
     """The turn as the engine takes it: the text alone, or — when the router sent files — content blocks: each file
-    after a line with its name (the router names it by its mark, «вложение #12: фото»), then the text."""
+    after a line with its name (the router names it by its mark, «attachment #12: photo»), then the text."""
     text = get_message_text(message)
     files = [part for part in message.parts if part.raw]
     if not files:
@@ -56,7 +56,7 @@ def prompt_of(message) -> Prompt:
         elif part.media_type == "application/pdf":
             block = {"type": "document", "source": {"type": "base64", "media_type": part.media_type, "data": data}}
         else:
-            blocks.append({"type": "text", "text": f"[файл «{part.filename}» не передан: тип {part.media_type}]"})
+            blocks.append({"type": "text", "text": f'[file "{part.filename}" not passed: type {part.media_type}]'})
             continue
         blocks += [{"type": "text", "text": f"[{part.filename}]"}, block]
     return blocks + [{"type": "text", "text": text}]
@@ -129,7 +129,7 @@ class EngineExecutor(AgentExecutor):
             await event_queue.enqueue_event(task)
         updater = TaskUpdater(event_queue=event_queue, task_id=task.id, context_id=task.context_id)
         if not context.message or not get_message_text(context.message).strip():
-            await updater.update_status(TaskState.TASK_STATE_REJECTED, message=new_text_message("Пустое сообщение."))
+            await updater.update_status(TaskState.TASK_STATE_REJECTED, message=new_text_message("Empty message."))
             return
         prompt = prompt_of(context.message)
         await updater.update_status(TaskState.TASK_STATE_WORKING)
@@ -172,7 +172,7 @@ class EngineExecutor(AgentExecutor):
             return
         text = result.text
         if skipped:
-            text += f"\n\nНе отправлены (больше {MAX_FILES} файлов или {MAX_FILE_BYTES // 2**20} МБ): {', '.join(skipped)}"
+            text += f"\n\nNot sent (more than {MAX_FILES} files or {MAX_FILE_BYTES // 2**20} MB): {', '.join(skipped)}"
         await updater.add_artifact(parts=[new_text_part(text=text, media_type="text/markdown")], name="answer")
         for f in files:
             media_type = mimetypes.guess_type(f.name)[0] or "application/octet-stream"

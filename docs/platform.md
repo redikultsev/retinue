@@ -898,7 +898,7 @@ decided reaches the lane host as a `control_request` on the CLI's stdout, and th
 (`cliengine.deny_control`) — the run never waits on it, and nothing is ever granted that way.
 
 The gate defers every AskUserQuestion — never the classifier's, never run unanswered — and you get one message per
-question: «Question · <track> · session <id> · 1 of 2», the question and its options verbatim, and the options as
+question: one head line «❓ <track> · <header> · 1 of 2» (no session number: a reply to it goes to its session), the question and its options verbatim, each with its description, and the options as
 buttons. A single choice is answered by its button; a multi-select's buttons tick (☐/☑: each press toggles that
 option in the stored picks, the same buttons relabelled, so fast taps all count) and «Done» sends what is ticked;
 **a reply to the question's message** is your own answer («Your answer…»), a spoken one too — taken once: the router
@@ -921,8 +921,18 @@ time since you last acted on the session: your last message, or the start of the
 message or on your decision on a card; one that waited for room on its lane counts from its start). A long text is
 split as before; a reply to any of its messages goes into the session.
 
-**Suggested replies.** The lanes' instructions (`deploy/lanes/instructions/common.md`) ask the model to end a turn
-that leaves you a choice with one line `Replies: "Yes, go ahead" · "Show me the plan first"`. The platform takes that
+**When a session asks you.** The lanes' instructions (`deploy/lanes/instructions/common.md`) tell the model to decide
+itself what is reversible, stays on the server and has an obvious best way — and to ask you only when the decision is
+yours: it cannot be undone, leaves the server under your name, costs money, is a matter of your taste, or has ways of
+about equal worth, and your answer changes what it does. Never to go on, to confirm, or for what the rules already
+allow. Then it asks with AskUserQuestion ([Questions](#questions)), never in the text: at most two or three lines of
+what is at stake before it; the fork in a dozen words; two or three options different in kind, each an action and
+what follows from it in a line; the one it recommends first, marked «(Recommended)», only when it truly recommends
+one. You can always answer in your own words. So a decision is a question card — its options described, an answer of
+your own always open, alive 7 days and through restarts — and the run stops on it, holding no room on its lane.
+
+**Suggested replies** are the older way, no longer taught: a turn's last line `Replies: "Yes, go ahead" · "Show me
+the plan first"`. A model that still writes one gets its buttons, read as before. The platform takes that
 line off the text and parses it strictly: only the very last line, not inside an open code fence (a fence closes only
 with its own marker, ``` or ~~~, at least as long), `"…"` (or `“…”`, `«…»`) joined by ` · ` (a bold label is
 tolerated; the older label `Ответы:` is read too); each reply loses
@@ -935,7 +945,7 @@ gets none: the card has its own buttons. The convention was chosen over a tool t
 server by `--mcp-config`): no new path out of a lane, nothing for the gate to rule on, and the failure is the same —
 no line, no buttons.
 
-The replies are buttons under the ping's last message, one per row (and under it in the app, [face.md](face.md#in-the-app));
+The replies are buttons under the ping's last message, one per row (and under the summary in the app, [face.md](face.md#in-the-app), never under the session's row in its list);
 buttons Telegram refuses cost the buttons, never the text — the message goes again without them.
 A press sends that reply into the session as your message — input `ping:<seq>`, taken once whichever place and however
 often it is pressed: like a question's buttons, it survives restarts, and a press an hour later sends once. The

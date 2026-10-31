@@ -27,9 +27,3 @@ export function hideReplyLines(items: Item[], summaries: Summary[]): Item[] {
     return text === it.data.text ? it : { ...it, data: { ...it.data, text } };
   });
 }
-
-/** The session's latest summary when its replies are still pressable; a newer summary closes the older ones. */
-export function openPing(summaries: Summary[]): Summary | null {
-  const last = summaries.at(-1);
-  return last && typeof last.seq === "number" && (last.replies?.length ?? 0) > 0 ? last : null;
-}

@@ -90,7 +90,7 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
     <Card data-testid="question-card" className={cn(open && "border-warning/70 bg-warning/5 ring-1 ring-warning/30", className)}>
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
-          <CardTitle className="text-sm">Question · session {approval.session}</CardTitle>
+          <CardTitle className="text-sm">Question</CardTitle>
           <Badge variant={open ? "warning" : "secondary"}>{open ? "Awaiting an answer" : approvalStateWord(approval.state)}</Badge>
         </div>
       </CardHeader>

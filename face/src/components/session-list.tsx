@@ -9,13 +9,11 @@ import { ApprovalCard } from "@/components/approval-card";
 import { Composer } from "@/components/composer";
 import { ArrowUp, ChevronDown, Clock, Columns, Database, Fork, GitPullRequest, Pin, Plus, Star } from "@/components/icons";
 import { NewSession } from "@/components/new-session";
-import { ReplyButtons } from "@/components/reply-buttons";
 import { SessionMenu } from "@/components/session-menu";
 import { Markdown } from "@/components/transcript/item";
 import { ApiError, api } from "@/lib/api";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
-import { openPing } from "@/lib/replies";
 import { FILTERS, type Filter, type FoldedRow, foldRows, isWaiting, sphereGroups } from "@/lib/spheres";
 import { approvalsOf, lastWords, orderedItems, orderedSummaries, waitsOnOwner } from "@/lib/store";
 import { toast } from "@/lib/toast";
@@ -160,9 +158,6 @@ function Row({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const state = useLiveState();
-  // Its last ping's suggested replies, when this app has seen that ping (on the stream, or in a loaded session).
-  const summariesOf = state.summaries[s.id];
-  const ping = useMemo(() => openPing(orderedSummaries(summariesOf)), [summariesOf]);
   // A pull request its push opened, when this app has seen the card (a loaded session, the stream).
   const pr = useMemo(
     () => Object.values(state.pushes).find((p) => p.session === s.id && p.state === "pushed" && p.url),
@@ -305,7 +300,6 @@ function Row({
           )}
         </span>
       </div>
-      {ping && <ReplyButtons summary={ping} className="mt-0.5 mb-1.5 ml-5" />}
       {open && <Peek id={s.id} />}
     </li>
   );

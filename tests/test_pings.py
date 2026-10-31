@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -25,9 +24,12 @@ COMMON = Path(__file__).parent.parent / "deploy" / "lanes" / "instructions" / "c
 
 # --- the replies line ---------------------------------------------------------------------------------------------
 
-def test_the_instructions_own_example_parses():
-    example = re.search(r"`(Replies: [^`]+)`", COMMON.read_text()).group(1)
-    assert pings.split(f"Done.\n\n{example}") == ("Done.", ["Yes, go ahead", "Show me the plan first"])
+def test_the_instructions_ask_with_a_question_card_and_no_longer_teach_the_replies_line():
+    common = " ".join(COMMON.read_text().split())
+    assert "Replies:" not in common, "the older way is read, not taught"
+    for rule in ("ask with AskUserQuestion, never as a question in the text", "(Recommended)",
+                 "Never ask to go on", "his answer changes what you do next"):
+        assert rule in common, rule
 
 
 @pytest.mark.parametrize("text, expected", [

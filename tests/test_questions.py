@@ -57,7 +57,7 @@ def test_a_question_is_one_card_per_question_with_its_options_as_buttons(tmp_pat
         assert approval["state"] == "shown" and world.store.session(session)["state"] == "waiting"
         assert [c["approval"] for c in cards] == [questions.key(approval["id"], 0), questions.key(approval["id"], 1)]
         first, second = cards
-        assert first["data"]["view"]["head"] == ["Question · notes · session " + session + " · 1 of 2", "Жильё"]
+        assert first["data"]["view"]["head"] == ["❓ notes · Жильё · 1 of 2"], "one line: no session number to read"
         assert first["data"]["view"]["body"] == "Где жить?\n\n1. Центр — старый город\n2. Окраина — тихо"
         assert first["data"]["view"]["status"] == questions.OPEN_SINGLE
         assert labels(first) == ["Центр", "Окраина"]

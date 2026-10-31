@@ -4,7 +4,7 @@ import { ReplyButtons } from "@/components/reply-buttons";
 import { Transcript } from "@/components/transcript/transcript";
 import { live } from "@/lib/live";
 import { lastWords } from "@/lib/store";
-import { hideReplyLines, openPing, withoutLine } from "@/lib/replies";
+import { hideReplyLines, withoutLine } from "@/lib/replies";
 import type { Item, Summary } from "@/lib/types";
 
 const ping = (over: Partial<Summary> = {}): Summary => ({
@@ -63,7 +63,5 @@ describe("a ping's replies", () => {
     expect(hideReplyLines(items, [ping({ line: null })])).toBe(items);
     expect(lastWords([msg(0, LAST)], "", [ping()])).toBe("Found three options.");
     expect(lastWords([msg(0, LAST)], "", [])).toBe(LAST);
-    expect(openPing([ping(), ping({ seq: 8, replies: [] })])).toBeNull();
-    expect(openPing([ping({ seq: 6, replies: [] }), ping()])?.seq).toBe(7);
   });
 });

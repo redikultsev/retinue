@@ -77,18 +77,15 @@ describe("SessionList", () => {
     expect(screen.queryByTestId("peek")).toBeNull();
   });
 
-  it("shows the last ping's replies under the session's row once the app has seen it", async () => {
+  it("never shows a ping's replies under the session's row: they are under its summary", async () => {
     seed([session("a1b2c3d4")]);
     mount(<SessionList />);
     await screen.findByText("Session a1b2c3d4");
-    expect(screen.queryByRole("group", { name: "Replies" })).toBeNull();
     const summary = { session: "a1b2c3d4", seq: 3, head: "Result", text: "Done.", at: 2, turn: 0, kind: "decision" as const,
       took_s: 10, replies: ["Yes", "No"], answered: null };
     act(() => live.dispatch({ type: "event", id: 9, event: { kind: "summary", data: summary } }));
-    const group = await screen.findByRole("group", { name: "Replies" });
-    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Yes", "No"]);
-    act(() => live.dispatch({ type: "event", id: 10, event: { kind: "summary", data: { ...summary, replies: [], answered: "Yes" } } }));
-    await waitFor(() => expect(screen.queryByRole("group", { name: "Replies" })).toBeNull());
+    await waitFor(() => expect(live.getState().summaries.a1b2c3d4?.["3"]).toBeTruthy());
+    expect(screen.queryByRole("group", { name: "Replies" })).toBeNull();
   });
 
   it("pins on the server, the pinned filter shows it, and side sessions hang under theirs", async () => {

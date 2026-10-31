@@ -29,8 +29,8 @@ LABEL_CHARS = 60                  # a button's words
 BODY_CHARS = 3000                 # one question as its Telegram card shows it; the face shows it whole
 DONE = "done"
 TICK, UNTICK = "☑ ", "☐ "
-OPEN_SINGLE = "Pick an option with a button — or reply to this message in your own words."
-OPEN_MULTI = "Tick the options and press «Done» — or reply to this message in your own words."
+OPEN_SINGLE = "Press one — or reply in your own words."
+OPEN_MULTI = "Tick, then «Done» — or reply in your own words."
 
 
 def of(tool_input: dict) -> list[dict]:
@@ -103,14 +103,14 @@ def updated_input(tool_input: dict, answers: dict) -> dict:
 
 
 def card(approval: dict, n: int, session: str, track: str, status: str = "") -> courier.CardView:
-    """Question `n` of the call as its Telegram message: who asks, the question and its options verbatim, and what
-    to do — or its answer, or `status` once it no longer asks."""
+    """Question `n` of the call as its Telegram message, read on a phone in seconds: one head line — where it asks
+    from and its header — then the question and its options verbatim, each with what it means, and what to do — or its
+    answer, or `status` once it no longer asks. The session needs no number here: a reply to the message goes to it."""
     questions = of(approval["input"])
     q = questions[n]
     count = f" · {n + 1} of {len(questions)}" if len(questions) > 1 else ""
-    head = [f"Question · {courier.line(track)} · session {session}{count}"]
-    if q["header"]:
-        head.append(courier.line(q["header"], 120))
+    header = f" · {courier.line(q['header'], 120)}" if q["header"] else ""
+    head = [f"❓ {courier.line(track)}{header}{count}"]
     lines = [q["question"], ""] if q["options"] else [q["question"]]
     for i, option in enumerate(q["options"], 1):
         lines.append(f"{i}. {option['label']}" + (f" — {option['description']}" if option["description"] else ""))

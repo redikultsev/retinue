@@ -503,9 +503,9 @@ is as of opening the session.
   platform's limits before it uploads, and a message may be files alone.
 - **Summaries** are inline, each at the end of the turn it was said for. One that only repeats the turn's last message
   is a divider with its header; one that says more (an error, a restart, a limit) is shown whole. A ping's suggested
-  replies are buttons under it, and under the session's row in the list once the app has seen that ping (on the
-  stream, or in a loaded session): a press sends that reply into the session, once — a press in Telegram counts as
-  the same press — and the buttons go in both places; the reply that went in shows as «→ …». The turn's last message
+  replies (the older way: a session now asks with a question card) are buttons under it, never under the session's
+  row in the list, where they were noise: a press sends that reply into the session, once — a press in Telegram counts
+  as the same press — and the buttons go in both places; the reply that went in shows as «→ …». The turn's last message
   hides its replies line — the exact `line` the platform parsed, never one the app parses itself.
 - **“To the Base”** ([base.md](base.md#the-button)): “To the Base · N” under the session's last summary, in its
   menu and in its feed row opens its commit card in a dialog — the same card as in Telegram (the event `base`): the

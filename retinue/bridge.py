@@ -69,6 +69,7 @@ FILES_TIMEOUT_S = 300        # the platform reads every picture and PDF of the m
 WAITING_LOOK_S = 30.0        # the assistant's digest («Waiting for you») is built this often…
 WAITING_PUSH_S = 3600.0      # …pushed when it changed, and at least this often anyway
 WAITING_TIMEOUT_S = 10.0     # a push waits no longer: it runs beside the notes' pump, never in its way
+DETAIL_SPIN_S = 0.5          # the sheets' long call answered empty at once (an old platform): this pause, not a spin
 DECIDE_HINT = "Decide with its card's buttons or in the app."
 STALE_PRESS = "The press did not apply: the list is out of date."
 FAILED_PRESS = "The press did not apply: a server error. Try again."
@@ -254,10 +255,11 @@ class PlatformBridge:
         BACKOFF_MAX_S — the app has given up on what it asked by then, and asks again."""
         wait = PUMP_S
         while True:
+            started = time.monotonic()
             try:
-                for ask in await self.neighbour.asked():
-                    await self.answer_detail(ask, time.time())
-                wait = 0.0
+                asked = await self.neighbour.asked()
+                await asyncio.gather(*(self.answer_detail(ask, time.time()) for ask in asked))
+                wait = 0.0 if time.monotonic() - started >= DETAIL_SPIN_S else DETAIL_SPIN_S  # an empty answer at once
             except Unavailable as exc:
                 wait = min(max(wait, PUMP_S) * 2, BACKOFF_MAX_S)
                 log.warning("the app's sheets not taken: %s (next try in %.0f s)", exc, wait)
@@ -276,9 +278,13 @@ class PlatformBridge:
         except Exception:
             log.exception("the sheet for request %s was not built", number)
             body = {"r": number, "failed": True}
-        answer = await self.neighbour.detail(body)
-        if answer.get("error"):
-            log.warning("the platform refused the sheet for request %s: %s", number, answer["error"])
+        try:
+            answer = await self.neighbour.detail(body)
+            if answer.get("error") and "detail" in body:  # refused, too big: the app hears it failed, not silence
+                log.warning("the platform refused the sheet for request %s: %s", number, answer["error"])
+                await self.neighbour.detail({"r": number, "failed": True})
+        except Unavailable as exc:  # one answer lost: the app's wait ends it; the others go on
+            log.warning("the sheet for request %s did not reach the platform: %s", number, exc)
 
     def poke(self) -> None:
         """The digest changed by the owner's hand: looked at and pushed on the push loop's next turn, not in 30 s."""

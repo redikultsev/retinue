@@ -157,7 +157,8 @@ function Way({ row, bot, record, onOpen }: { row: FeedRow; bot: string; record: 
       </a>
     ) : null;
   return (
-    <button type="button" aria-label="Details" title="Details" aria-haspopup="dialog" className={ROW_ICON} onClick={onOpen}>
+    // the row's words open the same sheet and take the tab stop; this is the pointer's way to it, at the row's end
+    <button type="button" tabIndex={-1} aria-hidden="true" title="Details" className={ROW_ICON} onClick={onOpen}>
       <ChevronRight />
     </button>
   );
@@ -186,9 +187,10 @@ function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: 
         <Way row={row} bot={bot} record={record} onOpen={() => onOpen(row)} />
       </div>
     ) : null;
+  // spans only: inside a button (her rows) only phrasing content is valid
   const text = (
-    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-      <div className="flex min-w-0 items-baseline gap-2 text-[15px] md:text-sm">
+    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <span className="flex min-w-0 items-baseline gap-2 text-[15px] md:text-sm">
         {title}
         {where && (
           <span className="hidden min-w-0 shrink truncate text-xs text-muted-foreground sm:inline">
@@ -199,9 +201,9 @@ function Row({ row, bot, now, feed, onOpen }: { row: FeedRow; bot: string; now: 
         <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
           {row.source === "deadline" ? "" : waited(row.since, now)}
         </span>
-      </div>
-      {row.essence && !row.approval && <p className="line-clamp-2 text-sm break-words text-muted-foreground">{row.essence}</p>}
-    </div>
+      </span>
+      {row.essence && !row.approval && <span className="line-clamp-2 text-sm break-words text-muted-foreground">{row.essence}</span>}
+    </span>
   );
   return (
     <li data-testid="feed-row" className="group/row flex flex-col gap-2 px-3 py-2.5 hover:bg-accent/30 focus-within:bg-accent/30">

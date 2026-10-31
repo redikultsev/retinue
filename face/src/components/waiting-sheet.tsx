@@ -73,7 +73,11 @@ export function useDetail(row: FeedRow | null, load = api.waitingDetail): [Loade
     let current = true;
     setLoaded({ state: "loading" });
     load(row.ref, row.t)
-      .then(({ detail }) => current && setLoaded({ state: "ok", detail }))
+      .then((answer) => {
+        if (!current) return;
+        if (answer?.detail && Array.isArray(answer.detail.asks)) setLoaded({ state: "ok", detail: answer.detail });
+        else setLoaded({ state: "error", status: 502, message: "The assistant's side could not say — try again." });
+      })
       .catch((e: unknown) => {
         if (!current) return;
         const status = e instanceof ApiError ? e.status : 0;

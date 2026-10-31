@@ -954,7 +954,12 @@ def test_a_sheet_the_app_asked_for_is_answered_by_its_number_and_a_failure_is_sa
     assert seen == [("chat:1", "f" * 32), ("draft:0000000c", ""), ("chat:2", "e" * 32)]
     assert [body for _, body in platform.calls] == [{"r": "a" * 16, "detail": sheet}, {"r": "b" * 16, "detail": None},
                                                    {"r": "c" * 16, "failed": True}]
-    assert "c" * 16 in caplog.text, "logged by its number"
+    assert "c" * 16 in caplog.text and "secret words" not in caplog.text.split("Traceback")[0], "logged by its number"
+    platform.calls.clear()
+    platform.answers = {"waiting/detail": {"error": "detail over 24576 bytes"}}
+    asyncio.run(bridge.answer_detail({"r": "d" * 16, "ref": "chat:1", "t": "f" * 32}, 1.0))
+    assert [body for _, body in platform.calls] == [{"r": "d" * 16, "detail": sheet}, {"r": "d" * 16, "failed": True}], \
+        "refused or too big: the app hears it failed at once"
 
 
 def test_the_sheets_loop_takes_what_was_asked_beside_the_notes_and_waits_when_the_platform_is_away(tmp_path,
@@ -980,4 +985,5 @@ def test_the_sheets_loop_takes_what_was_asked_beside_the_notes_and_waits_when_th
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(bridge.detail_loop())
     assert [body for call, body in platform.calls if call == "waiting/detail"] == [{"r": "a" * 16, "detail": None}]
-    assert sleeps == [0.0, bridge_module.PUMP_S * 2], "at once after an answer; backing off when the platform is away"
+    assert sleeps == [bridge_module.DETAIL_SPIN_S, bridge_module.PUMP_S * 2], \
+        "a moment after an answer that came at once; backing off when the platform is away"

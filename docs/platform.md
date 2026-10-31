@@ -155,8 +155,10 @@ as anything is asked, or empty after 25 s. So a sheet never waits behind a card 
 of it enters the notes' journal. The router builds each sheet from its own tables (`waiting.detail`) — a token's
 items as `press` reads them, only those still open; a draft by its id — and answers `POST /owner/waiting/detail
 {r, detail}` (`detail: null`: it does not know the row any more; `failed: true`: building it failed, logged by `r`
-only). The platform checks it (`feed.clean_detail`: its fields, their types and caps, a link only of the router's own
-shapes) and hands it to the request still waiting; an answer nobody waits for is dropped. A request waits 12 s at
+only). The platform checks it (`feed.clean_detail`: its fields, their types and caps; a link of any shape but the router's
+own is dropped) and hands it to the request still waiting; an answer nobody waits for is dropped, and one off the
+contract — or too big, which the router then says as `failed` — ends the wait at once. Only the newest of the
+router's long calls takes what was asked: one still held from before a restart of the router gives it up. A request waits 12 s at
 most, 8 at once; whatever ends it, the face going away too, forgets it. The sheet carries her words and a draft's
 text masked as the digest's title is (`waiting.masked`), a link to the Gmail thread or the person's @username, and the
 owner's own mailbox — never the letter's text, its quote or the sender's address. It is held in the platform's memory

@@ -460,6 +460,7 @@ def test_a_persons_sheet_says_her_words_masked_and_where_the_thread_is_never_the
     assert [a["at"] for a in sheet["asks"]] == [NOW - HOUR, NOW - 2 * HOUR], "newest first"
     assert sheet["asks"][0]["text"] == "Pay the invoice ‹number› at ‹link› or call ‹number›.\nBy Friday."
     assert sheet["asks"][0]["deadline"] == "Fri" and sheet["asks"][0]["open"] == gmail
+    assert waiting.masked("1. 123\n2. 456", 100) == "1. 123\n2. 456", "two lines, two numbers"
     said = json.dumps(sheet, ensure_ascii=False)
     assert "VERBATIM" not in said and "anna@example.org" not in said, "no quote, no sender's address"
     assert feed.clean_detail(sheet) == sheet, "the platform takes it as it is"

@@ -158,12 +158,14 @@ def test_a_sheet_is_taken_only_in_its_shape_with_links_of_the_routers_own_shapes
                 {"url": "javascript:alert(1)", "label": "Open the chat"},
                 {"url": GMAIL, "label": "Open the chat"},
                 {"url": GMAIL + "?x", "label": "Open in Gmail"},
-                {"url": GMAIL, "label": "Open in Gmail", "x": 1}):
-        with pytest.raises(feed.Refused, match="link"):
-            feed.clean_detail(sheet(open=bad))
+                {"url": GMAIL, "label": ["Open in Gmail"]},
+                {"url": GMAIL, "label": "Open in Gmail", "x": 1}, "x"):
+        odd = feed.clean_detail(sheet(open=bad, asks=[{**sheet()["asks"][0], "open": bad}]))
+        assert "open" not in odd and "open" not in odd["asks"][0], "a link off the router's shapes is dropped"
     for bad in (sheet(kind="deadline"), sheet(address="anna@acme.example"), sheet(asks=[{"need": "read", "text": "",
                 "at": NOW}]), sheet(asks="x"), sheet(asks=[sheet()["asks"][0]] * 11), sheet(more=-1),
                 sheet(draft={"text": "Hi", "channel": "mail", "subject": "", "expires": NOW, "state": "shown"}),
+                sheet(asks=[{**sheet()["asks"][0], "at": 10 ** 400}]), sheet(asks=[{**sheet()["asks"][0], "at": True}]),
                 {"kind": "letter", "who": "A"}):
         with pytest.raises(feed.Refused):
             feed.clean_detail(bad)
@@ -204,7 +206,8 @@ def test_a_sheet_is_asked_of_the_router_by_its_long_call_and_relayed_never_kept(
         assert "anna_example" not in kept and "invoice" not in kept, "relayed, never written"
 
         for answer, code in ((lambda ask: {"detail": None}, 410), (lambda ask: {"failed": True}, 502),
-                             (lambda ask: {"detail": sheet(open={"url": "https://evil.example", "label": "x"})}, 502)):
+                             (lambda ask: {"detail": sheet(kind="deadline")}, 502),
+                             (lambda ask: {"detail": sheet(asks=[{**sheet()["asks"][0], "at": 10 ** 400}])}, 502)):
             opened = asyncio.create_task(world.call("POST", "/api/waiting/detail", {"ref": "chat:000000000001",
                                                                                    "t": TOKEN}))
             await router(answer)
@@ -408,4 +411,16 @@ def test_what_a_gone_router_took_is_asked_again_and_what_nobody_waits_for_is_not
         details.again(taken)
         assert [a["r"] for a in await details.asked(1)] == [first], "only what is still waited for"
         assert await details.asked(0.05) == [], "nothing asked: empty after the hold"
+    asyncio.run(go())
+
+
+def test_a_call_held_by_a_router_that_restarted_takes_nothing_from_the_newer_one():
+    async def go():
+        details = feed.Details()
+        old = asyncio.create_task(details.asked(5))
+        await asyncio.sleep(0.01)
+        new = asyncio.create_task(details.asked(5))
+        await asyncio.sleep(0.01)
+        number = details.ask("draft:0000000c", None)
+        assert await old == [] and [a["r"] for a in await new] == [number]
     asyncio.run(go())

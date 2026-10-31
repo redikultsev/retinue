@@ -310,7 +310,7 @@ class Platform:
         """The router's answer to a row's sheet the app asked for (`feed.Details`): `{r, detail}`, `detail` null when
         the router no longer knows the row. Checked (`feed.clean_detail`) and handed to the waiting request — never
         kept, never logged; a refused one is said to the router by its error alone."""
-        if request.content_length is None or request.content_length > feed.DETAIL_BYTES:
+        if request.content_length is None or request.content_length > feed.DETAIL_BYTES:  # the router says it failed
             return web.json_response({"error": f"detail over {feed.DETAIL_BYTES} bytes"}, status=413)
         body = await _body(request)
         number = body.get("r")
@@ -321,9 +321,10 @@ class Platform:
             return web.json_response({"ok": True, "waited": self.details.answer(number, feed.Refused("not built"))})
         try:
             detail = None if body["detail"] is None else feed.clean_detail(body["detail"])
-        except feed.Refused as exc:
-            self.details.answer(number, exc)
-            return web.json_response({"error": str(exc)}, status=400)
+        except Exception as exc:  # whatever is off the contract — an odd type too — ends the app's wait at once
+            refused = exc if isinstance(exc, feed.Refused) else feed.Refused(f"detail: {type(exc).__name__}")
+            self.details.answer(number, refused)
+            return web.json_response({"error": str(refused)}, status=400)
         return web.json_response({"ok": True, "waited": self.details.answer(number, detail)})
 
     async def owner_library(self, request: web.Request) -> web.Response:

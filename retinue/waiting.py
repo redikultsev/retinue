@@ -202,8 +202,9 @@ def masked(text: str, cap: int) -> str:
     four digits — with their lines kept and invisible characters dropped."""
     text = unicodedata.normalize("NFKC", text)
     text = "".join(c for c in text if unicodedata.category(c) not in INVISIBLE or c == "\n")
-    lines = [" ".join(part.split()) for part in text.strip().splitlines()]
-    text = DIGITS.sub("••••", PHONE.sub("‹number›", URL.sub("‹link›", EMAIL.sub("‹address›", "\n".join(lines)))))
+    lines = [DIGITS.sub("••••", PHONE.sub("‹number›", URL.sub("‹link›", EMAIL.sub("‹address›", " ".join(part.split())))))
+             for part in text.strip().splitlines()]  # line by line: numbers on two lines are two numbers
+    text = "\n".join(lines)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text if len(text) <= cap else text[:cap - 1] + "…"
 

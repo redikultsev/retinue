@@ -107,7 +107,8 @@ describe("FeedView", () => {
     const read = screen.getByRole("region", { name: "Read" });
     expect(within(read).getByRole("link", { name: "Post" }).getAttribute("href")).toBe("/s/b2c3d4e5");
     const hers = screen.getByRole("region", { name: "From the assistant" });
-    expect(within(hers).getByRole("button", { name: "Details" }).getAttribute("aria-haspopup")).toBe("dialog");
+    expect(within(hers).getByRole("button", { name: /Anna Petrova/ }).getAttribute("aria-haspopup")).toBe("dialog");
+    expect(within(hers).getByTitle("Details").getAttribute("tabindex")).toBe("-1");
     expect(within(hers).queryByRole("link", { name: "Open in Telegram" })).toBeNull();
     expect(within(hers).getByText(/The assistant's list is from/)).toBeTruthy();
     expect(within(hers).queryByRole("link", { name: "Anna Petrova" })).toBeNull();
@@ -171,7 +172,7 @@ describe("Her row in the feed", () => {
     mount(<FeedView feed={feed} now={NOW} />);
     const section = await screen.findByRole("region", { name: "From the assistant" });
     expect(within(section).queryByRole("button", { name: "Done" })).toBeNull();
-    expect(within(section).queryByRole("button", { name: "Details" })).toBeNull();
+    expect(within(section).queryByTitle("Details")).toBeNull();
     expect(within(section).getByRole("link", { name: "Open in Telegram" }).getAttribute("href")).toBe("https://t.me/retinue_bot");
     expect(within(section).getByText("Closed today: 5 · Ran out unmarked this week: 2")).toBeTruthy();
   });
@@ -230,7 +231,7 @@ describe("Her row's sheet", () => {
     vi.spyOn(api, "waitingDetail").mockResolvedValue({ detail });
     const press = vi.spyOn(api, "waitingPress").mockResolvedValue({ ok: true });
     mount(<FeedView feed={hers([letter])} now={NOW} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Details" }));
+    fireEvent.click(await screen.findByTitle("Details"));
     const sheet = await screen.findByRole("dialog", { name: "Acme Hosting" });
     fireEvent.click(within(sheet).getByRole("button", { name: "Tomorrow" }));
     await waitFor(() => expect(press).toHaveBeenCalledWith(T, "later"));
@@ -241,7 +242,7 @@ describe("Her row's sheet", () => {
     const odd = { ...detail, open: { url: "javascript:alert(1)", label: "Open in Gmail" }, asks: [{ ...detail.asks[0]!, open: { url: "https://evil.example", label: "Open the chat" } }] };
     vi.spyOn(api, "waitingDetail").mockResolvedValue({ detail: odd as WaitingDetail });
     mount(<FeedView feed={hers([letter])} now={NOW} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Details" }));
+    fireEvent.click(await screen.findByTitle("Details"));
     const sheet = await screen.findByRole("dialog");
     await within(sheet).findByText(/The invoice for May/);
     expect(within(sheet).queryByRole("link", { name: /Gmail|chat/ })).toBeNull();
@@ -255,7 +256,7 @@ describe("Her row's sheet", () => {
       .mockRejectedValueOnce(new ApiError(410, "The assistant no longer has this row."));
     const refresh = vi.spyOn(feedSource, "refresh").mockResolvedValue();
     mount(<FeedView feed={hers([letter])} now={NOW} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Details" }));
+    fireEvent.click(await screen.findByTitle("Details"));
     const sheet = await screen.findByRole("dialog");
     expect((await within(sheet).findByRole("alert")).textContent).toContain("did not answer");
     fireEvent.click(within(sheet).getByRole("button", { name: "Try again" }));
@@ -280,7 +281,7 @@ describe("Her row's sheet", () => {
     const links = within(sheet).getAllByRole("link").map((a) => a.textContent);
     expect(links).toEqual(["Send in Telegram", "Open the thread"]);
     expect(within(sheet).queryByRole("button", { name: "Done" })).toBeNull();
-    expect(screen.getAllByRole("button", { name: "Details" })).toHaveLength(1);
+    expect(screen.getAllByTitle("Details")).toHaveLength(1);
     expect(load).toHaveBeenCalledTimes(1);
   });
 

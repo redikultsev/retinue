@@ -187,16 +187,18 @@ def _words(value: object, cap: int, field: str) -> str:
     return kept if len(kept) <= cap else kept[:cap - 1] + "…"
 
 
-def _link(value: object, field: str) -> dict:
-    """`{url, label}` of one of LINKS' shapes, with the label that goes with it; anything else refuses the sheet."""
-    if not isinstance(value, dict) or set(value) != {"url", "label"} or value["label"] not in LINKS or \
-            not isinstance(value["url"], str) or not LINKS[value["label"]].fullmatch(value["url"]):
-        raise Refused(f"{field}: not a link of a known shape")
+def _link(value: object) -> dict | None:
+    """`{url, label}` of one of LINKS' shapes, with the label that goes with it; anything else is dropped — the sheet
+    goes without it."""
+    if not isinstance(value, dict) or set(value) != {"url", "label"} or not isinstance(value["label"], str) or \
+            value["label"] not in LINKS or not isinstance(value["url"], str) or \
+            not LINKS[value["label"]].fullmatch(value["url"]):
+        return None
     return {"url": value["url"], "label": value["label"]}
 
 
 def _time(value: object, field: str) -> float:
-    if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+    if type(value) not in (int, float) or not 0 < value < 1e12 or not math.isfinite(value):
         raise Refused(f"{field}: not a time")
     return float(value)
 
@@ -219,15 +221,15 @@ def clean_detail(body: object) -> dict:
                          "deadline": line(_words(ask.get("deadline", ""), 4 * DETAIL_DEADLINE, f"asks[{n}].deadline"),
                                           DETAIL_DEADLINE),
                          "at": _time(ask["at"], f"asks[{n}].at"),
-                         **({"open": _link(ask["open"], f"asks[{n}].open")} if "open" in ask else {})})
+                         **({"open": link} if (link := _link(ask.get("open"))) else {})})
     more = body.get("more", 0)
     if type(more) is not int or not 0 <= more <= COUNT_MAX:
         raise Refused("more: not a number")
     out = {"kind": body["kind"], "who": _text(_words(body["who"], 4 * WHO_CHARS, "who"), WHO_CHARS),
            "account": line(body.get("account", "") if isinstance(body.get("account", ""), str) else "", DETAIL_ADDRESS),
            "asks": out_asks, "more": more}
-    if "open" in body:
-        out["open"] = _link(body["open"], "open")
+    if link := _link(body.get("open")):
+        out["open"] = link
     if "draft" in body:
         draft = body["draft"]
         if body["kind"] != "draft" or not isinstance(draft, dict) or \
@@ -252,6 +254,7 @@ class Details:
         self.waiting: dict[str, asyncio.Future] = {}
         self.queued: dict[str, dict] = {}  # asked, not yet taken by the router: number → {r, ref, t?}
         self._asked = asyncio.Event()
+        self._call = 0  # the router's long calls, counted: only the newest takes what was asked
 
     def ask(self, ref: str, token: str | None) -> str | None:
         """A new request's number, queued for the router; None while DETAIL_PENDING already wait."""
@@ -266,11 +269,16 @@ class Details:
     async def asked(self, hold: float) -> list[dict]:
         """What the app asked and the router has not taken — at once, or as soon as something is, or nothing after
         `hold` seconds."""
+        self._call += 1
+        call = self._call
         if not self.queued:
             self._asked.clear()
             try:
                 await asyncio.wait_for(self._asked.wait(), hold)
             except TimeoutError:
+                return []
+            if call != self._call:  # a newer call came — the router restarted while this one was held: it takes it
+                self._asked.set()
                 return []
         taken = list(self.queued.values())
         self.queued.clear()

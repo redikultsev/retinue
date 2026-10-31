@@ -846,6 +846,14 @@ def test_wait_says_the_queue_one_replyable_message_per_session_row(tmp_path):
                                            "card": "q1/0"}), "a reply to a question's line is its answer"
 
 
+def test_every_row_source_of_the_feed_has_its_icon_in_wait():
+    import re
+    from pathlib import Path
+    feed = (Path(__file__).parent.parent / "retinue" / "feed.py").read_text()
+    sources = set(re.findall(r'_row\([^,]+, "\w+", "(\w+)"', feed)) | {"question", "approval", "courier"}
+    assert "proposal" in sources and sources <= set(bridge_module.ICONS), sources - set(bridge_module.ICONS)
+
+
 def test_wait_with_nothing_waiting_or_no_platform_is_said(tmp_path):
     ch, bridge, platform = make(tmp_path)
     platform.answers = {"feed": {"count": 0, "rows": [], "more": 0}}

@@ -10,7 +10,7 @@ import type { Item, Proposal } from "@/lib/types";
 
 const proposal = (over: Partial<Proposal> = {}): Proposal => ({
   id: "9a0b1c2d", session: "s1", tool_use_id: "toolu_p", title: "Compare train fares", created: 10, at: 10, state: "open",
-  child: null, brief: "Compare fares AMS→LIS for 2 June and return the cheapest refundable one.", ...over,
+  child: null, from_report: false, brief: "Compare fares AMS→LIS for 2 June and return the cheapest refundable one.", ...over,
 });
 
 async function mount(node: React.ReactNode) {
@@ -53,6 +53,17 @@ describe("a proposed sub-session", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show the brief" }));
     expect(screen.getByTestId("proposal-brief").textContent).toBe(long.brief);
     expect(screen.getByRole("button", { name: "Start" })).toBeTruthy();
+  });
+
+  it("says it was proposed in a report's turn, while it waits", async () => {
+    await mount(<ProposalCard proposal={proposal({ from_report: true })} />);
+    expect(screen.getByTestId("proposal-from-report").textContent).toMatch(/report may have read someone else's text/);
+    cleanup();
+    await mount(<ProposalCard proposal={proposal()} />);
+    expect(screen.queryByTestId("proposal-from-report")).toBeNull();
+    cleanup();
+    await mount(<ProposalCard proposal={proposal({ from_report: true, state: "started", child: "c1" })} />);
+    expect(screen.queryByTestId("proposal-from-report")).toBeNull();
   });
 
   it("says what became of it once decided, with no buttons", async () => {

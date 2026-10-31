@@ -158,7 +158,7 @@ in the snapshot, never wrapped in an envelope. The kinds and their keys:
 | `summary` | `<session>/<seq>` | `{session, seq, head, text, at, turn, kind, took_s, auto}`: every summary its own object; `turn` is the turn it ends; a ping's `kind` (`done` · `decision` — a card of the session waits on you — · `failed`) and `took_s` ([platform.md](platform.md#pings)); `auto`, the card of the platform's own commit after that turn |
 | `input` | `<session>/<input_id>` | `{session, input_id, text, at, turn, n, attachments}`: your message; it goes before the item (`turn`, `n`) the session had not yet written (`null` on old ones: not shown); `attachments`: `[{kind: image\|pdf\|file, name, size, what, thumb}]` |
 | `file` | the file's id | `{id, session, path, name, size, mime, at}`: a file the session handed over ([below](#a-sessions-files)) |
-| `proposal` | the proposal's id | `{id, session, tool_use_id, title, brief, created, at, state, child}`: a sub-session the session proposed ([platform.md](platform.md#proposals)); `state` `open` · `started` (`child` the sub-session) · `declined` · `expired` (open past its week) |
+| `proposal` | the proposal's id | `{id, session, tool_use_id, title, brief, created, at, state, child, from_report}`: a sub-session the session proposed ([platform.md](platform.md#proposals)); `state` `open` · `started` (`child` the sub-session) · `declined` · `expired` (past its week: the platform's clock sends the event); `from_report`: proposed in a turn a report started, which its card says |
 | `delta` | none, no `id` | `{session, text}`: text being written, never replayed |
 
 An approval is `{id, session, tool_use_id, kind, state, tool, input, cwd, digest, view, created, at}`; `kind` is
@@ -524,6 +524,7 @@ is as of opening the session.
 - **A proposed sub-session** ([platform.md](platform.md#proposals)) is a card under the call that proposed it, as in
   Claude's desktop app: “Sub-session: <title>”, the brief as plain text (the model's words, never rendered), “Start”
   and “Not now” — a long brief opens by “Show the brief” before the buttons appear. The session goes on meanwhile.
+  One a report's turn proposed says so in amber while it waits («…the report may have read someone else's text»).
   Decided, the card says “started” with “Open the sub-session”, “set aside”, or “expired”. The same card is the row's
   action under “Decide”.
 - **Summaries** are inline, each at the end of the turn it was said for. One that only repeats the turn's last message

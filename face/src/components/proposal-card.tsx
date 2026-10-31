@@ -1,7 +1,8 @@
 // A sub-session a session proposed instead of starting it (retinue/subs.py), as the desktop app's own-initiative card:
 // its title, its brief — the model's text, shown as plain text and whole before «Start» (a long one opens first:
 // nothing is started unseen) — and «Start» / «Not now». The session goes on meanwhile. Decided, the card says what
-// became of it: started (a link to the sub-session), set aside, or past its week.
+// became of it: started (a link to the sub-session), set aside, or past its week. One proposed in a turn a report
+// started says so, as that turn's own start would on its card: the brief may carry a page the child read.
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { Fork } from "@/components/icons";
@@ -73,6 +74,12 @@ export function ProposalCard({ proposal: given, live = defaultLive, press = api.
         {waiting && (
           <p className="text-[13px] text-muted-foreground">
             The session proposes to hand this to a session of its own and goes on meanwhile.
+          </p>
+        )}
+        {waiting && proposal.from_report && (
+          <p data-testid="proposal-from-report" className="text-[13px] text-amber-700 dark:text-warning">
+            Proposed in a turn a sub-session's report started, not you: the report may have read someone else's text.
+            Start it only if you want it.
           </p>
         )}
       </CardHeader>

@@ -291,9 +291,12 @@ own-initiative work to you as a card: `propose_subsession(title, brief)`. The la
 everything the session noticed itself — a fix in passing, a follow-up its answer recommends — is a proposal, three in
 a turn at most.
 
-- **What is kept** (`sub_proposals`): the title, the brief, the call that proposed it, `open` → `started` (with the
-  child) or `declined`; an open one older than 7 days reads `expired` and can no longer start. At most 5 open per
-  session; the same call, or the same title and brief while it waits, names the proposal already made.
+- **What is kept** (`sub_proposals`): the title, the brief, the call that proposed it, your last message to the
+  session at that moment (the context the brief will carry, however much later you press), whether a report's turn
+  made it, `open` → `started` (with the child), `declined` or — past 7 days, on the platform's clock, its card told —
+  `expired`. At most 5 open per session; the same call, or the same title and brief while it waits, names the proposal
+  already made; the same work already at work in a sub-session names that child instead. No app (no
+  `RETINUE_FACE_ORIGIN`), no proposals: nowhere to press «Start», so the tool says to name the work in the summary.
 - **The session goes on.** The tool answers at once («Proposed to the owner… Go on with your turn»); nothing waits on
   your press. A proposal is allowed in a turn a report started too: nothing starts without you.
 - **What you see**: a row of «Waiting for you» → «Decide» and a card under the call in the session's transcript, each
@@ -301,11 +304,16 @@ a turn at most.
   it or set it aside in the app.». No ping of its own: the session's turn ends with its own.
 - **«Start»** runs the very start a tool call would (`Subs._spawn`) under the key `proposal:<id>` — the limits, the
   framed brief, the quiet ping — so a second press, here or on another device, names the child already started.
-  Refused (a subscription limit, 10 open, the session archived), it says why and stays open. **«Not now»** sets it
+  **One piece of work, one child**: any start of the same title and brief — your press, or `start_subsession` after
+  you said «start it» in the chat — marks every open proposal of it `started` with that child in the same commit as
+  the child, so a later press names it and a «Not now» meanwhile finds nothing open. Your press is your word to the
+  family: its exchanges count from zero, and a report paused after 30 reaches the session again. Refused (a
+  subscription limit, 10 open, the session archived), it says why and stays open. **«Not now»** sets an open one
   aside; the session is not told, as the desktop app does not tell it.
 - **Against a page that steers the session**: the brief is the model's text, so it is shown to you whole, as plain
   text, before «Start» can be pressed (a long one opens first); the child gets it framed as from the session, not from
-  you, and every call of the child passes the gate as any sub-session's.
+  you, and every call of the child passes the gate as any sub-session's. One proposed in a turn a report started says
+  so on its card, as that turn's own start would: the report may have read someone else's text.
 
 **Limits** (`subs.py`) — loose on purpose, near Claude Code's own on your Mac:
 

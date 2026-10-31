@@ -1234,6 +1234,7 @@ class Platform:
                                     run=f"expired:{approval['id']}")
         self._mark_idle(now)  # the cards still shown after the expiry
         self.subs.deliver()  # a report that waited for its siblings, or for a limit to pass: `_clock` drains
+        self.subs.expire()  # the proposals past their week: their cards told
         self.tobase.tick(now)
         self.topush.tick(now)
 

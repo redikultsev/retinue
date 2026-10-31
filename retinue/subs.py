@@ -24,7 +24,9 @@ stop waking the parent and wait, quietly, for his next message.
 the owner (`propose_subsession`) — a row of «Waiting for you» → «Decide» and a card in the parent's transcript with
 «Start» / «Not now». The parent goes on with its turn. «Start» runs the very start a tool call would, under the
 proposal's own key, so a second press starts nothing more; the brief is the model's text, so the owner sees it whole
-before he presses.
+before he presses. A start of the same title and brief, by either way, closes every proposal of it as started: one
+piece of work, one child. A proposal keeps what it was made with — the owner's message of that moment, and whether a
+report's turn made it — and expires on the clock (`expire`), its card told. No app, no proposals: nowhere to press.
 
 **Naming**: a session the owner started names itself first thing in its first turn (`name_session`), as the
 desktop app titles a session within seconds: a short title in place of his first words, and — when nobody placed it —
@@ -113,6 +115,8 @@ UNSEEN = "The platform did not see this call checked — it was not run. Repeat 
 HELD = ("The owner stopped this sub-session or wrote into it himself — you can write into it after his message in "
         "this session. Tell him in the summary what you want to pass on to it.")
 LIMIT = "The subscription is waiting for its limit to reset — a sub-session would only queue now. Start it after the reset."
+NO_APP = ("The owner has no app here to start a proposal in — name the work in your summary instead; he asks for it "
+          "if he wants it.")
 OWNER_QUOTE = 600       # what a brief carries of the owner's last message to the parent
 
 def may_start(session: dict) -> bool:
@@ -210,14 +214,20 @@ class Subs:
                 brief TEXT NOT NULL,
                 digest TEXT NOT NULL,               -- of title and brief: the same proposal again is the one made
                 at REAL NOT NULL,
-                state TEXT NOT NULL DEFAULT 'open', -- open | started | declined; open past PROPOSAL_S reads expired
-                child TEXT,                         -- the sub-session «Start» started
-                decided REAL
+                state TEXT NOT NULL DEFAULT 'open', -- open | started | declined | expired (`expire`, past PROPOSAL_S)
+                child TEXT,                         -- the sub-session started for it
+                decided REAL,
+                said TEXT,                          -- the owner's last message to the parent when it was proposed
+                from_report INTEGER NOT NULL DEFAULT 0  -- proposed in a turn a sub-session's report started
             );
             CREATE INDEX IF NOT EXISTS sub_proposals_parent ON sub_proposals (parent, state);
             """)
         if "run" not in {row[1] for row in self.store.db.execute("PRAGMA table_info(sub_reports)")}:
             self.store.db.execute("ALTER TABLE sub_reports ADD COLUMN run TEXT")  # a table from before the column
+        proposed = {row[1] for row in self.store.db.execute("PRAGMA table_info(sub_proposals)")}
+        if "said" not in proposed:  # a table from before the columns
+            self.store.db.execute("ALTER TABLE sub_proposals ADD COLUMN said TEXT")
+            self.store.db.execute("ALTER TABLE sub_proposals ADD COLUMN from_report INTEGER NOT NULL DEFAULT 0")
         self.store.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS sub_reports_run ON sub_reports (child, run)")
         self.store.db.commit()
 
@@ -318,9 +328,11 @@ class Subs:
             return FROM_REPORT, True
         return await self._spawn(parent, call_id, title, brief, digest)
 
-    async def _spawn(self, parent: dict, key: str, title: str, brief: str, digest: str) -> tuple[str, bool]:
+    async def _spawn(self, parent: dict, key: str, title: str, brief: str, digest: str,
+                     said: str | None = None) -> tuple[str, bool]:
         """The sub-session itself, under `key` (the tool call's id, or a proposal's): the limits first, then the child
-        with its framed brief, queued."""
+        with its framed brief, queued, and every open proposal of the same work started with it, in one commit.
+        `said`: the owner's words the brief carries — a proposal's own, from when it was made; else his last ones."""
         db, now = self.store.db, self.platform.clock()
         if self.limit_on(now):
             return LIMIT, True
@@ -333,7 +345,7 @@ class Subs:
         names = {"title": line(self.store.first_input(parent["id"]) or parent["track"], 60)}
         framed = (f'Assignment from session {parent["id"]} "{names["title"]}" — not from the owner. The owner sees '
                   "this sub-session and can write into it himself. End your turn with a summary for that session.")
-        if said := self.owner_said(parent["id"]):
+        if said := self.owner_said(parent["id"]) if said is None else said:
             framed += (f"\n\nFor context — the owner's last message to that session (his words to it, not a task "
                        f"for you):\n«{said}»")
         framed += f"\n\nAssignment:\n{brief}"
@@ -343,6 +355,7 @@ class Subs:
             db.execute("INSERT INTO sub_starts VALUES (?, ?, ?, ?, ?)", (key, parent["id"], child, digest, now))
             self.store.add_input(f"sub:{key}", child, framed, now, by="parent")
             self.store.enqueue(child, framed, now, by="parent", commit=False)
+            self._started(parent["id"], digest, child, now)
         row = self.store.session(child) or {}
         pings.add(self.store, {**row, "turn": None}, f"Sub-session · {track.name} · session {child}",
                   f'Started by session {parent["id"]} "{names["title"]}": {title}', pings.DONE, now, quiet=True,
@@ -403,12 +416,17 @@ class Subs:
                            "AND at > ?)", (call_id, parent["id"], digest, now - PROPOSAL_S)).fetchone()
         if known is not None:  # the same call again, or the same proposal while it still waits
             return f'Proposal {known[0]} "{title}" is already with the owner. Go on with your turn.', False
+        if (child := self._working(parent["id"], digest)) is not None:  # started already, by «Start» or by the tool
+            return f'Sub-session {child} "{title}" is already started; its report comes to you as a message.', False
+        if not self.platform.cfg.face_origin:
+            return NO_APP, True
         if len(self.open_proposals(parent["id"], now)) >= PROPOSALS_MAX:
             return (f"{PROPOSALS_MAX} of your proposals wait for the owner already — this one is not made. Name it in "
                     "your summary instead."), True
         proposal = secrets.token_hex(4)
-        db.execute("INSERT INTO sub_proposals (id, call, parent, title, brief, digest, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                   (proposal, call_id, parent["id"], title, brief, digest, now))
+        db.execute("INSERT INTO sub_proposals (id, call, parent, title, brief, digest, at, said, from_report) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (proposal, call_id, parent["id"], title, brief, digest, now,
+                                                         self.owner_said(parent["id"]), parent.get("turn_by") == "report"))
         self._proposal_event(proposal)
         db.commit()
         return (f'Proposed to the owner: "{title}" (proposal {proposal}). Go on with your turn — he starts it or not; '
@@ -419,51 +437,86 @@ class Subs:
                                      "ORDER BY at", (parent, now - PROPOSAL_S)).fetchall()
         return [row[0] for row in rows]
 
+    def _working(self, parent: str, digest: str) -> str | None:
+        """The parent's open sub-session of this title and brief, however it was started."""
+        row = self.store.db.execute("SELECT child FROM sub_starts WHERE parent = ? AND digest = ? AND child IN "
+                                    "(SELECT id FROM sessions WHERE state != 'closed')", (parent, digest)).fetchone()
+        return row[0] if row else None
+
+    def _started(self, parent: str, digest: str, child: str, now: float) -> None:
+        """Every open proposal of this work is started with `child`, inside the caller's transaction: the owner's
+        «Start» then names it, and his «Not now» finds nothing open."""
+        db = self.store.db
+        ids = [r[0] for r in db.execute("SELECT id FROM sub_proposals WHERE parent = ? AND digest = ? AND state = 'open'",
+                                        (parent, digest))]
+        for proposal in ids:
+            db.execute("UPDATE sub_proposals SET state = 'started', child = ?, decided = ? WHERE id = ?",
+                       (child, now, proposal))
+            self._proposal_event(proposal)
+
     async def start_proposal(self, proposal: str) -> tuple[bool, str]:
         """The owner's «Start»: the sub-session the proposal names, started as its tool call would start it, under the
-        proposal's own key — a second press starts nothing more. Refused (a limit, his session gone), it stays open.
+        proposal's own key — a second press, or the same work started by the tool, starts nothing more. His press is
+        his word to the family: its exchanges count from zero. Refused (a limit, his session gone), it stays open.
         (whether it is started, what to tell him)."""
-        row, now = self.face_proposal(proposal), self.platform.clock()
-        if row is None:
+        db, now = self.store.db, self.platform.clock()
+        if self.face_proposal(proposal) is None:
             return False, "No such proposal."
-        started = self.store.db.execute("SELECT child FROM sub_starts WHERE call = ?", (f"proposal:{proposal}",)).fetchone()
-        if started is not None:
-            return True, f"Started already: sub-session {started[0]}."
+        parent_id, digest, brief, said = db.execute("SELECT parent, digest, brief, said FROM sub_proposals WHERE id = ?",
+                                                    (proposal,)).fetchone()
+        own = db.execute("SELECT child FROM sub_starts WHERE call = ?", (f"proposal:{proposal}",)).fetchone()
+        if (child := own[0] if own else self._working(parent_id, digest)) is not None:
+            with db:
+                self._started(parent_id, digest, child, now)
+            return True, f"Started already: sub-session {child}."
+        row = self.face_proposal(proposal)
         if row["state"] != "open":
             return False, {"declined": "You set this proposal aside.", "expired": "This proposal is over a week old — "
-                           "ask the session again if you still want it."}.get(row["state"], "Not open.")
-        parent = self.store.session(row["session"])
+                           "ask the session again if you still want it.",
+                           "started": f"Started already: sub-session {row['child']}."}.get(row["state"], "Not open.")
+        parent = self.store.session(parent_id)
         if parent is None or parent.get("archived"):
             return False, "The session that proposed it is archived."
-        brief = self.store.db.execute("SELECT brief, digest FROM sub_proposals WHERE id = ?", (proposal,)).fetchone()
-        said, error = await self._spawn(parent, f"proposal:{proposal}", row["title"], brief[0], brief[1])
+        answer, error = await self._spawn(parent, f"proposal:{proposal}", row["title"], brief, digest, said=said or "")
         if error:
-            return False, said
-        child = self.store.db.execute("SELECT child FROM sub_starts WHERE call = ?", (f"proposal:{proposal}",)).fetchone()
-        self.store.db.execute("UPDATE sub_proposals SET state = 'started', child = ?, decided = ? WHERE id = ?",
-                              (child[0], now, proposal))
-        self._proposal_event(proposal)
-        self.store.db.commit()
-        return True, f'Sub-session {child[0]} "{row["title"]}" started.'
+            return False, answer
+        db.execute("UPDATE sessions SET hops = 0 WHERE id = ?", (parent_id,))
+        db.execute("DELETE FROM kv WHERE key = ?", (f"subs.paused:{parent_id}",))
+        db.commit()
+        child = db.execute("SELECT child FROM sub_starts WHERE call = ?", (f"proposal:{proposal}",)).fetchone()[0]
+        return True, f'Sub-session {child} "{row["title"]}" started.'
 
     def decline(self, proposal: str) -> bool:
-        """The owner's «Not now»: the proposal leaves his queue; the session is not told."""
+        """The owner's «Not now»: the proposal leaves his queue; the session is not told. Only an open one: a started
+        one keeps its child, an expired one its week."""
+        now = self.platform.clock()
         cursor = self.store.db.execute("UPDATE sub_proposals SET state = 'declined', decided = ? WHERE id = ? AND "
-                                       "state = 'open'", (self.platform.clock(), proposal))
+                                       "state = 'open' AND at > ?", (now, proposal, now - PROPOSAL_S))
         if cursor.rowcount:
             self._proposal_event(proposal)
         self.store.db.commit()
         return self.face_proposal(proposal) is not None
 
-    FACE_PROPOSAL = "SELECT id, call, parent, title, brief, at, state, child, decided FROM sub_proposals"
+    def expire(self) -> None:
+        """The proposals past their week: expired, each with its event, so an open card and its row leave at once."""
+        db, now = self.store.db, self.platform.clock()
+        ids = [r[0] for r in db.execute("SELECT id FROM sub_proposals WHERE state = 'open' AND at <= ?",
+                                        (now - PROPOSAL_S,))]
+        with db:
+            for proposal in ids:
+                db.execute("UPDATE sub_proposals SET state = 'expired', decided = ? WHERE id = ?", (now, proposal))
+                self._proposal_event(proposal)
+
+    FACE_PROPOSAL = ("SELECT id, call, parent, title, brief, at, state, child, decided, from_report "
+                     "FROM sub_proposals")
 
     def _face_proposal(self, row: tuple) -> dict:
-        proposal, call, parent, title, brief, at, state, child, decided = row
-        if state == "open" and at <= self.platform.clock() - PROPOSAL_S:
+        proposal, call, parent, title, brief, at, state, child, decided, from_report = row
+        if state == "open" and at <= self.platform.clock() - PROPOSAL_S:  # past its week, before `expire` came by
             state = "expired"
         # `at`: its last change, which the face's copies are ordered by; `tool_use_id`: the call it sits under.
         return {"id": proposal, "session": parent, "tool_use_id": call, "title": title, "brief": brief,
-                "created": at, "at": decided or at, "state": state, "child": child}
+                "created": at, "at": decided or at, "state": state, "child": child, "from_report": bool(from_report)}
 
     def face_proposal(self, proposal: str) -> dict | None:
         row = self.store.db.execute(f"{self.FACE_PROPOSAL} WHERE id = ?", (proposal,)).fetchone()

@@ -441,8 +441,10 @@ export interface Proposal {
   /** Its last change: a copy older than the store's never replaces it. */
   at: number;
   state: ProposalState;
-  /** The sub-session «Start» started. */
+  /** The sub-session started for it. */
   child: string | null;
+  /** Proposed in a turn a sub-session's report started: the brief may carry a page the child read. */
+  from_report: boolean;
 }
 
 /** What the face sends for one question: the options picked, or the owner's own text. */

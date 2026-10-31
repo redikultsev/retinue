@@ -197,7 +197,7 @@ def test_ten_open_no_day_cap_and_the_room_always_keeps_a_place_for_the_owner(tmp
 # --- reports --------------------------------------------------------------------------------------------------------
 
 def test_a_report_goes_to_the_parent_when_it_is_free_once_per_child_turn_and_as_data(tmp_path):
-    async def body(world: SubsWorld):
+    async def body(world: SubsFaceWorld):
         parent = await world.parent()
         child = await world.start_child(parent, "жильё", "toolu_a")
         await world.turn(child, "Нашёл три варианта. " + "x" * 600)
@@ -218,6 +218,8 @@ def test_a_report_goes_to_the_parent_when_it_is_free_once_per_child_turn_and_as_
         assert (said, error) == (DEFERRED, True), "a report-started turn's start is the owner's to decide"
         said, error = await world.tool(parent, subs.PROPOSE, {"title": "ещё", "brief": "b"}, "toolu_rp")
         assert not error and "proposal" in said, "a proposal is his to start anyway: made in a report's turn too"
+        [made] = world.platform.subs.face_proposals(parent)
+        assert made["from_report"] is True, "its card says a report's turn made it, as the start's card does"
         [card] = world.store.approvals(session=parent, tool_use_id="toolu_r")
         assert card["why"] == subs.FROM_REPORT_CARD
         await world.platform.write("tg:join", parent, "и ещё посмотри цены")  # he joins the running report turn
@@ -231,7 +233,7 @@ def test_a_report_goes_to_the_parent_when_it_is_free_once_per_child_turn_and_as_
         assert len([r for r in world.lanes["private"].runs() if r["session"] == parent]) == 2, \
             "one child turn, one parent turn: nothing more"
         assert world.store.session(child)["state"] == "closed"
-    subs_scenario(tmp_path, body)
+    subs_scenario(tmp_path, body, SubsFaceWorld)
 
 
 def test_a_start_the_owner_grants_on_a_card_runs_even_in_a_report_turn(tmp_path):
@@ -621,6 +623,94 @@ def test_not_now_sets_a_proposal_aside_a_week_ends_one_and_five_wait_at_most(tmp
         status, data, _ = await world.call("POST", f"/api/proposals/{made[1]}/start", {})
         assert status == 409 and "over a week old" in data["error"]
     subs_scenario(tmp_path, body, SubsFaceWorld)
+
+
+def test_one_piece_of_work_is_one_child_whether_the_tool_or_his_press_starts_it(tmp_path):
+    async def body(world: SubsFaceWorld):
+        await world.login()
+        parent = await world.parent()
+        proposal = await world.propose(parent, "сравнить цены", "toolu_p", "сравни цены")
+        child = await world.start_child(parent, "сравнить цены", "toolu_s", "сравни цены")  # he said «start it» in chat
+        shown = world.platform.subs.face_proposal(proposal)
+        assert (shown["state"], shown["child"]) == ("started", child), "the start closes the proposal of that work"
+        assert world.proposal_rows(await world.get("/api/feed")) == []
+        status, data, _ = await world.call("POST", f"/api/proposals/{proposal}/start", {})
+        assert status == 200 and data["say"] == f"Started already: sub-session {child}."
+        assert world.platform.subs.open_children(parent) == [world.store.session(child)], "no second child"
+
+        said, error = await world.tool(parent, subs.PROPOSE, {"title": "сравнить цены", "brief": "сравни цены"},
+                                       "toolu_p2")
+        assert not error and f"Sub-session {child}" in said and "already started" in said, \
+            "the same work proposed again names the child at work"
+        assert len(world.platform.subs.face_proposals(parent)) == 1
+    subs_scenario(tmp_path, body, SubsFaceWorld)
+
+
+def test_a_press_is_started_with_its_child_at_once_and_not_now_meanwhile_finds_it_started(tmp_path):
+    async def body(world: SubsFaceWorld):
+        parent = await world.parent()
+        proposal = await world.propose(parent, "а", "toolu_a")
+        released, platform = asyncio.Event(), world.platform
+        drain = platform.drain
+
+        async def slow_drain():  # a fetch of the mirror, a lane slow to answer: the press waits here
+            await released.wait()
+            await drain()
+        platform.drain = slow_drain
+        press = asyncio.create_task(platform.subs.start_proposal(proposal))
+        await asyncio.sleep(0.05)
+        shown = platform.subs.face_proposal(proposal)
+        assert shown["state"] == "started" and shown["child"], "written with the child, before the room is asked"
+        assert platform.subs.decline(proposal) and platform.subs.face_proposal(proposal)["state"] == "started", \
+            "«Not now» from another device finds it started"
+        released.set()
+        assert await press == (True, f'Sub-session {shown["child"]} "а" started.')
+        assert platform.subs.face_proposal(proposal)["state"] == "started"
+    subs_scenario(tmp_path, body, SubsFaceWorld)
+
+
+def test_his_press_is_his_word_to_the_family_and_the_brief_quotes_him_as_of_the_proposal(tmp_path):
+    async def body(world: SubsFaceWorld):
+        parent = await world.parent("спланируй поездку в Зурбаган")
+        proposal = await world.propose(parent, "билеты", "toolu_a", "найди билеты")
+        await world.platform.write("tg:later", parent, "забудь поездку, запиши к стоматологу")
+        world.store.db.execute("UPDATE sessions SET hops = ? WHERE id = ?", (subs.AUTO_MAX, parent))
+        world.store.set(f"subs.paused:{parent}", "1")
+        world.store.db.commit()
+        ok, _ = await world.platform.subs.start_proposal(proposal)
+        assert ok
+        assert world.store.session(parent)["hops"] == 0 and world.store.get(f"subs.paused:{parent}") is None, \
+            "he started it himself: its report reaches the session"
+        prompt = world.run_of(world.platform.subs.face_proposal(proposal)["child"])["prompt"]
+        assert "«спланируй поездку в Зурбаган»" in prompt and "стоматолог" not in prompt, \
+            "his words of when it was proposed, not of the press"
+    subs_scenario(tmp_path, body, SubsFaceWorld)
+
+
+def test_a_week_expires_a_proposal_on_the_clock_its_card_told_and_not_now_leaves_it_expired(tmp_path):
+    async def body(world: SubsFaceWorld):
+        await world.login()
+        parent = await world.parent()
+        early, late = await world.propose(parent, "а", "toolu_a"), await world.propose(parent, "б", "toolu_b")
+        world.clock.now += subs.PROPOSAL_S
+        status, data, _ = await world.call("POST", f"/api/proposals/{early}/dismiss", {})
+        assert status == 200 and data["proposal"]["state"] == "expired", "past its week: not set aside, expired"
+        world.platform.tick()
+        events = [json.loads(d) for _, k, d in world.store.events_after(0, 100_000) if k == "proposal"]
+        assert [e["state"] for e in events if e["id"] == late][-1] == "expired", "the open card is told"
+        assert world.platform.subs.face_proposal(early)["state"] == "expired"
+        world.platform.tick()
+        assert len([e for e in world.store.events_after(0, 100_000) if e[1] == "proposal"]) == len(events), \
+            "told once"
+    subs_scenario(tmp_path, body, SubsFaceWorld)
+
+
+def test_without_the_app_nothing_is_proposed(tmp_path):
+    async def body(world: SubsWorld):
+        parent = await world.parent()
+        assert await world.tool(parent, subs.PROPOSE, {"title": "а", "brief": "б"}, "toolu_a") == (subs.NO_APP, True)
+        assert world.platform.subs.face_proposals(parent) == []
+    subs_scenario(tmp_path, body)
 
 
 def test_a_proposal_of_an_archived_session_is_not_started(tmp_path):

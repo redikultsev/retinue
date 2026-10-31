@@ -309,11 +309,11 @@ export const inputs: Input[] = [
 
 // Sub-sessions the Lisbon session proposed instead of starting them (retinue/subs.py): «Start» / «Not now».
 export const proposals: Proposal[] = [
-  { id: "9a0b1c2d", session: "e5f6a7b8", tool_use_id: "toolu_prop1", title: "Compare train fares", created: T0 - 18, at: T0 - 18, state: "open", child: null,
+  { id: "9a0b1c2d", session: "e5f6a7b8", tool_use_id: "toolu_prop1", title: "Compare train fares", created: T0 - 18, at: T0 - 18, state: "open", child: null, from_report: false,
     brief: "Compare train fares Lisbon → Porto for 9 May: the morning trains, first and second class, refundable or not. Return a table and the cheapest refundable one." },
-  { id: "3e4f5a6b", session: "e5f6a7b8", tool_use_id: "toolu_prop2", title: "Day trip options", created: T0 - 16, at: T0 - 16, state: "open", child: null,
+  { id: "3e4f5a6b", session: "e5f6a7b8", tool_use_id: "toolu_prop2", title: "Day trip options", created: T0 - 16, at: T0 - 16, state: "open", child: null, from_report: true,
     brief: `Find day trips from Lisbon for 10 May, back by evening.\n\nKnown: the owner stays in the old town, no car, likes walking and old towns more than beaches.\n\nWhere to look: the regional train timetables, the official tourism pages of the towns, recent travellers' notes from the last year.\n\nFor each option return:\n- how to get there and back, with times;\n- what to see in one day;\n- the cost of travel for one person;\n- what can go wrong (a train that runs only on weekends, a palace closed on Mondays).\n\nThree options at most, the best first, and say why it is the best.` },
-  { id: "7c8d9e0f", session: "a1b2c3d4", tool_use_id: "toolu_none", title: "Clean up old fixtures", created: T0 - 3000, at: T0 - 2900, state: "declined", child: null,
+  { id: "7c8d9e0f", session: "a1b2c3d4", tool_use_id: "toolu_none", title: "Clean up old fixtures", created: T0 - 3000, at: T0 - 2900, state: "declined", child: null, from_report: false,
     brief: "Remove the fixtures no test reads any more." },
 ];
 

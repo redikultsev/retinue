@@ -75,7 +75,7 @@ STALE_PRESS = "The press did not apply: the list is out of date."
 FAILED_PRESS = "The press did not apply: a server error. Try again."
 # `/wait`: what each row's icon is, by where it came from.
 ICONS = {"question": "❓", "approval": "⚠️", "courier": "📦", "session": "💬", "letter": "✉️", "chat": "💬",
-         "draft": "📝", "deadline": "⏳", "base": "🗂", "push": "⬆️"}
+         "draft": "📝", "deadline": "⏳", "base": "🗂", "push": "⬆️", "proposal": "🔀"}
 SPHERES = "platform.spheres"  # the router's kv: the platform's spheres as it last named them, as JSON
 SPHERES_EVERY_S = 600        # how often the pump asks the platform for them again (a restart of it may change them)
 

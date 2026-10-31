@@ -393,6 +393,19 @@ def test_a_private_letter_is_a_row_of_its_own_named_in_the_app_and_closed_on_its
     assert opened(c.mail.store, NOW + 60) == [attend], "one letter closed, the other still asks"
 
 
+
+def test_people_writing_from_one_address_are_a_row_each(tmp_path):
+    """LinkedIn's InMail sends every recruiter's message from one address: her judgement names the person."""
+    c = core(tmp_path)
+    rows = []
+    for n, who in enumerate(("Анна Петрова, рекрутёр (LinkedIn InMail)", "Иван Иванов (LinkedIn InMail)")):
+        row = asking("decide", sender="inmail@linkedin.example", message_id=f"<i{n}@example.org>", ts=NOW - n * HOUR)
+        row["fields"]["card"] = {**row["fields"]["card"], "who": who}
+        rows.append(row)
+    put(c.mail.store, *rows)
+    assert sorted(r["who"] for r in waiting.digest(c, NOW)) == ["Анна Петрова", "Иван Иванов"]
+
+
 def test_the_morning_says_what_closed_and_what_ran_out_only_when_something_did(tmp_path):
     from retinue.mailroom import Mailroom
 

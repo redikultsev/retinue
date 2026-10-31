@@ -822,9 +822,13 @@ def message_ids(*headers) -> set[str]:
 
 
 def ask_row(item: dict) -> str:
-    """Which row of «Waiting for you» an ask is on: its sender and her ask — the private matter's too."""
+    """Which row of «Waiting for you» an ask is on: the person — by the name her judgement gave, since one address
+    (LinkedIn's InMail, a job board) carries many people — the address and her ask."""
+    from .pages import named  # here: pages imports what imports this module
+
     card = item["card"] or {}
-    return f"{item['source']}:{item['sender'] or card.get('who') or '?'}:{card.get('needs_now')}"
+    sender = str(item["sender"] or "")
+    return f"{item['source']}:{sender or '?'}:{named(str(card.get('who') or ''), sender)}:{card.get('needs_now')}"
 
 
 def is_private(item: dict) -> bool:

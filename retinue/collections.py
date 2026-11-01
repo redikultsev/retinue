@@ -104,10 +104,10 @@ SCHEMA = """
         reverts TEXT                        -- the change_id a revert takes back
     ) STRICT;
     CREATE TABLE IF NOT EXISTS idems (
-        scope TEXT NOT NULL,                -- the writer's class: owner, assistant, session, mac, code:<rule>, …
+        scope TEXT NOT NULL,                -- whose they are (`idem_scope`): a session's own, the assistant's, …
         collection TEXT NOT NULL,
         idem TEXT NOT NULL,                 -- call:<the writer's idem>, or mail:… one the store derived
-        answer TEXT NOT NULL CHECK (json_valid(answer)),  -- what the first time made: its change_ids, its records
+        answer TEXT NOT NULL CHECK (json_valid(answer)),  -- what the first time made, and of which operations
         ts REAL NOT NULL,
         PRIMARY KEY (scope, collection, idem)
     ) STRICT;
@@ -198,6 +198,10 @@ class Refused(Exception):
 
 class Full(Exception):
     """The file would leave less than `FREE_MIN` on the volume: nothing was written."""
+
+
+class _Stopped(Exception):
+    """An import's batch, no longer `applying` at its next chunk: taken back from another terminal while it ran."""
 
 
 class _Undo(Exception):
@@ -375,7 +379,8 @@ def parse_views(views: Any) -> list[dict]:
             raise Rejected(f"views[{n}]: \"kind\" is one of {', '.join(VIEW_KEYS)}")
         where = f"views[{n}] ({kind})"
         if unknown := set(view) - VIEW_KEYS[kind]:
-            raise Rejected(f"{where} takes {', '.join(sorted(VIEW_KEYS[kind]))}; not {', '.join(sorted(unknown))}")
+            raise Rejected(f"{where} takes {', '.join(sorted(VIEW_KEYS[kind]))}; not "
+                           f"{', '.join(sorted(map(repr, unknown)))}")
         name = view.get("name")
         if not isinstance(name, str) or not NAME.fullmatch(name) or name in names:
             raise Rejected(f"{where}: \"name\" is lowercase letters, digits and _, starting with a letter, and "
@@ -483,14 +488,16 @@ def _grows(old: dict, new: dict) -> None:
 def _path(field: str) -> str:
     """A field's value in a record, as SQL: the one place a name goes into a statement, so an index and the query
     meant to use it say it the same — and only a name the form declared, which is letters, digits and _."""
-    assert NAME.fullmatch(field), field
+    if not NAME.fullmatch(field):
+        raise ValueError(field)
     return f"json_extract(data, '$.{field}')"
 
 
 def _within(collection: str) -> str:
     """The records of a collection that are not deleted, as SQL: a partial index's WHERE, and every query's, so the
     planner sees that one implies the other."""
-    assert NAME.fullmatch(collection), collection
+    if not NAME.fullmatch(collection):
+        raise ValueError(collection)
     return f"collection = '{collection}' AND deleted IS NULL"
 
 
@@ -515,6 +522,33 @@ def writer_class(actor: str) -> str:
     return actor if actor.startswith("code:") else actor.split(":")[0]
 
 
+def idem_scope(actor: str, derived: bool = False) -> str:
+    """Whose idems a writer's are. A call's (`idem`) are a session's or the Mac's own actor's — another session's
+    `add-1` is another call — and its class's for the rest. One the store derives from a mail is its class's, so the
+    assistant reading a mail again finds what it made the first time, whichever run it is. An import's, of both kinds,
+    are its own batch's: a failed import, taken back, leaves none behind that a corrected one would skip."""
+    cls = writer_class(actor)
+    return actor if cls == "import" or (not derived and cls in ("session", "mac")) else cls
+
+
+def _digest(value: Any) -> str:
+    """A JSON value's SHA-256, its keys sorted: the same for the same value however its keys were ordered."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+                          .encode()).hexdigest()
+
+
+def _identity(form: dict, fields: dict, distinct: bool) -> str:
+    """What an `add` from a mail is, for the idem the store derives: its key's values, compared as `_keys` compares
+    them (a text by its letters, case and the spaces around it aside) — so the mail read again finds the record it
+    added whatever else it adds beside it, and in whatever order. Without a key, or given as `distinct`: all its
+    fields."""
+    key = form.get("key")
+    if key and not distinct and all(k in fields for k in key):
+        return "key:" + _digest([fields[k].strip(" ").lower() if form["fields"][k]["type"] == "text" else fields[k]
+                                 for k in key])
+    return "fields:" + _digest(fields)
+
+
 class Collections:
     """The store. Construct it anywhere; the thread opens the file on its first call (`open`, at the platform's
     start, so the file is there for the backup before anything is uploaded)."""
@@ -533,9 +567,11 @@ class Collections:
         self._ulids = Ulids()
         self._seen = 0  # the file's data_version this connection last looked at (`_fresh`)
         self._closed = False
-        # Told, on the loop, of every write of this store that changed a collection: its name and newest change_id
-        # (`PlatformStore.collection_event`, for the open apps). `moved` finds those another process wrote.
-        self.changed: Callable[[str, str | None], None] | None = None
+        # Told, on the loop, of every write of this store that changed a collection: its name, its Space and its
+        # newest change_id (`PlatformStore.collection_event`, for the open apps). `moved` finds those another process
+        # wrote.
+        self.changed: Callable[[str, str | None, str | None], None] | None = None
+        self._spaces: dict[str, str] = {}  # each collection's Space, as this process last read or wrote it
         self._watched: tuple[int, dict[str, str | None]] | None = None  # `moved`: the data_version, the revs
 
     # --- the thread -------------------------------------------------------------------------------------------------
@@ -562,6 +598,7 @@ class Collections:
         db = sqlite3.connect(self.path, isolation_level=None, timeout=BUSY_S)
         db.executescript(SCHEMA)
         self._ulids = Ulids(_newest(db))
+        self._spaces = dict(db.execute("SELECT collection, space FROM schemas").fetchall())
         self._seen = db.execute("PRAGMA data_version").fetchone()[0]
         self.blobs.mkdir(parents=True, exist_ok=True)
         for part in self.blobs.glob(".*.part"):  # a blob a crash cut while it was written: never named by a row
@@ -604,21 +641,23 @@ class Collections:
 
     def _tell(self, collection: str, rev: str | None) -> None:
         if self.changed is not None:
-            self.changed(collection, rev)
+            self.changed(collection, self._spaces.get(collection), rev)
 
-    async def moved(self) -> list[tuple[str, str | None]]:
-        """The collections another process (the server's terminal) changed since the last call, with their newest
-        change_id: `[(name, rev)]`. The first call only takes note. Cheap when nothing happened: SQLite's
+    async def moved(self) -> list[tuple[str, str, str | None]]:
+        """The collections another process (the server's terminal) changed since the last call, with their Space and
+        newest change_id: `[(name, space, rev)]`. The first call only takes note. Cheap when nothing happened: SQLite's
         `data_version` moves only with another connection's commit. Raises Refused."""
         return await self._run(self._moved)
 
-    def _moved(self) -> list[tuple[str, str | None]]:
+    def _moved(self) -> list[tuple[str, str, str | None]]:
         version = self._db.execute("PRAGMA data_version").fetchone()[0]
         if self._watched is not None and self._watched[0] == version:
             return []
-        revs = {name: self._rev(name) for (name,) in self._db.execute("SELECT collection FROM schemas").fetchall()}
+        self._spaces = dict(self._db.execute("SELECT collection, space FROM schemas").fetchall())
+        revs = {name: self._rev(name) for name in self._spaces}
         last, self._watched = self._watched, (version, revs)
-        return [] if last is None else [(name, rev) for name, rev in sorted(revs.items()) if last[1].get(name) != rev]
+        return [] if last is None else [(name, self._spaces[name], rev) for name, rev in sorted(revs.items())
+                                        if last[1].get(name) != rev]
 
     async def read(self, work: Callable[[], T]) -> T:
         """`work()` on the thread, in one read transaction, so all it reads is of one moment — a view and the rev it
@@ -721,6 +760,7 @@ class Collections:
         (records that do not fit included), Refused."""
         answer = await self._run(self._define, writer, collection, space, form, now, dry, views)
         if not dry and not answer["unchanged"]:
+            self._spaces[collection] = answer["space"]
             self._tell(collection, answer["rev"])
         return answer
 
@@ -876,8 +916,10 @@ class Collections:
         `set`, `delete`, `restore` or `revert`. Returns `{name, rev, change_ids, records}`: the collection, its newest
         change_id (what a screen compares to know it is behind), and for each operation the change it made (None when
         it changed nothing: the record was already so) and the record after it. `idem` names the call: made again by
-        the same class of writer, it changes nothing and answers the first time's change_ids, with the records as
-        they are now. Raises Rejected, Refused."""
+        the same writer (`idem_scope`) with the same operations, it changes nothing and answers the first time's
+        change_ids, with the records as they are now; with other operations it is Rejected. The writers of the
+        server's terminal (`import:`, `define:`) write through `import_ops` and `define` only. Raises Rejected,
+        Refused."""
         answer = await self._run(self._apply, writer, collection, ops, now, batch, idem)
         if any(answer["change_ids"]):
             self._tell(collection, answer["rev"])
@@ -890,38 +932,43 @@ class Collections:
             raise Rejected(f"idem is the call's own name, 1 to {IDEM_MAX} plain characters")
         if not isinstance(ops, list) or not 0 < len(ops) <= OPS_MAX:
             raise Rejected(f"ops is a list of 1 to {OPS_MAX} operations")
-        cls = writer_class(writer.actor)
+        if writer_class(writer.actor) in ("import", "define"):
+            raise Rejected("an import: or define: writer writes through import_ops or define, not apply")
+        scope, digest = idem_scope(writer.actor), _digest(ops)
         with self._write() as db:
             schema = self._schema(collection)
             if schema is None:
                 raise Rejected(f"there is no collection {collection!r}")
-            if idem is not None and (first := self._idem(cls, collection, f"call:{idem}")) is not None:
+            if idem is not None and (first := self._idem(scope, collection, f"call:{idem}")) is not None:
+                if first["ops"] != digest:
+                    raise Rejected(f"idem {idem!r} was used for other operations: give this call an idem of its own")
                 return {"name": collection, "rev": self._rev(collection), "change_ids": first["change_ids"],
                         "records": [self._record(collection, rid) for rid in first["ids"]]}
             if batch is not None and db.execute("SELECT 1 FROM batches WHERE id = ? AND state = 'applying'",
                                                 (batch,)).fetchone() is None:
                 raise Rejected(f"no batch {batch!r} is applying")
-            change_ids, records, adds = [], [], {}
+            change_ids, records = [], []
             for n, op in enumerate(ops):
                 try:
-                    record, change = self._op(writer, collection, schema, op, now, batch, idem, adds)
+                    record, change = self._op(writer, collection, schema, op, now, batch, idem)
                 except Rejected as exc:
                     raise Rejected(f"ops[{n}]: {exc.reason}", exc.record, exc.change) from None
                 change_ids.append(change)
                 records.append(record)
             if idem is not None:
-                self._remember(cls, collection, f"call:{idem}",
-                               {"change_ids": change_ids, "ids": [r["id"] for r in records]}, now)
+                self._remember(scope, collection, f"call:{idem}",
+                               {"ops": digest, "change_ids": change_ids, "ids": [r["id"] for r in records]}, now)
             return {"name": collection, "rev": self._rev(collection), "change_ids": change_ids, "records": records}
 
     def _op(self, writer: Writer, collection: str, schema: tuple[dict, dict], op: Any, now: float,
-            batch: str | None, idem: str | None, adds: dict) -> tuple[dict, str | None]:
+            batch: str | None, idem: str | None) -> tuple[dict, str | None]:
         form, rights = schema
         kind = op.get("op") if isinstance(op, dict) else None
         if kind not in OP_KEYS:
             raise Rejected(f"an operation is an object whose \"op\" is one of {', '.join(OP_KEYS)}")
         if unknown := set(op) - OP_KEYS[kind]:
-            raise Rejected(f"{kind} takes {', '.join(sorted(OP_KEYS[kind]))}; not {', '.join(sorted(unknown))}")
+            raise Rejected(f"{kind} takes {', '.join(sorted(OP_KEYS[kind]))}; not "
+                           f"{', '.join(sorted(map(repr, unknown)))}")
         as_of, src, distinct = op.get("as_of"), op.get("src"), op.get("distinct", False)
         if as_of is not None and not _date(as_of):
             raise Rejected(f"as_of is the date the world became so, YYYY-MM-DD: not {as_of!r}")
@@ -930,7 +977,7 @@ class Collections:
                            "cal:<account>/<event>, file:<sha256>#row=<n>, record:<id> or web:<url>")
         if not isinstance(distinct, bool):
             raise Rejected("distinct is true or false: true when the record is another than the one it matches")
-        cls = writer_class(writer.actor)
+        cls, scope = writer_class(writer.actor), idem_scope(writer.actor, derived=True)
         mail = src if src is not None and src.startswith("mail:") else None  # its idems the store derives
         stamp = {"writer": writer, "now": now, "collection": collection, "as_of": as_of, "src": src, "batch": batch,
                  "idem": idem}
@@ -938,9 +985,8 @@ class Collections:
             self._may(collection, rights, cls, "add", op.get("fields"))
             fields = self._fields(collection, form, op.get("fields"), {})
             if mail is not None:
-                adds[mail] = adds.get(mail, 0) + 1
-                derived = f"{mail}#add/{adds[mail]}"
-                if (first := self._idem(cls, collection, derived)) is not None:
+                derived = f"{mail}#add/{_identity(form, fields, distinct)}"
+                if (first := self._idem(scope, collection, derived)) is not None:
                     return self._record(collection, first["id"]), None
             rid = self._ulids.next(now)
             self._keys(collection, form, fields, rid, None, not distinct)
@@ -948,7 +994,7 @@ class Collections:
                              (collection, rid, _json(fields), now, now))
             change = self._change(**stamp, rid=rid, op="add", before=None, after=fields)
             if mail is not None:
-                self._remember(cls, collection, derived, {"change_id": change, "id": rid}, now)
+                self._remember(scope, collection, derived, {"change_id": change, "id": rid}, now)
             return self._record(collection, rid), change
         if kind == "revert":
             return self._revert(stamp, schema, op)
@@ -966,14 +1012,14 @@ class Collections:
             before = {DELETED: record["deleted"]} if gone != (kind == "delete") else {}
             after = {DELETED: now if kind == "delete" else None} if before else {}
         if mail is not None:  # what this mail made this class of writer change already is not changed again
-            for done in [k for k in before if self._idem(cls, collection, f"{mail}#{record['id']}/{k}") is not None]:
+            for done in [k for k in before if self._idem(scope, collection, f"{mail}#{record['id']}/{k}") is not None]:
                 del before[done], after[done]
         if not before:  # already so: nothing is written, the version stays
             return record, None
         record, change = self._put(stamp, form, record, before, after, kind, check_key=not distinct)
         if mail is not None:
             for k in before:
-                self._remember(cls, collection, f"{mail}#{record['id']}/{k}", {"change_id": change}, now)
+                self._remember(scope, collection, f"{mail}#{record['id']}/{k}", {"change_id": change}, now)
         return record, change
 
     def _may(self, collection: str, rights: dict, cls: str, kind: str, fields: Any = None) -> None:
@@ -1224,11 +1270,13 @@ class Collections:
             return await self._run(self._import_dry, collection, ops, now)
         owner = Writer("owner", "import")
         batch = await self.start_batch("import", owner, now)
-        counts, adds = {"lines": len(ops), "added": 0, "changed": 0, "same": 0}, {}
+        counts = {"lines": len(ops), "added": 0, "changed": 0, "same": 0}
         try:
             for start in range(0, len(ops), IMPORT_CHUNK):
                 await self._run(self._import_chunk, collection, ops[start:start + IMPORT_CHUNK], start, now, batch,
-                                adds, counts)
+                                counts)
+        except _Stopped as exc:  # taken back from another terminal while it ran: nothing is left to take back
+            raise Rejected(f"{exc}: what it had kept is as that revert-batch left it") from None
         except (Rejected, Refused) as exc:
             reason = exc.reason if isinstance(exc, Rejected) else str(exc)
             try:
@@ -1250,25 +1298,25 @@ class Collections:
                 batch = self._ulids.next(now)
                 db.execute("INSERT INTO batches (id, kind, state, actor, created, updated) "
                            "VALUES (?, 'import', 'applying', 'owner', ?, ?)", (batch, now, now))
-                self._lines(collection, ops, 0, now, batch, {}, counts)
+                self._lines(collection, ops, 0, now, batch, counts)
                 raise _Undo({"batch": None, "name": collection, "rev": self._rev(collection), **counts})
         except _Undo as undo:
             return undo.answer
 
-    def _import_chunk(self, collection: str, ops: list, start: int, now: float, batch: str, adds: dict,
-                      counts: dict) -> None:
-        with self._write():
-            self._lines(collection, ops, start, now, batch, adds, counts)
+    def _import_chunk(self, collection: str, ops: list, start: int, now: float, batch: str, counts: dict) -> None:
+        with self._write() as db:
+            if db.execute("SELECT 1 FROM batches WHERE id = ? AND state = 'applying'", (batch,)).fetchone() is None:
+                raise _Stopped(f"line {start + 1}: batch {batch} was taken back while the import ran")
+            self._lines(collection, ops, start, now, batch, counts)
 
-    def _lines(self, collection: str, ops: list, start: int, now: float, batch: str, adds: dict,
-               counts: dict) -> None:
+    def _lines(self, collection: str, ops: list, start: int, now: float, batch: str, counts: dict) -> None:
         schema = self._schema(collection)
         if schema is None:
             raise Rejected(f"there is no collection {collection!r}")
         writer = Writer(f"import:{batch}", "import")
         for n, op in enumerate(ops, start):
             try:
-                _, change = self._op(writer, collection, schema, op, now, batch, None, adds)
+                _, change = self._op(writer, collection, schema, op, now, batch, None)
             except Rejected as exc:
                 raise Rejected(f"line {n + 1}: {exc.reason}", exc.record, exc.change) from None
             kind = "same" if change is None else "added" if op["op"] == "add" else "changed"
@@ -1340,7 +1388,8 @@ class Collections:
                     records += 1
                 if not reverted:
                     db.execute("DELETE FROM batches WHERE id = ?", (undo,))
-                state = "reverted" if not touched else row[0]
+                # a batch taken back takes no more changes: an import still running stops at its next chunk
+                state = "reverted" if not touched else "applied" if row[0] == "applying" else row[0]
                 db.execute("UPDATE batches SET state = ?, updated = ? WHERE id = ?", (state, now, batch))
                 answer = {"batch": batch, "undo": undo if reverted else None, "reverted": reverted,
                           "records": records, "touched": touched, "state": state,
@@ -1354,17 +1403,27 @@ class Collections:
     async def export(self, folder: str | Path) -> dict:
         """Everything, to a folder that is empty or not there yet (docs/collections.md#export): `schemas.json`, each
         collection's `records.jsonl` and `changes.jsonl` in a folder of its name, `batches.jsonl`, `files.jsonl` and
-        the files themselves in `attachments/`. Read in one transaction, so what it holds is one moment's.
-        Answers how many of each. Raises Rejected, Refused."""
+        the files themselves in `attachments/`. One moment's: the file is first copied whole by SQLite's backup, the
+        only time the platform's writes wait, and everything is read from that copy. Refused before anything is
+        written when it would leave less than FREE_MIN on the folder's volume. Answers how many of each. Raises
+        Rejected, Refused."""
         return await self._run(self._export, Path(folder))
 
     def _export(self, folder: Path) -> dict:
         if folder.exists() and (not folder.is_dir() or any(folder.iterdir())):
             raise Rejected(f"{folder} is not an empty folder")
+        pages, page = (self._db.execute(f"PRAGMA {p}").fetchone()[0] for p in ("page_count", "page_size"))
+        need = 2 * pages * page + self._db.execute("SELECT coalesce(sum(size), 0) FROM files").fetchone()[0]
+        volume = next(p for p in (folder, *folder.parents) if p.exists())
+        if shutil.disk_usage(volume).free - need < FREE_MIN:
+            raise Rejected(f"the export needs {need // 2**20} MB and would leave less than {FREE_MIN // 2**30} GB "
+                           f"free on {volume}: nothing was written")
         folder.mkdir(parents=True, exist_ok=True)
-        db, counts = self._db, {"collections": 0, "records": 0, "changes": 0, "files": 0}
-        db.execute("BEGIN")
+        counts = {"collections": 0, "records": 0, "changes": 0, "files": 0}
+        snapshot = folder / ".snapshot.sqlite"
+        db = sqlite3.connect(snapshot)
         try:
+            self._db.backup(db)
             schemas = [{"collection": c, "space": sp, "form": json.loads(f), "rights": json.loads(r),
                         "views": json.loads(v), "rev": rev, "updated": u} for c, sp, f, r, v, rev, u in db.execute(
                 "SELECT collection, space, form, rights, views, rev, updated FROM schemas ORDER BY collection")]
@@ -1383,9 +1442,10 @@ class Collections:
             files = [_row(row) for row in db.execute(f"SELECT {FILE_COLUMNS} FROM files ORDER BY created, sha256")]
             _jsonl(folder / "files.jsonl", files)
         finally:
-            db.execute("COMMIT")
+            db.close()
+            snapshot.unlink(missing_ok=True)
         (folder / BLOBS).mkdir()
-        for file in files:  # after the transaction: a blob never changes, and the copy should not hold the lock
+        for file in files:  # a blob never changes
             if (self.blobs / file["sha256"]).is_file():
                 shutil.copyfile(self.blobs / file["sha256"], folder / BLOBS / file["sha256"])
                 counts["files"] += 1
@@ -1488,7 +1548,7 @@ class Collections:
         conditions = [filter] if isinstance(filter, dict) else filter
         if not isinstance(conditions, list) or len(conditions) > FILTER_MAX:
             raise Rejected(f"filter is a condition, or a list of up to {FILTER_MAX} that all hold: "
-                           "{\"field\": \"stage\", \"op\": \"in\", \"value\": [\"applied\", \"interview\"]}")
+                           "{\"field\": \"stage\", \"op\": \"in\", \"value\": [\"qualified\", \"proposal\"]}")
         terms, params = [where], []
         for n, condition in enumerate(conditions):
             try:
@@ -1506,7 +1566,7 @@ class Collections:
         if op not in FILTER_OPS:
             raise Rejected(f"\"op\" is one of {', '.join(FILTER_OPS)}: not {op!r}")
         if not isinstance(field, str):
-            raise Rejected("\"field\" names a field of the form, or a ref's field: \"lead.stage\"")
+            raise Rejected("\"field\" names a field of the form, or a ref's field: \"deal.stage\"")
         name, _, inner = field.partition(".")
         spec = form["fields"].get(name)
         if spec is None:

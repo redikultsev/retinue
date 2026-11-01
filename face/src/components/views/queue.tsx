@@ -1,6 +1,6 @@
 // A `queue` view: the records a filter keeps, the longest silent first, each with its days of silence — and past the
 // form's threshold «overdue», in a word as well as in red. A phone shows the first three and «Show all».
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { type CollectionViews, daysWords, emptyWords, type QueueView, rowWords, type ViewRow } from "@/lib/collections";
 import { cn, LIST } from "@/lib/utils";
@@ -8,15 +8,29 @@ import { cn, LIST } from "@/lib/utils";
 /** On a phone: the rows shown before «Show all». */
 export const PHONE_ROWS = 3;
 
+/** Words side by side, each isolated: one written right to left does not reorder its neighbours. */
+export function Parts({ parts }: { parts: string[] }) {
+  return parts.map((part, i) => (
+    <Fragment key={i}>
+      {i > 0 && " · "}
+      <bdi>{part}</bdi>
+    </Fragment>
+  ));
+}
+
 export function Row({ row, fields, kind = "queue", label }: { row: ViewRow; fields: string[]; kind?: "board" | "queue"; label?: string }) {
   const { title, rest } = rowWords(row, fields);
   const { text, late } = daysWords(row, kind);
   return (
-    <div className={cn("flex min-h-12 items-start gap-3 px-3 py-2", row.rotten && "border-l-2 border-l-destructive")}>
+    <div className={cn("flex min-h-12 items-start gap-3 border-l-2 px-3 py-2", row.rotten ? "border-l-destructive" : "border-l-transparent")}>
       <span className="min-w-0 flex-1">
-        <span className="block text-[15px] leading-snug break-words md:text-sm">{title}</span>
+        <span dir="auto" className="block text-[15px] leading-snug break-words md:text-sm">
+          {title}
+        </span>
         {(rest.length > 0 || label) && (
-          <span className="block truncate text-xs text-muted-foreground">{[label, ...rest].filter(Boolean).join(" · ")}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            <Parts parts={[label, ...rest].filter((p): p is string => !!p)} />
+          </span>
         )}
       </span>
       {(text || late) && (
@@ -46,8 +60,8 @@ export function Queue({ collection, view }: { collection: CollectionViews; view:
         ))}
       </ul>
       {more > 0 && !all && (
-        <Button size="sm" variant="ghost" className="self-start sm:hidden" onClick={() => setAll(true)}>
-          {`Show all ${view.rows.length}`}
+        <Button size="sm" variant="ghost" className="h-11 self-start sm:hidden" onClick={() => setAll(true)}>
+          {`Show all ${view.count}`}
         </Button>
       )}
       <Dropped n={view.dropped} />

@@ -1324,8 +1324,8 @@ class Platform:
         the platform had written it: an import shows on the screen without a reload."""
         while True:
             try:
-                for name, rev in await self.collections.moved():
-                    self.store.collection_event(name, rev)
+                for name, space, rev in await self.collections.moved():
+                    self.store.collection_event(name, space, rev)
             except collections_mod.Refused:
                 pass  # busy, or closing: the next look sees it
             except Exception:

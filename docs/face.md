@@ -160,7 +160,7 @@ in the snapshot, never wrapped in an envelope. The kinds and their keys:
 | `file` | the file's id | `{id, session, path, name, size, mime, at}`: a file the session handed over ([below](#a-sessions-files)) |
 | `proposal` | the proposal's id | `{id, session, tool_use_id, title, brief, created, at, state, child, from_report}`: a sub-session the session proposed ([platform.md](platform.md#proposals)); `state` `open` · `started` (`child` the sub-session) · `declined` · `expired` (past its week: the platform's clock sends the event); `from_report`: proposed in a turn a report started, which its card says |
 | `upload` | the file's SHA-256 | `{sha256, name, size, mime, created}`: a file uploaded from any device ([below](#uploads)) |
-| `collection` | the collection's name | `{name, rev}`: a collection changed — its records, form, views or rights; `rev` its newest change ([collections.md](collections.md#views)) |
+| `collection` | the collection's name | `{name, space, rev}`: a collection changed — its records, form, views or rights; `space` its Space, `rev` its newest change ([collections.md](collections.md#views)) |
 | `delta` | none, no `id` | `{session, text}`: text being written, never replayed |
 
 An approval is `{id, session, tool_use_id, kind, state, tool, input, cwd, digest, view, created, at}`; `kind` is
@@ -576,15 +576,16 @@ is as of opening the session.
 - **“Spaces”** (`/spaces`, `pages/spaces.tsx`): the Base, read only ([base.md](base.md#reading-the-base-in-the-app)).
   The grid has a tile per Space — the sphere's icon and title when a sphere has its name, else the Showcase's title —
   with “N waiting”, “N working” (from the live sessions, as the list counts them) and “N questions” (its Open questions).
-  A Space (`/spaces/<space>`) is its Showcase as a screen, in this order: its collections' views, read only
-  ([collections.md](collections.md#views), `components/views/`) — each `queue` (“My move (5)”: the longest silent
-  first, a `ref` by its record's words, days of silence and, past the form's threshold, “overdue · 4 days” in red; a
-  phone shows three and “Show all 5”), then the numbers, a tile per `stat` of every collection (“3 of 10” with a bar
+  A Space (`/spaces/<space>`) is its Showcase as a screen, in this order — first what waits for you: its collections'
+  views, read only ([collections.md](collections.md#views), `components/views/`), each `queue` (“Waiting on me (5)”:
+  the longest silent first, a `ref` by its record's words, days of silence and, past the form's threshold, “overdue ·
+  4 days” in red; a phone shows three and “Show all 5”), and the sphere's sessions (waiting first, then working, then
+  the rest of the week) with “＋ New”; then the numbers, a tile per `stat` of every collection (“3 of 10” with a bar
   to the goal and “met” once it is, “this week, 26.10–01.11”, “last week: 7”; two to a row on a phone, four on a wide
-  screen; “as of 31.10 · Europe/Berlin” once above them); the sphere's sessions (waiting first, then
-  working, then the rest of the week) with “＋ New”; each `board` — its columns side by side with each card's days
-  in it (“stuck · 9 days” past the threshold), the folded values below as closed lists; on a phone a switch of
-  columns, opened at the first with a stuck card; fewer than three records are a list, each with its column's name;
+  screen; “as of 31.10 · Europe/Berlin” once above them); each `board` — its columns side by side, narrowing so that
+  five fit, with each card's days in it (“stuck · 9 days” past the threshold), the folded values below as closed
+  lists; on a phone a switch of columns, opened at the first with a stuck card; fewer than three records are a list,
+  each with its column's name;
   then the Open questions, each with “Discuss”; the Tasks; the Records
   by nature (Knowledge, Profile, Journal, Artifacts; a subfolder as a small label), each with the two or three words that
   matter for it (“verified 21.09 · practice diverges”; a Profile's “until 01.03.2030”; “stale since” when it is), and a
@@ -592,8 +593,8 @@ is as of opening the session.
   make says why in its place (“Not counted: field not found: 'amount'”); an empty one says since when its collection
   is quiet (“Nothing here — no change since 28.10.”, “No data yet: nothing was written here.”), never nothing. The
   views are read with the Showcase, again when the app comes back to the front and after a resync; the stream's
-  `collection` event reads that collection's views again once its `rev` is past the one shown, and a collection the
-  screen did not have (a define brought it in) reads the Space anew. A Space without views — or a platform without
+  `collection` event reads that collection's views again once its `rev` is past the one shown, and a collection of
+  this Space the screen did not have (a define brought it in), or one that left it, reads the Space anew. A Space without views — or a platform without
   the route — shows its Showcase alone, as before. A Record
   (`/spaces/<space>/r/<path>`) opens to read: its title, its head in words — “Knowledge · verified 21.09 · practice
   diverges · stale after 21.12 · written by Claude Code”, then “created · updated · id” smaller, “Source” folded, the

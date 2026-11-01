@@ -57,11 +57,11 @@ const companies = Object.values(deals).flat();
 const refOf = (company: string) => companies.find((r) => r.fields.company === company)!;
 
 const followups = [
-  { company: "Initech", channel: "mail", state: "drafted", days: 4 },
-  { company: "Globex", channel: "phone", state: "drafted", days: 3 },
-  { company: "Acme", channel: "mail", state: "drafted", days: 1 },
-  { company: "Example Ltd", channel: "chat", state: "drafted", days: 0 },
-  { company: "Soylent", channel: "mail", state: "drafted", days: -2 },
+  { company: "Initech", channel: "mail", state: "draft", days: 4 },
+  { company: "Globex", channel: "phone", state: "draft", days: 3 },
+  { company: "Acme", channel: "mail", state: "draft", days: 1 },
+  { company: "Example Ltd", channel: "chat", state: "draft", days: 0 },
+  { company: "Soylent", channel: "mail", state: "draft", days: -2 },
 ].map((f) =>
   row({ deal: refOf(f.company).id, channel: f.channel, state: f.state, date: iso(Date.now() - f.days * DAY_MS) }, f.days, 2, {
     refs: { deal: f.company },
@@ -88,7 +88,7 @@ function dealViews(): View[] {
       group: "stage",
       rot: STUCK,
       fields: ["company", "contact", "value", "reason"],
-      columns: STAGES.map((value) => ({ value, count: deals[value].length, folded: value === "lost", rows: deals[value] })),
+      columns: STAGES.map((value) => ({ value, count: deals[value].length, folded: value === "won" || value === "lost", rows: deals[value] })),
       dropped: 0,
     },
   ];
@@ -97,9 +97,9 @@ function dealViews(): View[] {
 function followupViews(): View[] {
   const done = 3;
   return [
-    { name: "made", kind: "stat", title: "Follow-ups sent myself", value: done, goal: 10, previous: 7, window: "week", ...week() },
-    { name: "replied", kind: "stat", title: "Replies this month", value: 12, goal: 10, previous: 9, window: "month", first: `${iso(Date.now()).slice(0, 8)}01`, last: iso(Date.now()) },
-    { name: "my_move", kind: "queue", title: "My move", rot: 2, fields: ["deal", "channel", "date"], count: followups.length, rows: followups, dropped: 0 },
+    { name: "made", kind: "stat", title: "Follow-ups done", value: done, goal: 10, previous: 7, window: "week", ...week() },
+    { name: "replied", kind: "stat", title: "Replies this month", value: 12, goal: 10, previous: 9, window: "month", ...month() },
+    { name: "waiting", kind: "queue", title: "Waiting on me", rot: 2, fields: ["deal", "channel", "date"], count: followups.length, rows: followups, dropped: 0 },
   ];
 }
 
@@ -145,14 +145,21 @@ export function mockCollections(path: string, query: URLSearchParams): { status:
   return { status: 200, data: { name: collection.name, rev: collection.rev, ...moment(), view } satisfies OneView };
 }
 
+/** This month's first day and its last, as the server's `window()` gives them. */
+function month(): { first: string; last: string } {
+  const now = new Date();
+  const first = Date.UTC(now.getFullYear(), now.getMonth(), 1);
+  return { first: iso(first), last: iso(Date.UTC(now.getFullYear(), now.getMonth() + 1, 0)) };
+}
+
 /** A deal moves one column on (the last open one's first card comes back to the start): the stream's
- * `collection` event, `{name, rev}`. */
-export function moveDeal(): { name: string; rev: string } {
+ * `collection` event, `{name, space, rev}`. */
+export function moveDeal(): { name: string; space: string; rev: string } {
   const open = STAGES.filter((s) => s !== "lost");
   const from = open.find((s) => deals[s].length) ?? "lead";
   const to = open[(open.indexOf(from) + 1) % open.length]!;
   const card = deals[from].shift()!;
   deals[to].unshift({ ...card, version: card.version + 1, days: 0, rotten: false });
   dealsRev = ulid();
-  return { name: "deals", rev: dealsRev };
+  return { name: "deals", space: "work", rev: dealsRev };
 }

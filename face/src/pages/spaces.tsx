@@ -430,14 +430,6 @@ export function SpacePage({ space, read = spacesApi.space, views = collectionsAp
         {placed.queues.map((p) => (
           <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
         ))}
-        {placed.stats.length > 0 && shown.data && (
-          <Section
-            title="Numbers"
-            action={<span className="text-xs text-muted-foreground">{`as of ${day(shown.data.today)} · ${shown.data.tz}`}</span>}
-          >
-            <StatStrip stats={placed.stats} />
-          </Section>
-        )}
         <Section
           title="Sessions"
           count={mine.length}
@@ -458,6 +450,14 @@ export function SpacePage({ space, read = spacesApi.space, views = collectionsAp
             <Empty>No sessions here.</Empty>
           )}
         </Section>
+        {placed.stats.length > 0 && shown.data && (
+          <Section
+            title="Numbers"
+            action={<span className="text-xs text-muted-foreground">{`as of ${day(shown.data.today)} · ${shown.data.tz}`}</span>}
+          >
+            <StatStrip stats={placed.stats} />
+          </Section>
+        )}
         {placed.boards.map((p) => (
           <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
         ))}

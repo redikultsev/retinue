@@ -855,11 +855,12 @@ class PlatformStore:
         self._event("upload", "", row["sha256"], row)
         self.db.commit()
 
-    def collection_event(self, name: str, rev: str | None) -> None:
-        """A collection changed (`collections.py`): its name and newest change_id, for every open app — a Space's
-        screen that shows it reads its views again when `rev` is newer than theirs. Written by the loop once the
-        collections' thread has kept the change: that thread never touches this connection."""
-        self._event("collection", "", name, {"name": name, "rev": rev})
+    def collection_event(self, name: str, space: str | None, rev: str | None) -> None:
+        """A collection changed (`collections.py`): its name, its Space and its newest change_id, for every open app —
+        a Space's screen that shows it reads its views again when `rev` is newer than theirs, and one that does not
+        reads itself again only when it is its Space's. Written by the loop once the collections' thread has kept the
+        change: that thread never touches this connection."""
+        self._event("collection", "", name, {"name": name, "space": space, "rev": rev})
         self.db.commit()
 
     def _session_event(self, session: str) -> None:

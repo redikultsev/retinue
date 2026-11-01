@@ -17,15 +17,21 @@ import {
   valueWords,
 } from "@/lib/collections";
 import { cn, LIST } from "@/lib/utils";
-import { Dropped, Row } from "./queue";
+import { Dropped, Parts, Row } from "./queue";
 
 function Card({ row, fields }: { row: ViewRow; fields: string[] }) {
   const { title, rest } = rowWords(row, fields);
   const { text, late } = daysWords(row, "board");
   return (
     <li className={cn("flex flex-col gap-0.5 rounded-lg border bg-card px-2.5 py-2", row.rotten && "border-destructive/60")}>
-      <span className="text-sm leading-snug break-words">{title}</span>
-      {rest.length > 0 && <span className="text-xs break-words text-muted-foreground">{rest.join(" · ")}</span>}
+      <span dir="auto" className="text-sm leading-snug break-words">
+        {title}
+      </span>
+      {rest.length > 0 && (
+        <span className="text-xs break-words text-muted-foreground">
+          <Parts parts={rest} />
+        </span>
+      )}
       {(text || late) && (
         <span className={cn("text-xs tabular-nums", late ? "font-medium text-destructive" : "text-muted-foreground")}>
           {late ? `${late} · ${text}` : `${text} here`}
@@ -65,7 +71,7 @@ function Switched({ view }: { view: BoardView }) {
             aria-pressed={i === at}
             onClick={() => setAt(i)}
             className={cn(
-              "flex min-h-9 shrink-0 items-center gap-1 rounded-full border px-3 text-sm whitespace-nowrap",
+              "flex min-h-11 shrink-0 items-center gap-1 rounded-full border px-3 text-sm whitespace-nowrap",
               i === at ? "border-primary bg-primary text-primary-foreground" : c.folded || !c.count ? "text-muted-foreground" : "bg-card",
               c.rows.some((r) => r.rotten) && i !== at && "border-destructive/60",
             )}
@@ -80,8 +86,8 @@ function Switched({ view }: { view: BoardView }) {
   );
 }
 
-/** The wide screen's board: the open columns side by side, scrolled within the board when they do not fit; the folded
- * ones below, closed. */
+/** The wide screen's board: the open columns side by side, narrowing to fit (five fit the page's column), scrolled
+ * within the board only past that; the folded ones below, closed. */
 function Columns({ view }: { view: BoardView }) {
   const open = view.columns.filter((c) => !c.folded);
   const folded = view.columns.filter((c) => c.folded);
@@ -89,7 +95,7 @@ function Columns({ view }: { view: BoardView }) {
     <div className="hidden flex-col gap-2 sm:flex" data-testid={`board-wide-${view.name}`}>
       <div className="flex gap-2 overflow-x-auto pb-1">
         {open.map((c) => (
-          <section key={String(c.value)} aria-label={heading(c)} className="flex w-48 min-w-44 flex-1 shrink-0 flex-col gap-1.5 rounded-xl bg-muted/60 p-2">
+          <section key={String(c.value)} aria-label={heading(c)} className="flex min-w-32 flex-1 basis-0 flex-col gap-1.5 rounded-xl bg-muted/60 p-2">
             <h3 className={cn("px-0.5 text-xs font-semibold", !c.count && "text-muted-foreground")}>{heading(c)}</h3>
             {c.rows.length > 0 && (
               <ul className="flex flex-col gap-1.5">

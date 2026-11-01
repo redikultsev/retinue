@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 VIEW_MAX = 256 * 2**10      # bytes of one answer: a view, or a Space's views
 ROWS_MAX = VIEW_MAX - 16 * 2**10  # of them the rows' share; the rest is the views' own words
+RECORDS_MAX = 2000          # records one board or queue reads, the oldest first: more than its rows can ever hold
+IDS_CHUNK = 500             # ids in one statement's IN (…)
 ZONE_KEY = "collections.zone"  # the platform's kv: the zone the Router last told
 NOT_FOUND = "field not found"
 COLLECTION = "[a-z][a-z0-9_]{0,39}"  # as `collections.NAME`: never a reserved `_files` or `_space`
@@ -109,7 +111,8 @@ def _conditions(form: dict, view: dict) -> list:
 
 def _after(field: str) -> str:
     """A field's value as a change made it, as SQL: like `collections._path`, only a name the form declared."""
-    assert NAME.fullmatch(field), field
+    if not NAME.fullmatch(field):
+        raise ValueError(field)
     return f"json_extract(after, '$.{field}')"
 
 
@@ -173,9 +176,11 @@ def _shown(form: dict, view: dict) -> list[str] | None:
         _field(form, name)
     return view.get("fields") or None
 
+
 def _refs(store: Collections, form: dict, records: list[dict], fields: list[str] | None) -> dict:
     """For each record, the `ref` fields a view shows by the words of what they name: the first `text` field of the
-    form it is in, as that record has it now, a deleted one too — so a row says «Acme», not an id. A record without one: none."""
+    form it is in, as that record has it now — so a row says «Acme», not an id. A deleted record, or one without that
+    field: none, and the row shows the id."""
     words: dict = {}
     for name in fields or form["fields"]:
         spec = form["fields"][name]
@@ -187,36 +192,40 @@ def _refs(store: Collections, form: dict, records: list[dict], fields: list[str]
         if text is None:
             continue
         said = {}
-        for at in range(0, len(ids), 500):
-            chunk = ids[at:at + 500]
+        for at in range(0, len(ids), IDS_CHUNK):
+            chunk = ids[at:at + IDS_CHUNK]
             said.update(store._db.execute(
                 f"SELECT id, {_path(text)} FROM records WHERE collection = ? AND id IN ({', '.join('?' * len(chunk))})"
-                f" AND {_path(text)} IS NOT NULL", (spec["to"], *chunk)).fetchall())
+                f" AND deleted IS NULL AND {_path(text)} IS NOT NULL", (spec["to"], *chunk)).fetchall())
         for record in records:
             if record["fields"].get(name) in said:
                 words.setdefault(record["id"], {})[name] = said[record["fields"][name]]
     return words
 
 
-def _records(store: Collections, collection: str, form: dict, conditions: list) -> list[dict]:
+def _records(store: Collections, collection: str, form: dict, conditions: list) -> tuple[list[dict], int]:
+    """The records the filter matches, the oldest RECORDS_MAX of them, and how many it matches in all."""
     where, params = store._where(collection, form, conditions or None, False)
+    total = store._db.execute(f"SELECT count(*) FROM records WHERE {where}", params).fetchone()[0]
     return [_record(row) for row in store._db.execute(
-        f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} ORDER BY id", params)]
+        f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} ORDER BY id LIMIT ?", (*params, RECORDS_MAX))], total
 
 
-def _marks(store: Collections, collection: str, field: str | None, when: When) -> tuple[dict, dict]:
-    """For each record of the collection: the day its last change was made — of `field`, when one is named (its
-    `as_of`, else the day it was made, here) — and the `src` of its last change that had one."""
-    assert field is None or NAME.fullmatch(field), field
+def _marks(store: Collections, collection: str, ids: list[str], field: str | None, when: When) -> tuple[dict, dict]:
+    """For each of these records: the day its last change was made — of `field`, when one is named (its `as_of`,
+    else the day it was made, here) — and the `src` of its last change that had one. Only their own changes are read,
+    by the index on a record's changes."""
+    if field is not None and not NAME.fullmatch(field):
+        raise ValueError(field)
     touched = f"json_type(after, '$.{field}') IS NOT NULL" if field is not None else "1"
     days, srcs = {}, {}
-    for rid, as_of, ts, src, hit in store._db.execute(
-            f"SELECT id, as_of, ts, src, {touched} FROM changes WHERE collection = ? AND id IS NOT NULL ORDER BY seq",
-            (collection,)):
-        if hit:
+    for at in range(0, len(ids), IDS_CHUNK):
+        chunk = ids[at:at + IDS_CHUNK]
+        last = (f"SELECT id, {{}} FROM changes WHERE seq IN (SELECT max(seq) FROM changes WHERE collection = ? AND id "
+                f"IN ({', '.join('?' * len(chunk))}) AND {{}} GROUP BY id)")
+        for rid, as_of, ts in store._db.execute(last.format("as_of, ts", touched), (collection, *chunk)):
             days[rid] = dt.date.fromisoformat(as_of) if as_of else when.date(ts)
-        if src:
-            srcs[rid] = src
+        srcs.update(store._db.execute(last.format("src", "src IS NOT NULL"), (collection, *chunk)).fetchall())
     return days, srcs
 
 
@@ -245,14 +254,16 @@ def _board(store: Collections, collection: str, form: dict, view: dict, when: Wh
     spec, fields, rot = _field(form, group, "enum"), _shown(form, view), _rot(form, view)
     if lost := [v for v in view.get("folded", []) if v not in spec["values"]]:
         raise Rejected(f"{group!r} has no value {', '.join(map(repr, lost))}")
-    days, srcs = _marks(store, collection, group, when)
+    conditions = _conditions(form, view)
+    records, _ = _records(store, collection, form, conditions)
+    days, srcs = _marks(store, collection, [r["id"] for r in records], group, when)
     columns: dict = {value: [] for value in spec["values"]}
-    records = _records(store, collection, form, _conditions(form, view))
     for record in records:
         columns.setdefault(record["fields"].get(group), []).append(record)
+    counts = {c["value"]: c["count"] for c in store._count(collection, conditions or None, group)}
     refs = _refs(store, form, records, fields)
     folded = set(view.get("folded", []))
-    shown, dropped = {}, 0
+    shown, dropped = {}, sum(counts.values()) - len(records)  # past RECORDS_MAX: never read, counted
     for value in sorted(columns, key=lambda v: (v in folded, v is None)):  # what is folded takes what is left
         rows = []
         for record in sorted(columns[value], key=_longest(days)):
@@ -261,8 +272,8 @@ def _board(store: Collections, collection: str, form: dict, view: dict, when: Wh
                 dropped += 1
             else:
                 rows.append(row)
-        shown[value] = {"value": value, "count": len(columns[value]), "folded": value in folded, "rows": rows}
-    order = [*spec["values"], *([None] if columns.get(None) else [])]
+        shown[value] = {"value": value, "count": counts.get(value, 0), "folded": value in folded, "rows": rows}
+    order = [*spec["values"], *([None] if None in counts else [])]
     return {"group": group, "rot": rot, "fields": fields or list(form["fields"]), "columns": [shown[v] for v in order],
             "dropped": dropped}
 
@@ -271,18 +282,18 @@ def _queue(store: Collections, collection: str, form: dict, view: dict, when: Wh
     fields, rot, since = _shown(form, view), _rot(form, view), view.get("since")
     if since is not None:
         _field(form, since, "date")
-    days, srcs = _marks(store, collection, None, when)
-    records = _records(store, collection, form, _conditions(form, view))
+    records, total = _records(store, collection, form, _conditions(form, view))
+    days, srcs = _marks(store, collection, [r["id"] for r in records], None, when)
     if since is not None:
         days = {r["id"]: dt.date.fromisoformat(r["fields"][since]) for r in records if since in r["fields"]}
-    rows, dropped, refs = [], 0, _refs(store, form, records, fields)
+    rows, dropped, refs = [], total - len(records), _refs(store, form, records, fields)
     for record in sorted(records, key=_longest(days)):
         row = _row(record, fields, refs, days.get(record["id"]), srcs.get(record["id"]), when, rot, budget)
         if row is None:
             dropped += 1
         else:
             rows.append(row)
-    return {"rot": rot, "fields": fields or list(form["fields"]), "count": len(records), "rows": rows,
+    return {"rot": rot, "fields": fields or list(form["fields"]), "count": total, "rows": rows,
             "dropped": dropped}
 
 

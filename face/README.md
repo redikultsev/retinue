@@ -36,7 +36,7 @@ Session `5566aabb` streams forever, for watching two panels at once.
 Mock-only helpers: `POST /api/_mock/approval {"session": "0a1b2c3d"}` adds a shown card (an `approval` event);
 `POST /api/_mock/prune` prunes the event log and ends the streams, so the app gets 410 and reloads its snapshots;
 `POST /api/_mock/collection` moves a deal of the «work» Space a column on (a `collection` event), whose screen has
-made-up views: numbers, «My move», a pipeline board, a list too short for a board, an empty queue and a broken view.
+made-up views: numbers, «Waiting on me», a pipeline board, a list too short for a board, an empty queue and a broken view.
 The mock's cookie is `retinue_mock` without `Secure` (plain http); the real one is `__Host-retinue`.
 
 ## How it works

@@ -40,13 +40,13 @@ describe("layout", () => {
         ] },
         { name: "followups", rev: null, views: [
           { name: "made", kind: "stat", title: "Made", value: 0, goal: 7, previous: 0, window: "week", first: "2026-09-14", last: "2026-09-20" },
-          { name: "my_move", kind: "queue", title: "My move", rot: 2, fields: [], count: 0, rows: [], dropped: 0 },
+          { name: "waiting", kind: "queue", title: "Waiting on me", rot: 2, fields: [], count: 0, rows: [], dropped: 0 },
         ] },
       ],
     };
     const { stats, queues, boards } = layout(answer);
     expect(stats.map((p) => `${p.collection.name}/${p.view.name}`)).toEqual(["deals/moved", "followups/made"]);
-    expect(queues.map((p) => p.view.name)).toEqual(["my_move"]);
+    expect(queues.map((p) => p.view.name)).toEqual(["waiting"]);
     expect(boards.map((p) => p.view.error)).toEqual(["field not found: 'stage'"]);
     expect(layout(null)).toEqual({ stats: [], queues: [], boards: [] });
   });

@@ -161,10 +161,10 @@ describe("Live", () => {
     const told: unknown[] = [];
     const off = live.onCollection((e) => told.push(e));
     const before = live.getState();
-    FakeSource.all[0]!.emit("collection", { name: "deals", rev: "01J8ZQ4Y7Z5G0000000000000A" }, 11);
+    FakeSource.all[0]!.emit("collection", { name: "deals", space: "work", rev: "01J8ZQ4Y7Z5G0000000000000A" }, 11);
     off();
-    FakeSource.all[0]!.emit("collection", { name: "deals", rev: "01J8ZQ4Y7Z5G0000000000000B" }, 12);
-    expect(told).toEqual([{ name: "deals", rev: "01J8ZQ4Y7Z5G0000000000000A" }]);
+    FakeSource.all[0]!.emit("collection", { name: "deals", space: "work", rev: "01J8ZQ4Y7Z5G0000000000000B" }, 12);
+    expect(told).toEqual([{ name: "deals", space: "work", rev: "01J8ZQ4Y7Z5G0000000000000A" }]);
     expect(live.getState()).toBe(before);
   });
 });

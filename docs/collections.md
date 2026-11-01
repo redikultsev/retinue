@@ -65,7 +65,7 @@ never spooling either to its 16 MB `/tmp` ([face.md](face.md#serving)).
 
 ## Records
 
-A collection is a set of records of one form: `leads`, say, with a company, a role and a stage. Its name is lowercase
+A collection is a set of records of one form: `deals`, say, with a company, a product and a stage. Its name is lowercase
 letters, digits and `_`, starting with a letter (at most 40), so it never meets a reserved `_files`.
 
 | Table | What |
@@ -103,10 +103,10 @@ changed.
 | In the form | Does |
 |---|---|
 | `"unique": [["n"], ["account", "ext_id"]]` | one record only holds each combination, among those not deleted: another write of it is refused, `taken: <id> has n 7`, with that record. A partial unique index keeps it, so nothing past the store's own check can break it; a form whose records already break it is refused, and a record that is unknown in one of the fields holds nothing |
-| `"key": ["company", "role"]` | a soft key: an `add` (or a `set` of a key field, or a `restore`) matching another record on all of them — text by its letters, case and the spaces around it aside — is refused as `possible duplicate of <id>`, with that record. The writer changes that record instead, or says `"distinct": true` on the operation and it is kept at once |
+| `"key": ["company", "product"]` | a soft key: an `add` (or a `set` of a key field, or a `restore`) matching another record on all of them — text by its letters, case and the spaces around it aside — is refused as `possible duplicate of <id>`, with that record. The writer changes that record instead, or says `"distinct": true` on the operation and it is kept at once |
 | `"index": true` on a field | an index on it, for the queries that filter by it |
 
-Indexes are made only for what a form asks, each partial (`… WHERE collection = 'leads' AND deleted IS NULL`), on the
+Indexes are made only for what a form asks, each partial (`… WHERE collection = 'deals' AND deleted IS NULL`), on the
 same expression every query uses, so the planner takes it ([partialindex](https://www.sqlite.org/partialindex.html),
 [expridx](https://www.sqlite.org/expridx.html)). A form that no longer asks for one drops it.
 
@@ -119,7 +119,7 @@ outside (a cursor, the evening list) never skips one. `seq` orders the rows with
 
 `apply(writer, collection, ops)` is the only write of a record: 1 to 200 operations on one collection, checked against
 its form and kept in one transaction — all of them, or none, with the reason in words a model can correct its call by
-(`ops[1]: 'stage' is one of evaluated, applied, closed: not 'hired'`). It answers `{name, rev, change_ids, records}`:
+(`ops[1]: 'stage' is one of lead, qualified, lost: not 'paused'`). It answers `{name, rev, change_ids, records}`:
 `rev` is the collection's newest `change_id` (what a screen compares to know it is behind), and for each operation the
 change it made and the record after it.
 
@@ -159,23 +159,23 @@ day propose, and rights it could widen with one press would be no rights. They a
 {
   "writers": {
     "assistant": {"set": ["state"]},
-    "code:mail-sent": {"set": ["state"]},
+    "code:invoice-paid": {"set": ["state"]},
     "session": {"add": true, "set": "*", "delete": "propose"},
     "mac": {"add": true, "set": "*", "delete": false}
   },
-  "set_by": {"state": {"sent": ["owner", "code:mail-sent"]}}
+  "set_by": {"state": {"done": ["owner", "code:invoice-paid"]}}
 }
 ```
 
 - **`writers`**, for each class of writer — `assistant`, `session`, `mac`, `code:<rule>` — whether it adds records,
   which fields it gives a value (`"*"` all of them; an `add`'s fields too) and whether it deletes and restores:
   `true`, `false`, or `"propose"`, a proposal the owner applies. What a class is not given it does not do: the
-  refusal names the field and the class (`'text' is not open to assistant in touches: propose the change to the owner
+  refusal names the field and the class (`'text' is not open to assistant in followups: propose the change to the owner
   instead`). A revert needs the rights of what it does: setting the fields back, or deleting the record an add made.
-- **`set_by`**, for a value of an enum: the only classes that give the field it. An agent never marks a message
-  `sent` by itself; the owner's button, or the rule that saw it in the sent mail, does.
+- **`set_by`**, for a value of an enum: the only classes that give the field it. An agent never marks a follow-up
+  `done` by itself; the owner's button, or the rule that saw the invoice paid, does.
 - **The owner may do anything**, and so may what he runs from the server's terminal (`import:<batch>`,
-  `define:<rev>`): they are not listed.
+  `define:<rev>`): they are not listed. Those two write only through an import and a define; `apply` refuses them.
 - **A new collection's rights** are narrow: a session adds and sets every field and deletes by a proposal; the Mac
   adds and sets every field and does not delete; the assistant and every `code:` rule do nothing until the owner
   gives them something.
@@ -185,14 +185,19 @@ came by.
 
 ### Once
 
-- **`idem`** names a call: `apply(…, idem="…")` made again by the same class of writer on the same collection —
-  a retry after a timeout, a tool call repeated — changes nothing and answers the first call's `change_ids`, with the
-  records as they are now. A refused call leaves no idem behind, so it can be made again, corrected. Each change keeps
-  the idem of the call that made it.
+- **`idem`** names a call: `apply(…, idem="…")` made again with the same operations by the same writer on the same
+  collection — a retry after a timeout, a tool call repeated — changes nothing and answers the first call's
+  `change_ids`, with the records as they are now. The same idem with other operations is refused (“idem … was used
+  for other operations”). A session's and the Mac's idems are that session's own, so another session's `add-1` is
+  another call; the assistant's and a `code:` rule's are their class's. A refused call leaves no idem behind, so it
+  can be made again, corrected. Each change keeps the idem of the call that made it.
 - **A mail** (`src` `mail:…`) needs none: the store derives one for each field an operation sets, from the class of
   writer, the mail, the record and the field. A mail read again changes nothing it changed before, even when the
-  owner has changed it since; a field it had not set is set, and another mail is another change. The n-th `add` from
-  one mail is made once.
+  owner has changed it since; a field it had not set is set, and another mail is another change. An `add` from a mail
+  is made once by what it is — its `key`'s values, compared as the key compares them, else all its fields — so the
+  mail read again finds the record it added whatever else it adds beside it.
+- **An import's** idems, of both kinds, are its own batch's: an import refused and taken back leaves none that the
+  corrected file would meet.
 
 ## Reading
 
@@ -207,7 +212,7 @@ each condition `{"field": …, "op": …, "value": …}`, up to 16 that all hold
 | `empty`, `not_empty` | none | the field is unknown, or known |
 | `ref_is` | a record's id | a `ref` names it |
 
-A `field` of `lead.stage` follows a `ref` one level, with `eq` or `in` only: the touches whose lead is `applied`. A
+A `field` of `deal.stage` follows a `ref` one level, with `eq` or `in` only: the follow-ups whose deal is `qualified`. A
 field's name is checked against the form before it goes into the statement, and every value is a parameter: a name
 the form does not have is refused before any SQL is run on the records.
 
@@ -227,12 +232,12 @@ held to the form there: a view whose field the form lacks shows “field not fou
 
 ```json
 [
-  {"name": "sent", "kind": "stat", "title": "Sent myself", "date": "date", "window": "week", "goal": "weekly",
-   "filter": [{"field": "direction", "op": "eq", "value": "out"}, {"field": "lead.origin", "op": "eq", "value": "outbound"}]},
+  {"name": "done", "kind": "stat", "title": "Follow-ups done", "date": "date", "window": "week", "goal": "weekly",
+   "filter": [{"field": "direction", "op": "eq", "value": "out"}, {"field": "deal.origin", "op": "eq", "value": "outbound"}]},
   {"name": "moved", "kind": "stat", "count": "changed", "field": "stage", "window": "week",
    "filter": {"field": "origin", "op": "eq", "value": "inbound"}},
-  {"name": "funnel", "kind": "board", "group": "stage", "folded": ["closed"], "fields": ["company", "role"], "rot": "stuck"},
-  {"name": "my_move", "kind": "queue", "filter": {"field": "state", "op": "eq", "value": "drafted"}, "since": "date", "rot": "reply"}
+  {"name": "funnel", "kind": "board", "group": "stage", "folded": ["won", "lost"], "fields": ["company", "product"], "rot": "stuck"},
+  {"name": "waiting", "kind": "queue", "filter": {"field": "state", "op": "eq", "value": "draft"}, "since": "date", "rot": "reply"}
 ]
 ```
 
@@ -247,7 +252,8 @@ characters. A `filter` is the one [Reading](#reading) takes.
 
 A board's and a queue's `fields` are the names its rows show, in order: the view's `fields`, else the form's. A row
 is `{id, version, fields, refs, src, days, rotten}`: only the view's `fields` when it names some; `refs` the words of
-each `ref` it shows — the first `text` field of the record it names, so a row reads “Acme”, not an id; `src` that of
+each `ref` it shows — the first `text` field of the record it names, so a row reads “Acme”, not an id; none for a
+deleted record, whose row shows the id; `src` that of
 the record's last change that had one; `days` since the day the group's field last changed (a board), since its `since`
 date or its last change (a queue) — `null` when there is none, below zero for a date ahead — and `rotten` when
 `days` is past the `rot` threshold. A change is dated by its `as_of`, else by the day it was made: so an import of
@@ -258,7 +264,9 @@ at its start and with every change of the owner's), the config's `owner_tz` unti
 (`tz`, `today`), for the screen to say “week in Europe/Berlin, as of 16 Sep”.
 
 **Size.** One answer — a view, or a Space's views — is at most 256 KB: the numbers are made first and whole, then
-rows while they fit; `dropped` counts the rows left out, and `count` is always every one.
+rows while they fit; `dropped` counts the rows left out, and `count` is always every one. A board or a queue reads at
+most 2000 of the records its filter matches, the oldest first — more than an answer's rows can hold — and counts the
+rest as `dropped`.
 
 | Call | Answer |
 |---|---|
@@ -273,9 +281,10 @@ Router's, behind its token. A view and the `rev` it is of are read in one transa
 through the same code as the screen's: one zone, one number, in the app and in Telegram.
 
 **Live.** Every write that changes a collection — its records, its form, its views, its rights — is told to every
-open app as the stream's `collection` event, `{name, rev}`, written by the platform's loop once the collections'
+open app as the stream's `collection` event, `{name, space, rev}`, written by the platform's loop once the collections'
 thread has kept the change (that thread never touches the platform's own file). A Space's screen reads its views
-again when `rev` is newer than the one it has; after the stream's 410 it reads them anew. What the server's terminal
+again when `rev` is newer than the one it has, and reads itself anew for a collection that came into its Space or
+left it — never for another Space's; after the stream's 410 it reads them anew. What the server's terminal
 writes, from its own process, the platform finds within 5 s — SQLite's `data_version` moves only with another
 connection's commit — and tells the same way: an import shows without a reload.
 
@@ -294,8 +303,8 @@ file a command reads must be inside the container, whose filesystem is read-only
 volume; an export goes to the volume and comes out with `docker compose cp`:
 
 ```bash
-docker compose -p retinue exec -T platform sh -c 'cat > /tmp/leads.json' < leads.json
-docker compose -p retinue exec platform retinue-platform collections define leads /tmp/leads.json
+docker compose -p retinue exec -T platform sh -c 'cat > /tmp/deals.json' < deals.json
+docker compose -p retinue exec platform retinue-platform collections define deals /tmp/deals.json
 docker compose -p retinue exec platform retinue-platform collections export /platform/export
 docker compose -p retinue cp platform:/platform/export ./export
 docker compose -p retinue exec platform rm -r /platform/export
@@ -316,7 +325,7 @@ confirmed.
 | `revert-batch <batch>` | takes a batch back |
 | `export <folder>` | writes everything to an empty folder |
 
-**`define`** reads `{"space": "career", "form": {"fields": {…}, "key": […], "unique": […]}, "views": […]}` and
+**`define`** reads `{"space": "work", "form": {"fields": {…}, "key": […], "unique": […]}, "views": […]}` and
 nothing else — a `rights` beside the form is refused the same way as one in it. `views` ([Views](#views)) is optional:
 a file without it keeps the views the collection has, and its diff is shown apart from the form's. It shows the diff of the form, then tries the new one on
 every record (those not deleted) and says “All 47 records fit it.”, or names the first twenty that do not and stops
@@ -329,7 +338,7 @@ A form only grows, for now:
   another Space — and what the records would break (a field now required that some lack, a `unique` two of them
   share) the trial run finds;
 - **it may not** remove or rename a field, change a field's type or a ref's `to`, or take a value out of an enum:
-  “field 'role' would be gone: a form only grows for now … wait for their first real case (⏸)”. A rename is a field
+  “field 'product' would be gone: a form only grows for now … wait for their first real case (⏸)”. A rename is a field
   gone and another come, so it is refused the same way.
 
 **`rights`** reads `{"writers": {…}, "set_by": {…}}` ([Rights](#rights)), shows the diff against the rights the
@@ -337,12 +346,12 @@ collection has, and on `y` keeps it as a `define` change by `owner`.
 
 **`import`** reads one operation of `apply` per line — `add` with its `fields`, and its `as_of` and `src` when the file
 knows them; `set`, `delete` or `restore` of a record by its id and version — and tries every line in one transaction
-first: “12 lines into leads: 12 to add, 0 to change, 0 already so.”, or the first line refused (“line 3: 'stage' is
+first: “12 lines into deals: 12 to add, 0 to change, 0 already so.”, or the first line refused (“line 3: 'stage' is
 one of …”), before anything is asked.
 
 ```jsonl
-{"op": "add", "fields": {"company": "Acme", "role": "Backend", "stage": "applied"}, "as_of": "2026-09-01", "src": "file:<sha256>#row=2"}
-{"op": "add", "fields": {"company": "Example Ltd", "stage": "evaluated"}}
+{"op": "add", "fields": {"company": "Acme", "product": "Widgets", "stage": "qualified"}, "as_of": "2026-09-01", "src": "file:<sha256>#row=2"}
+{"op": "add", "fields": {"company": "Example Ltd", "stage": "lead"}}
 ```
 
 Applied, it is one batch (`kind` `import`), and every change in it is by `import:<batch>`, via `import`. It is kept 500
@@ -352,11 +361,14 @@ The answer names the batch, and the command that takes it back.
 
 **`revert-batch`** takes each record the batch changed back to what it was before it — a record it added is deleted —
 as a batch of its own (`kind` `revert`, by `owner`), one `revert` change for each change of the batch. A record
-something outside the batch has changed since is left as it is and named (“leads/<id>: set by owner (<change_id>)”),
+something outside the batch has changed since is left as it is and named (“deals/<id>: set by owner (<change_id>)”),
 for the owner to settle by hand; the batch stays `applied` while any is left, and is `reverted` once nothing of it is.
-Run again, it takes back only what it had left and names what still stands. The whole of it is one transaction.
+Run again, it takes back only what it had left and names what still stands. The whole of it is one transaction. A
+batch taken back takes no more changes: an import still running in another terminal stops at its next 500 lines.
 
 **`export`** writes, to a folder that is empty or not there yet: `schemas.json` (each collection's Space, form, rights,
 views and revision), `<collection>/records.jsonl` (deleted ones too) and `<collection>/changes.jsonl` (the oldest
-first, without `seq`), `batches.jsonl`, `files.jsonl` and the uploaded files in `attachments/`. The tables are read in
-one transaction, so they are one moment's; the files are copied after it, since a file never changes.
+first, without `seq`), `batches.jsonl`, `files.jsonl` and the uploaded files in `attachments/`. The file is first
+copied whole by SQLite's backup — the only moment the platform's writes wait — and the tables are read from that
+copy, so they are one moment's; the files are copied after, since a file never changes. It refuses before writing
+anything when it would leave less than 1 GB free on the folder's volume, which holds the platform's databases.

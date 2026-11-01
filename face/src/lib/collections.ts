@@ -187,10 +187,13 @@ export function useSpaceViews(space: string, api: ViewsApi = collectionsApi, sou
     current.current = kept.get(space) ?? null;
     setData(current.current);
     void load();
-    const moved = async ({ name, rev }: CollectionEvent) => {
+    const moved = async ({ name, space: theirs, rev }: CollectionEvent) => {
       if (!current.current) return;
       const known = current.current.collections.find((c) => c.name === name);
-      if (!known) return void load();
+      if (!known || theirs !== space) {
+        if (known || theirs === space) void load(); // one that came into this Space, or left it
+        return;
+      }
       if (!newer(rev, known.rev)) return;
       const mine = turn.current;
       try {

@@ -479,10 +479,12 @@ export const EVENT_KINDS: readonly EventKind[] = [
 ];
 
 /** The stream's `collection` event: a collection changed — its records, its form, its views or its rights — and
-`rev` is the newest change it has now (a ULID: compare as strings). Not kept in the state: a Space's screen that
-shows the collection reads its views again (lib/collections.ts). */
+`rev` is the newest change it has now (a ULID: compare as strings), `space` the Space it is in. Not kept in the state:
+a Space's screen that shows the collection reads its views again, and one that does not reads itself again only when
+the collection is in its Space (lib/collections.ts). */
 export interface CollectionEvent {
   name: string;
+  space: string | null;
   rev: string;
 }
 

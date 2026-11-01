@@ -93,6 +93,8 @@ How the week went:
 - Permission cards: 6 — you allowed 4, denied 1, expired or stale 1; questions: 2, answered 2.
 - Gate: 200 answers — by rules 150, by the classifier 40 (stopped 2), to you 6, denied by the gate 2. …
 - Tool errors: 5 (Bash — 4, Edit — 1); context compactions: 2; turns ended with an error: 1.
+- Turns sent on to run their check: 3; loops: warned 2, denied 1, cut 0; fetches that failed: http_403 — 4, timeout — 1.
+- Turns that went badly: 3 (your «Stop» — 1, an error — 1, asked again — 1).
 - The assistant: runs 23, failed 1, hit the limit 2.
 ```
 

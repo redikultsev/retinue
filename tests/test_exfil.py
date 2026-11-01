@@ -221,3 +221,29 @@ def test_a_research_session_on_one_site_stays_under_the_budget():
     pages = [f"https://ru.wikipedia.org/wiki/{quote('Список_достопримечательностей_Энска')}_{n}" for n in range(40)]
     pages += [url for url in BENIGN if "booking.com" in url] * 10
     assert not [url for url in pages if budget.over("run", "WebFetch", {"url": url})]
+
+
+@pytest.mark.parametrize("url, clean", [
+    ("https://www.example.com/news/a?id=7&utm_source=letter&utm_medium=email#top", "https://www.example.com/news/a?id=7"),
+    ("https://shop.example.org/p/1?fbclid=AbC123&gclid=x", "https://shop.example.org/p/1"),
+    ("https://www.booking.com/hotel/xx/acme.html?label=gen173nr&aid=304142&checkin=2026-12-01",
+     "https://www.booking.com/hotel/xx/acme.html?checkin=2026-12-01"),
+    ("https://www.google.com/search?q=acme+visa&ved=2ahUKE&ei=AbCd", "https://www.google.com/search?q=acme+visa"),
+    ("https://youtu.be/dQw4w9WgXcQ?si=AbCdEf", "https://youtu.be/dQw4w9WgXcQ"),
+])
+def test_tracking_parameters_come_out_and_the_rest_stays_as_it_was(url, clean):
+    assert exfil.clean(url) == clean
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com/a?b=1", "https://example.com/a", "ftp://example.com/?utm_source=x",
+    "https://example.org/p?label=mine", "https://example.org/p?ei=1&ved=2",  # only tracking on their own sites
+])
+def test_an_address_without_tracking_is_left_alone(url):
+    assert exfil.clean(url) == ""
+
+
+def test_a_save_to_a_public_archive_cards_and_a_read_of_it_does_not():
+    assert exfil.why("WebFetch", {"url": "https://web.archive.org/save/https://example.com/x"}).startswith("Publishes")
+    assert exfil.why("WebFetch", {"url": "https://archive.ph/submit/?url=https://example.com"}).startswith("Publishes")
+    assert exfil.why("WebFetch", {"url": "https://web.archive.org/web/2026/https://example.com/x"}) == ""

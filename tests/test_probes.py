@@ -815,3 +815,65 @@ def test_the_platforms_mcp_server_connects_its_tools_pass_the_gate_and_the_call_
     leaked = [str(path) for path in lane.cwd.parent.rglob("*") if path.is_file() and
               HOOK_TOKEN.encode() in path.read_bytes()]
     assert leaked == [], "the expanded header is written nowhere: not the config, a transcript, a log or a cache"
+
+
+def test_a_stop_hooks_block_sends_the_model_on_with_its_reason_once_and_the_next_stop_says_so(lane, api):
+    """The check of a turn's end (`finish`): a Stop the hook answers with a block is not the end — the model gets the
+    reason and goes on; the Stop after it carries `stop_hook_active`, so the platform never blocks twice. Each Stop
+    carries the model's last message."""
+    stops: list[dict] = []
+
+    def stop(body: dict) -> dict:
+        stops.append(body)
+        return {} if body.get("stop_hook_active") else {"decision": "block", "reason": "PROBE-STOP-REASON"}
+    api.stop = stop
+    run = lane.run("go")
+    assert run.rc == 0, run.stderr
+    assert [s.get("stop_hook_active") for s in stops] == [False, True]
+    assert all(s.get("last_assistant_message") == "done" for s in stops)
+    assert "PROBE-STOP-REASON" in json.dumps(api.requests[-1]), "the reason reaches the model"
+    assert len(api.requests) >= 2 and run.result["subtype"] == "success"
+
+
+def test_a_failed_command_fires_post_tool_use_failure_with_its_exit_code_not_post_tool_use(lane, api):
+    api.tools, api.mode = [bash("exit 3")], "allow"
+    run = lane.run("go")
+    assert run.rc == 0, run.stderr
+    [failed] = api.events("PostToolUseFailure")
+    assert failed.tool == "Bash" and "3" in str(failed.body.get("error")), failed.body
+    assert api.events("PostToolUse") == []
+
+
+def test_a_turn_ended_by_a_deferral_fires_no_stop(lane, api):
+    """A deferred call ends the turn without a Stop: the check of a turn's end never sees a turn that waits for the
+    owner, and a resume that ends normally fires it."""
+    api.tools, api.mode = [bash("true")], "defer"
+    first = lane.run("go")
+    assert first.result["stop_reason"] == "tool_deferred"
+    assert api.events("Stop") == []
+    api.mode = "allow"
+    lane.run(None, resume=first.result["session_id"])
+    assert len(api.events("Stop")) == 1
+
+
+def test_a_failures_additional_context_reaches_the_model(lane, api):
+    """The loop guard's warning (`finish.Loops`) rides on the answer to PostToolUseFailure."""
+    api.tools, api.mode = [bash("exit 3")], "allow"
+    api.after = lambda body: {"hookSpecificOutput": {"hookEventName": body["hook_event_name"],
+                                                     "additionalContext": "PROBE-LOOP-WARNING"}}
+    run = lane.run("go")
+    assert run.rc == 0, run.stderr
+    assert "PROBE-LOOP-WARNING" in json.dumps(api.requests[-1])
+
+
+def test_continue_false_on_pre_tool_use_ends_the_turn_without_running_the_call(lane, api):
+    """The loop guard's stop: a PreToolUse answered `continue: false` ends the turn at once, the call not run, and
+    the result says so."""
+    marker = lane.cwd.parent / "ran"
+    api.tools, api.mode, api.rounds = [bash(f"echo ran >> {marker}")], "allow", 3
+    api.cut = lambda body: True
+    run = lane.run("go")
+    assert run.rc == 0, run.stderr
+    assert not marker.exists()
+    assert run.result["subtype"] == "success" and run.result["stop_reason"] == "tool_use"
+    assert len([r for r in api.requests if r.get("stream")]) == 1, "no request after the cut"

@@ -47,6 +47,7 @@ class Hook:
     tool_use_id: str | None
     authorization: str | None
     agent_id: str | None = None  # a subagent's call: its id (2.1.304)
+    body: dict | None = None     # the whole request, as the CLI sent it
 
 
 def _sse(events: list[tuple[str, dict]]) -> bytes:
@@ -73,6 +74,9 @@ class FakeApi:
         self.ask = "deny"                 # PermissionRequest: deny | none
         self.scripts: dict[str, list[list[tuple[str, dict]]]] = {}  # a first message's key -> that conversation's turns
         self.decide: Callable[[dict], str] | None = None  # PreToolUse's mode by the hook's body, instead of `mode`
+        self.stop: Callable[[dict], dict] | None = None   # Stop's answer by the hook's body; none: let it stop
+        self.after: Callable[[dict], dict] | None = None  # PostToolUse's and PostToolUseFailure's answer by the body
+        self.cut: Callable[[dict], bool] | None = None    # a PreToolUse answered `continue: false` instead
         self.mcp: list[tuple[dict, str | None]] = []  # every MCP message, with its Authorization
         self.mcp_instructions = "PROBE-MCP-INSTRUCTIONS"
         self._lock = threading.Lock()
@@ -135,7 +139,7 @@ class FakeApi:
         event, tool_use_id = body.get("hook_event_name"), body.get("tool_use_id")
         with self._lock:
             self.hooks.append(Hook(path, event, body.get("tool_name"), body.get("tool_input"), tool_use_id,
-                                   authorization, body.get("agent_id")))
+                                   authorization, body.get("agent_id"), body))
         if path.startswith("/hook/mark/"):
             with self._lock:
                 self.marks.add(tool_use_id)
@@ -145,6 +149,14 @@ class FakeApi:
         if event == "PermissionRequest":
             return {"hookSpecificOutput": {"hookEventName": event,
                                            "decision": {"behavior": "deny", "message": PERMISSION_DENIED}}}
+        if event == "Stop" and self.stop is not None:
+            return self.stop(body)
+        if event in ("PostToolUse", "PostToolUseFailure") and self.after is not None:
+            return self.after(body)
+        if event == "PreToolUse" and self.cut is not None and self.cut(body):
+            return {"continue": False, "stopReason": "PROBE-CUT",
+                    "hookSpecificOutput": {"hookEventName": event, "permissionDecision": "deny",
+                                           "permissionDecisionReason": "PROBE-CUT-DENY"}}
         if event != "PreToolUse":
             return {}
         mode = self.mode if self.decide is None else self.decide(body)

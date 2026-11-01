@@ -683,11 +683,14 @@ class PlatformStore:
     def prune(self, now: float) -> int:
         """Raw lines older than 90 days go, a whole turn at a time — a turn still being written keeps its lines.
         The projection stays. The face's events older than 7 days go too, by number, and the last number gone is
-        kept: a stream asked to start before it is told to reload (`events_gone`). Spent codes and logins go."""
+        kept: a stream asked to start before it is told to reload (`events_gone`). Spent codes and logins go. A turn
+        marked as one that went badly (`episodes`) keeps its lines while its mark is kept."""
+        marked = self.db.execute("SELECT 1 FROM sqlite_master WHERE name = 'episodes'").fetchone() is not None
         cursor = self.db.execute(
             "DELETE FROM raw WHERE (session, turn) IN (SELECT session, turn FROM raw GROUP BY session, turn "
             "HAVING MAX(at) < ?) AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = raw.session "
-            "AND s.turn = raw.turn)", (now - RAW_KEEP_S,))
+            "AND s.turn = raw.turn)" + (" AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.session = raw.session AND "
+                                        "e.turn = raw.turn)" if marked else ""), (now - RAW_KEEP_S,))
         upto = self.db.execute("SELECT MAX(id) FROM events WHERE at < ?", (now - EVENTS_KEEP_S,)).fetchone()[0]
         if upto is not None:
             self.db.execute("DELETE FROM events WHERE id <= ?", (upto,))

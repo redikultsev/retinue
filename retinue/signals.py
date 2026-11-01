@@ -11,7 +11,11 @@ text, so nothing here needs keeping from anyone:
 - **tool_error**, **compaction** — read off a session's lines by the engine's adapter (`from_line`): the only place
   that knows the CLI's stream-json. Another engine gets its own adapter, the kinds stay;
 - **run_error** — a turn the platform itself told the owner ended in an error («Turn ended with an error»), once a run;
-- **owner_stop** — the owner pressed «Stop» (`Platform.stop`).
+- **owner_stop** — the owner pressed «Stop» (`Platform.stop`);
+- **finish** — a turn's end held back by the gate (`finish.Checks`): `what` is `stop_block`;
+- **loop** — the same call or failure again in a turn (`finish.Loops`): `what` is `warn`, `deny` or `cut`;
+- **web** — a fetch that failed (PostToolUseFailure): `what` is how (`web_what`) — `http_403`, `timeout`,
+  `too_large`… — never the address, so a site the owner read stays nobody's business here.
 
 What other tables already keep is read there, not copied: the owner's messages (`inputs`), runs (`runs`), sessions,
 and the cards and how he decided them (`approvals`).
@@ -22,9 +26,13 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from . import episodes
 from .sessions import PlatformStore
 
 GATE, TOOL_ERROR, COMPACTION, RUN_ERROR, OWNER_STOP = "gate", "tool_error", "compaction", "run_error", "owner_stop"
+FINISH, LOOP, WEB = "finish", "loop", "web"
+# A status as fetch errors word it («status code 403», «HTTP 404», «403 Forbidden»), not any number in an address.
+_HTTP = re.compile(r"(?:status(?:\s*code)?|http(?:/[\d.]+)?|error)\D{0,3}\b([45]\d\d)\b|\b([45]\d\d)\s+[a-z]")
 KEEP_DAYS = 400  # a year and a bit: the same week a year ago stays comparable
 WHAT_CHARS = 60
 TOP = 5          # the gate's reasons named in a tally
@@ -38,7 +46,7 @@ def prepare(store: PlatformStore, now: float) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             key TEXT UNIQUE,                    -- a line's signal: lane:seq:n, so a replayed line adds none
             at REAL NOT NULL,
-            kind TEXT NOT NULL,                 -- gate | tool_error | compaction | run_error | owner_stop
+            kind TEXT NOT NULL,                 -- gate | tool_error | compaction | run_error | owner_stop | finish | loop | web
             session TEXT NOT NULL,
             call TEXT NOT NULL DEFAULT '',      -- the tool call it is about: a tool error finds its tool by it
             tool TEXT NOT NULL DEFAULT '',
@@ -73,6 +81,18 @@ def blocked_what(reason: str) -> str:
     """A classifier block as kept: its tag (`[Remote Repoint]`) and nothing else — the rest may quote the command."""
     tag = TAG.search(reason or "")
     return f"blocked: {tag.group(0)}" if tag else "blocked"
+
+
+def web_what(error: object) -> str:
+    """How a fetch failed, as kept: an HTTP status, a timeout, a page too large, or `other`."""
+    text = str(error or "").lower()
+    if found := _HTTP.search(text):
+        return "http_" + (found.group(1) or found.group(2))
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "too large" in text or "exceeds" in text or "maximum" in text:
+        return "too_large"
+    return "other"
 
 
 def from_line(line: dict) -> list[tuple[str, str]]:
@@ -119,6 +139,12 @@ def tally(store: PlatformStore, since: float, until: float) -> dict:
                    "tool_errors_by_tool": dict(errors.most_common(TOP)),
                    "compactions": one("SELECT COUNT(*) FROM signals WHERE kind = 'compaction' AND at >= ? AND at < ?"),
                    "run_errors": one("SELECT COUNT(*) FROM signals WHERE kind = 'run_error' AND at >= ? AND at < ?")},
+        "turns": {"sent_on_to_check": one("SELECT COUNT(*) FROM signals WHERE kind = 'finish' AND at >= ? AND at < ?"),
+                  "loops": dict(db.execute("SELECT what, COUNT(*) FROM signals WHERE kind = 'loop' AND at >= ? "
+                                           "AND at < ? GROUP BY what", span).fetchall()),
+                  "web_failures": dict(db.execute("SELECT what, COUNT(*) FROM signals WHERE kind = 'web' AND at >= ? "
+                                                  "AND at < ? GROUP BY what", span).fetchall())},
+        "episodes": episodes.tally(store, since, until),
         "gate": {"calls": sum(how.values()), "by_decision": dict(how),
                  "reasons": dict([(w, n) for w, n in gate.most_common() if ":" in w][:TOP])},
         "cards": {"approval": _states(cards, "approval"), "question": _states(cards, "question"),

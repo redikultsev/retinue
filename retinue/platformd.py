@@ -29,8 +29,8 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, cliengine, collections_admin, courier, face, feed, inbox, outfiles, pings, questions,
-               signals, subs, tobase, topush, transcript, views)
+from . import (approvals, attachments, cliengine, collections_admin, courier, episodes, face, feed, finish, followups, inbox,
+               lanetravel, outfiles, pings, questions, signals, subs, tobase, topush, transcript, views)
 from .base import BaseRepo, under
 from . import library as library_mod
 from . import code as code_mod
@@ -111,8 +111,13 @@ class Platform:
         self.views = views.Views(self)  # their views: the Space's screen, and the Router's numbers
         self._looking = asyncio.Lock()
         pings.prepare(store)
+        episodes.prepare(store, clock())  # the turns that went badly (`episodes`)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
+        self.followups = followups.FollowUps(self)  # a session brought back to a task that waits (`followups.py`)
+        self._stopped_runs: set[str] = set()  # runs the owner's «Stop» ended: not errors (`episodes`)
+        # travel-ops' tools on the same server, for every session (`lanetravel.py`); None: no travel-ops in this stack.
+        self.travel = lanetravel.LaneTravel(cfg.travel_url) if cfg.travel_url else None
         self.feed.subs = self.subs  # the feed's proposals of sub-sessions, under «Decide»
         # The owner's Base cloned into a lane (`base.py`): kept fresh here, committed by his button.
         self.base = base if base is not None or cfg.base is None else BaseRepo(cfg.base, _lane_view(cfg))
@@ -126,6 +131,10 @@ class Platform:
         self.topush = topush.ToPush(self)
         self.feed.topush = self.topush  # the feed's «Push» rows
         self.gate.push_lanes = frozenset({cfg.code.lane}) if cfg.code is not None else frozenset()
+        # The trees a turn's end is checked under (`finish.Checks`): the Base, and the owner's repositories.
+        self.gate.checks.trees = [
+            *([finish.Tree(cfg.base.lane, f"{approvals.WORK}/{cfg.base.tree}", "base")] if cfg.base else []),
+            *([finish.Tree(cfg.code.lane, f"{approvals.WORK}/{cfg.code.root}", "code")] if cfg.code else [])]
         self._fetching: set[str] = set()  # repositories whose first mirror is being fetched
 
     # --- the HTTP surface ---------------------------------------------------------------------------------------
@@ -487,6 +496,7 @@ class Platform:
             return "The session already has this message."
         if by is None:  # the owner's own word: his questions answered, his family's exchanges counted again
             self.subs.owner_wrote(session)
+            episodes.owner_wrote(self.store, session_id, text, now)  # a correction, or the same request again
             self.store.db.execute("UPDATE sessions SET owner_joined = 1 WHERE id = ?", (session_id,))
             self.store.db.commit()  # the turn's ping answers him: it rings (`_summary`)
             for approval in self.store.approvals(session=session_id, kind=questions.KINDS, states=("pending", "shown")):
@@ -527,6 +537,8 @@ class Platform:
         if not self.store.move(approval["id"], ("shown",), "granted" if granted else "rejected", now, note=telegram,
                                view=view):
             return STALE, None
+        if not granted:
+            episodes.mark(self.store, approval["session"], episodes.CARD_REJECTED, now, run=approval["run"])
         self.store.enqueue(approval["session"], None, now)  # a bare resume: the CLI asks PreToolUse again
         self.store.mark_seen(approval["session"], now)
         self._set_state(approval["session"], "active", now)
@@ -540,6 +552,10 @@ class Platform:
         if session is None:
             return False
         signals.add(self.store, signals.OWNER_STOP, session_id, self.clock())
+        if (open_run := next((r["run"] for r in self.store.open_runs() if r["session"] == session_id), None)):
+            episodes.mark(self.store, session_id, episodes.OWNER_STOP, self.clock(), run=open_run)
+            self._stopped_runs.add(open_run)  # its end is his stop, not an error (`_result`)
+        self.followups.stopped(session_id)
         stopped = await self._stop_family(session)  # a parent's sub-sessions stop with it, a run of its own or not
         if session["lane"] not in self.lanes:
             return stopped
@@ -816,8 +832,9 @@ class Platform:
             self.store.db.commit()
         body = {"session": session["id"], "run": run, "cli_session": session["cli_session"] or fork or None,
                 **({"fork": True} if fork else {}),
-                # The sub-sessions' MCP server (`subs`): the lane host builds its address from its own hook address.
-                **({"subs": True} if subs.may_start(session) else {}),
+                # The platform's MCP server — sub-sessions (`subs`), travel-ops (`lanetravel`): the lane host builds its
+                # address from its own hook address.
+                **({"subs": True} if subs.may_start(session) or self.travel is not None else {}),
                 "cwd": self.cwd_of(session, track), "settings": cliengine.settings(lane.hook_url, CLEANUP_DAYS, [m.rule for m in marks]),
                 # A card rule is neither: its call is the gate's to defer, and the owner's grant must be able to run it.
                 "allowed": [m.rule for m in marks if m.kind == "allow"],
@@ -1050,10 +1067,13 @@ class Platform:
         elif kind == "result":
             self._result(session, run, line, now)
             self.gate.run_ended(run)  # a block the model went past is the owner's notice; the run's asks forgotten
+            if transcript.deferred_of(line) is None:  # a deferral's turn goes on at the resume
+                self.gate.turn_over(session["id"])
         elif kind == "lane":
             event = line.get("event")
             if event in ("exited", "restarted", "refused"):
                 self.gate.run_ended(run)
+                self.gate.turn_over(session["id"])
             if event == "stopped" and line.get("by") == "shutdown":  # the lane's own stop: an update, a restart
                 self.store.interrupt(run, now)
             if event in ("exited", "restarted", "refused"):
@@ -1104,6 +1124,9 @@ class Platform:
         elif self._failed(line):
             why = str(line.get("result") or "") or str(line.get("subtype") or "") or "no description"
             signals.add(self.store, signals.RUN_ERROR, session["id"], now, key=f"run:{run}")
+            if run not in self._stopped_runs:
+                episodes.mark(self.store, session["id"], episodes.RUN_ERROR, now, run=run)
+            episodes.ended(self.store, session["id"], run, f"Turn ended with an error: {why}")
             self._summary(session, f"Turn ended with an error: {why}", pings.FAILED, run)
             self._set_state(session["id"], "idle", now)
             self._owe_look(session)
@@ -1111,6 +1134,7 @@ class Platform:
         else:
             text = str(line.get("result") or "") or "Turn finished without text."
             self._summary(session, text, run=run)
+            episodes.ended(self.store, session["id"], run, text)  # the turn's summary, for a mark before or after
             self._set_state(session["id"], "closed" if session["kind"] == "code" else "idle", now)
             self._owe_look(session)
             self._turn_over(session, text, run=run)
@@ -1243,6 +1267,8 @@ class Platform:
         self._mark_idle(now)  # the cards still shown after the expiry
         self.subs.deliver()  # a report that waited for its siblings, or for a limit to pass: `_clock` drains
         self.subs.expire()  # the proposals past their week: their cards told
+        self.followups.tick()  # the follow-ups due, to sessions that are free: `_clock` drains
+        episodes.trim(self.store, now)
         self.tobase.tick(now)
         self.topush.tick(now)
 

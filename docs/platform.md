@@ -358,6 +358,47 @@ sets the sphere, never the main mark, and the session's sub-sessions follow — 
 a title it has stays; a sphere set by you (`sphere_by: owner`) or by the session stays. A sub-session has its title
 from its start and its parent's sphere; a side question its question's — neither is asked.
 
+## Follow-ups
+
+A session cannot wake itself — the CLI's schedulers are denied — so a promise to «check again tomorrow» is one nothing
+keeps. A session you started has `follow_up(after_hours, why)` and `cancel_follow_up(id)` on the platform's own server
+(`retinue/followups.py`, beside the sub-sessions' tools, through the gate like them). When one is due and the session
+is free — idle or closed, no run, nothing queued, no limit being waited out — the platform writes into it, in its own
+words, «The follow-up f1a2b3 you set on … is due. Go back to the task…», and that is a turn like a report's: it pings
+when done, as a turn nobody watched. The message never carries `why`, which is the model's text and may repeat a
+page; `why` is yours to read, in the call in the transcript.
+
+| Limit | Value |
+|---|---|
+| open per session (`OPEN_MAX`) / in all (`ALL_MAX`) | 3 / 15 |
+| how far ahead | 1 hour to 21 days: past that the CLI's transcript may be gone |
+| from a follow-up's own turn | none: it cannot set another, and a sub-session it asks for is your card, as from a report's turn |
+| your «Stop» of the session | drops its open follow-ups, and a fired one not yet started |
+| an archived session, or one whose lane or track is gone | its follow-up is dropped when it comes due |
+
+Not in «Waiting for you»: a follow-up asks nothing of you until its turn ends, and then its ping does.
+
+## Travel prices in a session
+
+With travel on (`setup.sh TRAVEL=1`, [install](install.md#6-travel-optional)), every session — yours, a sub-session,
+a subagent's call — has travel-ops' tools: `search_trip`, `search_flights`, `search_stays`, `search_ground`, their
+`refine_*` views, `resume_search`, `stay_details`, `stay_photos`, `compare_stays`, `compare_stay_searches`,
+`flight_schedule`, `airports_near`, `watch_price`, `watches`, `stop_watch`, `record_outcome`, `sources`.
+They come on the platform's own server, beside the sub-sessions' tools (`mcp__retinue__search_flights`): a run may have
+that one server only, and the room never reaches travel-ops — it has no login, and only the platform shares a network
+with it (`travel-platform`, two members). `retinue/lanetravel.py`:
+
+- **Each call is the gate's first**, as every call of that server is, then the assistant's check before it leaves
+  (`travel.exact`): closed types only — airport codes, dates, numbers, a place name in Latin script — and the call
+  goes out exactly as checked; anything else comes back refused with the reason. Only the tools those forms know are
+  offered, so a tool travel-ops adds stays off until it has a form; `watch_alerts` never — the router collects the
+  price alerts, and a session's watch tells you through it, as the assistant's does — nor `journal_review` and
+  `reparse_run`, which maintain travel-ops on your own machine.
+- **travel-ops' own rules** (its server's instructions) reach the session with the tools; its list is asked once in
+  ten minutes. A search asks the sites for minutes: a call may wait 14 minutes, as the assistant's does.
+- **travel-ops down** costs a run its travel tools, not its turn: the platform asks it for 5 seconds, then the run
+  starts without them and the session is told why; the next try is a minute later.
+
 ## What a session gets from you
 
 A photo, a PDF or any other file sent **in reply** to a session's message (its caption is your text), or attached in
@@ -599,8 +640,13 @@ budget lives in the platform's memory: a restart starts every count again.
 `tests/test_exfil.py` holds 50 ordinary addresses — search results, articles, docs, GitHub, PyPI, Russian and
 Chinese Wikipedia, long Title_Case and CamelCase paths, Booking, Maps, Skyscanner, Agoda, Google Flights and Airbnb
 links — and 6 searches: none cards, and 40 Wikipedia pages plus 20 Booking searches stay under one run's budget.
-21 hostile addresses all card. What does card although it is ordinary: a link copied from a browser with its
-tracking (Booking's `label=`, Google's `ved=`/`gs_lp=`), a signed S3 address, an image's sha256 in a path. What it
+21 hostile addresses all card. A link with tracking parameters — `utm_*`, `gclid`, `fbclid`, `srsltid` and the like
+anywhere, Booking's `label`/`aid`/`sid`, Google's `ved`/`ei`/`gs_lp`, YouTube's `si` on their own sites
+(`exfil.TRACKING`) — is not a card: the gate denies it with the same address without them («Fetch this address
+instead: …»), and the model's fetch of that one passes every check as usual — the classifier included, which an
+`updatedInput` (only an `allow` carries one) would skip. A fetch of a public archive's «save» address
+(`web.archive.org/save/…`, `archive.ph/submit…`) is a card: it publishes the page; reading `web.archive.org/web/…`
+is an ordinary fetch. What does card although it is ordinary: a signed S3 address, an image's sha256 in a path. What it
 does not stop: plain words under every threshold and the budget (a 190-character note in `?d=` passes, about 30 of
 them per site and run), and hex or all-caps base32 cut into short pieces (case-unmixed, read as a slug) — that is the
 classifier's.
@@ -1033,6 +1079,9 @@ A row is a kind, a time, a session, at most a tool and a short note — never an
 | `compaction` | the CLI's `compact_boundary` line | — |
 | `run_error` | a turn the platform told you ended in an error («Turn ended with an error») | once a run |
 | `owner_stop` | «Stop» in the app | — |
+| `finish` | a turn's end the gate sent on ([A turn's end and its loops](#a-turns-end-and-its-loops)) | `stop_block` |
+| `loop` | the same call or failure again in a turn | `warn`, `deny` or `cut` |
+| `web` | a `WebFetch` that failed | how: `http_403`, `timeout`, `too_large`, `other` — never the address |
 
 `tool_error` and `compaction` are read by the engine's adapter (`signals.from_line`), the one place that knows the
 CLI's stream-json, keyed by the lane's line so a line given again counts once; another engine gets its own adapter
@@ -1041,8 +1090,58 @@ and cards with how you decided them. Rows older than 400 days go when the platfo
 
 `POST /owner/stats` (the router's token, as every `/owner/*` call) with `{since, until}` answers the tally: sessions
 and sub-sessions started, runs, your messages and stops, tool errors by tool, compactions, failed turns, the gate's
-calls by how they went and its five most frequent reasons, and cards by how they ended. The weekly review puts it
+calls by how they went and its five most frequent reasons, turns sent on to their check, loops, fetches that failed
+by how, turns that went badly by mark, and cards by how they ended. The weekly review puts it
 in words at its end, «How the week went» ([proactive.md](proactive.md#how-the-week-went)).
+
+### Turns that went badly
+
+Beside the counts, the platform marks the turns that went badly by what happened in them, never by asking you
+(`retinue/episodes.py`): your «Stop» while it ran (`owner_stop` — its end is then not also an error), an error it
+ended in (`run_error`), a card of it you denied (`card_rejected`), your «Undo» of its Base commit (`base_undo` — the
+turn whose result the card was under), an end over files still unchecked after the gate sent it on (`unchecked_end`),
+a loop the gate denied or cut (`loop`), and the request that started it written again in other words within 10
+minutes of its end, when it did not end asking you something (`asked_again`: most of the longer words of both
+shared). A mark lands on the turn of the run it happened in. One row per turn with its marks, its summary as you got
+it, and your next message in that session within an hour as the newest marked turn's `correction` — what you wanted
+instead, in your words. A marked turn's raw lines outlive the store's 90 days while its row is kept: the newest 200,
+for at most 180 days. The weekly review counts them by mark; they are the material a later lesson or replay set is
+built from.
+
+## A turn's end and its loops
+
+"Done" is the model's word; two things the gate sees in its hooks hold it to it (`retinue/finish.py`). Both are in the
+platform's memory only: a restart forgets them, and the turn goes on as if they were not there. A turn is over when
+its Stop passes or its run ends any way but deferring a call — your «Stop», an error, a cut, a lane gone
+(`Gate.turn_over`): what it left is not the next turn's.
+
+**A check after the last change.** An `Edit`, `Write`, `MultiEdit` or `NotebookEdit` that ran (PostToolUse) on a file
+in the Base (`/work/<base.tree>`, any file) or in one of your repositories (`/work/<code.root>/<name>`, any file but
+prose: `.md`, `.mdx`, `.txt`, `.rst`) stays pending for that tree until a check of it exits 0 — for the Base
+`python3 scripts/lint.py` or `just check`, for a repository any test, lint, type check or build (`pytest`, `ruff`,
+`pnpm -s test`, `go test`, `mvn verify`… — `finish.CODE_CHECK`). A check is a command one of whose parts (between
+`&&`, `;`, `|`) starts with one, past env assignments and runners (`uv run`, `npx`, `python -m`); `cat scripts/lint.py`
+or `echo pytest` is not. It counts for the tree its cwd is in or whose folder its command names, else for every
+pending one; one that fails (PostToolUseFailure) counts for none. When the model ends its turn with something pending,
+the gate blocks the Stop once a turn, in its own words: which files, how to check, «if it cannot run here, add a `Not
+checked: …` line», and to write the whole summary again — you read only the turn's last message. The next Stop passes,
+and what was pending is forgotten. A turn that ends by deferring a call fires no Stop, so a turn waiting for you is
+never sent on. Not seen: a command that writes files (`sed -i`, a generator).
+
+**The same thing again.** Within a turn (across the runs a card's resume makes), per agent, the gate counts the same
+call — a fetch's address without its fragment, any other tool's whole input, each call id once — while its outcome
+stays the same: its result or error, numbers aside. An outcome that changes, or an edit by the same agent, starts the
+count again, so a test run after a fix, or a fetch of one page for another section, is not a loop; a command that
+waits on purpose (`sleep`) is not counted.
+
+| What | Then |
+|---|---|
+| the same call the 3rd time, or the same failure the 2nd in a row | a warning added to the model's context with the call's result (`additionalContext`) |
+| the same call the 5th time, or after 3 same failures in a row | denied: «try another way, or end your turn and say what blocks you» |
+| the same call the 8th time | the main agent's turn is ended (`continue: false`, the call not run); a subagent's call is only denied |
+
+The weekly review counts both: turns sent on to their check, loops warned, denied and cut, and fetches that failed by
+how ([How the work went](#how-the-work-went)).
 
 ## Probes
 
@@ -1062,6 +1161,19 @@ whole path of a block — `PermissionDenied`, the retry, the repeat as a card wi
 processes restarted, one run past the classifier. Without `RETINUE_LANE_CLI` they are skipped. The login probe also
 needs `CLAUDE_CODE_OAUTH_TOKEN`. Run them before
 bumping the version in `deploy/lanes/cli.lock` (together with `cliengine.CLI_VERSION` and `tests/test_pins.py`).
+
+Five pin [a turn's end and its loops](#a-turns-end-and-its-loops): a Stop the hook blocks sends the model on with
+the reason, and the next Stop carries `stop_hook_active`; a turn that ends by deferring a call fires no Stop; a command
+that fails fires PostToolUseFailure with its exit code and no PostToolUse; that hook's `additionalContext` reaches the
+model; and `continue: false` on PreToolUse ends the turn without running the call or asking the model again. A
+developer's Mac runs the pinned Linux CLI in a container:
+
+```bash
+docker run --rm -v "$PWD":/src:ro ghcr.io/astral-sh/uv:python3.12-bookworm-slim bash -c 'cp -r /src /w && cd /w \
+  && apt-get update -qq && apt-get install -y -qq curl git bubblewrap socat >/dev/null \
+  && bash deploy/lanes/fetch-cli.sh /cli && RETINUE_LANE_CLI=/cli/claude uv run --with pytest --with pytest-asyncio \
+  pytest -q -m probe tests/test_probes.py'
+```
 
 Two of them answer what the room's sessions rely on. [Subagents](#subagents): they run, in the foreground, their
 calls reach the gate marked by `agent_id`, and a deferral inside one is lost. And nested rules: under

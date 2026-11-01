@@ -21,7 +21,7 @@ cards (tests/test_exfil.py lists them).
 from __future__ import annotations
 
 import re
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 # A query string longer than this, in characters once its escapes are read (Cyrillic is six to the letter on the
 # wire), is a card. A model building a search or a booking link writes a few short params (`?q=…&checkin=…`), well
@@ -180,6 +180,55 @@ class Budget:
         self._spent.pop(run, None)
 
 
+# Parameters that only say where a click came from, by exact name (and `utm_*`): taken out of an address before the
+# checks, so a link copied from a search or a newsletter never cards for them — the model is told to fetch the clean
+# address instead (`clean`), and that one passes every check as usual. By site: names that are tracking only there.
+TRACKING = frozenset({"gclid", "gbraid", "wbraid", "dclid", "fbclid", "msclkid", "yclid", "ysclid", "mc_cid",
+                      "mc_eid", "igshid", "srsltid", "_ga", "_gl", "ref_src", "spm"})
+TRACKING_AT = [
+    (re.compile(rf"(?:www\.)?google\.{_CCTLD}"), frozenset({"ved", "ei", "sca_esv", "gs_lp", "gs_lcrp", "oq", "aqs",
+                                                           "sourceid", "sxsrf", "uact"})),
+    (re.compile(r"(?:[a-z0-9-]+\.)*booking\.com"), frozenset({"label", "aid", "sid", "srpvid", "sb_price_type"})),
+    (re.compile(r"(?:www\.|m\.)?youtube\.com|youtu\.be|open\.spotify\.com"), frozenset({"si", "feature", "pp"})),
+]
+CLEANED = "Not run: the address carries tracking parameters. Fetch this address instead: {url}"
+# Archives that keep a public copy of a page on request: a fetch of their «save» address publishes, it does not read.
+SAVES = re.compile(r"(web\.archive\.org/save|archive\.(ph|today|is|li|vn|md)/submit)(/|\?|$)")
+
+
+def saved(url: object) -> bool:
+    """A fetch that asks a public archive to keep a copy of a page (`SAVES`)."""
+    try:
+        parts = urlsplit(url.strip()) if isinstance(url, str) else None
+    except ValueError:
+        return False
+    if parts is None:
+        return False
+    path = unquote(unquote(parts.path, errors="replace"), errors="replace").lower()
+    return bool(SAVES.match((parts.hostname or "").rstrip(".") + re.sub(r"/{2,}", "/", path)))
+
+
+def clean(url: object) -> str:
+    """The address without its tracking parameters (`TRACKING`); '' when it has none or cannot be read. Host, path,
+    the other params (escapes kept) and their order stay as they are; the fragment goes."""
+    if not isinstance(url, str):
+        return ""
+    try:
+        parts = urlsplit(url.strip())
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https") or not parts.query:
+        return ""
+    local = next((names for site_re, names in TRACKING_AT if site_re.fullmatch(host)), frozenset())
+    pairs = [pair for pair in re.split(r"&", parts.query) if pair]
+    kept = [pair for pair in pairs if not ((name := unquote(pair.partition("=")[0]).lower()).startswith("utm_")
+                                          or name in TRACKING or name in local)]
+    if len(kept) == len(pairs):
+        return ""
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "&".join(kept), ""))
+
+
 def _url_why(url: str) -> str:
     try:
         parts = urlsplit(url.strip())
@@ -215,6 +264,8 @@ def why(tool: str, tool_input: dict) -> str:
     """The card's line when this call looks like it carries data out; empty when it does not."""
     if tool == "WebFetch":
         url = tool_input.get("url")
+        if saved(url):
+            return "Publishes a page: the address asks a public archive to keep a copy of it. Read the whole address"
         try:
             reason = _url_why(url) if isinstance(url, str) else "the address is not a string"
         except Exception:  # noqa: BLE001 — a hook that fails lets the call run: an address not read is a card

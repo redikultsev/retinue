@@ -149,7 +149,7 @@ def test_the_only_mcp_server_a_run_may_have_is_the_platforms_at_the_lanes_own_ho
     assert full[-3:] == ["--mcp-config", cliengine.mcp_config(hook), "--strict-mcp-config"]
     assert json.loads(full[-2]) == {"mcpServers": {"retinue": {
         "type": "http", "url": "http://platform:9500/hook/mcp",
-        "headers": {"Authorization": "Bearer ${RETINUE_HOOK_RUN}"}}}}
+        "headers": {"Authorization": "Bearer ${RETINUE_HOOK_RUN}"}, "timeout": 840_000}}}
     assert cliengine.check_argv(full, hook) == full
     base = cliengine.argv(SETTINGS, [], [], None)
     other = json.dumps({"mcpServers": {"x": {"type": "stdio", "command": "sh"}}})
@@ -226,7 +226,7 @@ def test_the_settings_hold_only_blocking_http_hooks_back_to_the_platform():
         ("*", f"{HOOK_URL}/PreToolUse", None)]
     assert {event: [h["url"] for e in entries for h in e["hooks"]] for event, entries in data["hooks"].items()
             if event != "PreToolUse"} == {e: [f"{HOOK_URL}/{e}"] for e in ("PermissionRequest", "PermissionDenied",
-                                                                           "PostToolUse", "Stop")}
+                                                                           "PostToolUse", "PostToolUseFailure", "Stop")}
     assert pre[2]["hooks"][0] == {"type": "http", "url": f"{HOOK_URL}/PreToolUse", "timeout": 15, "onFailure": "block",
                                   "headers": {"Authorization": "Bearer $RETINUE_HOOK_RUN"},
                                   "allowedEnvVars": ["RETINUE_HOOK_RUN"]}
@@ -270,7 +270,7 @@ def test_settings_off_that_shape_are_refused():
         assert refused(check, {**cliengine.settings(HOOK_URL, 30, []), **extra}, HOOK_URL) == \
             "settings: the top level is only hooks and cleanupPeriodDays"
     assert refused(check, {"hooks": {"SessionStart": []}, "cleanupPeriodDays": 30}, HOOK_URL) == \
-        "settings: events not among PreToolUse, PermissionRequest, PermissionDenied, PostToolUse, Stop"
+        "settings: events not among PreToolUse, PermissionRequest, PermissionDenied, PostToolUse, PostToolUseFailure, Stop"
     regex = cliengine.settings(HOOK_URL, 30, [])
     regex["hooks"]["PreToolUse"][0]["matcher"] = "Bash|Write"
     assert refused(check, regex, HOOK_URL) == "settings: PreToolUse — not the expected entry"

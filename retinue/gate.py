@@ -40,7 +40,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from . import approvals, exfil, questions, signals, subs
+from . import approvals, episodes, exfil, finish, followups, questions, signals, subs
 from .approvals import Mark, Unbindable
 from .config import LaneRef
 from .sessions import PlatformStore
@@ -164,6 +164,8 @@ class Gate:
         self._retried: dict[str, set[str]] = {}  # run -> the reask keys it was let retry
         self.budget = exfil.Budget()  # per run: the address characters each site has taken (`exfil.SITE_BUDGET`)
         self._passed: dict[tuple[str, str], tuple[str, str, str]] = {}  # (run, call) -> (tool, digest, how)
+        self.checks = finish.Checks()  # files changed since their check: a turn's end is sent on once (`finish`)
+        self.loops = finish.Loops()    # the same call or failure again and again in a turn
 
 
     def token_hash(self, token: str) -> str:
@@ -204,7 +206,7 @@ class Gate:
         if event.startswith("mark/"):
             return self.mark(run, int(event.removeprefix("mark/")), body)
         if event == "PreToolUse":
-            answer = await self.pre_tool_use(run, body)
+            answer = self.loop_guard(run, body) or await self.pre_tool_use(run, body)
             self._remember(run, body, answer)
             marks = [m.kind for m in self._call(str(body.get("tool_use_id") or "")).marks]
             self._journal(run, body, signals.gate_what(answer, marks))
@@ -217,7 +219,83 @@ class Gate:
             return self.permission_denied(run, body)
         if event == "PostToolUse":
             self.post_tool_use(run, body)
+            return self.after(run, body, None)
+        if event == "PostToolUseFailure":
+            return self.after(run, body, body.get("error") or "failed")
+        if event == "Stop":
+            return self.stop(run, body)
         return {}
+
+    def loop_guard(self, run: Run, body: dict) -> dict:
+        """The same call again and again in a turn (`finish.Loops`): denied, and past that the turn is cut. Empty:
+        the gate decides as ever."""
+        tool, tool_input, _ = _call_of(body)
+        how, reason = self.loops.before(run.session, str(body.get("agent_id") or ""), tool, tool_input,
+                                        str(body.get("tool_use_id") or ""))
+        if not how:
+            return {}
+        self._signal(signals.LOOP, run, body, how)
+        self._mark(run, episodes.LOOP)
+        answer = _decision("deny", reason)
+        return {"continue": False, "stopReason": reason, **answer} if how == "cut" else answer
+
+    def after(self, run: Run, body: dict, error: object) -> dict:
+        """A call that ran or failed: what it changed or checked (`finish.Checks`), and a warning when it is the
+        same again (`finish.Loops`)."""
+        tool, tool_input, cwd = _call_of(body)
+        try:
+            if error is None:
+                self.checks.edited(run.session, run.lane, tool, tool_input, cwd)
+                if tool == "Bash":
+                    self.checks.ran(run.session, run.lane, str(tool_input.get("command") or ""), cwd)
+            warning = self.loops.after(run.session, str(body.get("agent_id") or ""), tool, tool_input,
+                                       body.get("tool_response"), error, str(body.get("tool_use_id") or ""))
+            if error is not None and tool == "WebFetch":
+                self._signal(signals.WEB, run, body, signals.web_what(error))
+        except Exception:  # noqa: BLE001 — a count that failed never holds a call back
+            log.exception("finish: a call's result not counted")
+            return {}
+        if not warning:
+            return {}
+        self._signal(signals.LOOP, run, body, "warn")
+        event = "PostToolUse" if error is None else "PostToolUseFailure"
+        return {"hookSpecificOutput": {"hookEventName": event,
+                                       "additionalContext": warning}}
+
+    def stop(self, run: Run, body: dict) -> dict:
+        """The model ends its turn: sent on once if files it changed have not passed their check since
+        (`finish.Checks`)."""
+        try:
+            reason = self.checks.stop(run.session, body)
+        except Exception:  # noqa: BLE001 — a check that failed lets the turn end
+            log.exception("finish: a turn's end not checked")
+            reason = ""
+        if reason:
+            self._signal(signals.FINISH, run, body, "stop_block")
+            return {"decision": "block", "reason": reason}
+        if self.checks.ended_unchecked:
+            self._mark(run, episodes.UNCHECKED_END)
+        self.turn_over(run.session)
+        return {}
+
+    def turn_over(self, session: str) -> None:
+        """The session's turn is over — its Stop passed, or its run ended any way but deferring a call: what it left
+        unchecked and its counts are not the next turn's."""
+        self.checks.forget(session)
+        self.loops.end(session)
+
+    def _mark(self, run: Run, why: str) -> None:
+        try:
+            episodes.mark(self.store, run.session, why, self.clock(), run=run.id)
+        except Exception:  # noqa: BLE001 — a mark that failed never holds a call back
+            log.exception("episode not marked")
+
+    def _signal(self, kind: str, run: Run, body: dict, what: str) -> None:
+        try:
+            signals.add(self.store, kind, run.session, self.clock(), str(body.get("tool_name") or ""), what,
+                        str(body.get("tool_use_id") or ""))
+        except Exception:  # noqa: BLE001
+            log.exception("signal not written")
 
     def _journal(self, run: Run, body: dict, what: str) -> None:
         """Every answer of the gate, for the week's tally (`signals`): the tool and how it went, never its input."""
@@ -265,7 +343,7 @@ class Gate:
             refused = UNCHECKED
         if refused:
             return _decision("deny", refused)  # first: no rule, card or courier ever holds such an input
-        if _call_of(body)[0].startswith(subs.PREFIX) and (_subagent(body) or not run.subs):
+        if subs.own(_call_of(body)[0]) and (_subagent(body) or not run.subs):
             return _decision("deny", subs.NO_DEPTH)  # depth 1: not a subagent's, a side question's or a child's
         if self.closing:
             return _decision("deny" if _subagent(body) else "defer", CLOSING)
@@ -313,6 +391,11 @@ class Gate:
             if digest is None:
                 return _decision("deny", UNBINDABLE)
             return self._to_owner(run, call_id, body, file_hash, digest, approvals.never_why(label))
+        if tool == "WebFetch" and (clean := exfil.clean(tool_input.get("url"))) and \
+                not exfil.why(tool, {**tool_input, "url": clean}):
+            # A link with tracking parameters: the model fetches the clean address instead, and that call passes every
+            # check below — not an `updatedInput`, which only an allow carries, and an allow skips the classifier.
+            return _decision("deny", exfil.CLEANED.format(url=clean))
         if leak := exfil.why(tool, tool_input) or self.budget.over(run.id, tool, tool_input):
             # A web call whose address or query looks like it carries data out, or one that takes its site past the
             # run's budget: the owner reads it whole first, whatever an allow rule or the classifier would say
@@ -325,7 +408,7 @@ class Gate:
                 return _decision("deny", SUBAGENT)
             # One card per ask or block: the same call made after the owner's answer is asked about anew.
             return self._to_owner(run, call_id, body, file_hash, digest, self._reasks.pop((run.session, key)).why)
-        if tool == subs.PREFIX + subs.START and run.turn_by == "report":
+        if tool == subs.PREFIX + subs.START and run.turn_by in followups.MACHINE_TURNS:
             if digest is None:
                 return _decision("deny", UNBINDABLE)
             return self._to_owner(run, call_id, body, file_hash, digest, subs.FROM_REPORT_CARD)

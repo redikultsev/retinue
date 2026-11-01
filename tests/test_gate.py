@@ -885,4 +885,14 @@ def test_a_site_past_the_runs_budget_comes_as_a_card_through_the_owners_card_pat
     assert decision(hook(the_gate, "PreToolUse", fetch(LEAK, "toolu_leak"))) == "defer" and len(carded) == 2
     hook(the_gate, "PreToolUse", fetch(piece, "toolu_3"))
     the_gate.run_ended(setup[3])
+    the_gate.loops.end(session)  # and a new turn: the same fetch five times in one would be a loop (`finish.Loops`)
     assert decision(hook(the_gate, "PreToolUse", fetch(piece, "toolu_4"))) is None, "a new run counts afresh"
+
+
+def test_a_fetch_with_tracking_parameters_is_sent_to_the_clean_address_and_one_that_leaks_still_cards(setup):
+    store, the_gate, session, _ = setup
+    answer = hook(the_gate, "PreToolUse", fetch("https://example.com/a?id=1&utm_source=x&fbclid=y", "toolu_t1"))
+    assert decision(answer) == "deny"
+    assert answer["hookSpecificOutput"]["permissionDecisionReason"].endswith("instead: https://example.com/a?id=1")
+    assert decision(hook(the_gate, "PreToolUse", fetch("https://example.com/a?id=1", "toolu_t2"))) is None
+    assert decision(hook(the_gate, "PreToolUse", fetch(LEAK + "&utm_source=x", "toolu_t3"))) == "defer"

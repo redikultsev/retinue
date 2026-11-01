@@ -1,7 +1,8 @@
-"""travel-ops: what the assistant may send to the travel sites.
+"""travel-ops: what the assistant and the platform's sessions may send to the travel sites.
 
-The assistant calls travel-ops' MCP server herself and reads its whole answer — reviews, descriptions, photos.
-What goes the other way is checked here, in code, before every call (the engine's PreToolUse hook): the arguments
+The assistant calls travel-ops' MCP server herself and reads its whole answer — reviews, descriptions, photos; the
+sessions call it through the platform's server (`lanetravel`). What goes the other way is checked here, in code,
+before every call (the engine's PreToolUse hook; the platform before it forwards one): the arguments
 of a search are what the sites receive, and the owner's data must not ride out in them. Closed types only — airport
 codes, dates, numbers, choices, a place name in Latin script of a few words — and anything else is refused with the
 reason, which the model reads and acts on.
@@ -154,6 +155,18 @@ KINDS = many(choice("hotel", "apartment", "room", "house", "shared_room", "other
 # A stay's name as the results gave it (any script); an amenity word for a filter travel-ops applies itself.
 STAY = pattern(r"[^\x00-\x1f]+", "a name from this search's results, up to 100 characters", longest=100)
 AMENITY = pattern(r"[A-Za-zА-Яа-яЁё]+( [A-Za-zА-Яа-яЁё]+)?", "an amenity word without digits, e.g. wifi", longest=30)
+# A landmark or a district with its town: the place's words, a comma, the town's — measured from, never sent as a name.
+NEAR = pattern(r"[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F'.\-]*( [A-Za-z\u00C0-\u024F'.\-]+){0,4}"
+               r"(, [A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F'.\-]*( [A-Za-z\u00C0-\u024F'.\-]+){0,3})?",
+               "a landmark or district in Latin script with its town, e.g. Eiffel Tower, Paris", longest=80)
+ROOM_WORD = pattern(r"[A-Za-zА-Яа-яЁё]+( [A-Za-zА-Яа-яЁё]+){0,2}", "a word of a room's name, e.g. king", longest=40)
+TRANSIT = pattern(r"schengen|[A-Z]{2}|[A-Z]{3}", "schengen, a country code (DE) or an airport code (IST)")
+WINDOW = pattern(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}",
+                 "start/end, e.g. 2030-12-31T23:00/2031-01-01T01:00", longest=33)
+FLIGHT_NO = pattern(r"[A-Z0-9]{2}\d{1,4}", "a flight number, e.g. LH1234", upper=True)
+BASIS = many(choice("total_with_taxes", "before_taxes", "not_stated"), 3)
+# What the owner chose, in a few words: kept in travel-ops' own journal, never sent to a site.
+CHOICE = pattern(r"[^\x00-\x1f]+", "a few words, up to 120 characters", longest=120)
 
 # Each tool: field -> (check, required). A field travel-ops has and the form lacks is refused: a new field of a new
 # travel-ops version waits until it has a check here.
@@ -164,15 +177,15 @@ FORMS: dict[str, dict[str, tuple[Check, bool]]] = {
                     "max_airports": (integer(1, 3), False), "stay_adults": (integer(1, 9), False),
                     "cabin": (CABIN, False), "max_stops": (integer(0, 3), False),
                     "min_rating": (number(0, 10), False), "max_center_km": (number(0.1, 100), False),
-                    **{k: (v, False) for k, v in {**PARTY, **ASK}.items()}},
+                    "near": (NEAR, False), **{k: (v, False) for k, v in {**PARTY, **ASK}.items()}},
     "search_flights": {"origin": (AIRPORTS, False), "destination": (AIRPORTS, True), "depart": (day, True),
                        "return_date": (day, False), "flex_days": (integer(0, 3), False), "cabin": (CABIN, False),
                        "sources": (many(SOURCE, 8), False), "max_stops": (integer(0, 3), False),
                        "separate_tickets": (flag, False), **{k: (v, False) for k, v in {**PARTY, **ASK}.items()}},
     "search_stays": {"place": (PLACE, True), "checkin": (day, True), "checkout": (day, True),
                      "sources": (many(SOURCE, 3), False), "min_rating": (number(0, 10), False),
-                     "max_center_km": (number(0.1, 100), False),
-                     **{k: (v, False) for k, v in {**PARTY, **ASK}.items()}},
+                     "max_center_km": (number(0.1, 100), False), "max_total": (number(0.01, 1e7), False),
+                     "near": (NEAR, False), **{k: (v, False) for k, v in {**PARTY, **ASK}.items()}},
     "search_ground": {"origin": (PLACE, True), "destination": (PLACE, True), "depart": (day, True),
                       "modes": (MODES, False), "sources": (many(SOURCE, 3), False),
                       **{k: (v, False) for k, v in {**PARTY, **ASK}.items()}},
@@ -183,15 +196,21 @@ FORMS: dict[str, dict[str, tuple[Check, bool]]] = {
                        "return_before": (CLOCK, False), "airlines": (many(CARRIER, 10), False),
                        "avoid_airlines": (many(CARRIER, 10), False), "destination": (many(AIRPORTS, 6), False),
                        "checked_bag": (flag, False), "max_price": (number(0.01, 1e7), False),
-                       "sort": (choice("price", "duration", "departure"), False)},
+                       "arrive_after": (CLOCK, False), "arrive_before": (CLOCK, False),
+                       "return_arrive_after": (CLOCK, False), "return_arrive_before": (CLOCK, False),
+                       "workday_depart_after": (CLOCK, False), "arrive_before_workday": (CLOCK, False),
+                       "no_night": (flag, False), "same_airport": (flag, False), "one_ticket": (flag, False),
+                       "not_in_air": (many(WINDOW, 6), False), "avoid_transit": (many(TRANSIT, 10), False),
+                       "sort": (choice("price", "duration", "departure", "comfort"), False)},
     "refine_stays": {"search_id": (SEARCH_ID, True), "limit": (LIMIT, False),
                      "min_rating": (number(0, 10), False), "min_reviews": (integer(0, 100_000), False),
                      "max_total": (number(0.01, 1e7), False), "kinds": (KINDS, False),
                      "exclude_kinds": (KINDS, False), "no_hostels": (flag, False),
                      "min_bedrooms": (integer(0, 10), False), "sources": (many(SOURCE, 3), False),
                      "max_center_km": (number(0.1, 100), False), "free_cancellation": (flag, False),
-                     "must_have": (many(AMENITY, 10), False),
-                     "sort": (choice("price", "rating", "reviews", "center"), False)},
+                     "must_have": (many(AMENITY, 10), False), "near": (NEAR, False),
+                     "price_basis": (BASIS, False), "room_contains": (many(ROOM_WORD, 5), False),
+                     "sort": (choice("price", "rating", "reviews", "center", "value"), False)},
     "refine_ground": {"search_id": (SEARCH_ID, True), "limit": (LIMIT, False), "modes": (MODES, False),
                       "depart_after": (CLOCK, False), "depart_before": (CLOCK, False),
                       "max_changes": (integer(0, 5), False), "max_price": (number(0.01, 1e7), False),
@@ -202,6 +221,20 @@ FORMS: dict[str, dict[str, tuple[Check, bool]]] = {
     "stay_details": {"search_id": (SEARCH_ID, True), "stays": (many(STAY, 5), True), "refresh": (flag, False)},
     "stay_photos": {"search_id": (SEARCH_ID, True), "stays": (many(STAY, 5), True),
                     "per_stay": (integer(1, 4), False)},
+    "compare_stays": {"search_id": (SEARCH_ID, True), "stays": (many(STAY, 5), True)},
+    "compare_stay_searches": {"search_id_a": (SEARCH_ID, True), "search_id_b": (SEARCH_ID, True),
+                              "min_rating": (number(0, 10), False), "max_center_km": (number(0.1, 100), False),
+                              "sources": (many(SOURCE, 3), False), "limit": (integer(1, 30), False)},
+    # Its own memory: on which days the search's flights were seen. No request to any site.
+    "flight_schedule": {"search_id": (SEARCH_ID, True), "flights": (many(FLIGHT_NO, 10), False),
+                        "direct_only": (flag, False), "limit": (LIMIT, False)},
+    # Asks again only the sources of a search that did not answer: the arguments that search was checked with.
+    "resume_search": {"search_id": (SEARCH_ID, True), "confirm": (flag, False), "limit": (LIMIT, False)},
+    "record_outcome": {"status": (choice("chosen", "booked", "rejected"), True), "choice": (CHOICE, True),
+                       "search_id": (SEARCH_ID, False), "seller": (CHOICE, False), "source": (SOURCE, False),
+                       "quoted": (number(0, 1e7), False), "quoted_currency": (CURRENCY, False),
+                       "paid": (number(0, 1e7), False), "paid_currency": (CURRENCY, False),
+                       "note": (CHOICE, False)},
     "airports_near": {"place": (PLACE, True), "country": (PLACE, False), "radius_km": (integer(10, 400), False)},
     "watches": {"include_stopped": (flag, False)},
     "stop_watch": {"watch_id": (WATCH_ID, True)},
@@ -214,7 +247,9 @@ FORMS["watch_price"] = {"kind": (choice(*WATCHED), True), "arguments": (obj, Tru
                         "below": (number(0.01, 1e7), False), "drop_percent": (number(1, 90), False),
                         "every_hours": (number(3, 168), False), "currency": (CURRENCY, False)}
 # Not hers: the router takes the alerts and keeps them until they are told (task 9); one she took would be lost to it.
-NOT_HERS = {"watch_alerts": "the router collects the price alerts and wakes you itself when a price drops"}
+NOT_HERS = {"watch_alerts": "the router collects the price alerts and wakes you itself when a price drops",
+            "journal_review": "it is for maintaining travel-ops, on the owner's own machine, not for a trip",
+            "reparse_run": "it is for maintaining travel-ops, on the owner's own machine, not for a trip"}
 
 
 def fill(form: dict[str, tuple[Check, bool]], given: Any, where: str = "", partial: bool = False) -> dict:
@@ -331,8 +366,9 @@ def alert(value: Any) -> dict:
 
 
 class TravelOps:
-    """`travelops mcp --http` as the router reaches it: one JSON-RPC `tools/call` per POST, no session, so a
-    restart of either side loses only the call in flight. The router only collects price alerts with it."""
+    """`travelops mcp --http` as the router and the platform reach it: one JSON-RPC message per POST, no session, so a
+    restart of either side loses only the call in flight. The router collects price alerts with it; the platform
+    serves its tools to the sessions (`lanetravel`)."""
 
     def __init__(self, url: str, http: httpx.AsyncClient | None = None) -> None:
         self.url = url
@@ -347,8 +383,15 @@ class TravelOps:
 
     async def result(self, tool: str, arguments: dict, timeout: float = 60.0) -> dict:
         """The whole MCP result of a call: its `content` blocks too — the pictures of `stay_photos`."""
-        body = {"jsonrpc": "2.0", "id": next(self.ids), "method": "tools/call",
-                "params": {"name": tool, "arguments": arguments}}
+        result = await self.ask("tools/call", {"name": tool, "arguments": arguments}, timeout)
+        if result.get("isError"):
+            said = " ".join(c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict))
+            raise Refused(f"travel-ops refused: {words(said, 300) or 'no reason given'}")
+        return result
+
+    async def ask(self, method: str, params: dict, timeout: float = 60.0) -> dict:
+        """One JSON-RPC request's result: a tool's call, or what the server offers (`initialize`, `tools/list`)."""
+        body = {"jsonrpc": "2.0", "id": next(self.ids), "method": method, "params": params}
         headers = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": PROTOCOL}
         try:
             response = await self.http.post(self.url, json=body, headers=headers, timeout=timeout)
@@ -362,9 +405,6 @@ class TravelOps:
             raise Unavailable("travel-ops answered off protocol.") from None
         if not isinstance(result, dict):
             raise Unavailable("travel-ops answered off protocol.")
-        if result.get("isError"):
-            said = " ".join(c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict))
-            raise Refused(f"travel-ops refused: {words(said, 300) or 'no reason given'}")
         return result
 
     async def alerts(self) -> list[dict]:

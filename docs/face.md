@@ -812,6 +812,15 @@ frames it in an iframe of another site — and there the login cookie (`SameSite
 Safari blocks it anyway, so allowing that frame would make the app load and then fail every call. The Mini App works
 in the phone apps and the desktop apps; in Telegram Web, open the app by its link instead.
 
+## In a browser
+
+`pnpm e2e` opens the face in Chromium against the mock (`face/e2e/`, `face/playwright.config.ts`) at a phone's
+(390 px, touch), a tablet's (768 px) and a desktop's (1280 px) width: the login code opens «Today», a session shows
+its transcript and its summary, its changes their diff, the sessions list and the Spaces open — each with no sideways
+scroll and no error in the page. It starts its own mock and Vite (ports 9611 and 4173), so a `pnpm dev` already
+running is never in the way. Once on a new machine: `pnpm exec playwright install chromium`. Run it before a deploy
+that touches the face, beside `typecheck`, `lint` and `test`; it does not replace looking at a new screen yourself.
+
 ## Operator checks
 
 1. `/app` in the chat: the link opens the app logged in; the same link again says the code did not fit. “Open”

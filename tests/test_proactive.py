@@ -42,15 +42,19 @@ def test_the_bases_dates_ahead_and_past_closed_records_left_out(tmp_path):
     record(tmp_path, "personal/profile/far.md", title="Далеко", until=day(20))
     record(tmp_path, ".scratch/notes/x.md", title="Черновик", deadline=day(1))
     record(tmp_path, "sport/profile/old-gym.md", title="Абонемент", until=day(-2))  # closed: no «overdue»
+    record(tmp_path, "career/profile/tracker.md", title="Трекер", until=day(0), updated=day(0))  # closed today, not due
+    record(tmp_path, "personal/profile/visa.md", title="Виза", until=day(2), updated=day(-90))
     record(tmp_path, "personal/profile/broken.md", title="Сломано", until="2026-02-30")
     (tmp_path / "personal/profile/garbled.md").write_text("---\nuntil: [\n---\n", encoding="utf-8")
     items, old = scan(tmp_path, TODAY)
     assert [(i.path, i.field) for i in items] == [("personal/knowledge/rules.md", "stale_after"),
+                                                  ("personal/profile/visa.md", "until"),
                                                   ("personal/profile/gym.md", "until"),
                                                   ("misc/artifacts/form.md", "deadline")]
     assert old == 1, "a check overdue for months is counted, not listed"
     assert [deadline_line(i, TODAY) for i in items] == [
         "- overdue by 2 days (13 October): Правила спортзала — recheck · personal/knowledge/rules.md",
+        "- in 2 days (17 October): Виза — valid until · personal/profile/visa.md",
         "- in 3 days (18 October): Абонемент — valid until · personal/profile/gym.md",
         "- in 4 days (19 October): Заявка на грант — deadline · misc/artifacts/form.md"]
     assert scan(tmp_path / "none", TODAY) == ([], 0)

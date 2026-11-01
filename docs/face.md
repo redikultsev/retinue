@@ -386,7 +386,7 @@ made after what the good chat apps share (studied from public sources):
 ### Today
 
 An inbox (`components/inbox.tsx`): the list at the left — 360 px, 400 from 1280 — and the row opened whole at the
-right; nothing opens a dialog. Under a header of one line, 48 px: «Today», the day, «· N waiting», and the hub's status
+right; nothing opens a dialog. Under a header of one line, 48 px: «Today», the day, «· N waiting» (the feed's count, the same as on the sidebar and the header), and the hub's status
 at the right — what is fine is one green dot (its words in the tooltip), what is off is said («limit 89 %»).
 
 **The list**, every row on one grid: a mark, what you do, who or what, how long — and a second line under the title

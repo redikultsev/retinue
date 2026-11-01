@@ -164,7 +164,7 @@ describe("TodayView", () => {
     expect(within(waiting).queryByText("Session new")).toBeNull(); // it is under «Done», not twice
     expect(within(waiting).queryByText(/Gym membership/)).toBeNull(); // under «Dates», not twice
     expect(within(waiting).getByText("Anna Petrova")).toBeTruthy();
-    expect(screen.getByText("· 2 waiting")).toBeTruthy();
+    expect(screen.getByText("· 3 waiting")).toBeTruthy(); // the feed's count, as on the sidebar
 
     const busy = screen.getByRole("region", { name: "Working" });
     const row = within(busy).getByTestId("inbox-row");

@@ -43,7 +43,8 @@ with `status: superseded|done|retired` are skipped):
   the Artifact of a grant application: `deadline: 2030-01-31`.
 
 The morning summary gets one block «Deadlines, 14 days» — dates up to 14 days ahead and up to 30 days past, plus a count
-of checks overdue for longer. A past `until` is how a profile Record is closed, so it is never listed as overdue;
+of checks overdue for longer. A past `until` is how a profile Record is closed, so it is never listed as overdue — nor is one written on its own
+day or after it (`updated` not before `until`): that is the Record closed today, not a document running out;
 past `stale_after` and `deadline` are. A Record whose header does not read (a date like `2026-02-30`) is skipped and
 logged once. An `until` of a profile Record and any `deadline` are also pushed once, 3 days before
 (or as soon as the router sees one nearer).

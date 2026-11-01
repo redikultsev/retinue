@@ -5,7 +5,7 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-header";
-import { Inbox, inboxLists } from "@/components/inbox";
+import { Inbox } from "@/components/inbox";
 import { Chart } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { type Chip, type Feed, useFeed } from "@/lib/feed";
@@ -74,7 +74,8 @@ export function TodayView({
     for (const s of busy.slice(0, WATCH_AT_MOST))
       if (!(s.id in live.getState().floors) && !live.isWatched(s.id)) live.watch(s.id).catch(() => undefined);
   }, [ids]);
-  const waiting = inboxLists(feed, busy, done, feed?.deadlines ?? [], () => "").waiting.length;
+  // the same number as the count in the sidebar and the header: what the feed says waits
+  const waiting = feed?.count ?? 0;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4 md:px-6">

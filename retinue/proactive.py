@@ -107,7 +107,8 @@ class Deadline:
 
 def scan(tree: str | Path, today: date, ahead: int = AHEAD_DAYS, past: int = PAST_DAYS) -> tuple[list[Deadline], int]:
     """Dates in the base's Records: `until` (a document, a membership, a status), `stale_after` (a fact to check
-    again) and `deadline` (a submission, a form, a payment — any Record may carry it). Closed Records are left out. Returns the
+    again) and `deadline` (a submission, a form, a payment — any Record may carry it). Closed Records are left out, and an
+    `until` written on its own day or after it (`updated` not before it): that is a fact closed, not one running out. Returns the
     dates from `past` days ago to `ahead` days on, nearest first, and how many `stale_after` passed before that."""
     root, found, old = Path(tree), [], 0
     if not root.is_dir():
@@ -126,9 +127,12 @@ def scan(tree: str | Path, today: date, ahead: int = AHEAD_DAYS, past: int = PAS
                 log.warning("deadlines: %s not read", relative, exc_info=True)
         if not head or str(head.get("status", "")).strip() in CLOSED:
             continue
+        updated = _day(head.get("updated"))
         for field in FIELDS:
             day = _day(head.get(field))
             if day is None or (field == "until" and day < today):  # a past `until` is how a fact is closed
+                continue
+            if field == "until" and updated is not None and updated >= day:  # …and so is one written on its day or after
                 continue
             if day < first:
                 old += field == "stale_after"

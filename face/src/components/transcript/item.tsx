@@ -352,7 +352,7 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
   switch (item.kind) {
     case "message":
       return item.data.role === "user" ? (
-        <div className="ml-auto max-w-[85%] rounded-2xl bg-bubble px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words md:text-sm">
+        <div className="ml-auto max-w-[85%] rounded-2xl bg-bubble px-3.5 py-2 text-[15px] whitespace-pre-wrap wrap-anywhere md:text-sm">
           {item.data.text}
         </div>
       ) : (

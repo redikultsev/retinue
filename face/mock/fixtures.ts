@@ -147,7 +147,7 @@ const turns: Record<string, ItemData[][]> = {
       msg("assistant", "The gate did not change this week; the failure reproduces. Two open issues about the restart (#41, #38) — that is it. Fixing next."),
     ],
     [
-      msg("user", "Fix the failing test_gate: the card cannot be pressed after a restart. Logs are in /tmp/gate.log."),
+      msg("user", "Fix the failing test_gate: the card cannot be pressed after a restart. Logs are in /tmp/gate.log. The tool refused: expected one of [\"DE_CH\",\"DE_DE\",\"EL_GR\",\"EN_AU\",\"EN_GB\",\"EN_HK\",\"EN_IE\",\"EN_IN\",\"EN_NZ\",\"EN_PH\",\"EN_SG\",\"EN_US\",\"ES_ES\",\"FR_FR\"]."),
       msg(
         "assistant",
         "I'll look at how the gate decides whether a card can be pressed, and what changes after a restart.\n\nPlan:\n1. find `_pressable` and the test;\n2. reproduce;\n3. fix and run the tests.",

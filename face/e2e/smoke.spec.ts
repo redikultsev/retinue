@@ -58,3 +58,20 @@ test("the sessions list and the Spaces open", async ({ page }) => {
     await fits(page);
   }
 });
+
+test("a message with a long unbroken run wraps inside the column", async ({ page }) => {
+  await login(page);
+  await page.goto("/s/a1b2c3d4");
+  const run = `expected one of [${Array.from({ length: 16 }, (_, n) => `"EN_${String(n).padStart(2, "0")}"`).join(",")}]`;
+  await page.getByPlaceholder("Write to the session…").fill(run);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByTestId("input").last()).toContainText("EN_15");
+  const outside = await page.evaluate(() =>
+    [...document.querySelectorAll(".bg-bubble")].filter((b) => {
+      const column = b.closest("[data-testid=input]") ?? b.parentElement!;
+      const [r, c] = [b.getBoundingClientRect(), column.getBoundingClientRect()];
+      return r.left < c.left - 1 || r.right > c.right + 1;
+    }).length,
+  );
+  expect(outside, "bubbles wider than their column").toBe(0);
+});

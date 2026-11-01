@@ -82,7 +82,7 @@ export function InputBubble({ input }: { input: Input }) {
         </div>
       )}
       {input.text.trim() && (
-        <div className="rounded-2xl bg-bubble px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words md:text-sm">
+        <div className="max-w-full rounded-2xl bg-bubble px-3.5 py-2 text-[15px] whitespace-pre-wrap wrap-anywhere md:text-sm">
           {input.text}
         </div>
       )}

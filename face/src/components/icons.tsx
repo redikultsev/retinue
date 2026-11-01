@@ -261,4 +261,3 @@ export const Archive = icon(
   </>,
 );
 export const ArrowUpRight = icon("ArrowUpRight", <path d="M7 17 17 7M7 7h10v10" />);
-export const UploadIcon = icon("Upload", <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />);

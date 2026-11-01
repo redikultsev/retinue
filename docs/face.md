@@ -160,7 +160,7 @@ in the snapshot, never wrapped in an envelope. The kinds and their keys:
 | `input` | `<session>/<input_id>` | `{session, input_id, text, at, turn, n, attachments}`: your message; it goes before the item (`turn`, `n`) the session had not yet written (`null` on old ones: not shown); `attachments`: `[{kind: image\|pdf\|file, name, size, what, thumb}]` |
 | `file` | the file's id | `{id, session, path, name, size, mime, at}`: a file the session handed over ([below](#a-sessions-files)) |
 | `proposal` | the proposal's id | `{id, session, tool_use_id, title, brief, created, at, state, child, from_report}`: a sub-session the session proposed ([platform.md](platform.md#proposals)); `state` `open` · `started` (`child` the sub-session) · `declined` · `expired` (past its week: the platform's clock sends the event); `from_report`: proposed in a turn a report started, which its card says |
-| `upload` | the file's SHA-256 | `{sha256, name, size, mime, created}`: a file uploaded from any device ([below](#uploads)) |
+| `upload` | the file's SHA-256 | `{sha256, name, size, mime, created}`: a file uploaded through `/api/c/_files` (nothing in the app listens yet) |
 | `collection` | the collection's name | `{name, space, rev}`: a collection changed — its records, form, views or rights; `space` its Space, `rev` its newest change ([collections.md](collections.md#views)) |
 | `collection_proposal` | the proposal's id | a write to a collection a session proposed, as `GET /api/c/_proposals` lists it: made, applied, dismissed or expired ([collections.md](collections.md#proposals)) |
 | `delta` | none, no `id` | `{session, text}`: text being written, never replayed |
@@ -223,7 +223,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `POST /api/speech?mode=dictate\|en` (body: the recording, `Content-Type` its type) | `{text}`; in `en` also `{message}`, the text as the session gets it, “(by voice, verbatim) …” — [Voice](#voice) |
 | `GET /api/library` | `{schema, hub, at, pages: [{id, title, url, updated, section, section_title, section_icon, minutes, opened, done}]}` — “Pages”, [below](#pages) |
 | `POST /api/library/{id}/open` · `/done {done}` | `{page}`: you opened the page; “Finished” (`done: true`) or taken back (`false`); 404 for a page not in the list |
-| `POST /api/c/_files` · `GET /api/c/_files` · `GET /api/c/_files/{sha256}` | “Uploads”: a file in, any type up to 40 MB, `{file, new}`; the list `{schema, files, max}`; a file back as a download — [collections.md](collections.md#uploads) |
+| `POST /api/c/_files` · `GET /api/c/_files` · `GET /api/c/_files/{sha256}` | the store of a collection's attachments (the app has no screen for it: attaching to a row comes with the collections' files): a file in, any type up to 40 MB, `{file, new}`; the list `{schema, files, max}`; a file back as a download — [collections.md](collections.md#uploads) |
 | `GET /api/c/_space?space=` · `GET /api/c/{collection}?view=` · `GET /api/c/{collection}/{id}` | a Space's collections and their views `{space, tz, today, at, collections}`; one view again `{name, rev, …, view}`; one record with its form's fields, its newest changes and the words of its refs `{name, rev, title, fields, record, changes, words}` — [collections.md](collections.md#views) |
 | `GET /api/c/_proposals?space=` · `POST /api/c/_proposals/{id}/apply` · `/dismiss` | the writes the sessions proposed `{proposals}`, a Space's alone; the owner's «Apply» or «Dismiss» `{proposal, answer?}` (409 for one decided or a record that moved on) — [collections.md](collections.md#proposals) |
 | `POST /api/c/{collection}` · `GET /api/c/{collection}/_form` · `GET /api/c/_changes?space=&before=` | the owner's write `{ops, idem}` — `apply`'s answer, or `{error, kind, record, change}` (409 when the record moved on since it was shown); what an add asks for `{name, rev, fields, options}`; a Space's newest changes `{space, changes, next, words}` — [collections.md](collections.md#from-the-screen) |
@@ -292,7 +292,6 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
 | `/spaces`, `/spaces/<space>`, `/spaces/<space>/r/<path inside the Space>` | the Spaces of the Base, a Space's Showcase, a Record ([base.md](base.md)) |
 | `/pages` | your HTML pages: to read, interactive ones, small sites ([pages.md](pages.md)); `/read`, its old name, leads here |
 | `/week` | “Week”: how the work went ([below](#week)); in the left column on a wide screen, a link on “Today” on a phone |
-| `/uploads` | “Uploads”: files you send up, kept as they came ([below](#uploads)); in the left column on a wide screen, the upload icon on “Today” on a phone (with its name from 640 px) |
 | `/s/<id>`, `/a/<id>`, `/f/<id>`, `/p/<id>`, `/login` | as before: a session, a card, a file, a push card, the login |
 
 - **The tab bar** stands under the tabs' own screens, not under a session (it has its own input box and “Back”, which
@@ -307,7 +306,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
   middle, the right panel.
 - **«＋»** is `/new`, a page in its own place, not a sheet over another ([below](#a-new-task)).
 - **On a wide screen**, the left column (272 px by default): on top, fixed, the places — “New task” (`/new`), “Today”
-  with the count, “Pages”, “Spaces”, “Week”, “Uploads” — then the filters and the sessions by sphere, the one part of it that
+  with the count, “Pages”, “Spaces”, “Week” — then the filters and the sessions by sphere, the one part of it that
   scrolls. Starting a session in a sphere is the composer's sphere picker, the Spaces are their page: the column holds
   only where you go and what runs (Apple's HIG: two levels at most; NN/g: the rest one step away). The middle: the page. The right is one panel with tabs: a
   session's [“Summary”](#summary) (one session in the middle; the header's panel button folds it away and the device
@@ -735,23 +734,6 @@ the platform's rule, checked a second time.
 service's ([pages.md](pages.md#what-a-page-keeps)), not the app's. A page that leaves the list and comes back under the
 same id keeps both. The app reads the list when the screen opens and again whenever it comes back to the front.
 
-## Uploads
-
-`/uploads` is where a file goes up from a device to stay: a statement, an export, a screenshot, a photo of a receipt
-— any type, up to 40 MB ([collections.md](collections.md#uploads)). “Upload” opens the device's picker with several
-files allowed and no type filter, so a phone offers its files, its photos and its camera; on a wide screen files can
-also be dropped on the page. They go one after another, in the order picked, each with a progress bar; a file over the
-limit or empty is refused before it is sent, and a failed one stays with the platform's reason and “Retry”. One the
-platform already had says “Already uploaded — kept once.” The queue belongs to the app, not the page: leaving
-“Uploads” goes on sending, and coming back shows where each file is; while anything is still to go, closing the tab
-asks first.
-
-The list under it is the platform's, the newest first: each file's name (its download), the day or time it came, its
-size and the first 12 characters of its SHA-256 (the whole one on hover). It is read when the screen opens, when the
-app comes back to the front and after the stream resynced (a 410), and a file uploaded from another device comes in
-at once by the stream's `upload` event.
-Nothing here opens or previews a file.
-
 ## A session's changes
 
 `GET /api/sessions/{id}/diff` answers what the session's own edits changed, for any session, code or private:
@@ -810,7 +792,7 @@ once it has any, for every kind of session): newest first, each with its size, i
 `deploy/face/nginx.conf`, in the image (`nginx-unprivileged`, the public pages' pin; read-only, no capabilities, its
 pid and temporary files on a tmpfs):
 
-- The app's routes (`/`, `/login`, `/today`, `/sessions`, `/read`, `/uploads`, `/spaces`, `/spaces/<space>`,
+- The app's routes (`/`, `/login`, `/today`, `/sessions`, `/read`, `/spaces`, `/spaces/<space>`,
   `/spaces/<space>/r/<path>`, `/s/<id>`, `/a/<id>`, `/f/<id>`, `/p/<id>`) answer `index.html` — the
   service worker keeps exactly these as the shell; any other path that is not a file is 404. `/assets/*` (hashed by Vite) are cached for a year; `index.html`, `sw.js` and the manifest are `no-cache`, so a
   new deploy is seen at the next load.

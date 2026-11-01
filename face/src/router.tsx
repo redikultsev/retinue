@@ -26,7 +26,6 @@ import { type SessionSearch, SessionPage } from "@/pages/session";
 import { SessionsPage } from "@/pages/sessions";
 import { RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
 import { TodayPage } from "@/pages/today";
-import { UploadsPage } from "@/pages/uploads";
 import { WeekPage } from "@/pages/week";
 import { visits } from "@/lib/today";
 
@@ -141,8 +140,6 @@ const readRoute = createRoute({
   },
 });
 const weekRoute = createRoute({ getParentRoute: () => shellRoute, path: "/week", component: () => <WeekPage /> });
-// «Uploads»: any file sent up from a device, kept on the server as it came (pages/uploads.tsx).
-const uploadsRoute = createRoute({ getParentRoute: () => shellRoute, path: "/uploads", component: UploadsPage });
 const spacesRoute = createRoute({ getParentRoute: () => shellRoute, path: "/spaces", component: SpacesPage });
 const spaceRoute = createRoute({
   getParentRoute: () => shellRoute,
@@ -229,7 +226,7 @@ const pushRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   homeRoute,
   loginRoute,
-  shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, uploadsRoute, spacesRoute, spaceRoute, recordRoute, sessionRoute]),
+  shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, spacesRoute, spaceRoute, recordRoute, sessionRoute]),
   approvalRoute,
   fileRoute,
   pushRoute,

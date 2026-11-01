@@ -82,7 +82,7 @@ describe("Live", () => {
     expect(deps.api.session).toHaveBeenCalledTimes(2); // the watched session again
     // the session snapshot (cursor 10) is older than the new list (cursor 900): the list's row stays
     expect(live.getState().sessions.s1?.state).toBe("idle");
-    expect(resynced).toHaveBeenCalledTimes(1); // a list kept beside the state («Uploads») reads itself again
+    expect(resynced).toHaveBeenCalledTimes(1); // a list kept beside the state (a collection's) reads itself again
   });
 
   it("on 401 hands over to the login screen", async () => {

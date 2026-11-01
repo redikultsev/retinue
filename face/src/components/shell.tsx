@@ -5,7 +5,7 @@
 //   the tabs' own screens (a session's screen has its own input box and a way back), sits above the home indicator
 //   (the safe area) and steps aside while the keyboard is up.
 // - A wide screen (≥ 1024 px), three columns as in Claude's desktop app: on the left (272 px) «New task», what
-//   waits («Today» with its count), «Pages», the Spaces, «Week», «Uploads» and the sessions by sphere; in the middle
+//   waits («Today» with its count), «Pages», the Spaces, «Week» and the sessions by sphere; in the middle
 //   the page — `/new` too; on the right one panel with tabs: a session's «Summary» (foldable, components/session-summary.tsx) and, when one is
 //   open, a Record, a session's diff or a file (`?pane=`, lib/pane.ts). The pane's tab is the URL's; «Summary» closes it.
 //   The columns are resized by dragging the lines between them (the left one folds away when dragged past its
@@ -15,7 +15,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Group, type Layout, type LayoutChangedMeta, Panel, Separator } from "react-resizable-panels";
 import { AppHeader } from "@/components/app-header";
 import { FileRow } from "@/components/files";
-import { AppWindow, Chart, Close, Grid, Home, List, Plus, UploadIcon } from "@/components/icons";
+import { AppWindow, Chart, Close, Grid, Home, List, Plus } from "@/components/icons";
 import { SessionList } from "@/components/session-list";
 import { SessionSummary } from "@/components/session-summary";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,7 @@ import { RecordPage } from "@/pages/spaces";
 const Changes = lazy(() => import("@/components/changes").then((m) => ({ default: m.Changes })));
 
 /** The screens the tab bar stands under on a phone. */
-export const TABBED = /^\/(today|sessions|new|pages|read|spaces|week|uploads)(\/|$)/;
+export const TABBED = /^\/(today|sessions|new|pages|read|spaces|week)(\/|$)/;
 
 const TABS = [
   { to: "/today", label: "Today", Icon: Home },
@@ -116,10 +116,6 @@ export function Sidebar({ pathname, current, beside }: { pathname: string; curre
         <Link to="/week" className={navClass(pathname.startsWith("/week"))}>
           <Chart className="size-4" />
           Week
-        </Link>
-        <Link to="/uploads" className={navClass(pathname.startsWith("/uploads"))}>
-          <UploadIcon className="size-4" />
-          Uploads
         </Link>
       </nav>
       <SessionList current={current} beside={beside} fill />

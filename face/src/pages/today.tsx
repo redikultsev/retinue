@@ -7,7 +7,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-header";
 import { FeedView } from "@/components/feed";
-import { Chart, UploadIcon } from "@/components/icons";
+import { Chart } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { type Chip, type Deadline, type Feed, useFeed } from "@/lib/feed";
 import { when } from "@/lib/format";
@@ -202,16 +202,11 @@ export function TodayView({
     <PageHeader
       title={`Today · ${todayWord(today)}`}
       actions={
-        // the phone's way to «Week» and «Uploads»: the tab bar has no room for them; the sidebar has them on a wide
-        // screen
+        // the phone's way to «Week»: the tab bar has no room for it; the sidebar has it on a wide screen
         <div className="flex items-center lg:hidden">
           <Link to="/week" className={PHONE_LINK}>
             <Chart className="size-4" />
             Week
-          </Link>
-          <Link to="/uploads" aria-label="Uploads" title="Uploads" className={PHONE_LINK}>
-            <UploadIcon className="size-4" />
-            <span className="hidden sm:inline">Uploads</span>
           </Link>
         </div>
       }

@@ -96,6 +96,13 @@ def test_a_question_with_no_brief_before_it_is_sent_back_once_and_one_with_it_is
                                    said_then_asked("**Recommend:** центр\n**Why:** пешком до всего\n**Cost:** +€20 в ночь"))
         await world.poll()
         assert decision(await world.hook("PreToolUse", run, pre_tool_use())) == "defer", "a brief: asked at once"
+
+        # the brief in the question's own text: asked at once whatever was said before, and its card shows it plainly
+        briefed = {"questions": [{**ASK["questions"][0], "question": "Где жить?\n**Recommend:** центр\n**Risk:** шумно"}]}
+        call = {**CALL, "id": "toolu_question_3", "input": briefed}
+        assert decision(await world.hook("PreToolUse", run, pre_tool_use(call))) == "defer"
+        [approval] = world.store.approvals(tool_use_id="toolu_question_3")
+        assert questions.card(approval, 0, approval["session"], "notes").body.startswith("Где жить?\nRecommend: центр\nRisk: шумно\n\n1.")
     scenario(tmp_path, body)
 
 

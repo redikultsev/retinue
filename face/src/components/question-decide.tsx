@@ -1,6 +1,7 @@
 // A question card decided in «Today»'s pane: the question, the session's brief for it, its options to pick, one button
-// that answers. The brief is what the session wrote just before asking (the feed's `said`) when it is in the brief's
-// shape — labelled lines, «**Recommend:** …» (deploy/lanes/instructions/common.md) — with its whole text a tap away;
+// that answers. The brief is labelled lines, «**Recommend:** …» (deploy/lanes/instructions/common.md), in the
+// question's own text after its first line — or in what the session wrote just before asking (the feed's `said`) —
+// with the session's whole text a tap away;
 // a text not in that shape shows its first paragraph, the rest a tap away. The recommended option is picked at the start; 1–9 pick,
 // Enter answers. Same rules as the card in a session (`QuestionCard`): each answer is bound to the card's digest.
 import { useEffect, useRef, useState } from "react";
@@ -15,7 +16,7 @@ import { toast } from "@/lib/toast";
 import type { Approval, QuestionReply } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const BRIEF = /^\s*(?:[-*]\s+)?\*\*(Recommend|Why|Cost|Risk|Skip|Not checked)\s*[:.]?\s*\*\*\s*[:.]?\s*(.+)$/i;
+export const BRIEF = /^\s*(?:[-*]\s+)?\*\*(Recommend|Why|Cost|Risk|Skip|Not checked)\s*[:.]?\s*\*\*\s*[:.]?\s*(.+)$/i;
 
 /** The brief's lines in the session's text, by their labels; empty when it has fewer than two. */
 export function briefOf(said: string): [string, string][] {
@@ -81,7 +82,10 @@ export function QuestionDecide({
     setText("");
   }, [approval.id, n]);
 
-  const brief = briefOf(said);
+  // the brief rides in the question's own text (its first line the question); a session's words before it count too
+  const inQuestion = q ? briefOf(q.question) : [];
+  const brief = inQuestion.length ? inQuestion : briefOf(said);
+  const title = q ? (inQuestion.length ? q.question.split("\n").filter((l) => l.trim() && !BRIEF.test(l)).join(" ") : q.question) : "";
   const own = text.trim();
   const chosen = q ? picks.map((i) => q.options[i]?.label).filter((l): l is string => !!l) : [];
   const ready = !busy && approval.state === "shown" && (own ? true : chosen.length > 0);
@@ -129,7 +133,7 @@ export function QuestionDecide({
   const label = own ? "Send your answer" : chosen.length === 1 ? `Answer · ${chosen[0]!.replace(RECOMMENDED, "")}` : chosen.length ? `Answer · ${chosen.length} picked` : "Answer";
   return (
     <div data-testid="question-decide" className="flex flex-col gap-6">
-      <h2 className="text-xl font-medium text-balance">{q.question}</h2>
+      <h2 className="text-xl font-medium text-balance">{title}</h2>
       {questions.length > 1 && (
         <p className="-mt-4 text-xs text-muted-foreground tabular-nums">
           Question {n + 1} of {questions.length}
@@ -145,7 +149,7 @@ export function QuestionDecide({
               </div>
             ))}
           </dl>
-          <Reasoning text={said} />
+          {said && <Reasoning text={said} />}
         </div>
       ) : said ? (
         <div data-testid="question-lead" className="flex flex-col gap-1">

@@ -74,10 +74,10 @@ DEFERRED = "Waiting for the owner's decision"
 CLOSING = "The platform is stopping"
 UNCHECKED = "The platform could not check this call — it was not run. Simplify it: another path or pattern."
 UNANSWERED = "The owner did not answer the question. If you still need the answer, ask again."
-NO_BRIEF = ("Not asked: the brief is missing. Right before the question, and nothing after it, write the brief the "
-            "owner decides by — each a bold label and one line: **Recommend:** **Why:** **Cost:** **Risk:** "
-            "**Not checked:** (leave out a line that has nothing) — and give each option's description what follows "
-            "from it and what it costs or risks. Then ask the same question again.")
+NO_BRIEF = ("Not asked: the brief is missing. Ask again with the brief inside the question's text: its first line the "
+            "question, then one line each — **Recommend:** **Why:** **Cost:** **Risk:** **Not checked:** (leave out a "
+            "line that has nothing) — and in each option's description what follows from it and what it costs or "
+            "risks.")
 # A subagent's call never waits for the owner: a deferral inside a subagent ends the subagent without its report and
 # is lost — the run goes on and no resume brings the call back (probed with 2.1.304). So what would be deferred to the
 # owner is denied with this, no card made; the main agent, told so in the report, makes the call itself.
@@ -402,7 +402,7 @@ class Gate:
         if _call_of(body)[0] == questions.QUESTION:
             if _subagent(body):
                 return _decision("deny", SUBAGENT)
-            return await self._brief(run, call_id) or self._question(run, call_id, body)
+            return await self._brief(run, call_id, _call_of(body)[1]) or self._question(run, call_id, body)
 
         tool, tool_input, cwd = _call_of(body)
         try:
@@ -529,11 +529,14 @@ class Gate:
                                 self.clock(), why=why)
         return _decision("defer", DEFERRED)
 
-    async def _brief(self, run: Run, call_id: str) -> dict | None:
-        """A new question with no brief before it is sent back once, so the model writes it and asks again: the owner
-        decides from the brief and the options alone. The call's words are read once the stream has it, at most
-        BRIEF_WAIT_S; not there by then, it is asked as it is — a question is never lost for a brief."""
+    async def _brief(self, run: Run, call_id: str, tool_input: dict) -> dict | None:
+        """A new question with no brief is sent back once, so the model asks again with it: the owner decides from the
+        brief and the options alone. The brief is in the question's own text; a session's words right before the call
+        count too, read once the stream has the call, at most BRIEF_WAIT_S. A run's question is never sent back twice
+        — a question is never lost for its brief."""
         if run.id in self._briefed or self.store.approvals(session=run.session, tool_use_id=call_id, kind="question"):
+            return None
+        if any(questions.has_brief(q["question"]) for q in questions.of(tool_input)):
             return None
         deadline = time.monotonic() + BRIEF_WAIT_S
         while (said := self.store.said_at(run.session, call_id)) is None and not self.closing \

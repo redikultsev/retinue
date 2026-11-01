@@ -148,6 +148,14 @@ describe("QuestionDecide", () => {
     await waitFor(() => expect(answer).toHaveBeenCalledWith(expect.anything(), 0, { labels: ["Centre"] }));
   });
 
+  it("reads the brief in the question's own text, its first line the question", () => {
+    const asked = { questions: [{ ...ONE.questions[0]!, question: "Where to stay?\n**Recommend:** the outskirts\n**Risk:** the last bus at 23:00" }] };
+    render(<QuestionDecide approval={question({ input: asked })} said="" live={fakeLive()} />);
+    expect(screen.getByRole("heading", { name: "Where to stay?" })).toBeTruthy();
+    expect(within(screen.getByTestId("question-brief")).getByText("the last bus at 23:00")).toBeTruthy();
+    expect(screen.queryByText("The session's full reasoning")).toBeNull();
+  });
+
   it("shows a text not in the brief's shape by its first paragraph, the rest folded", () => {
     render(<QuestionDecide approval={question({ input: ONE })} said={"Take the outskirts.\n\n**Prices.** half"} live={fakeLive()} />);
     expect(screen.getByTestId("question-lead").textContent).toContain("Take the outskirts.");

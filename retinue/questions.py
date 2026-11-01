@@ -121,7 +121,8 @@ def card(approval: dict, n: int, session: str, track: str, status: str = "") -> 
     count = f" · {n + 1} of {len(questions)}" if len(questions) > 1 else ""
     header = f" · {courier.line(q['header'], 120)}" if q["header"] else ""
     head = [f"❓ {courier.line(track)}{header}{count}"]
-    lines = [q["question"], ""] if q["options"] else [q["question"]]
+    text = q["question"].replace("**", "")  # the brief's bold labels: Telegram's plain text shows them as words
+    lines = [text, ""] if q["options"] else [text]
     for i, option in enumerate(q["options"], 1):
         lines.append(f"{i}. {option['label']}" + (f" — {option['description']}" if option["description"] else ""))
     body = "\n".join(lines)

@@ -433,7 +433,7 @@ class Feed:
             question = approval["kind"] == "question"
             busy.add(session["id"])
             n = _open_question(approval) if question else 0
-            essence = (line(questions.of(approval["input"])[n]["question"], ESSENCE_CHARS)
+            essence = (line(questions.of(approval["input"])[n]["question"].strip().split("\n")[0], ESSENCE_CHARS)
                        if question and questions.of(approval["input"]) else _call(approval["tool"], approval["input"]))
             out["answer" if question else "decide"].append(
                 {**self._row(f"card:{approval_id}", "answer" if question else "decide", approval["kind"], session,

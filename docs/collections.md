@@ -25,8 +25,9 @@ The platform makes the file at its start, uploads or not, so the backup can requ
 
 ## Uploads
 
-“Uploads” in the app (`/uploads`, [face.md](face.md#uploads)) takes any file up to 40 MB from any of your devices:
-a statement, an export, a screenshot, a photo of a receipt. Nothing is refused for its type, and nothing is opened,
+`POST /api/c/_files` takes any file up to 40 MB — a statement, an export, a screenshot, a photo of a receipt — as the
+store of a collection's attachments. The app has no screen for it (an «Uploads» tab was taken out on 2026-11-01: a file
+nothing reads is no use on its own); attaching a file to a row comes with the collections' files. Nothing is refused for its type, and nothing is opened,
 parsed or shown to an agent: a file is kept as it came.
 
 - **Where.** Its bytes go to `attachments/<sha256>` on the same volume, its row to the table `files`: `sha256` (the

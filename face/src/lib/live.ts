@@ -10,7 +10,6 @@ import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
 import { type Action, initialState, reduce, type State, waitsOnOwner } from "./store";
 import { type Approval, type CollectionEvent, EVENT_KINDS, type Meta, SCHEMA, type StreamEvent } from "./types";
-import type { Upload } from "./uploads";
 import type { CollectionProposal } from "./view-types";
 
 export const HIDDEN_RECONNECT_MS = 45_000;
@@ -43,7 +42,6 @@ export class Live {
   private state: State = initialState;
   private listeners = new Set<() => void>();
   private cardListeners = new Set<(approval: Approval) => void>();
-  private uploadListeners = new Set<(file: Upload) => void>();
   private collectionListeners = new Set<(event: CollectionEvent) => void>();
   private proposalListeners = new Set<(proposal: CollectionProposal) => void>();
   private resyncListeners = new Set<() => void>();
@@ -188,12 +186,6 @@ export class Live {
     for (const kind of EVENT_KINDS) {
       source.addEventListener(kind, (e) => this.onEvent(kind, e as MessageEvent<string>));
     }
-    // A file uploaded from any device (lib/uploads.ts): not the sessions' state, so not the store's — told to whoever
-    // has «Uploads» open.
-    source.addEventListener("upload", (e) => {
-      const file = JSON.parse((e as MessageEvent<string>).data) as Upload;
-      for (const l of this.uploadListeners) l(file);
-    });
     source.addEventListener("collection", (e) => {
       const event = JSON.parse((e as MessageEvent<string>).data) as CollectionEvent;
       for (const l of this.collectionListeners) l(event);
@@ -239,12 +231,6 @@ export class Live {
     if (event.kind === "session" && event.data.waiting > 0 && !this.watched.has(event.data.id)) {
       this.watch(event.data.id).catch(() => undefined);
     }
-  }
-
-  /** Told of each file uploaded while the app is open, from this device or another. */
-  onUpload(listener: (file: Upload) => void): () => void {
-    this.uploadListeners.add(listener);
-    return () => this.uploadListeners.delete(listener);
   }
 
   /** Told of each change to a collection while the app is open: its name and its newest `rev`. */

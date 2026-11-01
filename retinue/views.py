@@ -358,12 +358,13 @@ def _agenda(store: Collections, collection: str, form: dict, view: dict, when: W
     zero, today's zero."""
     date, fields = view["date"], _shown(form, view)
     _field(form, date, "date")
+    shown = fields + [date] if fields and date not in fields else fields  # a row always says its day
     last = when.today + (view.get("days", AGENDA_DAYS) - 1) * DAY
     span = [{"field": date, "op": "between", "value": [when.today.isoformat(), last.isoformat()]}]
     records, total = _records(store, collection, form, _conditions(form, view) + span)
     refs, rows, dropped = _refs(store, form, records, fields), [], total - len(records)
     for record in sorted(records, key=lambda r: (r["fields"][date], r["id"])):
-        row = _row(record, fields, refs, dt.date.fromisoformat(record["fields"][date]), None, when, None, budget)
+        row = _row(record, shown, refs, dt.date.fromisoformat(record["fields"][date]), None, when, None, budget)
         if row is None:
             dropped += 1
         else:

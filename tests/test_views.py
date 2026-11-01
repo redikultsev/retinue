@@ -653,6 +653,9 @@ def test_an_agenda_lists_the_days_ahead_soonest_first_and_a_chart_counts_each_we
         assert [(r["fields"]["company"], r["days"]) for r in calls["rows"]] == [("Globex", 0), ("Acme", -2)], \
             "today and the two days after it, the soonest first; yesterday's and the fourth day's are not ahead"
         assert (calls["first"], calls["last"], calls["count"]) == ("2026-09-16", "2026-09-18", 2)
+        assert calls["rows"][0]["fields"] == {"company": "Globex", "call": "2026-09-16"}, \
+            "a row says its day, though the view's fields do not name it: the screen puts it on that day"
+        assert calls["fields"] == ["company"]
         weekly = got["weekly"]
         assert weekly["tab"] == "Numbers" and weekly["values"] == ["inbound", "outbound"]
         assert [(w["first"], {c["value"]: c["count"] for c in w["counts"]}) for w in weekly["weeks"]] == [

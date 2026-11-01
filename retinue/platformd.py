@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, cliengine, collections_admin, courier, episodes, face, feed, finish, followups, inbox,
+from . import (approvals, attachments, citecheck, cliengine, collections_admin, courier, episodes, face, feed, finish, followups, inbox,
                lanetravel, outfiles, pings, questions, signals, subs, tobase, topush, transcript, views)
 from .base import BaseRepo, under
 from . import library as library_mod
@@ -112,6 +112,7 @@ class Platform:
         self._looking = asyncio.Lock()
         pings.prepare(store)
         episodes.prepare(store, clock())  # the turns that went badly (`episodes`)
+        citecheck.prepare(store)  # a turn's cited addresses checked by a clean session (`citecheck`)
         store.set(signals.STARTED_KEY, str(clock()))  # a day worse than the week names it (`signals.worse`)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
@@ -1134,11 +1135,38 @@ class Platform:
             self._turn_over(session, f"Turn ended with an error: {why}", failed=True, run=run)
         else:
             text = str(line.get("result") or "") or "Turn finished without text."
-            self._summary(session, text, run=run)
+            checked = citecheck.ended(self.store, session["id"], text)  # a source check's own end: rings on a flag
+            if checked is not None:
+                text, quiet = checked
+                self._summary(session, text, run=run, quiet=quiet)
+                if quiet:
+                    self.store.update_session(session["id"], now, archived=now)
+            else:
+                self._summary(session, text, run=run)
+                self._cite_check(session, run, text, now)
             episodes.ended(self.store, session["id"], run, text)  # the turn's summary, for a mark before or after
             self._set_state(session["id"], "closed" if session["kind"] == "code" else "idle", now)
             self._owe_look(session)
             self._turn_over(session, text, run=run)
+
+    def _cite_check(self, session: dict, run: str, text: str, now: float) -> None:
+        """A turn that ended on several cited addresses: a side session that checks them is queued (`citecheck`)."""
+        row = self.store.session(session["id"]) or session
+        lane = self.cfg.lanes.get(row["lane"])
+        try:
+            start = citecheck.maybe_start(self.store, row, run, text, self.subs._day_start(now),
+                                          bool(lane is not None and lane.web))
+            if start is None:
+                return
+            title, prompt, urls, n = start
+            checker = self.store.new_session(row["track"], row["lane"], row["kind"], now, parent=row["id"],
+                                             sphere=row.get("sphere"), cwd=row.get("cwd"))
+            citecheck.bind(self.store, checker, row["id"], run, urls, n, now)
+            self.store.add_input(f"cite:{run}", checker, title, now)
+            self.store.enqueue(checker, prompt, now, by="check")
+            self._set_state(checker, "active", now)
+        except Exception:  # noqa: BLE001 — a check that could not start never holds the turn's end back
+            log.exception("source check not started")
 
     def _owe_look(self, session: dict) -> None:
         """The turn is over: what it left in `out/` is the owner's, looked at after this poll (`hand_over`). A side
@@ -1212,7 +1240,8 @@ class Platform:
         self.store.add_note("card", session["id"], {"view": data, "buttons": buttons}, approval=approval["id"])
         return True
 
-    def _summary(self, session: dict, text: str, kind: str = pings.DONE, run: str | None = None, **extra) -> None:
+    def _summary(self, session: dict, text: str, kind: str = pings.DONE, run: str | None = None,
+                 quiet: bool | None = None, **extra) -> None:
         """A note for the owner, in Telegram and in the face — a ping (`pings`): its kind, how long the turn took
         (from `run`); `turn` places it in the transcript, after that turn. A turn that was not the owner's doing — a
         sub-session's on its parent's word, a parent's on a report — pings without a sound when it is done (`subs`)."""
@@ -1222,7 +1251,7 @@ class Platform:
         head = f"Result · {session['track']} · session {session['id']}{side}{sub}"
         machine = row.get("turn_by") in ("parent", "report") and not row.get("owner_joined")
         pings.add(self.store, row, head, text, kind, self.clock(), run=run, spheres=_sphere_titles(self.cfg),
-                  quiet=machine, **extra)
+                  quiet=machine if quiet is None else quiet, **extra)
 
     summary = _summary
 

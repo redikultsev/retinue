@@ -358,6 +358,20 @@ sets the sphere, never the main mark, and the session's sub-sessions follow — 
 a title it has stays; a sphere set by you (`sphere_by: owner`) or by the session stays. A sub-session has its title
 from its start and its parent's sphere; a side question its question's — neither is asked.
 
+## The source check
+
+A turn in the room that ends with three or more distinct addresses in its summary gets a second opinion of its
+own (`retinue/citecheck.py`): a side session of it, started by the platform, sees only the summary's lines that cite
+addresses — numbered and cut by code, at most 12 — and the platform's instruction to open each address and answer one
+line per claim: `N | found | <the page's words>`, `N | missing`, `N | contradicts | <what the page says>`,
+`N | unreachable`. It never sees the turn's reasoning, the Base or your words. Its runs may do one thing: `WebFetch`
+of exactly those addresses (a tracked link's clean form too), past the exfil guard and the site budget, never a card;
+every other call is denied. At most 10 a day; a check is never checked.
+
+Code reads its lines. A «found» without the page's words counts as unchecked; «unreachable» is never a flag. When a
+page contradicts its claim, the check's ping rings and names the claims and what the page says. Otherwise it is quiet
+— «Sources of session … checked: 7 of 9 found (unreachable 2).» — and the check is archived.
+
 ## Follow-ups
 
 A session cannot wake itself — the CLI's schedulers are denied — so a promise to «check again tomorrow» is one nothing

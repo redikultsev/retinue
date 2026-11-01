@@ -40,7 +40,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from . import approvals, episodes, exfil, finish, followups, questions, signals, subs
+from . import approvals, citecheck, episodes, exfil, finish, followups, questions, signals, subs
 from .approvals import Mark, Unbindable
 from .config import LaneRef
 from .sessions import PlatformStore
@@ -154,6 +154,7 @@ class Gate:
             raise SystemExit("the platform needs RETINUE_HOOK_SECRET: hook tokens are kept only as its HMAC")
         self.store, self.lanes, self.secret, self.clock = store, lanes, secret.encode(), clock
         signals.prepare(store, clock())  # its journal of every answer (`_journal`)
+        citecheck.prepare(store)  # the source checks whose runs it confines (`pre_tool_use`)
         self.skills_mount = skills_mount  # the owner's skills as the platform reads them (approvals.SKILLS)
         self.memory_mount = memory_mount  # and his memory snapshot (approvals.OWNER_MEMORY)
         self.push_lanes: frozenset[str] = frozenset()  # lanes whose `git push` is the owner's «Push» (topush)
@@ -343,6 +344,15 @@ class Gate:
             refused = UNCHECKED
         if refused:
             return _decision("deny", refused)  # first: no rule, card or courier ever holds such an input
+        if run.read_only and (cited := citecheck.allowed(self.store, run.session)) is not None:
+            # A source check's run (`citecheck`): a fetch of an address it was given, past the exfil guard and the
+            # site's budget — never a card, it has no owner watching — and nothing else.
+            tool, tool_input, _ = _call_of(body)
+            if tool != "WebFetch" or not citecheck.may_fetch(cited, tool_input.get("url")):
+                return _decision("deny", citecheck.ONLY)
+            if leak := exfil.why(tool, tool_input) or self.budget.over(run.id, tool, tool_input):
+                return _decision("deny", leak)
+            return _decision("allow", "an address the source check was given")
         if subs.own(_call_of(body)[0]) and (_subagent(body) or not run.subs):
             return _decision("deny", subs.NO_DEPTH)  # depth 1: not a subagent's, a side question's or a child's
         if self.closing:

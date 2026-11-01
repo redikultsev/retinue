@@ -1,8 +1,8 @@
 # Your Base in the server's sessions
 
 Sessions on the server can work in your knowledge base (the Base) as on your Mac: they see all of it, read and edit
-its records, and what they changed is committed — by the platform itself after a run, for what the assistant may
-write, with «Undo»; by your button for the rest. What the Mac's agent did by hand — `git pull` at the start, "commit
+its records, and what they changed is committed and pushed by the platform itself after every turn, said in one line
+with «Undo». What the Mac's agent did by hand — `git pull` at the start, "commit
 and push?" at the end — is the platform's job here: it pulls the hub before each run, commits with your name, and
 pushes to the hub itself. That lane is the room, which also reads the
 web ([platform.md](platform.md#the-room): what that gives up and what stands in the way).
@@ -14,7 +14,7 @@ your Mac ── push/pull over the VPN ──┐
               ▲ push (your role: the platform is not uid 10001)        ▲ the router's pushes (the assistant)
               │                                                        │
  platform (10007): /platform/base.git ── the clone's repository, never in a lane
-              │ refresh: the hub's changes into clean files · commit: your button
+              │ refresh: the hub's changes into clean files · commit: after each turn
               ▼ read-write
  /srv/retinue/base/tree ══ lane-private (10005): /work/base ── the sessions edit files; no .git there
 ```
@@ -31,7 +31,7 @@ your Mac ── push/pull over the VPN ──┐
 
 ```yaml
 base:
-  author: "Your Name <you@example.com>"   # the commits the button makes are yours
+  author: "Your Name <you@example.com>"   # the commits the platform makes are yours
   tree: base                              # the clone's folder under the lane's /work
   lane: private                           # refused if the lane is retired
   # hub: /hub, mount: <work_mount>/<tree>, git_dir: /platform/base.git, policy: <hub>/hooks/kb-policy.json,
@@ -51,9 +51,10 @@ A fork runs where its parent ran; it is refused («the session's track is now �
 would put a new session of that sphere elsewhere.
 
 The lane is told about the Base by `deploy/lanes/instructions/base.md` (baked into lane-private's image): the platform
-pulls before each turn and commits by «To the Base»; never run `git` in `/work/base` (it has no repository), never offer
-"commit and push?"; name the changed records in one line of the summary; `python3 scripts/lint.py` is the
-Base's check (`just` is not in the image).
+pulls before each turn and commits and pushes after it; a new Record gets its Showcase row in the same turn and the
+check (`python3 scripts/lint.py`; `just` is not in the image) runs before the turn ends; what kept files out comes as a
+message from the platform and is the session's to fix; never run `git` in `/work/base` (it has no repository), never
+offer "commit and push?"; name the changed records in one line of the summary.
 
 ## Who writes the tree, and why this way
 
@@ -151,13 +152,13 @@ waits on the Base.
 
 ## Commit
 
-`commit(paths, subject, body, expect=…, session=…, role=…)` — on your press ([the button](#the-button)), or the
-platform's own after a run with the assistant's `role` ([below](#the-platforms-own-commit)):
+`commit(paths, subject, body, expect=…, session=…, role=…)` — the platform's own after a turn, with your `role`
+([below](#the-commit-after-a-turn)):
 
 1. **Which paths may go at all.** Outside the Base (`..`, absolute, control characters) and what never goes to it
    (`out/`, `inbox/`, the policy's `excluded`, untracked files under the Base's `.gitignore`) → `left_out`. Hidden,
    `.git`-ish, protected, not UTF-8, a link, a FIFO, a folder, too big → `refused`. So is a path that is no longer
-   what you saw: `expect` maps a path to the digest `snapshot()` gave when the card was made (`''` : no file), and a
+   what you saw: `expect` maps a path to the digest `snapshot()` gave when the commit was planned (`''` : no file), and a
    path whose digest is now another is refused («the file changed after the card»), under the lock, before anything
    is staged.
 2. **Against the hub's `main` now**, path by path: base = the held base or `HEAD`'s blob. The hub has not changed it
@@ -166,7 +167,7 @@ platform's own after a run with the assistant's `role` ([below](#the-platforms-o
    goes).
 3. **Built without touching anything else**: a temporary index from the hub's `main` plus only those paths;
    `commit-tree` with the hub's head as parent; author and committer = `author` from the config; a trailer
-   `Pushed-by: retinue-platform (the owner's button, session <id>)`. Other sessions' uncommitted files are not looked at.
+   `Pushed-by: retinue-platform (the platform's own commit after a turn, session <id>)`. Other sessions' uncommitted files are not looked at.
 4. **Checked the hub's way first** (`kbcheck.check`, the owner's role, without the lint): a path it refuses (an `id`
    renamed, a symlink, a name that collides on a Mac) goes to `refused` with its reason and the rest is built again.
 5. **Pushed**, up to four times: when the hub moved meanwhile (the router pushes after the assistant's turns, the
@@ -181,8 +182,8 @@ A path that would turn a file of the Base into a folder or a folder into a file 
 the folder justfile would be», «the Base has a folder in this place»): the index would otherwise drop the file under it silently —
 `justfile/x.md` would delete the protected `justfile`. And after `write-tree` the commit is compared with the hub's
 `main`: if it changes any path no one chose, nothing is built. A push that times out is refused («the hub did not answer —
-check and press again»); if it did land, the next press finds those files «already so in the Base» and commits nothing
-twice.
+check and press again»); if it did land, the next turn's commit finds those files «already so in the Base» and commits
+nothing twice.
 
 `Committed`: `sha` (None: no commit), `files` (`Change(path, A|M|D)` as committed), `conflicts` (paths),
 `refused` and `left_out` («<path>: <why>», Russian; `refused` may also hold a line about the whole change, «just
@@ -194,7 +195,7 @@ Because the platform is not uid 10001, the hub takes its push for yours: your ru
 which is why the platform itself refuses what it must never carry from the server. Like the router, the platform
 could write the hub's objects and refs past the hook: it is code you trust; the model never sees the hub.
 
-## What the button reads
+## What the commit reads
 
 `retinue/base.py`, `BaseRepo`:
 
@@ -208,11 +209,11 @@ could write the hub's objects and refs past the hook: it is code you trust; the 
 - `Platform.base` — the `BaseRepo`, set in `Platform.__init__`, None when `base:` is off. The refresh before a run
   sits in `Platform._start` after the fork check and before the run is recorded and sent.
 
-## The button
+## The commit after a turn
 
-The clone, its refresh and the commit are above (`retinue/base.py`). The button adds **who changed what** and
-**your press**, «To the Base» (`retinue/tobase.py`). Nothing the assistant may not write is committed without your
-press, and the press is yours only: through the bridge (the router's token) or the app (its login) — never from a lane.
+The clone, its refresh and the commit are above (`retinue/base.py`). `retinue/tobase.py` adds **who changed what** and
+**the platform's own commit after every turn**: the session writes, the platform commits and pushes, you read one line.
+There is no button to commit — as the Mac's agents commit and push by themselves, so does the server.
 
 - **Who changed what.** Each run on the Base's lane is watched — a session in the clone, and one that is not (a
   notes session at `/work` can Edit `/work/base/…` as well); never a side question, which only reads — in windows: the tree's snapshot (path → digest) when the run starts, and again
@@ -221,90 +222,52 @@ press, and the press is yours only: through the bridge (the router's token) or t
   window: one only the tools name (a snapshot that missed a stat) is recorded too; one only the snapshot names as well
   — as the run's own when one of its Bash commands in the window writes and names the file (a `sed -i`, a heredoc's
   `write_text`), else only as seen (a script that names no file, or another run in the same window). **A run that
-  wrote a file takes it from every run that only saw it change**, whichever window closes first: a session that read
-  the Base while another rewrote it gets nothing. **Two runs that overlap and neither names the file both get it**,
-  and the card marks it ⇄: you decide whose it is. Only a path the clone says is uncommitted is kept: a file committed
-  by any button, or refreshed to the hub's content, leaves every session's list — checked at every mark, every run's
-  start, after a commit and once a minute. The marks are taken on the poll after their lines, and before a new run on
-  the lane starts; every window is a row, so a restart goes on where it was. A run whose first snapshot failed is
-  still watched through its file tools. «Uncommitted» is `changed()`'s word: a held path (the hub's change waiting
-  for an idle refresh, the file untouched here) is not in it, so it is on no list and is nobody's either.
-- **Nobody's files.** An uncommitted file no session claims (changed before this, or by something no window saw) is
-  «nobody's», and never hidden: every card lists such files at its end, turned off, for you to turn on; the feed has a
-  «Decide» row «Nobody's Base files: N» (its button opens the card of the latest session on the lane).
-- **The card.** «To the Base · N» under the ping sends a card: «To the Base · <sphere or track> · session <id>», «Subject: …», the
-  files (☑/☐, A/M/D, +/− lines; what does not fit in 2800 characters is «…and N more files: not committed from Telegram — they
-  are in the app», and the copy's «Commit» commits only the files it lists), how many files
-  other sessions have uncommitted and in how many sessions — never which — and buttons: a toggle per file (the first
-  12; the rest in the app), «Commit», «Open diff» (the diff of the files turned on, a `.diff` file of at most
-  1 MB), «Cancel». The status lines are cut at 700 characters, so a copy stays under 4000. **A reply to the card
-  sets the subject** (a spoken one loses its «(by voice)»; a reply to a card no longer open is taken and answered
-  «This card is no longer active — open «To the Base» again», never sent into the session); by default it is
-  `<Space of the first file>: <session title>`, the Base's own style. Pressed again, «To the Base» sends a fresh copy of the
-  same card: every copy and the app show one card (the app's event `base`; a change in either place rewrites the
-  other).
-- **«Commit»** commits the files turned on, each only as the card showed it (its digest when the card opened:
-  a file changed since brings the card back with what changed, and nothing goes), and only while the session is not
-  running. The card moves to «Committing…» once — a second press anywhere gets «Committing — wait.», one after «Already
-  committed.» — and the Base's `commit()` runs in the background (subject yours; body: the session's
-  latest summary, then `Retinue: session <id>, card <id>, last turn <n>.` and the link to that turn — see «Why, in
-  the commit» below; `expect`, each path's digest as the card showed it, which the Base checks again under its own lock
-  and refuses a file that moved). No run on the Base's lane starts while a commit is in flight: it stays queued
-  («waiting for room on the lane») and goes when the commit ends — so the commit never stages a file a run is writing, and
-  neither the drain nor `busy` waits on the other. The card is rewritten with «Committed: <sha7> · N files» or «Nothing committed», and what
-  was refused or conflicted, and why; those files stay on the session's list and on the next ping's button. When the
-  Base's own check (`just check`) refused the commit — a Record without its Showcase row, say — the session is told
-  what the check said, as a message from the platform, and the card adds «The session was asked to fix what the check
-  refused.»: fixing a Record is the session's work, and its own commit after the turn takes the fix. A card a
-  restart left «Committing…» is settled from the clone when the platform is back: the files no longer uncommitted went
-  in, the rest are shown again for one more press («A platform restart cut the commit off — press «Commit»
-  again.»); while the Base cannot be read, the clock tries again each minute.
-- With no Base configured, rows left from before show nowhere: no count in the app, no feed row, no ping button.
-- A card goes **stale** when the session's next ping comes (the button is on that one), is **cancelled** by «Cancel»
-  (its files stay on the list), **expires** after 7 days like an approval. In the app it can also be **discarded**:
-  «Discard…», asked once, puts each file turned on back as the clone's HEAD has it — an added file deleted, an edited
-  or deleted one restored, a file the hub moved meanwhile taking the hub's version — only if it is as the card showed it
-  and only while the session is not running (`BaseRepo.discard`, under the same lock as a commit; nothing is committed).
-  What did not go back stays, with why. Its buttons are never spent: the card's
-  state answers each press.
-
-The feed has a «Decide» row per session with Base files uncommitted («To the Base: N files»), in the app with the button
-in place ([face.md](face.md#the-feed)); `/wait` words it as [platform.md](platform.md) says.
-
-## Why, in the commit
-
-Every commit the platform makes in your Base — your «Commit» and its own after a turn — carries why the files changed:
-its body is the session's latest summary (`tobase.why`: control characters out, cut at a line under 1 500
-characters), then the line naming the session and the turn, and `https://<app>/s/<id>?turn=<n>`. So `git log` of a
-Record answers "where did this come from" without opening anything, and the link opens the session at that turn's
-summary, marked. The summary is what the session told you, not its transcript: the steps stay in the session. A
-press can gather files of several turns; it names the last one.
-
-## The platform's own commit
-
-Your rule for the Mac's agent is "commit and push yourself when it is safe"; on the server the platform does that
-(`tobase.ToBase._autocommit`), within the rights the hub already gives the assistant, who pushes by herself:
-
+  wrote a file takes it from every run that only saw it change**, whichever window closes first. Only a path the
+  clone says is uncommitted is kept: a file committed, or refreshed to the hub's content, leaves every session's list —
+  checked at every mark, every run's start, after a commit and once a minute. The marks are taken on the poll after
+  their lines, and before a new run on the lane starts; every window is a row, so a restart goes on where it was. A run
+  whose first snapshot failed is still watched through its file tools.
 - **When.** A session whose run ended waits until no run is open on the Base's lane and every ended run's last window
-  is marked — until then a file's owner is not known: another run may claim it too. Then, one session after another, while runs on the lane wait for it
-  (`before_start`, as for a press). A restart in between leaves those files to the button.
-- **What.** The session's files no other session claims (no ⇄, no «nobody's»), added or edited (never a deletion),
-  and not held back by your «Cancel» on one of its cards (until the file is edited again), as the snapshot has them — committed by `BaseRepo.commit(…, role="assistant")`: `kbcheck` with the assistant's rules
-  (her `writable` folders, a Showcase only below its marker), and never a Record whose `written_by` is yours. A path
-  those refuse stays uncommitted; the hub's own lint runs as for any push.
-- **What you see.** A card (`auto`) kept only when something went: «Committed by itself after the turn: <sha7> · N
-  files», the commit's own diff, and **«Undo · N in the Base»** on the turn's ping and «In the Base · N» under its
-  summary in the app. The body is the turn's summary and `Retinue: session <id>, after turn <n>.` with the link to
-  it; the trailer says `Pushed-by: retinue-platform (the platform's own commit after a turn, session <id>)`. What it
-  left keeps «To the Base · N».
+  is marked. Then, one session after another, while runs on the lane wait for it (`before_start`): a run on the lane
+  stays queued («waiting for room on the lane») while a commit is in flight, so a commit never stages a file a run is
+  writing.
+- **What.** Everything the session changed — added, edited, deleted, a file another session changed too — and every
+  uncommitted file no session claims (changed before this, or by something no window saw): never left behind. As the
+  snapshot has them (`expect`: the Base refuses a file that moved under its own lock), committed by
+  `BaseRepo.commit(…, role="owner")` — your rules, as your own agents push from the Mac. What the platform never commits
+  (the Base's scripts and code, hidden paths) stays out. The body is the turn's summary and `Retinue: session <id>, after
+  turn <n>.` with the link to it; the trailer says `Pushed-by: retinue-platform (the platform's own commit after a turn,
+  session <id>)`.
+- **What you see: one line.** Under the turn's ping in Telegram and under its summary in the app: «🗂 Written to the
+  Base: <up to three files> +N more · <sha7>.», with **«Undo · N in the Base»** beside it. A tap in the app opens the
+  commit's card: the files, the commit's diff, «Undo».
+- **What kept a file out is the session's to fix, not yours.** The Base's own check refused the change (a Record
+  without its Showcase row, say), a file holds both versions between conflict markers (the hub changed the same lines
+  meanwhile — see «Refresh»), a file the platform never commits: the session is told what and why, as a message from
+  the platform (`by: "platform"`, «From the platform» in the app), and fixes it in its next turn, whose own commit takes
+  the fix. Your line says «Not written: <the first reason> (+N more). The session was asked to fix it.» The same problems
+  again after the session was told (`base_asks`) are yours: «…The session could not fix it: it needs you.» — a conflict
+  with a Record you wrote that the session cannot settle by itself, say. A clean commit forgets what was asked.
 - **«Undo»** (`BaseRepo.revert`): for 7 days, while the session is not running, a new commit on top of the hub's
   `main` — history is never rewritten — puts each file back as it was before that commit, only if neither the hub nor
   the clone changed it since («changed here since», «changed in the Base since»: left as it is, never merged). The card
-  ends «Undone»; the ping loses its button.
+  ends «Undone»; the ping loses its button. Older than that: the evening's list of commits, or the Mac.
+- **A restart mid-commit** — the card left «Writing…» is settled from the clone when the platform is back: the files no
+  longer uncommitted went in («Written to the Base before the platform restarted»), the rest go with the session's next
+  turn; while the Base cannot be read, the clock tries again each minute.
+- With no Base configured, nothing is watched and nothing is committed.
 
-Why the assistant's rights and not yours: a session in the room reads the web, so what it writes is committed no wider
-than what the assistant — the other agent that reads the outside world — may push unasked; anything wider is your
-press.
+Writing with your rights is your decision (2026-11-01): a session in the room reads the web, and what it writes now
+reaches the Base unasked — the check of the hub, the evening's list and «Undo» are what stands between. A card left
+open from the older «To the Base» button is closed at start; a press on an old ping's «To the Base · N» says it is gone.
+
+## Why, in the commit
+
+Every commit the platform makes in your Base carries why the files changed: its body is the session's latest summary
+(`tobase.why`: control characters out, cut at a line under 1 500 characters), then the line naming the session and the
+turn, and `https://<app>/s/<id>?turn=<n>`. So `git log` of a Record answers "where did this come from" without opening
+anything, and the link opens the session at that turn's summary, marked. The summary is what the session told you, not
+its transcript: the steps stay in the session.
 
 ## Reading the Base in the app
 
@@ -314,7 +277,7 @@ platform's own repository (`/platform/base.git`, through `BaseRepo.repo` and `Ba
 no config of the tree) at its `main`, the hub's commit the clone is on as of the last refresh. A session's draft in
 `/work/base` is not shown until it is committed; a link, a FIFO or a 10 GB file a session left in the tree is never
 opened, because the tree is never opened. The answers carry `head`, that commit, and are cached by it: a new commit
-(a refresh, a press of «To the Base») drops the cache.
+(a refresh, a commit after a turn) drops the cache.
 
 - **A Space** is a top-level folder whose `AGENTS.md` is a regular file of the commit and whose name is
   `[a-z0-9][a-z0-9_-]*` (64 at most): so not `.cache`, not a folder of no Showcase, not a Showcase that is a link.
@@ -361,14 +324,14 @@ at start. Check from the lane: `docker compose -p retinue exec lane-private ls /
 
 ## When something goes wrong
 
-- **The hub is unreachable or empty** — refresh logs `Unavailable`, runs go on with the clone as it is, a press says
-  the Base is not available.
+- **The hub is unreachable or empty** — refresh logs `Unavailable`, runs go on with the clone as it is, the commit
+  after a turn waits for the next one.
 - **The push is refused for a reason that is not a moved hub** (a permission on `objects/`, say) — `refused` says the
   hub's last line; the log has it in full. Check the platform's `group_add` and the hub's `objects/`, `refs/` modes
   (`setup.sh` with `MEMORY=1`).
-- **A file with conflict markers** — its session was told to merge it; until it does, the card refuses the file and
-  says why. A file no session claims keeps its markers (the log says so): merge it in any session, or «Discard» it.
-- **A held file** — it stays as the session left it; the owner's card shows it as a conflict when pressed. Either put
+- **A file with conflict markers** — its session was told to merge it; until it does, no commit takes the file and the
+  line under the ping says why. A file no session claims keeps its markers (the log says so): merge it in any session.
+- **A held file** — it stays as the session left it; the line under the ping names it as a conflict. Either put
   it back to the hub's version (it stops being held at the next refresh) or edit it on the Mac and pull.
 - **The platform's repository is lost** (`platform-data` gone) — the next start makes a new one; files the tree has
   that differ from the hub are held with no base and can only be committed after being reconciled by hand.

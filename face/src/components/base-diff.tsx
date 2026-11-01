@@ -1,4 +1,4 @@
-// A «To the Base» card's diff: the files turned on, as the Base's clone has them now (`GET /api/base/{id}/diff`), rendered by
+// A commit to the Base: what it changed (`GET /api/base/{id}/diff`), rendered by
 // @pierre/diffs as a diff — never as the Markdown the files are. Read again when the files turned on change. A tap on
 // a line comments on it; the comments go to the card's session together (components/remarks.tsx).
 import { parsePatchFiles } from "@pierre/diffs";

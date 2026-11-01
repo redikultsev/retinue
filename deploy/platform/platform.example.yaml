@@ -65,7 +65,7 @@ speech:
 #    - {name: retinue, url: "https://github.com/you/retinue.git", token: you}
 #    - {name: example-app, url: "https://gitlab.com/group/example-app.git", token: group_gitlab}
 # Your knowledge base in the room (docs/base.md): a clone of the hub's `main` at /work/base, pulled by the platform
-# before each run in it and committed by your «To the Base» button, with your name. Needs MEMORY=1 (the hub) and
+# before each run in it and committed and pushed by the platform after each turn, with your name. Needs MEMORY=1 (the hub) and
 # PLATFORM=1. Without it /work/base is an empty folder. To turn it on, remove the `#` at the start of `#base:` and of
 # the lines under it, name yourself, then `docker compose restart platform`.
 #base:

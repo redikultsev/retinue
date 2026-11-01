@@ -166,7 +166,7 @@ def test_a_commit_carries_the_chosen_files_only_and_leaves_the_rest_as_they_are(
         ("A", "notes/knowledge/b.md"), ("D", "notes/journal/2026-10-01-x.md"), ("M", "notes/knowledge/a.md")]
     message = git(hub, "log", "-1", "--format=%an <%ae>|%cn|%B", "main")
     assert message.startswith(f"{OWNER}|Иван|notes: факт и запись\n\nЧто поменялось.")
-    assert "Pushed-by: retinue-platform (the owner's button, session ab12cd34)" in message
+    assert "Pushed-by: retinue-platform (the platform's own commit after a turn, session ab12cd34)" in message
     assert repo.changed() == [Change("notes/knowledge/other.md", "A")], "another session's file stays uncommitted"
     assert "notes/knowledge/other.md" not in git(hub, "ls-tree", "-r", "--name-only", "main")
     assert repo.diff(["notes/knowledge/other.md"], 10_000).startswith("--- /dev/null\n+++ b/notes/knowledge/other.md")
@@ -445,7 +445,7 @@ def test_a_file_changed_after_the_card_is_refused_and_the_rest_goes(kb):
     assert done.refused == ["notes/knowledge/a.md: the file changed after the card — open it again",
                             "notes/journal/2026-10-01-x.md: the file changed after the card — open it again"]
     assert repo._digest_now("notes/knowledge/l.md", repo._read("notes/knowledge/l.md")) == seen["notes/knowledge/l.md"]
-    assert "Retinue: session s1, card c1.\n\nPushed-by: retinue-platform (the owner's button)" in git(
+    assert "Retinue: session s1, card c1.\n\nPushed-by: retinue-platform (the platform's own commit after a turn)" in git(
         hub, "log", "-1", "--format=%B", "main")
 
 

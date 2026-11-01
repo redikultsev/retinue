@@ -61,7 +61,7 @@ export interface Session {
   fork_of?: string | null;
   /** A summary or a card came after the owner last looked at it. */
   unread?: boolean;
-  /** Its Base files not committed yet (retinue/tobase.py): «To the Base · N». Absent from a platform before the Base. */
+  /** Its Base files not written yet (retinue/tobase.py): the platform commits them after its turn. */
   base?: number;
   /** Commits in the repositories it worked in that no branch of the remote has (retinue/topush.py): «Push · N». */
   push?: number;
@@ -146,53 +146,34 @@ export interface Summary {
   took_s?: number | null;
   /** The card of the platform's own commit after this turn (retinue/tobase.py), while it can be undone from here. */
   auto?: string | null;
+  /** What the turn wrote to the Base, in one line — or why it did not and what came next (retinue/tobase.py). */
+  base_line?: string | null;
 }
 
 export type PingKind = "done" | "decision" | "failed";
 
-/** One file of a «To the Base» card: A/M/D, its lines added and removed (null: not counted), turned on, also changed in
- * another session's run. */
+/** One file of a commit to the Base: A/M/D, its lines added and removed (null: not counted). */
 export interface BaseFile {
   path: string;
   status: "A" | "M" | "D" | string;
   add: number | null;
   del: number | null;
-  on: boolean;
-  shared: boolean;
-  /** No session's run changed it, yet it is uncommitted: listed turned off, for the owner to include. */
-  nobody?: boolean;
 }
 
-export type BaseCardState =
-  | "shown"
-  | "committing"
-  | "committed"
-  | "failed"
-  | "cancelled"
-  | "discarded"
-  | "stale"
-  | "expired"
-  | "undone";
+export type BaseCardState = "committing" | "committed" | "failed" | "undone" | "expired";
 
-/** «To the Base»: a session's commit card (retinue/tobase.py), the same object as its Telegram copies. */
+/** The platform's own commit to the Base after a turn (retinue/tobase.py). */
 export interface BaseCard {
   id: string;
   session: string;
   state: BaseCardState;
-  /** The session's sphere or track, as the card's header names it. */
-  place: string;
   files: BaseFile[];
+  /** The commit's subject: `<Space>: <session title>`. */
   subject: string;
-  /** The owner set the subject; otherwise it is the default `<Space>: <title>`. */
-  custom: boolean;
-  /** How many files other sessions have uncommitted, and in how many sessions — never which. */
-  others: { files: number; sessions: number };
   sha: string | null;
-  /** The result in words: committed, what was refused and why, stale, expired. */
+  /** The line the owner reads: what went where, or why nothing did and what came next. */
   said: string;
-  /** The platform's own commit after a turn: «Undo», not «Commit». */
-  auto: boolean;
-  /** «Undo» can be pressed now (an `auto` card committed less than seven days ago). */
+  /** «Undo» can be pressed now (committed less than seven days ago). */
   undo: boolean;
   /** The commit that undid it. */
   undone: string | null;
@@ -200,7 +181,6 @@ export interface BaseCard {
   committed: string[];
   created: number;
   at: number;
-  view: CardView;
 }
 
 /** What came with an owner's message (retinue/inbox.py `Ready.meta`): a picture or a PDF went in as a block, a file
@@ -334,7 +314,7 @@ export interface SessionSnapshot {
   inputs?: Input[];
   /** The files the session handed over, oldest first; absent from a platform before them. */
   files?: OutFile[];
-  /** Its «To the Base» cards: the open one and the last few decided; absent from a platform before the Base. */
+  /** Its last few commits to the Base (retinue/tobase.py). */
   base_cards?: BaseCard[];
   /** Its «Push» cards, the same way; absent from a platform before the code. */
   push_cards?: PushCard[];

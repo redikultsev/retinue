@@ -311,12 +311,12 @@ def test_in_the_room_a_push_is_a_courier_card_that_points_to_the_button(tmp_path
     coded(tmp_path, body)
 
 
-def test_the_bridge_puts_the_push_buttons_after_the_base_one_and_links_a_card_to_its_page(tmp_path):
+def test_the_bridge_puts_the_push_buttons_after_undo_and_links_a_card_to_its_page(tmp_path):
     from retinue.bridge import CARD
     from test_bridge import make
 
     data = {"head": "Итог", "text": "Готово.", "kind": "done", "place": "code", "title": "t",
-            "base": ["To the Base · 1", "p.base"],
+            "undo": ["Undo · 1 in the Base", "p.undo"],
             "push": [["Push retinue · 2", "p.push1"], ["Push site · 1", "p.push2"]]}
     ch, bridge, _ = make(tmp_path, [
         {"seq": 1, "kind": "summary", "session": "ab12cd34", "data": data},
@@ -327,7 +327,7 @@ def test_the_bridge_puts_the_push_buttons_after_the_base_one_and_links_a_card_to
     asyncio.run(bridge.deliver())
     (_, first, _), (_, card, _) = ch.sent
     assert [row[0]["text"] for row in first["reply_markup"]["inline_keyboard"]] == [
-        "To the Base · 1", "Push retinue · 2", "Push site · 1"]
+        "Undo · 1 in the Base", "Push retinue · 2", "Push site · 1"]
     assert card["reply_markup"]["inline_keyboard"][-1] == [{"text": "Open in the app",
                                                             "web_app": {"url": "https://app.example/p/f00dbabe"}}]
     assert ch.store.sent_event(CARD, "901") == "push/f00dbabe"

@@ -1,5 +1,5 @@
 """Pings: the loudness rule and the header, a ping's life on the platform — its kind, how long its turn took, where
-it is read — and in the bridge: its parts, its sound and its «To the Base»/«Push» buttons."""
+it is read — and in the bridge: its parts, its sound and its «Undo»/«Push» buttons and its line of what went to the Base."""
 
 from __future__ import annotations
 
@@ -186,11 +186,12 @@ def ping_note(seq=5, session="ab12cd34", **data):
             "place": "Путешествия", "title": "жильё <в> Энске"}
     return {"seq": seq, "kind": "summary", "session": session, "approval": "", "data": {**base, **data}}
 
-BASE = ["To the Base · 1", "p.base"]
+UNDO = ["Undo · 1 in the Base", "p.undo"]
 PUSH = [["Push retinue · 2", "p.push1"], ["Push site · 1", "p.push2"]]
 
 def test_a_ping_goes_out_with_its_header_its_buttons_on_the_last_part_and_its_sound(tmp_path):
-    ch, bridge, _ = make(tmp_path, [ping_note(text="Сделал. " * 900, base=BASE, push=PUSH),
+    ch, bridge, _ = make(tmp_path, [ping_note(text="Сделал. " * 900, undo=UNDO, push=PUSH,
+                                              base_line="Written to the Base: travel/a.md · abc1234."),
                                     ping_note(6, kind="done", took_s=30, attended=True)])
     asyncio.run(bridge.deliver())
     long_parts = [p for m, p, _ in ch.sent if m == "sendMessage"][:-1]
@@ -199,9 +200,10 @@ def test_a_ping_goes_out_with_its_header_its_buttons_on_the_last_part_and_its_so
     assert long_parts[0]["text"].startswith("<b>❓ Путешествия · жильё &lt;в&gt; Энске · 10 min</b>\n\n")
     assert all("reply_markup" not in p for p in long_parts[:-1])
     assert long_parts[-1]["reply_markup"] == {"inline_keyboard": [
-        [{"text": "To the Base · 1", "callback_data": "p.base"}],
+        [{"text": "Undo · 1 in the Base", "callback_data": "p.undo"}],
         [{"text": "Push retinue · 2", "callback_data": "p.push1"}],
         [{"text": "Push site · 1", "callback_data": "p.push2"}]]}
+    assert long_parts[-1]["text"].endswith("\n\n🗂 Written to the Base: travel/a.md · abc1234."), "one line, last"
     assert all("disable_notification" not in p for p in long_parts), "a decision notifies"
     assert quick["disable_notification"] is True and quick["text"].startswith("<b>✅ Путешествия")
     assert "reply_markup" not in quick, "nothing to carry: no buttons"
@@ -210,7 +212,7 @@ def test_a_ping_goes_out_with_its_header_its_buttons_on_the_last_part_and_its_so
     assert ch.store.sent_native(PING, "5") == [str(sent[len(long_parts) - 1])]
 
 def test_buttons_telegram_refuses_cost_the_buttons_never_the_text(tmp_path):
-    ch, bridge, platform = make(tmp_path, [ping_note(base=BASE)])
+    ch, bridge, platform = make(tmp_path, [ping_note(undo=UNDO)])
     real = ch.call
 
     async def call(method, files=None, **params):
@@ -227,18 +229,18 @@ def test_buttons_telegram_refuses_cost_the_buttons_never_the_text(tmp_path):
     assert ch.store.sent_event(SESSION, "900") == "ab12cd34", "a reply to it still goes into the session"
 
 def test_a_ping_note_rewrites_the_last_message_with_its_new_buttons_and_the_same_text(tmp_path):
-    first = ping_note(base=BASE)
+    first = ping_note()
     relabelled = {"seq": 7, "kind": "ping", "session": "ab12cd34", "approval": "",
-                  "data": {**first["data"], "base": ["To the Base · 2", "p.base"], "push": PUSH[:1], "seq": 5}}
+                  "data": {**first["data"], "undo": ["Undo · 2 in the Base", "p.undo"], "push": PUSH[:1], "seq": 5}}
     taken_off = {"seq": 8, "kind": "ping", "session": "ab12cd34", "approval": "",
-                 "data": {**first["data"], "base": None, "push": [], "seq": 5}}
+                 "data": {**first["data"], "undo": None, "push": [], "seq": 5}}
     ch, bridge, platform = make(tmp_path, [first, relabelled, taken_off])
     asyncio.run(bridge.deliver())
     [(_, sent, _)] = [s for s in ch.sent if s[0] == "sendMessage"]
     (_, put_on, _), (_, bare, _) = [s for s in ch.sent if s[0] == "editMessageText"]
     assert put_on["message_id"] == bare["message_id"] == 900
     assert put_on["text"] == bare["text"] == sent["text"] and "→" not in sent["text"]
-    assert put_on["reply_markup"] == {"inline_keyboard": [[{"text": "To the Base · 2", "callback_data": "p.base"}],
+    assert put_on["reply_markup"] == {"inline_keyboard": [[{"text": "Undo · 2 in the Base", "callback_data": "p.undo"}],
                                                           [{"text": "Push retinue · 2", "callback_data": "p.push1"}]]}
     assert "reply_markup" not in bare
     assert platform.confirmed == [8]

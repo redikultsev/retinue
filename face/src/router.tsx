@@ -17,7 +17,6 @@ import { cardNotice, visibleSessions } from "@/lib/notify";
 import { toast } from "@/lib/toast";
 import { listed, waitingCount } from "@/lib/store";
 import { ApprovalPage } from "@/pages/approval";
-import { BasePage } from "@/pages/base";
 import { PushPage } from "@/pages/push";
 import { FilePage } from "@/pages/file";
 import { LoginPage } from "@/pages/login";
@@ -218,15 +217,6 @@ const fileRoute = createRoute({
   },
 });
 
-const baseRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/b/$id",
-  component: function Base() {
-    const { id } = baseRoute.useParams();
-    return <BasePage id={id} />;
-  },
-});
-
 const pushRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/p/$id",
@@ -242,7 +232,6 @@ const routeTree = rootRoute.addChildren([
   shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, uploadsRoute, spacesRoute, spaceRoute, recordRoute, sessionRoute]),
   approvalRoute,
   fileRoute,
-  baseRoute,
   pushRoute,
 ]);
 

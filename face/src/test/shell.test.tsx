@@ -54,9 +54,9 @@ describe("the routes", () => {
     expect(await screen.findByRole("heading", { name: /^Today/ })).toBeTruthy();
   });
 
-  it("keep the old links: a session, a card, a file, a commit card, a push card", async () => {
+  it("keep the old links: a session, a card, a file, a push card", async () => {
     phone(false);
-    for (const path of ["/s/a1b2c3d4", "/a/5f3a9c21", "/f/f1", "/b/b1", "/p/p1"]) {
+    for (const path of ["/s/a1b2c3d4", "/a/5f3a9c21", "/f/f1", "/p/p1"]) {
       const router = await open(path);
       expect(router.state.matches.at(-1)?.routeId).not.toBe("__root__");
       expect(router.state.location.pathname).toBe(path);

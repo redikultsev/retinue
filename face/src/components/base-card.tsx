@@ -1,46 +1,25 @@
-// «To the Base» (retinue/tobase.py): a session's commit card — the Base files its runs changed, each a toggle, the commit's
-// subject, «Commit», the diff, «Cancel», and — here only, asked once — «Discard», which puts the files turned on back
-// as the Base has them. It is the same card as its Telegram copies: a change here rewrites them, and one there comes
-// here on the stream. Nothing commits without a press; a press is taken once in either place — but for the platform's
-// own commit after a turn (`auto`): what the assistant's rules allow, committed by itself, with «Undo» instead.
-import { lazy, Suspense, useEffect, useState } from "react";
+// The platform's own commit to the Base after a turn (retinue/tobase.py): the session writes, the platform commits and
+// pushes, the owner reads one line under the turn's summary. A tap opens its card — the files, the commit's diff,
+// «Undo». There is nothing to press to commit.
+import { lazy, Suspense, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { ApiError, api } from "@/lib/api";
 import { type Live, live as defaultLive, useLiveState } from "@/lib/live";
 import { toast } from "@/lib/toast";
 import type { BaseCard as Card, BaseResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// The diff renderer (@pierre/diffs and Shiki) is loaded only when the diff is opened.
 const BaseDiff = lazy(() => import("@/components/base-diff").then((m) => ({ default: m.BaseDiff })));
 
-type Calls = Pick<typeof api, "baseToggle" | "baseSubject" | "baseCommit" | "baseCancel" | "baseOpen"> &
-  Partial<Pick<typeof api, "baseDiscard" | "baseUndo">>;
-
 const STATE_WORDS: Record<string, string> = {
-  committing: "Committing…",
-  committed: "Committed",
-  failed: "Not committed",
-  cancelled: "Cancelled",
-  discarded: "Discarded",
-  stale: "Stale",
-  expired: "Expired",
+  committing: "Writing…",
+  committed: "Written",
+  failed: "Not written",
   undone: "Undone",
+  expired: "Closed",
 };
-
-/** The card's state as its badge says it: the platform's own commit is «Committed by itself». */
-function stateWord(card: Card): string {
-  if (card.auto && card.state === "committed") return "Committed by itself";
-  return STATE_WORDS[card.state] ?? card.state;
-}
-
-/** «3 files» */
-export function filesWord(n: number): string {
-  return `${n} ${n === 1 ? "file" : "files"}`;
-}
 
 function put(live: Live, card: Card | null) {
   if (card) live.dispatch({ type: "event", id: null, event: { kind: "base", data: card } });
@@ -48,193 +27,74 @@ function put(live: Live, card: Card | null) {
 
 interface Props {
   card: Card;
-  calls?: Calls;
+  undo?: (id: string) => Promise<BaseResponse>;
   live?: Live;
   className?: string;
 }
 
-export function BaseCardView({ card, calls = api, live = defaultLive, className }: Props) {
+export function BaseCardView({ card, undo = api.baseUndo, live = defaultLive, className }: Props) {
   const [busy, setBusy] = useState(false);
-  const [subject, setSubject] = useState(card.subject);
   const [diff, setDiff] = useState(false);
-  const [discarding, setDiscarding] = useState(false);
-  const discard = calls.baseDiscard ?? api.baseDiscard;
-  const undo = calls.baseUndo ?? api.baseUndo;
-  useEffect(() => setSubject(card.subject), [card.subject]);
-  const shown = card.state === "shown";
-  const chosen = card.files.filter((f) => f.on).length;
 
-  async function act(call: () => Promise<BaseResponse>, fallback: string): Promise<boolean> {
+  async function pressUndo() {
     setBusy(true);
     try {
-      const res = await call();
+      const res = await undo(card.id);
       put(live, res.card);
       if (res.toast) toast(res.toast);
-      return true;
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : fallback, "error");
-      return false;
+      toast(e instanceof ApiError ? e.message : "Did not undo.", "error");
     } finally {
       setBusy(false);
     }
   }
 
-  /** «Commit» with the subject as the field shows it: an edit not saved yet is saved first. */
-  async function commit() {
-    const edited = subject.trim() && subject !== card.subject;
-    if (edited && !(await act(() => calls.baseSubject(card.id, subject), "The subject was not saved."))) return;
-    await act(() => calls.baseCommit(card.id), "The commit did not go through.");
-  }
-
   return (
-    <section data-testid="base-card" aria-label={card.view.head[0] ?? "To the Base"} className={cn("flex flex-col gap-3", className)}>
+    <section data-testid="base-card" aria-label="In the Base" className={cn("flex flex-col gap-3", className)}>
       <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{card.view.head[0]}</span>
-        {!shown && <Badge variant={card.state === "committing" ? "warning" : "secondary"}>{stateWord(card)}</Badge>}
+        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{card.subject}</span>
+        <Badge variant={card.state === "committing" ? "warning" : card.state === "failed" ? "destructive" : "secondary"}>
+          {STATE_WORDS[card.state] ?? card.state}
+        </Badge>
       </div>
-      {card.auto ? (
-        <p className="text-sm">{card.subject}</p>
-      ) : (
-      <form
-        className="flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (subject.trim() && subject !== card.subject) void act(() => calls.baseSubject(card.id, subject), "The subject was not saved.");
-        }}
-      >
-        <Input aria-label="Commit subject" value={subject} disabled={!shown || busy} onChange={(e) => setSubject(e.target.value)} />
-        {shown && subject !== card.subject && subject.trim() && (
-          <Button type="submit" variant="outline" disabled={busy}>
-            Save
-          </Button>
-        )}
-      </form>
+      {card.said && (
+        <p role="status" className="text-sm whitespace-pre-line wrap-anywhere">
+          {card.said}
+        </p>
       )}
       <ul className="flex flex-col gap-1" aria-label="Files">
         {card.files.map((f) => (
-          <li key={f.path}>
-            <label className={cn("flex min-h-9 items-center gap-2 rounded-md px-1 text-sm", shown && "hover:bg-accent")}>
-              {!card.auto && <input
-                type="checkbox"
-                className="size-4 shrink-0"
-                checked={f.on}
-                disabled={!shown || busy}
-                aria-label={f.path}
-                onChange={(e) => void act(() => calls.baseToggle(card.id, f.path, e.target.checked), "Did not switch.")}
-              />}
-              <span className="w-4 shrink-0 font-mono text-xs text-muted-foreground">{f.status}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={f.path}>
-                {f.path}
+          <li key={f.path} className="flex min-h-9 items-center gap-2 px-1 text-sm">
+            <span className="w-4 shrink-0 font-mono text-xs text-muted-foreground">{f.status}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={f.path}>
+              {f.path}
+            </span>
+            {f.add !== null && (
+              <span className="shrink-0 font-mono text-xs tabular-nums">
+                <span className="text-green-600 dark:text-green-400">+{f.add}</span>{" "}
+                <span className="text-red-600 dark:text-red-400">−{f.del}</span>
               </span>
-              {f.nobody && (
-                <span className="shrink-0 text-xs text-muted-foreground" title="No session changed it">
-                  nobody's
-                </span>
-              )}
-              {f.shared && (
-                <span className="shrink-0 text-xs text-warning-foreground" title="The file was also changed in another session">
-                  ⇄
-                </span>
-              )}
-              {f.add !== null && (
-                <span className="shrink-0 font-mono text-xs tabular-nums">
-                  <span className="text-green-600 dark:text-green-400">+{f.add}</span>{" "}
-                  <span className="text-red-600 dark:text-red-400">−{f.del}</span>
-                </span>
-              )}
-            </label>
+            )}
           </li>
         ))}
       </ul>
-      {card.files.some((f) => f.shared) && (
-        <p className="text-xs text-muted-foreground">⇄ — the file was also changed in another session: decide whose it is.</p>
-      )}
-      {card.files.some((f) => f.nobody) && (
-        <p className="text-xs text-muted-foreground">
-          “nobody's” — changed, but by no session. Off: turn it on to commit it.
-        </p>
-      )}
-      {card.others.files > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {filesWord(card.others.files)} more not committed in other sessions ({card.others.sessions}).
-        </p>
-      )}
-      {card.said && <p role="status" className="text-sm whitespace-pre-line">{card.said}</p>}
-      {shown && discarding ? (
-        <fieldset aria-label="Discard" className="flex flex-col gap-2 rounded-md border border-destructive/40 p-3">
-          <p className="text-sm">
-            Discard {filesWord(chosen)}? {chosen === 1 ? "It goes" : "They go"} back to what the Base has: an added file is
-            deleted, an edited one restored. This cannot be undone.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={async () => {
-                await act(() => discard(card.id), "Did not discard.");
-                setDiscarding(false);
-              }}
-            >
-              Discard · {chosen}
-            </Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setDiscarding(false)}>
-              Back
-            </Button>
-          </div>
-        </fieldset>
-      ) : (
       <div className="flex flex-wrap gap-2">
-        {shown && (
-          <Button disabled={busy || chosen === 0} onClick={() => void commit()}>
-            Commit · {chosen}
-          </Button>
-        )}
-        {card.auto && card.undo && (
-          <Button variant="outline" disabled={busy} onClick={() => void act(() => undo(card.id), "Did not undo.")}>
+        {card.undo && (
+          <Button variant="outline" disabled={busy} onClick={() => void pressUndo()}>
             Undo
           </Button>
         )}
         <Button variant="outline" aria-expanded={diff} onClick={() => setDiff(!diff)}>
           {diff ? "Hide diff" : "Show diff"}
         </Button>
-        {shown && (
-          <Button variant="ghost" disabled={busy} onClick={() => void act(() => calls.baseCancel(card.id), "Did not cancel.")}>
-            Cancel
-          </Button>
-        )}
-        {shown && (
-          <Button
-            variant="ghost"
-            className="ml-auto text-destructive hover:text-destructive"
-            disabled={busy || chosen === 0}
-            onClick={() => setDiscarding(true)}
-          >
-            Discard…
-          </Button>
-        )}
       </div>
-      )}
       {diff && (
         <Suspense fallback={<p className="text-sm text-muted-foreground">Loading the diff…</p>}>
-          <BaseDiff id={card.id} session={card.session} on={card.files.filter((f) => f.on).map((f) => f.path).join("\n")} />
+          <BaseDiff id={card.id} session={card.session} on={`${card.state}:${card.sha ?? ""}`} />
         </Suspense>
       )}
     </section>
   );
-}
-
-/** «To the Base»: the session's card, opened or brought up to date by the platform. Its id, or null when there is
- * nothing to commit (said as a toast). */
-export async function openBase(session: string, calls: Pick<Calls, "baseOpen"> = api, live: Live = defaultLive) {
-  try {
-    const res = await calls.baseOpen(session);
-    put(live, res.card);
-    if (!res.card) toast(res.toast || "Nothing to commit.");
-    return res.card?.id ?? null;
-  } catch (e) {
-    toast(e instanceof ApiError ? e.message : "The card did not open.", "error");
-    return null;
-  }
 }
 
 /** The card in a dialog, as the stream keeps it. */
@@ -242,7 +102,7 @@ export function BaseDialog({ id, onClose }: { id: string | null; onClose: () => 
   const { bases } = useLiveState();
   const card = id ? bases[id] : undefined;
   return (
-    <Dialog open={id !== null} onClose={onClose} title={card?.auto ? "In the Base" : "To the Base"} className="max-w-2xl">
+    <Dialog open={id !== null} onClose={onClose} title="In the Base" className="max-w-2xl">
       {card && <BaseCardView card={card} />}
       <div className="flex justify-end">
         <Button variant="ghost" onClick={onClose}>
@@ -253,42 +113,19 @@ export function BaseDialog({ id, onClose }: { id: string | null; onClose: () => 
   );
 }
 
-/** «To the Base · N»: under a session's last summary, in its feed row. */
-export function BaseButton({ session, count, calls = api, className }: { session: string; count: number; calls?: Pick<Calls, "baseOpen">; className?: string }) {
-  const [id, setId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        className={cn("w-fit", className)}
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          setId(await openBase(session, calls));
-          setBusy(false);
-        }}
-      >
-        To the Base · {count}
-      </Button>
-      <BaseDialog id={id} onClose={() => setId(null)} />
-    </>
-  );
-}
-
-/** «In the Base · N» under a turn's summary: the platform's own commit after that turn, opened as its card — the
- * files, the commit's diff, «Undo». */
-export function AutoButton({ id, calls = api, live = defaultLive }: { id: string; calls?: Pick<typeof api, "baseCard">; live?: Live }) {
+/** The line under a turn's summary — what the turn wrote to the Base, or why it did not and what came next — and a
+ * tap on it opens the commit's card. */
+export function BaseLine({ id, line, calls = api, live = defaultLive }: { id?: string | null; line: string; calls?: Pick<typeof api, "baseCard">; live?: Live }) {
   const { bases } = useLiveState();
-  const card = bases[id];
+  const card = id ? bases[id] : undefined;
   const [open, setOpen] = useState(false);
+  const text = card?.state === "undone" ? `${line} Undone.` : line;
+  if (!id) return <p className="text-xs text-muted-foreground wrap-anywhere">🗂 {text}</p>;
   return (
     <>
-      <Button
-        variant="outline"
-        size="sm"
-        className="w-fit"
+      <button
+        type="button"
+        className="w-fit max-w-full text-left text-xs text-muted-foreground underline-offset-4 wrap-anywhere hover:text-foreground hover:underline"
         onClick={async () => {
           if (!card) {
             try {
@@ -301,8 +138,8 @@ export function AutoButton({ id, calls = api, live = defaultLive }: { id: string
           setOpen(true);
         }}
       >
-        {card ? `In the Base · ${card.files.length}${card.state === "undone" ? " · undone" : ""}` : "In the Base"}
-      </Button>
+        🗂 {text}
+      </button>
       <BaseDialog id={open ? id : null} onClose={() => setOpen(false)} />
     </>
   );

@@ -50,7 +50,7 @@ export interface State {
   fileAt: Record<string, Record<string, number>>;
   /** The live text of a running turn, not stored by the server; the final item replaces it. */
   deltas: Record<string, string>;
-  /** «To the Base» cards by id, and the id of the event that last set each. */
+  /** The platform's own commits to the Base by id (retinue/tobase.py), and the id of the event that last set each. */
   bases: Record<string, BaseCard>;
   baseAt: Record<string, number>;
   /** «Push» cards by id, the same way. */
@@ -404,13 +404,6 @@ export function orderedFiles(files: Record<string, OutFile> | undefined): OutFil
 
 export const sessionItems = (state: State, session: string) => orderedItems(state.items[session]);
 export const sessionApprovals = (state: State, session: string) => approvalsOf(state.approvals, session);
-
-/** A session's «To the Base» card still open (shown or committing), the newest; pass `state.bases`. */
-export function openBaseCard(bases: Record<string, BaseCard>, session: string): BaseCard | undefined {
-  return Object.values(bases)
-    .filter((b) => b.session === session && (b.state === "shown" || b.state === "committing"))
-    .sort((a, b) => b.created - a.created)[0];
-}
 
 /** A card that waits on the owner now: a call to decide or a question to answer. */
 export const waitsOnOwner = (a: Approval) => (a.kind === "approval" || a.kind === "question") && a.state === "shown";

@@ -314,10 +314,9 @@ class Face:
             # Spheres (`spheres.py`): a session's sphere, its sphere's main session, a fork, what is unread.
             web.post("/api/sessions/{id}/sphere", self.sphere), web.post("/api/sessions/{id}/main", self.main),
             web.post("/api/sessions/{id}/seen", self.seen), web.post("/api/sessions/{id}/fork", self.fork),
-            # «To the Base» (`tobase.py`): the session's commit card, the same one its Telegram copies show.
-            web.post("/api/sessions/{id}/base", self.base_open), web.get("/api/base/{id}", self.base_card),
-            web.get("/api/base/{id}/diff", self.base_diff), web.post("/api/base/{id}/{action:toggle|subject|commit|cancel|discard|undo}",
-                                                                     self.base_act),
+            # The platform's own commits to the Base after a turn (`tobase.py`): the card, its diff, «Undo».
+            web.get("/api/base/{id}", self.base_card), web.get("/api/base/{id}/diff", self.base_diff),
+            web.post("/api/base/{id}/undo", self.base_undo),
             # «Push» (`topush.py`): a repository's push card, the same one its Telegram copies show.
             web.post("/api/sessions/{id}/push", self.push_open), web.get("/api/push/{id}", self.push_card),
             web.get("/api/push/{id}/diff", self.push_diff),
@@ -910,53 +909,28 @@ class Face:
         return web.FileResponse(path, headers={"Content-Type": row["mime"], "Content-Security-Policy": FILE_CSP,
                                                "Content-Disposition": _attachment(row["name"])})
 
-    # --- «To the Base» -----------------------------------------------------------------------------------------------
-
-    async def base_open(self, request: web.Request) -> web.Response:
-        """The session's menu «To the Base», the button under its summary or its feed row: its card, opened or brought
-        up to date — the same card a press in Telegram opens."""
-        session_id = request.match_info["id"]
-        if self.store.session(session_id) is None:
-            return _error(404, "No such session.")
-        toast, card = await self.platform.tobase.open(session_id, telegram=False)
-        return web.json_response({"toast": toast, "card": card})
+    # --- the Base: the platform's own commits after a turn (`tobase.py`) ------------------------------------------------
 
     async def base_card(self, request: web.Request) -> web.Response:
-        """One card, for the link a Telegram copy's Mini App button opens (`/b/<id>`)."""
+        """One commit's card (`/b/<id>`)."""
         if (card := self.platform.tobase.card(request.match_info["id"])) is None:
             return _error(404, "No such card.")
         return web.json_response({"card": self.platform.tobase.face(card)})
 
     async def base_diff(self, request: web.Request) -> web.Response:
-        """The card's files turned on, as a unified diff the app renders (`base.BaseRepo.diff`, bounded)."""
+        """What the commit changed, as a unified diff the app renders (bounded)."""
         tobase_ = self.platform.tobase
         if (card := tobase_.card(request.match_info["id"])) is None:
             return _error(404, "No such card.")
         text = await tobase_.diff(card)
         return web.json_response({"diff": text, "truncated": len(text.encode()) >= tobase.DIFF_LIMIT})
 
-    async def base_act(self, request: web.Request) -> web.Response:
-        """A file turned on or off (`{path, on}`), the subject (`{subject}`), «Commit», «Cancel», «Discard», and «Undo» of
-        the platform's own commit: by the rules of a Telegram press, and every Telegram copy rewritten."""
-        body, action, tobase_ = await _body(request), request.match_info["action"], self.platform.tobase
+    async def base_undo(self, request: web.Request) -> web.Response:
+        """«Undo» of the platform's own commit, by the rules of a Telegram press."""
+        tobase_ = self.platform.tobase
         if (card := tobase_.card(request.match_info["id"])) is None:
             return _error(404, "No such card.")
-        if action == "toggle":
-            if not isinstance(body.get("path"), str) or type(body.get("on")) is not bool:
-                return _error(400, "path: string; on: true | false")
-            toast, _ = tobase_.toggle(card, body["path"], body["on"])
-        elif action == "subject":
-            if not isinstance(body.get("subject"), str):
-                return _error(400, "subject: string")
-            toast, _ = tobase_.set_subject(card, body["subject"])
-        elif action == "commit":
-            toast, _ = await tobase_.commit(card)
-        elif action == "discard":
-            toast, _ = await tobase_.discard(card)
-        elif action == "undo":
-            toast, _ = await tobase_.undo(card)
-        else:
-            toast, _ = tobase_.cancel(card)
+        toast, _ = await tobase_.undo(card)
         now = tobase_.card(card["id"])
         return web.json_response({"toast": toast, "card": tobase_.face(now) if now else None})
 

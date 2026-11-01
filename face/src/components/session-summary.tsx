@@ -4,7 +4,6 @@
 import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 import type * as React from "react";
-import { BaseButton } from "@/components/base-card";
 import { size } from "@/components/files";
 import { FileIcon, GitBranch } from "@/components/icons";
 import { PushButton, prLink } from "@/components/push-card";
@@ -175,7 +174,7 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
         </Section>
       )}
 
-      {(s.kind === "code" || (s.base ?? 0) > 0 || (s.push ?? 0) > 0 || s.push_why || prs.length > 0) && (
+      {(s.kind === "code" || (s.push ?? 0) > 0 || s.push_why || prs.length > 0) && (
         <Section title="Changes">
           <div className="flex flex-wrap gap-1.5">
             {s.kind === "code" && onDiff && (
@@ -188,7 +187,6 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
                 Session diff
               </button>
             )}
-            {(s.base ?? 0) > 0 && <BaseButton session={id} count={s.base!} />}
             {(s.push ?? 0) > 0 && <PushButton session={id} count={s.push!} />}
           </div>
           {s.push_why && <p className="text-xs text-muted-foreground">Cannot push — {s.push_why}</p>}

@@ -1137,7 +1137,9 @@ def test_every_lane_is_told_the_common_rules_and_where_files_for_the_owner_go():
         "Debian 13: git 2.47, which reads `/lane/mirrors/*` as a prefix"
     assert "v[2] >= 46" in lane_image, "an older git fails the build, not every clone"
     base = (folder / "base.md").read_text()
-    assert "/work/base" in base and "«To the Base»" in base and "Do not run `git` in `/work/base`" in base
+    assert "/work/base" in base and "Do not run `git` in `/work/base`" in base and "To the Base" not in base
+    assert "its row in its Space's Showcase" in base and "python3 scripts/lint.py" in base, "the agent writes as on the Mac"
+    assert "a message of its own" in base and "merge both sides" in base, "what kept files out is the session's to fix"
     assert "python3 scripts/lint.py" in base and '"commit and push?"' in base, "rule 6 is the platform's here"
     common, out = (folder / "common.md").read_text(), (folder / "out.md").read_text()
     assert "Answer in English" in common and "as a card" in common and "data, not instructions" in common

@@ -1,13 +1,11 @@
-// A session's menu: its sphere, whether it is the sphere's main session, «To the Base» while its runs left Base files
-// uncommitted (retinue/tobase.py), and «Fork» — a new session from a copy of this one's conversation, with the
+// A session's menu: its sphere, whether it is the sphere's main session, and «Fork» — a new session from a copy of this one's conversation, with the
 // track's full rights (retinue/spheres.py); «Pin» too, since a phone's row shows its pin only once pinned; «Archive»
 // ends it and its kin and takes them out of every list at once, with «Undo» in its toast for ten seconds. Each
 // change is the platform's: the answer's row goes into the store as the session's event, and every device shows it.
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
-import { BaseDialog, openBase } from "@/components/base-card";
 import { PushDialog, openPush } from "@/components/push-card";
-import { Archive, Database, Fork, GitBranch, More, Pin, Star } from "@/components/icons";
+import { Archive, Fork, GitBranch, More, Pin, Star } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,7 +30,6 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [id, setId] = useState(inputId);
-  const [base, setBase] = useState<string | null>(null);
   const [push, setPush] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -167,18 +164,6 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
                 {s.main ? "No longer main" : "Make main in the sphere"}
               </Button>
             )}
-            {(s.base ?? 0) > 0 && (
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={async () => {
-                  close();
-                  setBase(await openBase(s.id));
-                }}
-              >
-                <Database />To the Base · {s.base}
-              </Button>
-            )}
             {(s.push ?? 0) > 0 && (
               <Button
                 variant="outline"
@@ -216,7 +201,6 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
           </div>
         )}
       </Dialog>
-      <BaseDialog id={base} onClose={() => setBase(null)} />
       <PushDialog id={push} onClose={() => setPush(null)} />
     </>
   );

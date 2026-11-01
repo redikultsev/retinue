@@ -6,7 +6,7 @@ Built by code on every read from the platform's own rows — never a copy kept b
 
 - «Answer the question»: a question card (AskUserQuestion) shown and not answered;
 - «Decide»: an approval card shown, a courier card of the last day he has not closed («Done») nor written to its session
-  since, a session with Base files not committed yet («To the Base», `tobase`), a sub-session a session proposed
+  since, a sub-session a session proposed
   («Start» / «Not now», `subs`), and a write to a collection a session proposed («Apply» / «Dismiss», `colltools`);
 - «Reply»: a session waiting for his message with no card shown;
 - «Read»: a session whose finished turn he has not read (the session's `unread`; nothing without it);
@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING
 
 from . import questions
 from .courier import INVISIBLE, line
-from .tobase import files_word
 
 if TYPE_CHECKING:
     from .sessions import PlatformStore
@@ -49,8 +48,6 @@ COURIER_S = 86400            # a courier card waits in «Decide» this long, unl
 RECENT_S = 7 * 86400         # a summary older than this leaves nothing to read in the feed
 ESSENCE_CHARS = 200          # the one line a row says
 TELEGRAM_ROWS = 10           # `/wait` names this many rows; the rest are counted
-BASE_HINT = "Press «To the Base» under its result or open it in the app."
-NOBODY_HINT = "They are on the «To the Base» card of any Base session, turned off: turn on the ones you want and commit."
 PUSH_HINT = "Press «Push» under its result or open it in the app."
 PROPOSAL_HINT = "Start it or set it aside in the app."
 CPROPOSAL_HINT = "Apply it or dismiss it in the app."
@@ -431,12 +428,6 @@ class Feed:
                 {**self._row(f"card:{approval_id}", "answer" if question else "decide", approval["kind"], session,
                              approval["created"], essence),
                  "approval": approval, "card": questions.key(approval_id, n) if question else None})
-        for session in sessions.values():  # «To the Base»: its files wait for the owner's commit, since the first of them
-            if session.get("base"):
-                since = db.execute("SELECT MIN(at) FROM base_files WHERE session = ?", (session["id"],)).fetchone()[0]
-                out["decide"].append({**self._row(f"base:{session['id']}", "decide", "base", session,
-                                                  since or session["at"], f"To the Base: {files_word(session['base'])}"),
-                                      "base": session["base"], "hint": BASE_HINT})
         topush = getattr(self, "topush", None)  # «Push»: commits no branch of the remote has yet
         for session in sessions.values():
             if session.get("push") and topush is not None and (repos := topush.unpushed(session["id"])):
@@ -466,13 +457,6 @@ class Feed:
             else:
                 continue
             out["decide"].append({**row, "collection_proposal": proposal, "hint": CPROPOSAL_HINT})
-        tobase = getattr(self, "tobase", None)  # set by the platform; nobody's files are never left unseen
-        if tobase is not None and (nobodys := tobase.nobodys()) and \
-                (carrier := sessions.get(tobase.carrier() or "")) is not None:
-            out["decide"].append({**self._row("base:nobody", "decide", "base", carrier, now,
-                                              f"Nobody's Base files: {files_word(len(nobodys))} — changed, but by no "
-                                              "session"), "title": "Nobody's Base files", "base": len(nobodys),
-                                  "hint": NOBODY_HINT})
         said = {session: (seq, json.loads(data)) for session, seq, data in db.execute(
             "SELECT n.session, n.seq, n.data FROM notes n JOIN (SELECT MAX(seq) AS seq FROM notes WHERE kind = "
             "'summary' GROUP BY session) m ON n.seq = m.seq")}

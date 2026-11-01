@@ -364,7 +364,7 @@ class PlatformBridge:
 
     async def _ping(self, seq: int, session: str, data: dict) -> None:
         """The end of a turn (`pings`): its header and text, split as any text is, each message answering into the
-        session; its buttons («To the Base», «Push») on the last one, which is mapped to the ping so new buttons rewrite it. A
+        session; its buttons («Undo», «Push») on the last one, which is mapped to the ping so new buttons rewrite it. A
         quick done turn goes out without a sound. Buttons Telegram refuses cost the buttons, never the text: the last
         part goes again without them (a reply to it still answers). A turn of a session the owner drives from the app
         is read there (`_in_app`)."""
@@ -403,8 +403,8 @@ class PlatformBridge:
             self.store.save_sent(SESSION, native_id, session)
 
     async def _ping_buttons(self, data: dict) -> None:
-        """A ping's buttons changed: its «To the Base · N» or «Push · N» put on, relabelled or taken off (`tobase`,
-        `topush`) — its last message rewritten with them."""
+        """A ping's buttons or its Base line changed: «Undo» and what went to the Base (`tobase`), «Push · N»
+        (`topush`) — its last message rewritten with them."""
         html = ping_parts(data)[-1]
         for native_id in self.store.sent_native(PING, str(data["seq"])):
             await self._edit(html, int(native_id), ping_keyboard(data))
@@ -777,10 +777,8 @@ class PlatformBridge:
         """A card's buttons one per row; while it still has any, and the face is known, the face's own button last."""
         keyboard = rows_of(buttons)
         if keyboard and approval and self.face_url:  # a question's message is `<approval>/<n>`: the app shows the card
-            base = approval.removeprefix("base/") if approval.startswith("base/") else None  # a «To the Base» card
             push = approval.removeprefix("push/") if approval.startswith("push/") else None  # a «Push» card
-            url = f"{self.face_url}/b/{base}" if base else f"{self.face_url}/p/{push}" if push else \
-                f"{self.face_url}/a/{approval.partition('/')[0]}"
+            url = f"{self.face_url}/p/{push}" if push else f"{self.face_url}/a/{approval.partition('/')[0]}"
             keyboard["inline_keyboard"].append([{"text": IN_APP, "web_app": {"url": url}}])
         return keyboard
 
@@ -826,12 +824,18 @@ def ping_parts(data: dict) -> list[str]:
             parts[0] = f"{head}\n\n{parts[0]}"
         else:
             parts.insert(0, head)
+    if isinstance(data.get("base_line"), str) and data["base_line"]:  # what the turn wrote to the Base (`tobase`)
+        said = f"{ICONS['base']} {_tg_escape(data['base_line'])}"
+        if len(parts[-1]) + 2 + len(said) <= TELEGRAM_LIMIT:
+            parts[-1] = f"{parts[-1]}\n\n{said}"
+        else:
+            parts.append(said)
     return parts
 
 
 def ping_keyboard(data: dict) -> dict | None:
-    """A ping's buttons: «Undo» of the platform's own commit, «To the Base · N» and «Push · N» while it carries them."""
-    buttons = [b for b in (data.get("undo"), data.get("base")) if isinstance(b, list) and len(b) == 2]
+    """A ping's buttons: «Undo» of the platform's own commit and «Push · N» while it carries them."""
+    buttons = [b for b in (data.get("undo"),) if isinstance(b, list) and len(b) == 2]
     buttons += [b for b in data.get("push") or [] if isinstance(b, list) and len(b) == 2]
     return rows_of(buttons)
 

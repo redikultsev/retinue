@@ -171,18 +171,9 @@ export const api = {
       question,
       ...reply,
     }),
-  /** «To the Base»: the session's commit card, opened or brought up to date (the same one Telegram shows). */
-  baseOpen: (session: string) => request<BaseResponse>(`/api/sessions/${encodeURIComponent(session)}/base`, {}),
+  /** The platform's own commit to the Base after a turn: its card, its diff, «Undo». */
   baseCard: (id: string) => request<{ card: BaseCard }>(`/api/base/${encodeURIComponent(id)}`),
   baseDiff: (id: string) => request<{ diff: string; truncated: boolean }>(`/api/base/${encodeURIComponent(id)}/diff`),
-  baseToggle: (id: string, path: string, on: boolean) =>
-    request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/toggle`, { path, on }),
-  baseSubject: (id: string, subject: string) =>
-    request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/subject`, { subject }),
-  baseCommit: (id: string) => request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/commit`, {}),
-  baseCancel: (id: string) => request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/cancel`, {}),
-  /** «Discard»: the files turned on put back as the Base has them; nothing is committed. */
-  baseDiscard: (id: string) => request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/discard`, {}),
   baseUndo: (id: string) => request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/undo`, {}),
   /** «Push»: a repository's push card, opened or brought up to date (the same one Telegram shows). */
   pushOpen: (session: string, repo?: string) =>

@@ -5,7 +5,7 @@
 // once it moved on. A call with a card is never folded — the card is the owner's to answer.
 import { type ReactNode, useMemo } from "react";
 import { ApprovalCard } from "@/components/approval-card";
-import { AutoButton, BaseButton } from "@/components/base-card";
+import { BaseLine } from "@/components/base-card";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
 import type { Approval, Input, Item, Proposal, Summary } from "@/lib/types";
@@ -132,7 +132,7 @@ function turnText(items: Item[], index: number): string {
 }
 
 function SummaryNote({ summary, repeats, base, focused }: { summary: Summary; repeats: boolean; base?: ReactNode; focused?: boolean }) {
-  // «To the Base · N» on the last one while the session has Base files uncommitted.
+  // What the turn wrote to the Base, «Push · N» on the last one.
   const buttons = base ? <div className="flex flex-wrap items-center gap-1.5">{base}</div> : null;
   if (repeats)
     return (
@@ -167,8 +167,6 @@ interface Props {
   summaries?: Summary[];
   /** The owner's messages, oldest first: each before what the session wrote after it. */
   inputs?: Input[];
-  /** The session's Base files not committed yet (retinue/tobase.py): «To the Base · N» under its last summary. */
-  base?: { session: string; count: number };
   /** Its commits no branch of the remote has (retinue/topush.py): «Push · N» there too. */
   push?: { session: string; count: number; why?: string };
   /** The sub-sessions it proposed (retinue/subs.py): each card under its call. */
@@ -177,7 +175,7 @@ interface Props {
   focus?: number;
 }
 
-export function Transcript({ items, approvals, delta, running, summaries = [], inputs = [], base, push, proposals = [], focus }: Props) {
+export function Transcript({ items, approvals, delta, running, summaries = [], inputs = [], push, proposals = [], focus }: Props) {
   const cards = useMemo(() => placeCards(items, approvals), [items, approvals]);
   const notes = useMemo(() => placeSummaries(items, summaries), [items, summaries]);
   const mine = useMemo(() => placeInputs(items, inputs), [items, inputs]);
@@ -199,10 +197,9 @@ export function Transcript({ items, approvals, delta, running, summaries = [], i
       focused={focus !== undefined && s.turn === focus}
       repeats={s.text.trim() === turnText(items, index)}
       base={
-        s === latest || s.auto ? (
+        s === latest || s.base_line ? (
           <>
-            {s.auto && <AutoButton id={s.auto} />}
-            {s === latest && base && base.count > 0 && <BaseButton session={base.session} count={base.count} />}
+            {s.base_line && <BaseLine id={s.auto} line={s.base_line} />}
             {s === latest && push && push.count > 0 && <PushButton session={push.session} count={push.count} />}
             {s === latest && push?.why && <p className="text-xs text-muted-foreground">Cannot push — {push.why}</p>}
           </>

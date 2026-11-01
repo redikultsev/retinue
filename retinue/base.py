@@ -1,5 +1,5 @@
 """The owner's knowledge base (the Base) in a lane: a clone of the hub's `main` at `/work/<tree>` of lane-private,
-kept fresh by the platform, committed by the owner's button (docs/base.md).
+kept fresh by the platform, committed by the platform after each turn of a session (docs/base.md).
 
 The sessions edit the clone's files; the platform — code, not the model — brings the hub's changes in (`refresh`) and
 turns the files the owner picked into one commit on top of the hub's `main`, checked and pushed with his rights
@@ -287,11 +287,11 @@ class BaseRepo:
     async def commit(self, paths: list[str], subject: str, body: str, expect: dict[str, str] | None = None,
                      session: str = "", role: str = kbcheck.OWNER) -> Committed:
         """`paths` of the tree, as they are now, in one commit on top of the hub's `main`, pushed with the owner's
-        rights; nothing else of the tree is touched. `expect`: path → the digest `snapshot()` gave when the owner saw
-        the card (None or '' : no file there); a path that is not that any more is refused, the rest goes. `session`: named in
-        the commit's trailer. `role`: whose rules the commit is checked by before the push — the owner's (his press),
-        or the assistant's (the platform's own commit after a turn: only what the hub lets the assistant write, and
-        never a Record the owner wrote)."""
+        rights; nothing else of the tree is touched. `expect`: path → the digest `snapshot()` gave when the commit was
+        planned (None or '' : no file there); a path that is not that any more is refused, the rest goes. `session`:
+        named in the commit's trailer. `role`: whose rules the commit is checked by before the push — the owner's (the
+        platform's commit after a turn), or the assistant's (only what the hub lets the assistant write, and never a
+        Record the owner wrote)."""
         expect = {path: digest or "" for path, digest in (expect or {}).items()}  # None or '' : no file there
         return await asyncio.to_thread(self._locked, self._commit, paths, subject, body, session, expect, role)
 
@@ -662,7 +662,7 @@ class BaseRepo:
                 done.refused.append(f"{path}: {MARKED}")
                 del states[path]
         held, admitted, refused = self._held(), list(done.left_out), list(done.refused)
-        by = "the platform's own commit after a turn" if role == kbcheck.ASSISTANT else "the owner's button"
+        by = "the platform's own commit after a turn"
         message = (f"{subject}\n\n{body.strip()}\n\n" if body.strip() else f"{subject}\n\n") + \
             f"Pushed-by: retinue-platform ({by}{f', session {session}' if session else ''})\n"
         try:
@@ -879,7 +879,7 @@ class BaseRepo:
             commit = self._run("commit-tree", tree, "-p", upstream, data=message.encode()).stdout.decode().strip()
             verdict = kbcheck.check(self.repo, upstream, commit, dataclasses.replace(self._policy, check=[]), role)
             if role == kbcheck.ASSISTANT:
-                verdict.refusals += [f"{path}: a Record you wrote — it waits for «To the Base»"
+                verdict.refusals += [f"{path}: a Record you wrote — not the assistant's to commit"
                                      for path in verdict.owner_records]
             if not verdict.refusals:
                 return commit, [Change(path, "A" if old is None else "D" if new is None else "M")

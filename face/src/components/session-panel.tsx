@@ -247,7 +247,6 @@ export function SessionPanel({ id, tab, onTab, back, onClose, extra, panel = fal
             running={running}
             summaries={summaries}
             inputs={inputs}
-            base={session?.base ? { session: id, count: session.base } : undefined}
             push={session?.push || session?.push_why ? { session: id, count: session.push ?? 0, why: session.push_why } : undefined}
             proposals={proposals}
             focus={turn}

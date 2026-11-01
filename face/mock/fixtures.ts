@@ -290,7 +290,7 @@ export function items(): Item[] {
 
 export const summaries: Summary[] = [
   { session: "a1b2c3d4", seq: 1, head: "Result · retinue · session a1b2c3d4", text: "The gate did not change this week; the failure reproduces. Two open issues about the restart (#41, #38) — that is it. Fixing next.", at: T0 - 3000, turn: 0, kind: "decision" },
-  { session: "e5f6a7b8", seq: 5, auto: "a070a070", head: "Result · notes · session e5f6a7b8", text: "Good, **Centre**. Putting together a plan by day:\n\n| Day | What |\n|---|---|\n| 7 May | arrival, check-in, dinner |\n| 8 May | the old town, a museum |\n| 9 May | the azulejo museum |", at: T0 - 25, turn: 0, kind: "decision" },
+  { session: "e5f6a7b8", seq: 5, auto: "a070a070", base_line: "Written to the Base: travel/AGENTS.md, travel/journal/2026-05-07-lisbon.md · 4f2a9c1.", head: "Result · notes · session e5f6a7b8", text: "Good, **Centre**. Putting together a plan by day:\n\n| Day | What |\n|---|---|\n| 7 May | arrival, check-in, dinner |\n| 8 May | the old town, a museum |\n| 9 May | the azulejo museum |", at: T0 - 25, turn: 0, kind: "decision" },
   { session: "c9d0e1f2", seq: 3, head: "Result · retinue · session c9d0e1f2", text: "Done: changelog and tag `v0.4.0`. Do the push (`git push`) yourself — the command is in the courier card.", at: T0 - 80000 },
   { session: "0a1b2c3d", seq: 4, head: "Result · notes · session 0a1b2c3d", text: "The turn ended without text.", at: T0 - 5400 },
 ];
@@ -334,18 +334,17 @@ export function about(s: Session): About {
 }
 
 // A push that went out and opened a PR (retinue/topush.py): the closed release session's.
-// The platform's own commit after a turn (retinue/tobase.py `_autocommit`): «In the Base · N» under its summary.
+// The platform's own commit after a turn (retinue/tobase.py `_autocommit`): its line under the turn's summary.
 export const baseCards: BaseCard[] = [
   {
-    id: "a070a070", session: "e5f6a7b8", state: "committed", place: "notes", subject: "travel: Lisbon in May", custom: false,
+    id: "a070a070", session: "e5f6a7b8", state: "committed", subject: "travel: Lisbon in May",
     files: [
-      { path: "travel/journal/2026-05-07-lisbon.md", status: "A", add: 18, del: 0, on: true, shared: false },
-      { path: "travel/AGENTS.md", status: "M", add: 1, del: 0, on: true, shared: false },
+      { path: "travel/AGENTS.md", status: "M", add: 1, del: 0 },
+      { path: "travel/journal/2026-05-07-lisbon.md", status: "A", add: 18, del: 0 },
     ],
-    others: { files: 0, sessions: 0 }, sha: "4f2a9c1e0b7d", auto: true, undo: true, undone: null,
-    said: "Committed by itself after the turn: 4f2a9c1 · 2 files.", refused: [],
-    committed: ["A travel/journal/2026-05-07-lisbon.md", "M travel/AGENTS.md"], created: T0 - 20, at: T0 - 20,
-    view: { head: ["In the Base · notes · session e5f6a7b8", "Subject: travel: Lisbon in May"], body: "", status: "" },
+    sha: "4f2a9c1e0b7d", undo: true, undone: null,
+    said: "Written to the Base: travel/AGENTS.md, travel/journal/2026-05-07-lisbon.md · 4f2a9c1.", refused: [],
+    committed: ["M travel/AGENTS.md", "A travel/journal/2026-05-07-lisbon.md"], created: T0 - 20, at: T0 - 20,
   },
 ];
 

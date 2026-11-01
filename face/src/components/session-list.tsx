@@ -218,7 +218,7 @@ function Row({
               </Mini>
             )}
             {(s.base ?? 0) > 0 && (
-              <Mini title={`To the Base: ${s.base}`}>
+              <Mini title={`Not in the Base yet: ${s.base}`}>
                 <Database />
                 {s.base}
               </Mini>

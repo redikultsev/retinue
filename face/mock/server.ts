@@ -407,7 +407,10 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return json(res, decided.status, decided.data);
   }
   // …and the owner's writes to them, each at the version shown (docs/collections.md «From the screen»).
-  const wrote = method === "POST" && path !== "/api/c/_files" ? mockWrite(path, await body(req)) : null;
+  // Only a collection's own path: its body is read once, and every other POST keeps its own for its route below.
+  const wrote = method === "POST" && /^\/api\/c\/[a-z][a-z0-9_]*$/.test(path) && path !== "/api/c/_files"
+    ? mockWrite(path, await body(req))
+    : null;
   if (wrote) {
     if (wrote.moved) emit("collection", wrote.moved.name, wrote.moved);
     return json(res, wrote.status, wrote.data);

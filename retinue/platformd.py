@@ -130,9 +130,9 @@ class Platform:
         self.base = base if base is not None or cfg.base is None else BaseRepo(cfg.base, _lane_view(cfg))
         if self.base is not None:
             self.base.busy = self._base_busy
-        # «To the Base»: who changed what in the Base and the owner's commit card (`tobase.py`).
+        # The Base: who changed what, and the platform's own commit after each turn (`tobase.py`).
         self.tobase = tobase.ToBase(self)
-        self.feed.tobase = self.tobase  # the feed's «To the Base» rows, nobody's files among them
+        self.feed.tobase = self.tobase
         # The owner's repositories in the room (`code.py`) and «Push», their push by his button (`topush.py`).
         self.code = CodeRepos(cfg.code, cfg.lanes[cfg.code.lane].work_mount) if cfg.code is not None else None
         self.topush = topush.ToPush(self)
@@ -246,8 +246,6 @@ class Platform:
         card = body.get("card")
         if isinstance(card, str) and self.store.input_known(input_id):
             return web.json_response({"say": "The session already has this message."})  # the router sent it again
-        if isinstance(card, str) and not attachments and (say := self.tobase.reply(card, session_id, text)) is not None:
-            return web.json_response({"say": say})  # a reply to a «To the Base» card: the commit's subject
         if isinstance(card, str) and not attachments and (say := self.topush.reply(card, session_id, text)) is not None:
             return web.json_response({"say": say})  # a reply to a «Push» card: its branch or its PR's title
         if isinstance(card, str) and not attachments and \
@@ -259,7 +257,7 @@ class Platform:
         button = (await _body(request)).get("button")
         now = self.clock()
         bound = self.store.peek_button(button, now) if isinstance(button, str) else None
-        if bound is not None and bound["approval"].startswith(tobase.KEY):  # «To the Base»: its card keeps its state
+        if bound is not None and bound["approval"].startswith(tobase.KEY):  # «Undo» of the platform's own commit
             return web.json_response(await self.tobase.press(bound))
         if bound is not None and bound["approval"].startswith(topush.KEY):  # «Push»: the same, its own card
             return web.json_response(await self.topush.press(bound))
@@ -816,7 +814,7 @@ class Platform:
         return None
 
     async def _start(self, session: dict, queued: dict) -> str:
-        if not await self.tobase.before_start(session):  # a «To the Base» commit in flight: the run waits its turn
+        if not await self.tobase.before_start(session):  # a commit to the Base in flight: the run waits its turn
             return "busy"
         now = self.clock()
         track, lane = self.tracks[session["track"]], self.cfg.lanes[session["lane"]]
@@ -1013,7 +1011,7 @@ class Platform:
         except Exception as exc:  # files are never worth the lane's journal or the queue: logged, and on
             log.error("the hand-over of files failed: %s", type(exc).__name__)
         try:
-            await self.tobase.settle()  # the Base files these lines' runs changed, and the pings' «To the Base»
+            await self.tobase.settle()  # the Base files these lines' runs changed, and their commit after the turn
         except Exception as exc:
             log.error("the Base's marks failed: %s", type(exc).__name__)
         try:
@@ -1339,7 +1337,7 @@ class Platform:
         self.tasks.append(asyncio.create_task(self.collections.open()))  # there for the night's backup from now on
         self.tasks.append(asyncio.create_task(self._watch_collections()))
         self.tasks.append(asyncio.create_task(self._clock()))
-        self.tasks.append(asyncio.create_task(self.tobase.recover()))  # a «To the Base» card a restart cut
+        self.tasks.append(asyncio.create_task(self.tobase.recover()))  # a commit to the Base a restart cut
         if self.base is not None:
             self.tasks.append(asyncio.create_task(self._base_loop()))
         self.tasks.append(asyncio.create_task(self.topush.recover()))  # a «Push» card a restart cut

@@ -21,7 +21,6 @@ export type FeedSourceKind =
   | "chat"
   | "draft"
   | "deadline"
-  | "base"
   | "push"
   | "proposal"
   | string;
@@ -45,8 +44,6 @@ export interface FeedRow {
   ref: string;
   /** «Answer», «Decide»: the card itself, decided in place. */
   approval?: Approval;
-  /** «Decide» · «To the Base»: the session's Base files not committed yet (retinue/tobase.py). */
-  base?: number;
   /** «Decide» · «Push»: commits no branch of the remote has, and in which repositories (retinue/topush.py). */
   push?: number;
   repos?: string[];

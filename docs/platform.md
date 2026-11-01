@@ -90,8 +90,7 @@ one past the CLI's 6-hour cap is read as 6 hours), the time in `owner_tz` of `pl
   card, so the card's later rewrites never touch it). A card to decide is not answered by a reply — it would only go
   stale — so its line says «Decide with its card's buttons or in the app.» and a reply to it goes nowhere. The
   assistant's rows come as one system message in her conversation (on record there): a reply to it goes to her with
-  that message quoted. A session's «To the Base» row (🗂) says «Press «To the Base» under its result or open it in the app.» and maps
-to nothing. The first 10 rows; «N more — in the app.».
+  that message quoted. The first 10 rows; «N more — in the app.».
 - If the platform is down, the router says «The platform is unavailable — try again later.» and never hands the message to
   the assistant.
 
@@ -645,8 +644,8 @@ What keeps the way out narrow: **the web is the CLI's, not Bash's** — exactly 
 A host added to that list (and the image rebuilt) is one more way out.
 
 What never enters the room: your mail, Telegram, the bot tokens, the subscription token (a pipe to the CLI, below),
-any GitHub or registry credential and any right to push — a commit leaves only by your button, the Base's «To the Base»
-([base.md](base.md)) and the code's ([code.md](code.md)). There are no documents in the Base. The never list still
+any GitHub or registry credential and any right to push — a commit leaves only by the platform: the Base's after a
+turn ([base.md](base.md#the-commit-after-a-turn)), the code's by your button ([code.md](code.md)). There are no documents in the Base. The never list still
 holds in the room ([The never list](#the-never-list-and-the-courier-card)).
 
 ### The exfil guard
@@ -1068,11 +1067,10 @@ what follows from it in a line; the one it recommends first, marked «(Recommend
 one. You can always answer in your own words. So a decision is a question card — its options described, an answer of
 your own always open, alive 7 days and through restarts — and the run stops on it, holding no room on its lane.
 
-After a run in the Base the platform commits by itself what the assistant may write, and the ping gets **«Undo · N in
-the Base»** ([base.md](base.md#the-platforms-own-commit)) — gone once undone. What is left — files only the owner
-commits — has a button on the session's latest ping: **«To the Base · N»** ([base.md](base.md#the-button)). It comes a
-poll after the ping (the message is rewritten with it), moves to the next ping, is relabelled when N changes and goes
-when nothing is left.
+After a run in the Base the platform commits and pushes by itself everything the session changed there, and the ping
+gets one line — «🗂 Written to the Base: <files> · <sha7>.», or «Not written: <why>. The session was asked to fix
+it.» — and **«Undo · N in the Base»** ([base.md](base.md#the-commit-after-a-turn)), gone once undone. They come a poll
+after the ping: the message is rewritten with them.
 
 **Loudness.** A ✅ ping less than 2 minutes (`pings.QUIET_S`) after you last acted on the session, of a run your own
 message or decision started, goes out without a sound (`disable_notification`): you are looking. A longer one, a ❓

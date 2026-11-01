@@ -88,7 +88,7 @@ directly, past the hook — the router is trusted code; the model never sees the
 ## In the server's sessions
 
 Sessions of the platform can work in the base too: a clone in `lane-private`, pulled by the platform before each run
-and committed by your «To the Base» button with your rights — the hub sees a uid other than the router's. See
+and committed and pushed by the platform after each turn with your rights — the hub sees a uid other than the router's. See
 [base.md](base.md).
 
 ## Every day

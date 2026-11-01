@@ -9,7 +9,6 @@
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
-import { BaseButton } from "@/components/base-card";
 import { CollectionProposalCard } from "@/components/collection-proposal-card";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
@@ -49,7 +48,6 @@ const ICONS: Record<string, (props: React.SVGProps<SVGSVGElement>) => React.Reac
   chat: MessageCircle,
   draft: Pencil,
   deadline: Clock,
-  base: Database,
   push: GitBranch,
   proposal: Fork,
   collection_proposal: Database,
@@ -69,7 +67,6 @@ const SOURCE_WORDS: Record<string, string> = {
   chat: "Telegram",
   draft: "draft",
   deadline: "deadline",
-  base: "To the Base",
   push: "Push",
   proposal: "proposed sub-session",
   collection_proposal: "proposed write",
@@ -228,7 +225,6 @@ function Row({ row, now, feed, onOpen }: { row: FeedRow; now: number; feed: Feed
       {row.collection_proposal && (
         <CollectionProposalCard proposal={row.collection_proposal} onDecided={() => void feedSource.refresh()} />
       )}
-      {row.source === "base" && row.session && <BaseButton session={row.session} count={row.base ?? 0} />}
       {row.source === "push" && row.session && (
         <PushButton session={row.session} count={row.push ?? 0} repo={row.repos?.length === 1 ? undefined : row.repos?.[0]} />
       )}

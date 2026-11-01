@@ -411,8 +411,8 @@ the list's end: «Closed today M · ran out unmarked this week N», and when her
 place. Its top line says where it is from and how long it waits, with «Open the session ↗» when it has one:
 
 - **a question**: the question large; the session's brief — what it wrote just before asking, when in the brief's
-  shape (labelled lines «**Recommend:** …», `**Why:**`, `**Cost:**`, `**Skip:**`, `**Not checked:**`: the lanes'
-  instructions ask for it) — as a table, its whole text under «The session's full reasoning»; a text not in that shape
+  shape (labelled lines «**Recommend:** …», `**Why:**`, `**Cost:**`, `**Risk:**`, `**Not checked:**`: the lanes'
+  instructions ask for it, and a question without it is sent back to the session once) — as a table, its whole text under «The session's full reasoning»; a text not in that shape
   its first paragraph — where a session puts its answer — and the rest folded the same way. Then the options to pick (radio buttons; checkboxes for a multi-select), the
   recommended one picked at the start, «(Recommended)» shown as a mark; «Or answer in your own words»; one button —
   «Answer · <the pick>», «Send your answer» once words are written. 1–9 pick, Enter answers, ⌘Enter in the words;

@@ -31,6 +31,16 @@ DONE = "done"
 TICK, UNTICK = "☑ ", "☐ "
 OPEN_SINGLE = "Press one — or reply in your own words."
 OPEN_MULTI = "Tick, then «Done» — or reply in your own words."
+# The brief a session writes right before its question (deploy/lanes/instructions/common.md): labelled lines the face
+# shows beside the options — the face reads them by the same labels (`components/question-decide.tsx`).
+BRIEF = re.compile(r"^\s*(?:[-*]\s+)?\*\*(Recommend|Why|Cost|Risk|Skip|Not checked)\s*[:.]?\s*\*\*\s*[:.]?\s*\S",
+                   re.IGNORECASE | re.MULTILINE)
+
+
+def has_brief(said: str) -> bool:
+    """Whether the session's last words carry the brief: a recommendation and at least one more of its lines."""
+    labels = {m.group(1).lower() for m in BRIEF.finditer(said)}
+    return "recommend" in labels and len(labels) >= 2
 
 
 def of(tool_input: dict) -> list[dict]:

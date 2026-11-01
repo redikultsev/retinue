@@ -71,6 +71,40 @@ def test_a_question_is_one_card_per_question_with_its_options_as_buttons(tmp_pat
     scenario(tmp_path, body)
 
 
+def said_then_asked(text: str) -> str:
+    """The run's assistant line: its words, then the question's call — as the stream has it before the hook."""
+    return json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+        {"type": "text", "text": text}, {"type": "tool_use", "id": CALL["id"], "name": CALL["name"], "input": ASK}]}},
+        ensure_ascii=False)
+
+
+def test_a_question_with_no_brief_before_it_is_sent_back_once_and_one_with_it_is_asked(tmp_path):
+    async def body(world: World):
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "куда поехать"}))["session"]
+        [run] = world.lanes["private"].runs()
+        world.lanes["private"].add(session, run["run"], DEFERRED[0], said_then_asked("Смотрел оба района."))
+        await world.poll()
+        answer = await world.hook("PreToolUse", run, pre_tool_use())
+        assert decision(answer) == "deny"
+        assert answer["hookSpecificOutput"]["permissionDecisionReason"] == gate.NO_BRIEF
+        assert not world.store.approvals(session=session, kind="question"), "no card for a question sent back"
+        assert decision(await world.hook("PreToolUse", run, pre_tool_use())) == "defer", "never twice in a run"
+
+        session = (await world.owner("new", {"input_id": "tg:2", "track": "notes", "text": "куда ещё"}))["session"]
+        run = world.lanes["private"].runs()[-1]
+        world.lanes["private"].add(session, run["run"], DEFERRED[0],
+                                   said_then_asked("**Recommend:** центр\n**Why:** пешком до всего\n**Cost:** +€20 в ночь"))
+        await world.poll()
+        assert decision(await world.hook("PreToolUse", run, pre_tool_use())) == "defer", "a brief: asked at once"
+    scenario(tmp_path, body)
+
+
+def test_the_brief_is_read_by_its_labels():
+    assert questions.has_brief("Долго.\n\n**Recommend:** центр\n- **Risk:** шумно")
+    assert not questions.has_brief("**Why:** дёшево\n**Cost:** €20"), "no recommendation: no brief"
+    assert not questions.has_brief("**Prices.** go up\n**Recommend** nothing on its line")
+
+
 def test_buttons_answer_each_question_and_the_resume_after_a_restart_hands_the_cli_the_answers_once(tmp_path):
     async def body(world: World):
         session, run, (first, second) = await asked(world)

@@ -155,6 +155,7 @@ class World:
 @pytest.fixture(autouse=True)
 def short_wait(monkeypatch):
     monkeypatch.setattr(gate, "MARK_WAIT_S", 0.05)
+    monkeypatch.setattr(gate, "BRIEF_WAIT_S", 0.05)
 
 
 def scenario(tmp_path, body, **start):

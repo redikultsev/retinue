@@ -955,11 +955,19 @@ class PlatformStore:
         """What the session wrote to the owner last before this call — a question's case and its stakes, which the
         question alone does not carry. The session's last words when the call is not in its transcript yet; "" when
         it wrote nothing."""
+        said = self.said_at(session, call_id)
+        return said if said is not None else self._last_said(session, None)
+
+    def said_at(self, session: str, call_id: str) -> str | None:
+        """What the session wrote last before this call, once the call is in its transcript; None until then."""
         at = self.db.execute("SELECT turn, n FROM items WHERE session = ? AND kind = 'question' AND "
                              "json_extract(data, '$.id') = ?", (session, call_id)).fetchone()
-        before, args = ("AND (turn < ? OR (turn = ? AND n < ?))", (at[0], at[0], at[1])) if at else ("", ())
+        return self._last_said(session, (at[0], at[1])) if at else None
+
+    def _last_said(self, session: str, before: tuple[int, int] | None) -> str:
+        where, args = ("AND (turn < ? OR (turn = ? AND n < ?))", (before[0], before[0], before[1])) if before else ("", ())
         row = self.db.execute("SELECT data FROM items WHERE session = ? AND kind = 'message' AND "
-                              f"json_extract(data, '$.role') = 'assistant' {before} ORDER BY turn DESC, n DESC LIMIT 1",
+                              f"json_extract(data, '$.role') = 'assistant' {where} ORDER BY turn DESC, n DESC LIMIT 1",
                               (session, *args)).fetchone()
         return str(json.loads(row[0]).get("text") or "") if row else ""
 

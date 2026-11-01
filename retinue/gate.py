@@ -52,6 +52,7 @@ MACHINE_CARDS = {subs.PREFIX + subs.START: subs.FROM_REPORT_CARD,  # what a mach
                  subs.PREFIX + colltools.APPLY: colltools.FROM_MACHINE_CARD}
 
 MARK_WAIT_S = 1.0     # how long the general PreToolUse waits for the call's marker hooks
+BRIEF_WAIT_S = 2.0    # how long a question's PreToolUse waits for its call to be in the transcript, to read the brief
 # Retries the gate lets one run make after classifier blocks. The CLI aborts a headless run after 3 classifier denials
 # in a row or 20 in all; a retry the gate allows is deferred, never denied, so it adds none — the cap keeps it so even
 # for a model that tries one blocked call after another.
@@ -73,6 +74,10 @@ DEFERRED = "Waiting for the owner's decision"
 CLOSING = "The platform is stopping"
 UNCHECKED = "The platform could not check this call — it was not run. Simplify it: another path or pattern."
 UNANSWERED = "The owner did not answer the question. If you still need the answer, ask again."
+NO_BRIEF = ("Not asked: the brief is missing. Right before the question, and nothing after it, write the brief the "
+            "owner decides by — each a bold label and one line: **Recommend:** **Why:** **Cost:** **Risk:** "
+            "**Not checked:** (leave out a line that has nothing) — and give each option's description what follows "
+            "from it and what it costs or risks. Then ask the same question again.")
 # A subagent's call never waits for the owner: a deferral inside a subagent ends the subagent without its report and
 # is lost — the run goes on and no resume brings the call back (probed with 2.1.304). So what would be deferred to the
 # owner is denied with this, no card made; the main agent, told so in the report, makes the call itself.
@@ -171,6 +176,7 @@ class Gate:
         self.memory_mount = memory_mount  # and his memory snapshot (approvals.OWNER_MEMORY)
         self.push_lanes: frozenset[str] = frozenset()  # lanes whose `git push` is the owner's «Push» (topush)
         self.closing = False
+        self._briefed: set[str] = set()  # runs whose question was sent back once for its brief: never twice
         self._calls: dict[str, _Call] = {}
         # (session, reask key): the CLI asked, or its classifier blocked the call; made again, it goes to the owner
         self._reasks: dict[tuple[str, str], _Reask] = {}
@@ -394,7 +400,9 @@ class Gate:
         if any(m.kind == "deny" for m in call.marks):
             return {}  # the CLI's own deny rule refuses it; no card may grant it past that
         if _call_of(body)[0] == questions.QUESTION:
-            return _decision("deny", SUBAGENT) if _subagent(body) else self._question(run, call_id, body)
+            if _subagent(body):
+                return _decision("deny", SUBAGENT)
+            return await self._brief(run, call_id) or self._question(run, call_id, body)
 
         tool, tool_input, cwd = _call_of(body)
         try:
@@ -520,6 +528,21 @@ class Gate:
         self.store.add_approval(run.session, run.id, call_id, "approval", tool, tool_input, cwd, file_hash, digest,
                                 self.clock(), why=why)
         return _decision("defer", DEFERRED)
+
+    async def _brief(self, run: Run, call_id: str) -> dict | None:
+        """A new question with no brief before it is sent back once, so the model writes it and asks again: the owner
+        decides from the brief and the options alone. The call's words are read once the stream has it, at most
+        BRIEF_WAIT_S; not there by then, it is asked as it is — a question is never lost for a brief."""
+        if run.id in self._briefed or self.store.approvals(session=run.session, tool_use_id=call_id, kind="question"):
+            return None
+        deadline = time.monotonic() + BRIEF_WAIT_S
+        while (said := self.store.said_at(run.session, call_id)) is None and not self.closing \
+                and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        if said is None or questions.has_brief(said):
+            return None
+        self._briefed.add(run.id)
+        return _decision("deny", NO_BRIEF)
 
     def _question(self, run: Run, call_id: str, body: dict) -> dict:
         """AskUserQuestion is always the owner's: deferred to him as a question card, never the classifier's, and on

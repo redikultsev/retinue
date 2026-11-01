@@ -353,7 +353,7 @@ def _queue(store: Collections, collection: str, form: dict, view: dict, when: Wh
         else:
             rows.append(row)
     return {"rot": rot, "fields": fields or list(form["fields"]), "count": total, "rows": rows,
-            "dropped": dropped, "mark": view.get("mark", "act")}
+            "dropped": dropped, "mark": view.get("mark", "act"), "latest": "latest" in view}
 
 
 def _latest(store: Collections, collection: str, spec: dict, ids: list[str]) -> dict[str, dict]:

@@ -86,6 +86,8 @@ export interface QueueView extends Named {
   dropped: number;
   /** Its rows are the owner's to act on (`act`), or his to wait for (`wait`). */
   mark?: "act" | "wait";
+  /** Its rows carry their newest record that names them (`ViewRow.latest`): the screen keeps that column. */
+  latest?: boolean;
   done?: Done | null;
   add?: AddSpec | null;
 }

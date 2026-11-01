@@ -174,7 +174,7 @@ export function Queue({ collection, view }: { collection: CollectionViews; view:
     setGone(new Set());
   }
   const rows = view.rows.filter((r) => !gone.has(r.id));
-  const latestShown = view.rows.some((r) => r.latest);
+  const latestShown = view.latest === true;
   if (rows.length === 0 && (view.count === 0 || view.rows.length > 0))
     return <p className="px-1 py-2 text-sm text-muted-foreground">{view.count === 0 ? emptyWords(collection) : "None left."}</p>;
   const more = rows.length - PHONE_ROWS;

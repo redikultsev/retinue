@@ -125,7 +125,7 @@ describe("a Space's views", () => {
 
   it("says on each row which way its last touch went and when, and a row nothing names keeps the column empty", async () => {
     const talks: View = {
-      name: "talks", kind: "queue", title: "In talks", mark: "wait", rot: 7, fields: ["company"], count: 2, dropped: 0,
+      name: "talks", kind: "queue", title: "In talks", mark: "wait", latest: true, rot: 7, fields: ["company"], count: 2, dropped: 0,
       rows: [
         { ...row({ company: "Initech" }, 3), latest: { date: "2026-09-14", value: "in", label: "They wrote", arrow: "in" } },
         row({ company: "Globex" }, 1),

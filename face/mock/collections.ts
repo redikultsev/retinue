@@ -236,6 +236,7 @@ function dealViews(): View[] {
       kind: "queue",
       title: "In talks",
       mark: "wait",
+      latest: true,
       rot: STUCK,
       fields: ["company", "contact", "value"],
       count: talking().length,

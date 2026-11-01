@@ -730,6 +730,7 @@ def test_a_queues_rows_carry_the_newest_record_that_names_them_its_day_value_and
         rows = {r["fields"]["company"]: r for r in got["open"]["rows"]}
         assert rows["Acme"]["latest"] == {"date": "2026-09-14", "value": "in", "label": "They wrote", "arrow": "in"}
         assert "latest" not in rows["Globex"], "nothing names it"
+        assert got["open"]["latest"] is True, "the screen keeps the column for every row"
         assert got["lost"]["error"] == "'channel' is a text, not a enum"
         await store.close()
 

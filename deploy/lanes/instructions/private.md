@@ -5,7 +5,9 @@ or the code. The terminal (Bash) does not reach the open internet: only GitHub, 
 
 - Every claim from the internet has a link to its source and the source's date (of publication or of the page's
   update). No date — say so.
-- A link stands under a claim only if the claim is on that page: open it with WebFetch and find it there. A search
+- A link stands under a claim only if the claim is on that page: open it with WebFetch and find it there. For an
+  exact figure, a term or a quote, read the page's own text with `read_page` (the platform's tool; a PDF by its
+  pages): WebFetch gives a summary, which can drop or round a number. A search
   snippet, a catalogue the page sits in, or another site retelling it is not that page.
 - A price, a tariff, a fee, a deadline or a requirement comes from the page of whoever sets it — the seller, the
   authority, the law — as it reads today. A blog, a review or a news story is a second source, named as one. Prices

@@ -39,8 +39,9 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
-from . import approvals, citecheck, episodes, exfil, finish, followups, questions, signals, subs
+from . import approvals, citecheck, episodes, exfil, finish, followups, questions, reach, signals, subs
 from .approvals import Mark, Unbindable
 from .config import LaneRef
 from .sessions import PlatformStore
@@ -74,6 +75,14 @@ UNANSWERED = "The owner did not answer the question. If you still need the answe
 # owner is denied with this, no card made; the main agent, told so in the report, makes the call itself.
 SUBAGENT = ("A subagent cannot wait for the owner's decision — the call was not run. Do not retry; finish your report "
             "and name this step in it: the main session will do it itself.")
+
+
+# The page reader's tool (`reach`) opens an address as WebFetch does: the exfil guard and the site budget read it so.
+READ_PAGE = subs.PREFIX + reach.READ
+
+
+def _web(tool: str) -> str:
+    return "WebFetch" if tool == READ_PAGE else tool
 
 
 @dataclass(frozen=True)
@@ -167,6 +176,9 @@ class Gate:
         self._passed: dict[tuple[str, str], tuple[str, str, str]] = {}  # (run, call) -> (tool, digest, how)
         self.checks = finish.Checks()  # files changed since their check: a turn's end is sent on once (`finish`)
         self.loops = finish.Loops()    # the same call or failure again and again in a turn
+        # session -> the addresses its turn fetched through this gate (WebFetch, read_page): all a source check of
+        # that turn may open again (`citecheck`). Memory only: after a restart a turn's check finds none, and none runs.
+        self.fetched: dict[str, set[str]] = {}
 
 
     def token_hash(self, token: str) -> str:
@@ -245,6 +257,10 @@ class Gate:
         same again (`finish.Loops`)."""
         tool, tool_input, cwd = _call_of(body)
         try:
+            if error is None and _web(tool) == "WebFetch" and isinstance(tool_input.get("url"), str):
+                if len(self.fetched) > 500 and run.session not in self.fetched:
+                    self.fetched.clear()
+                self.fetched.setdefault(run.session, set()).add(citecheck.norm(tool_input["url"]))
             if error is None:
                 self.checks.edited(run.session, run.lane, tool, tool_input, cwd)
                 if tool == "Bash":
@@ -284,6 +300,7 @@ class Gate:
         unchecked and its counts are not the next turn's."""
         self.checks.forget(session)
         self.loops.end(session)
+        self.fetched.pop(session, None)
 
     def _mark(self, run: Run, why: str) -> None:
         try:
@@ -348,9 +365,11 @@ class Gate:
             # A source check's run (`citecheck`): a fetch of an address it was given, past the exfil guard and the
             # site's budget — never a card, it has no owner watching — and nothing else.
             tool, tool_input, _ = _call_of(body)
-            if tool != "WebFetch" or not citecheck.may_fetch(cited, tool_input.get("url")):
+            if _web(tool) != "WebFetch" or not citecheck.may_fetch(cited, tool_input.get("url")):
                 return _decision("deny", citecheck.ONLY)
-            if leak := exfil.why(tool, tool_input) or self.budget.over(run.id, tool, tool_input):
+            if (clean := exfil.clean(tool_input.get("url"))) and citecheck.may_fetch(cited, clean):
+                return _decision("deny", exfil.CLEANED.format(url=clean))
+            if leak := exfil.why(_web(tool), tool_input) or self.budget.over(run.id, _web(tool), tool_input):
                 return _decision("deny", leak)
             return _decision("allow", "an address the source check was given")
         if subs.own(_call_of(body)[0]) and (_subagent(body) or not run.subs):
@@ -401,12 +420,18 @@ class Gate:
             if digest is None:
                 return _decision("deny", UNBINDABLE)
             return self._to_owner(run, call_id, body, file_hash, digest, approvals.never_why(label))
-        if tool == "WebFetch" and (clean := exfil.clean(tool_input.get("url"))) and \
-                not exfil.why(tool, {**tool_input, "url": clean}):
+        if tool == READ_PAGE and (ruled := self._web_rule(run, tool_input)) is not None:
+            # The CLI's WebFetch rules match its own tool's name only: the reader's address is held to them here.
+            kind, rule = ruled
+            if kind in ("deny", "never") or _subagent(body) or digest is None:
+                return _decision("deny", f"Not run: the session's rules do not let it open this site ({rule}).")
+            return self._to_owner(run, call_id, body, file_hash, digest, approvals.rule_why(rule))
+        if _web(tool) == "WebFetch" and (clean := exfil.clean(tool_input.get("url"))) and \
+                not exfil.why("WebFetch", {**tool_input, "url": clean}):
             # A link with tracking parameters: the model fetches the clean address instead, and that call passes every
             # check below — not an `updatedInput`, which only an allow carries, and an allow skips the classifier.
             return _decision("deny", exfil.CLEANED.format(url=clean))
-        if leak := exfil.why(tool, tool_input) or self.budget.over(run.id, tool, tool_input):
+        if leak := exfil.why(_web(tool), tool_input) or self.budget.over(run.id, _web(tool), tool_input):
             # A web call whose address or query looks like it carries data out, or one that takes its site past the
             # run's budget: the owner reads it whole first, whatever an allow rule or the classifier would say
             # (`exfil`). The owner's card path: a subagent's call is never deferred there.
@@ -433,6 +458,27 @@ class Gate:
         if digest is None:
             return _decision("deny", UNBINDABLE)
         return self._to_owner(run, call_id, body, file_hash, digest)
+
+    @staticmethod
+    def _web_rule(run: Run, tool_input: dict) -> tuple[str, str] | None:
+        """The run's own rule a read_page address falls under, as the CLI would match it for WebFetch: `WebFetch`, or
+        `WebFetch(domain:<host>)` for the host or a domain above it. Deny and never first, then card; allow rules are
+        left out — the reader is never let past the classifier by one."""
+        url = tool_input.get("url")
+        try:
+            host = (urlsplit(url).hostname or "").lower().rstrip(".") if isinstance(url, str) else ""
+        except ValueError:
+            host = ""
+        found = []
+        for mark in run.marks:
+            name, _, spec = mark.rule.partition("(")
+            if name != "WebFetch" or mark.kind not in ("deny", "never", "card"):
+                continue
+            domain = spec.rstrip(")").removeprefix("domain:").lower() if spec else ""
+            if not spec or (spec.startswith("domain:") and (host == domain or host.endswith("." + domain))):
+                found.append((mark.kind, mark.rule))
+        found.sort(key=lambda f: f[0] == "card")
+        return found[0] if found else None
 
     async def _wait_for_marks(self, run: Run, body: dict, call: _Call) -> None:
         """Wait, up to MARK_WAIT_S, for the marks that change the answer. A tool a card rule names waits until a card

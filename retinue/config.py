@@ -432,6 +432,7 @@ class PlatformConfig:
     speech: SpeechConfig = field(default_factory=SpeechConfig)
     stt_key: str = ""                   # from ELEVENLABS_API_KEY: the app's dictation; without it voice is refused aloud
     travel_url: str = ""                # from RETINUE_TRAVEL_URL: travel-ops' MCP; '' = no travel tools in sessions
+    reach_url: str = ""                 # from RETINUE_REACH_URL: the page reader (`reach`); '' = no read_page
 
     @classmethod
     def load(cls, path: str | Path = "/config/platform.yaml") -> PlatformConfig:
@@ -500,6 +501,7 @@ class PlatformConfig:
         cfg.oauth_token = _env("CLAUDE_CODE_OAUTH_TOKEN")
         cfg.face_origin = os.environ.get("RETINUE_FACE_ORIGIN", "").rstrip("/")
         cfg.travel_url = os.environ.get("RETINUE_TRAVEL_URL", "")
+        cfg.reach_url = os.environ.get("RETINUE_REACH_URL", "")
         cfg.face_host = os.environ.get("RETINUE_FACE_HOST", "") or cfg.face_host
         try:
             ipaddress.ip_address(cfg.face_host)

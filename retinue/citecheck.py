@@ -2,10 +2,14 @@
 each of them and says, claim by claim, whether the page says it. Its own judge, apart from the turn's work: it sees
 the claims and their addresses only, never the reasoning, the Base or the owner's words.
 
-Started by code (`maybe_start`) when a turn of a session the owner started, on a lane with the web, ends with at
-least `MIN_LINKS` distinct addresses in its summary — at most `DAY_MAX` a day. It is a side session of that session
-(`parent`): it changes nothing, and the gate lets its runs do one thing, `WebFetch` of exactly the addresses it was
-given — the exfil guard and the site budget still first — and denies every other call (`allowed`). The prompt is the
+Started by code (`maybe_start`) when the owner's own turn of a session he started, on a lane with the web, ends
+with at least `MIN_LINKS` distinct addresses in its summary that the turn itself opened through the gate (WebFetch,
+read_page: `Gate.fetched`) — at most `DAY_MAX` a day. An address in the summary the turn never opened is left out:
+the summary's text may be a page's, and the check must never be the way a planted address gets fetched past the
+classifier, or a link that does something when opened gets opened. It is a side session of that session (`parent`):
+it changes nothing, and the gate lets its runs do one thing, `WebFetch` or `read_page` of exactly those addresses —
+the exfil guard and the site budget still first — and denies every other call (`allowed`). It reads the rules a
+side session reads, the Base's among them; what it may do keeps them in. The prompt is the
 platform's, the claims cut and numbered by code; what comes back is read by code (`verdict`): one line per claim,
 `N | found | <the page's words>`, `N | missing`, `N | contradicts | <what the page says>` or `N | unreachable`.
 
@@ -25,6 +29,7 @@ from .sessions import PlatformStore
 
 MIN_LINKS = 3
 MAX_CLAIMS = 12
+MAX_URLS = 20
 DAY_MAX = 10
 CLAIM_CHARS = 400
 TITLE = "Source check"
@@ -104,6 +109,11 @@ def verdict(text: str, n: int) -> dict:
     return {"counts": counts, "contradicts": flagged}
 
 
+def _plain(text: str) -> str:
+    """A page's words as the ping quotes them: one line, no link, cut."""
+    return " ".join(re.sub(r"https?://\S+|www\.\S+", "[link]", text).split())[:200]
+
+
 def allowed(store: PlatformStore, session: str) -> frozenset[str] | None:
     """The addresses a checker's run may open; None for a session that is not a checker."""
     row = store.db.execute("SELECT urls FROM cite_checks WHERE checker = ?", (session,)).fetchone()
@@ -115,13 +125,16 @@ def may_fetch(urls: frozenset[str], url: object) -> bool:
 
 
 def maybe_start(store: PlatformStore, session: dict, run: str, text: str, day_start: float,
-                web: bool) -> tuple[str, str, str, int] | None:
+                web: bool, fetched: set[str] | None = None) -> tuple[str, str, str, int] | None:
     """A check of this turn, when it is one to check: the checker's title, its prompt, the addresses it may open and
     how many claims; else None. The caller makes the side session (`Platform._cite_check`) and records it (`bind`)."""
-    if not web or session.get("parent") or allowed(store, session["id"]) is not None:
+    if not web or session.get("parent") or session.get("sub_of") or session.get("turn_by") not in (None, "owner") or \
+            allowed(store, session["id"]) is not None:
         return None
-    found = claims(text)
-    urls = {norm(u) for _, us in found for u in us} - {""}
+    opened = set(fetched or ())
+    found = [(claim, kept) for claim, us in claims(text)
+             if (kept := [u for u in us if norm(u) in opened or norm(exfil.clean(u) or u) in opened])]
+    urls = set([u for u in dict.fromkeys(norm(u) for _, us in found for u in us) if u][:MAX_URLS])
     if len(urls) < MIN_LINKS:
         return None
     if store.db.execute("SELECT COUNT(*) FROM cite_checks WHERE at >= ?", (day_start,)).fetchone()[0] >= DAY_MAX:
@@ -140,9 +153,10 @@ def bind(store: PlatformStore, checker: str, session: str, run: str, urls: str, 
 
 
 def ended(store: PlatformStore, checker: str, text: str) -> tuple[str, bool] | None:
-    """A checker's turn is over: what its ping says, and whether it rings — only when a page contradicts its claim.
-    None for a session that is not a checker."""
-    row = store.db.execute("SELECT session, claims FROM cite_checks WHERE checker = ?", (checker,)).fetchone()
+    """A checker's own turn is over: what its ping says, and whether it rings — only when a page contradicts its
+    claim. None for a session that is not a checker, and for a turn after its first: the owner's word in it is his."""
+    row = store.db.execute("SELECT session, claims FROM cite_checks WHERE checker = ? AND state = 'open'",
+                           (checker,)).fetchone()
     if row is None:
         return None
     session, n = row
@@ -154,8 +168,8 @@ def ended(store: PlatformStore, checker: str, text: str) -> tuple[str, bool] | N
     if read["contradicts"]:
         lines = [f"Sources of session {session}: {len(read['contradicts'])} of {n} claims are contradicted by "
                  "their page —"]
-        lines += [f"- claim {f['claim']}: the page says «{f['page']}»" if f["page"] else f"- claim {f['claim']}"
-                  for f in read["contradicts"]]
-        return "\n".join([*lines, "", text.strip()[:3000]]), False
+        lines += [f"- claim {f['claim']}: the checker read on its page «{_plain(f['page'])}»" if f["page"]
+                  else f"- claim {f['claim']}" for f in read["contradicts"]]
+        return "\n".join([*lines, "", "Open the check for its lines."]), False
     rest = ", ".join(f"{k} {v}" for k, v in c.items() if v and k != "found")
     return f"Sources of session {session} checked: {c['found']} of {n} found" + (f" ({rest})" if rest else "") + ".", True

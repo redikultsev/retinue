@@ -358,18 +358,42 @@ sets the sphere, never the main mark, and the session's sub-sessions follow — 
 a title it has stays; a sphere set by you (`sphere_by: owner`) or by the session stays. A sub-session has its title
 from its start and its parent's sphere; a side question its question's — neither is asked.
 
+## The page reader
+
+WebFetch hands the model a small model's retelling of a page, cut at a size: an exact price can come back rounded,
+a 14 MB rulebook not at all. `read_page(url, page?, pages?)` (`retinue/reach.py`, on the platform's own MCP server
+beside the sub-sessions' and travel's tools, for every session) gives the page's own text instead: an HTML page
+without its scripts and styles, a PDF by its own pages (`pages: "30-35"`, 40 at most), plain text as it is — 20 000
+characters a part (`page`), marked as data. No JavaScript runs: a page built by it reads almost empty, and the answer
+says to take WebFetch.
+
+It runs in a container of its own, `reach`, that holds nothing — no login, no token, no volume — on two internal
+networks: `reach-platform`, where only the platform asks it, and `reach-out`, where the room's open proxy
+(`lane-private-egress`) is its only way out: CONNECT to 443 of public hosts, never an inside one. https only; an
+address naming an IP, a port, a login or an inside name is refused before it goes, and so is every redirect's
+target — three at most, within the same site: a move to another site comes back as its address, for the session to
+ask for, through the gate. 20 MB at most, asked uncompressed and counted as it comes; a minute for the whole read,
+20 s to turn it into text (in a thread, two reads at a time), an HTML page's first 4 MB of markup. The gate reads its address as a fetch's: the exfil guard, a tracked link sent
+to its clean form, the site budget — and a source check may read the addresses it was given with it too.
+
 ## The source check
 
-A turn in the room that ends with three or more distinct addresses in its summary gets a second opinion of its
-own (`retinue/citecheck.py`): a side session of it, started by the platform, sees only the summary's lines that cite
-addresses — numbered and cut by code, at most 12 — and the platform's instruction to open each address and answer one
-line per claim: `N | found | <the page's words>`, `N | missing`, `N | contradicts | <what the page says>`,
-`N | unreachable`. It never sees the turn's reasoning, the Base or your words. Its runs may do one thing: `WebFetch`
-of exactly those addresses (a tracked link's clean form too), past the exfil guard and the site budget, never a card;
-every other call is denied. At most 10 a day; a check is never checked.
+Your own turn in the room that ends with three or more distinct addresses in its summary — addresses the turn itself
+opened through the gate (WebFetch, `read_page`) — gets a second opinion (`retinue/citecheck.py`): a side session of
+it, started by the platform, given only the summary's lines that cite those addresses — numbered and cut by code, at
+most 12 claims and 20 addresses — and the platform's instruction to open each and answer one line per claim:
+`N | found | <the page's words>`, `N | missing`, `N | contradicts | <what the page says>`, `N | unreachable`. It never
+sees the turn's reasoning or your words (it does read the rules a side session reads, the Base's among them). An
+address in the summary the turn never opened is left out: the summary may repeat a page, and the check must never be
+the way a planted address gets fetched past the classifier, or a link that acts when opened gets opened. Its runs
+may do one thing: `WebFetch` or `read_page` of exactly those addresses (a tracked link's clean form too), past the
+exfil guard and the site budget, never a card; every other call is denied. Not for a sub-session's turn or one a
+report or a follow-up started; at most 10 a day; a check is never checked, and your own word in a check is a turn
+like any other.
 
 Code reads its lines. A «found» without the page's words counts as unchecked; «unreachable» is never a flag. When a
-page contradicts its claim, the check's ping rings and names the claims and what the page says. Otherwise it is quiet
+page contradicts its claim, the check's ping rings and names the claims and, cut to a line with its links taken out,
+what the checker read there. Otherwise it is quiet
 — «Sources of session … checked: 7 of 9 found (unreachable 2).» — and the check is archived.
 
 ## Follow-ups

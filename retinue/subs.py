@@ -268,19 +268,28 @@ class Subs:
         if offered and self.platform.travel is not None:  # travel-ops' tools beside these (`lanetravel`)
             rules, travelling = await self.platform.travel.offer()
             said, tools = "\n".join(x for x in (said, rules) if x), tools + travelling
+        lane = self.platform.cfg.lanes.get(session.get("lane") or "")
+        web = lane is not None and lane.web  # the reader reads the web: a lane without it gets none
+        if offered and self.platform.reach is not None and web:  # the page reader's (`reach`)
+            rules, reading = self.platform.reach.offer()
+            said, tools = "\n".join(x for x in (said, rules) if x), tools + reading
         return await rpc(body, said, lambda name, arguments, params:
                          self.call(run, session, name, arguments, call_id_of(params)), tools)
 
     async def call(self, run: Run, session: dict, name: str, arguments: dict,
                    call_id: str) -> tuple[list[dict] | str, bool]:
         travelling = self.platform.travel is not None and self.platform.travel.has(name)
-        if not travelling and not may_start(session):
+        lane = self.platform.cfg.lanes.get(session.get("lane") or "")
+        reading = self.platform.reach is not None and self.platform.reach.has(name) and lane is not None and lane.web
+        if not travelling and not reading and not may_start(session):
             return NO_DEPTH, True
         seen = self.platform.gate.passed(run.id, call_id, PREFIX + name, arguments) if call_id else None
         if seen is None:
             return UNSEEN, True
         if travelling:
             return await self.platform.travel.call(name, arguments)
+        if reading:
+            return await self.platform.reach.call(name, arguments)
         if name == START:
             return await self.start(session, call_id, arguments, granted=seen == "granted")
         if name == PROPOSE:

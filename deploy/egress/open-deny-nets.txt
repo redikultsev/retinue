@@ -12,9 +12,12 @@
 198.18.0.0/15
 224.0.0.0/4
 240.0.0.0/4
-# IPv6: unspecified, loopback, NAT64 (an IPv4 address inside), unique local, link-local, multicast
+# IPv6: unspecified, loopback, IPv4-mapped and 6to4 and NAT64 (an IPv4 address inside), unique local, link-local,
+# multicast
 ::/128
 ::1/128
+::ffff:0:0/96
+2002::/16
 64:ff9b::/96
 fc00::/7
 fe80::/10

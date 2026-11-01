@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from retinue import cliengine, lane_host, pagesd
+from retinue import cliengine, lane_host, pagesd, reach
 from retinue.bus import bus_token
 from retinue.config import AgentConfig, PlatformConfig, RouterConfig
 
@@ -92,7 +92,7 @@ def test_one_assistant_and_nothing_else():
     assert sorted(SERVICES) == ["assistant", "collector", "egress", "face", "lane-code", "lane-code-egress",
                                 "lane-private", "lane-private-egress", "lane-private-sni", "lane-web",
                                 "lane-web-egress", "mail-egress", "mail-send", "pages", "pages-build", "pages-public",
-                                "platform", "platform-egress", "router", "tg-business",
+                                "platform", "platform-egress", "reach", "router", "tg-business",
                                 "travel-ops", "travel-watch", "tuwunel"]
     assert sorted(COMPOSE["volumes"]) == ["assistant-data", "lane-code-config", "lane-code-state", "lane-code-work",
                                           "lane-private-config", "lane-private-state", "lane-private-work",
@@ -777,7 +777,7 @@ ROOM = "private"                     # lane-private: the Base, the code and the 
 RETIRED = ("code", "web")            # under the profile legacy-lanes, for their volumes
 SEALED = ("code",)  # the lanes whose proxies let through a list of hosts; the room's (and lane-web's) is open (below)
 UIDS = {"private": "10005", "code": "10006", "web": "10008"}
-PLATFORM_SERVICES = ["lane-private", "lane-private-egress", "lane-private-sni", "platform", "platform-egress"]
+PLATFORM_SERVICES = ["lane-private", "lane-private-egress", "lane-private-sni", "platform", "platform-egress", "reach"]
 LEGACY_SERVICES = ["lane-code", "lane-code-egress", "lane-web", "lane-web-egress"]
 OPEN_FILES = ("open-squid.conf", "open-deny-nets.txt", "open-deny-ips.txt", "open-deny-domains.txt")
 OPEN_PROXY = ["/srv/retinue/egress/open-squid.conf:/etc/squid/squid.conf:ro",
@@ -828,7 +828,7 @@ def test_the_platform_and_its_lanes_are_off_until_asked_and_locked_down():
                                                "RETINUE_FACE_ORIGIN",
                                                "RETINUE_HOOK_SECRET", "RETINUE_LANE_TOKEN_CODE",
                                                "RETINUE_LANE_TOKEN_PRIVATE", "RETINUE_LANE_TOKEN_WEB",
-                                               "RETINUE_PLATFORM_TOKEN", "RETINUE_TRAVEL_URL", "RETINUE_WEBAPP_KEY",
+                                               "RETINUE_PLATFORM_TOKEN", "RETINUE_REACH_URL", "RETINUE_TRAVEL_URL", "RETINUE_WEBAPP_KEY",
                                                "TELEGRAM_OWNER_ID"], \
         "the lanes' login, which it sends with each run; no bot token: the Mini App's key is derived from it, not it"
     assert platform["environment"]["CLAUDE_CODE_OAUTH_TOKEN"] == "${CLAUDE_CODE_OAUTH_TOKEN}"
@@ -873,8 +873,13 @@ def test_each_lane_is_on_its_own_internal_network_and_goes_out_through_its_own_p
                for net in COMPOSE["networks"]}
     assert members["platform-router"] == ["platform", "router"]
     assert list(SERVICES["platform"]["networks"]) == ["platform-router", "lane-private", "face-platform",
-                                                      "platform-out", "travel-platform"], \
-        "no `outside`, and no retired lane's network; travel-ops' bridge is the platform's alone"
+                                                      "platform-out", "travel-platform", "reach-platform"], \
+        "no `outside`, and no retired lane's network; travel-ops' and the reader's bridges are the platform's alone"
+    assert members["reach-platform"] == ["platform", "reach"] and members["reach-out"] == ["lane-private-egress", "reach"]
+    assert COMPOSE["networks"]["reach-platform"] == {"internal": True} == COMPOSE["networks"]["reach-out"]
+    assert SERVICES["reach"]["networks"] == ["reach-platform", "reach-out"], "no lane's network, no `outside`"
+    assert SERVICES["reach"]["environment"] == {"HTTPS_PROXY": "http://lane-private-egress:3128"}, "nothing else"
+    assert "volumes" not in SERVICES["reach"] and SERVICES["reach"]["read_only"] is True
     assert SERVICES["platform"]["depends_on"] == ["lane-private"], "a retired lane is never started for it"
     assert members["platform-out"] == ["platform", "platform-egress"] and COMPOSE["networks"]["platform-out"] == \
         {"internal": True}, "its way to GitHub and GitLab is its own proxy"
@@ -889,7 +894,7 @@ def test_each_lane_is_on_its_own_internal_network_and_goes_out_through_its_own_p
         assert COMPOSE["networks"][net] == {"internal": True} and members[net] == on
         assert SERVICES[f"lane-{lane}"]["networks"] == [net], "exactly its own network"
         proxy = SERVICES[f"lane-{lane}-egress"]
-        assert proxy["networks"] == ["room-out" if lane == ROOM else net, "outside"]
+        assert proxy["networks"] == (["room-out", "reach-out"] if lane == ROOM else [net]) + ["outside"]
         assert proxy["image"] == SERVICES["egress"]["image"]
         if lane in SEALED:
             assert proxy["volumes"] == ["/srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro",
@@ -943,7 +948,7 @@ def test_every_retinue_service_that_listens_reports_its_health_by_its_own_port()
              "collector": CollectorConfig.listen_port, "mail-send": SenderConfig.listen_port,
              "tg-business": GatewayConfig.listen_port, "platform": PlatformConfig.listen_port,
              **{f"lane-{lane}": LaneHostConfig.listen_port for lane in LANES}, "lane-private-sni": 3128,
-             "pages": pagesd.Config.port}
+             "pages": pagesd.Config.port, "reach": reach.PORT}
     assert sorted(name for name, service in SERVICES.items() if "healthcheck" in service) == \
         sorted([*ports, "face", "pages-public"])
     for nginx in ("face", "pages-public"):
@@ -1414,8 +1419,8 @@ def test_the_face_api_is_on_a_network_of_its_own_that_no_lane_is_on():
     assert set(re.findall(r"proxy_pass (\S+);", nginx)) == {f"http://{FACE_IP}:{PlatformConfig.face_port}"}
     for lane in LANES:
         assert SERVICES[f"lane-{lane}"]["networks"] == [f"lane-{lane}"]
-        assert SERVICES[f"lane-{lane}-egress"]["networks"] == ["room-out" if lane == ROOM else f"lane-{lane}",
-                                                                "outside"]
+        assert SERVICES[f"lane-{lane}-egress"]["networks"] == (["room-out", "reach-out"] if lane == ROOM
+                                                               else [f"lane-{lane}"]) + ["outside"]
     assert "face-platform" not in SERVICES["lane-private-sni"]["networks"]
     assert "dokploy-network" not in SERVICES["platform"]["networks"], "Traefik's neighbours never reach the platform"
 

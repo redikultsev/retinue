@@ -36,6 +36,7 @@ retinue-tg-business = "retinue.tgbusiness:main"
 retinue-lane = "retinue.lane_host:main"
 retinue-platform = "retinue.platformd:main"
 retinue-pages = "retinue.pagesd:main"
+retinue-reach = "retinue.reach:main"
 
 [build-system]
 requires = ["hatchling"]

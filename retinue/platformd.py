@@ -33,6 +33,7 @@ from . import (approvals, attachments, citecheck, cliengine, collections_admin, 
                lanetravel, outfiles, pings, questions, signals, subs, tobase, topush, transcript, views)
 from .base import BaseRepo, under
 from . import library as library_mod
+from . import reach as reach_mod
 from . import code as code_mod
 from .code import CodeRepos
 from . import collections as collections_mod
@@ -120,6 +121,8 @@ class Platform:
         self._stopped_runs: set[str] = set()  # runs the owner's «Stop» ended: not errors (`episodes`)
         # travel-ops' tools on the same server, for every session (`lanetravel.py`); None: no travel-ops in this stack.
         self.travel = lanetravel.LaneTravel(cfg.travel_url) if cfg.travel_url else None
+        # The page reader's read_page on the same server, for every session (`reach.py`); None: no reader here.
+        self.reach = reach_mod.LaneReach(cfg.reach_url) if cfg.reach_url else None
         self.feed.subs = self.subs  # the feed's proposals of sub-sessions, under «Decide»
         # The owner's Base cloned into a lane (`base.py`): kept fresh here, committed by his button.
         self.base = base if base is not None or cfg.base is None else BaseRepo(cfg.base, _lane_view(cfg))
@@ -836,7 +839,8 @@ class Platform:
                 **({"fork": True} if fork else {}),
                 # The platform's MCP server — sub-sessions (`subs`), travel-ops (`lanetravel`): the lane host builds its
                 # address from its own hook address.
-                **({"subs": True} if subs.may_start(session) or self.travel is not None else {}),
+                **({"subs": True} if subs.may_start(session) or self.travel is not None or self.reach is not None
+                   else {}),
                 "cwd": self.cwd_of(session, track), "settings": cliengine.settings(lane.hook_url, CLEANUP_DAYS, [m.rule for m in marks]),
                 # A card rule is neither: its call is the gate's to defer, and the owner's grant must be able to run it.
                 "allowed": [m.rule for m in marks if m.kind == "allow"],
@@ -1155,7 +1159,7 @@ class Platform:
         lane = self.cfg.lanes.get(row["lane"])
         try:
             start = citecheck.maybe_start(self.store, row, run, text, self.subs._day_start(now),
-                                          bool(lane is not None and lane.web))
+                                          bool(lane is not None and lane.web), self.gate.fetched.get(row["id"]))
             if start is None:
                 return
             title, prompt, urls, n = start

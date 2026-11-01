@@ -413,6 +413,7 @@ services:
       RETINUE_HOOK_SECRET: ${RETINUE_HOOK_SECRET:-}
       # travel-ops' MCP on `travel-platform` (setup.sh TRAVEL=1); empty = no travel tools in the sessions.
       RETINUE_TRAVEL_URL: ${RETINUE_TRAVEL_URL:-}
+      RETINUE_REACH_URL: http://reach:9700      # the page reader on `reach-platform` (retinue/reach.py): read_page
       # The face API (docs/face.md): it listens on the platform's own address on `face-platform` alone — never
       # 0.0.0.0, which the lanes' networks would reach. Off while RETINUE_FACE_ORIGIN is empty (setup.sh FACE=1).
       RETINUE_FACE_HOST: 172.16.96.10
@@ -440,6 +441,7 @@ services:
         ipv4_address: 172.16.96.10              # = RETINUE_FACE_HOST and deploy/face/nginx.conf's proxy_pass
       platform-out: {}                          # its proxy to GitHub and GitLab alone: the mirrors and the push
       travel-platform: {}                       # travel-ops' MCP, which it serves to the sessions (lanetravel.py)
+      reach-platform: {}                        # the page reader, which it serves to the sessions (reach.py)
     depends_on: [lane-private]                  # the room creates its work volume, owned by its own user
 
   # The face: the platform's app for the owner's phone (docs/face.md). nginx serves the built app and passes /api/* to
@@ -629,6 +631,29 @@ services:
     networks: [lane-private, room-out]
     depends_on: [lane-private-egress]
 
+  # The page reader (retinue/reach.py): a public page's own text for the sessions' read_page. It holds nothing — no
+  # login, no token, no volume — and reaches the platform, which alone asks it, and the room's open proxy on a network
+  # of its own (`reach-out`): CONNECT to 443 of public hosts only, never an inside one.
+  reach:
+    profiles: ["platform"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10022:10022"
+    command: ["retinue-reach"]
+    mem_limit: 256m                 # a 20 MB PDF read whole, its text, and the HTML parser
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9700), 3).close()"]
+    environment:
+      HTTPS_PROXY: http://lane-private-egress:3128   # the room's open proxy, on a network of the reader's own
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    init: true
+    networks: [reach-platform, reach-out]
+    depends_on: [lane-private-egress]
+
   lane-private-egress:            # the room's only way out: CONNECT to 443 of any public host, never an inside one
     profiles: ["platform"]
     image: *squid-image
@@ -639,7 +664,7 @@ services:
       - /srv/retinue/egress/open-deny-nets.txt:/etc/squid/deny-nets.txt:ro
       - /srv/retinue/egress/open-deny-ips.txt:/etc/squid/deny-ips.txt:ro
       - /srv/retinue/egress/open-deny-domains.txt:/etc/squid/deny-domains.txt:ro
-    networks: [room-out, outside]   # the SNI guard is its only client
+    networks: [room-out, reach-out, outside]   # the SNI guard and the page reader, each on its own network
 
   lane-code-egress:               # retired with lane-code: the model API, GitHub, the package registries
     profiles: ["legacy-lanes"]
@@ -726,6 +751,10 @@ networks:
   lane-private:     # platform <-> the room <-> its SNI guard. Internal: the guard is the lane's only way out
     internal: true
   room-out:         # the SNI guard <-> the open proxy only. Internal: the proxy is the only member on `outside`
+    internal: true
+  reach-platform:   # platform <-> the page reader only. Internal: no route out; no lane is on it
+    internal: true
+  reach-out:        # the page reader <-> the room's open proxy only. Internal: the proxy is its only way out
     internal: true
   lane-code:        # retired: lane-code <-> its proxy, the platform no longer on it
     internal: true

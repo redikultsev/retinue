@@ -289,12 +289,14 @@ def test_the_router_pushes_the_digest_signed_and_a_refused_one_leaves_the_last_i
 
 # --- the queue ------------------------------------------------------------------------------------------------------
 
-async def asked(world: World) -> str:
-    """A private session whose first run asked two questions (test_questions' ASK)."""
+async def asked(world: World, *said: str) -> str:
+    """A private session whose first run asked two questions (test_questions' ASK), having written `said` before."""
     session = (await world.owner("new", {"input_id": "tg:9", "track": "notes", "text": "куда поехать"}))["session"]
     [run] = world.lanes["private"].runs()
     assert decision(await world.hook("PreToolUse", run, pre_tool_use())) == "defer"
-    world.lanes["private"].add(session, run["run"], *LINES)
+    words = [json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": t}]}},
+                        ensure_ascii=False) for t in said]
+    world.lanes["private"].add(session, run["run"], LINES[0], *words, *LINES[1:])
     world.lanes["private"].exited(session, run["run"])
     await world.poll()
     return session
@@ -328,6 +330,7 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
         [row] = answer
         assert (row["session"], row["source"], row["essence"]) == (question, "question", "Где жить?")
         assert row["approval"]["kind"] == "question" and row["card"] == f"{row['approval']['id']}/0"
+        assert row["said"] == "", "the session wrote nothing before asking"
         [row] = decide
         assert (row["session"], row["source"], row["approval"]["id"]) == (decided, "approval", card["approval"])
         assert row["essence"] == "echo ran >> ran.txt" and row["title"] == "почини"
@@ -345,6 +348,27 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
         assert world.lanes["private"].runs()[-1]["prompt"] == "Бери первый"
 
     faced(tmp_path, body)
+
+
+def test_a_question_comes_with_what_its_session_wrote_just_before_asking(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        await asked(world, "Сначала смотрю цены.", "**Центр** дороже на €20 в ночь, зато пешком до всего.\n\nОкраина тише.")
+        [group] = (await world.get("/api/feed"))["groups"]
+        [row] = group["rows"]
+        assert row["said"] == "**Центр** дороже на €20 в ночь, зато пешком до всего.\n\nОкраина тише.", \
+            "the last words before the call, Markdown kept"
+        assert "said" not in (await world.owner("feed", {}))["rows"][0], "`/wait` stays one line a row"
+
+    faced(tmp_path, body)
+
+
+def test_a_long_case_is_cut_at_a_lines_end():
+    long = "\n".join(f"строка {n} " + "x" * 90 for n in range(100))
+    cut = feed._said(long)
+    assert len(cut) <= feed.SAID_CHARS + 3 and cut.endswith("\n\n…") and cut[:-3].endswith("x")
+    assert feed._said("  коротко  ") == "коротко"
+    assert feed._said("y" * (feed.SAID_CHARS + 5)) == "y" * feed.SAID_CHARS + "…"
 
 
 def test_a_courier_card_waits_a_day_or_until_he_writes_into_its_session(tmp_path):

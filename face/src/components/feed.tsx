@@ -65,11 +65,13 @@ function useCurrent(approval: Approval): Approval {
 
 /** A card in place. A question, or a call short enough to read at a glance, shows whole; a longer call shows its
  * one line, and the whole card — the input as it is, both buttons — opens under it: nothing is decided unseen. */
-function CardAction({ approval, essence }: { approval: Approval; essence: string }) {
+function CardAction({ approval, essence, said }: { approval: Approval; essence: string; said?: string }) {
   const current = useCurrent(approval);
   const text = inputText(current);
   const small = current.kind === "question" || (text.length <= SMALL_CHARS && text.split("\n").length <= SMALL_LINES);
   const [open, setOpen] = useState(small);
+  if (open && current.kind === "question")
+    return <ApprovalCard approval={current} context={said} inline className="sm:pl-10" onDecided={() => void feedSource.refresh()} />;
   if (open) return <ApprovalCard approval={current} onDecided={() => void feedSource.refresh()} />;
   return (
     <div className="flex items-start gap-3 pl-10">
@@ -204,7 +206,7 @@ function Row({ row, now, feed, onOpen }: { row: FeedRow; now: number; feed: Feed
         </div>
         {actions}
       </div>
-      {row.approval && <CardAction approval={row.approval} essence={row.essence} />}
+      {row.approval && <CardAction approval={row.approval} essence={row.essence} said={row.said} />}
       {row.proposal && <ProposalCard proposal={row.proposal} onDecided={() => void feedSource.refresh()} />}
       {row.collection_proposal && (
         <CollectionProposalCard proposal={row.collection_proposal} onDecided={() => void feedSource.refresh()} />

@@ -2,8 +2,9 @@
 // description on a second line. A single choice is sent by its tap; a multi-select is ticked and sent by «Done»;
 // «Own answer…» opens a field for the owner's own words. Every answer is bound to the card's digest, by the same rules
 // as a Telegram press — an answer here retires that question's Telegram buttons, and one there shows here.
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Check } from "@/components/icons";
+import { Markdown } from "@/components/transcript/item";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,8 +49,51 @@ const viewOf = (approval: Approval): QuestionView => {
   return { answers: view.answers ?? {}, picks: view.picks ?? {}, status: view.status ?? "" };
 };
 
+/** «(Recommended)» at a label's end, as AskUserQuestion's convention writes it: shown as a mark, sent as written. */
+const RECOMMENDED = /\s*\(recommended\)\s*$/i;
+
+/** What the session wrote just before asking: the case and the stakes. A few lines at rest, the rest a tap away;
+ * measured once a text (keyed by it). */
+function Context({ text }: { text: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [whole, setWhole] = useState(false);
+  const [long, setLong] = useState(false);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el && !whole) setLong(el.scrollHeight > el.clientHeight + 4);
+  }, [whole]);
+  return (
+    <div data-testid="question-context" className="flex flex-col gap-1">
+      <div
+        ref={box}
+        className={cn(
+          "min-w-0 break-words text-muted-foreground",
+          !whole && "max-h-36 overflow-hidden",
+          !whole && long && "[mask-image:linear-gradient(to_bottom,black_60%,transparent)]", // ui-craft: allow — the cut text fades, no colour
+        )}
+      >
+        <Markdown text={text} />
+      </div>
+      {(long || whole) && (
+        <button
+          type="button"
+          aria-expanded={whole}
+          className="hit w-fit rounded-sm text-sm text-primary underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+          onClick={() => setWhole((w) => !w)}
+        >
+          {whole ? "Show less" : "Show all"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   approval: Approval;
+  /** What the session wrote just before asking (the feed's `said`): shown above the question. */
+  context?: string;
+  /** In a row of «Waiting for you»: no frame and no header of its own — the row and its group say both. */
+  inline?: boolean;
   live?: Live;
   answer?: typeof api.answer;
   className?: string;
@@ -57,7 +101,7 @@ interface Props {
   onDecided?: (approval: Approval) => void;
 }
 
-export function QuestionCard({ approval, live = defaultLive, answer = api.answer, className, onDecided }: Props) {
+export function QuestionCard({ approval, context, inline = false, live = defaultLive, answer = api.answer, className, onDecided }: Props) {
   const questions = questionsOf(approval.input);
   const view = viewOf(approval);
   const open = approval.state === "shown";
@@ -87,22 +131,16 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
       return { ...t, [n]: now.includes(label) ? now.filter((l) => l !== label) : [...now, label] };
     });
 
-  return (
-    <Card data-testid="question-card" className={cn(open && "border-warning/70 bg-warning/5 ring-1 ring-warning/30", className)}>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-2">
-          <CardTitle className="text-sm">Question</CardTitle>
-          <Badge variant={open ? "warning" : "secondary"}>{open ? "Awaiting an answer" : approvalStateWord(approval.state)}</Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+  const body = (
+    <>
+        {context && open && <Context key={context} text={context} />}
         {questions.map((q, n) => {
           const answered = view.answers[String(n)];
           const picked = ticks[n] ?? [];
           const text = writing[n];
           return (
             <section key={n} data-testid="question" className="flex flex-col gap-2">
-              {q.header && <div className="text-xs text-muted-foreground">{q.header}</div>}
+              {q.header && !inline && <div className="text-xs text-muted-foreground">{q.header}</div>}
               <div className="font-medium break-words whitespace-pre-wrap">{q.question}</div>
               {answered ? (
                 <div data-testid="question-answer" className="text-sm">
@@ -114,25 +152,35 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
                   <div className="flex flex-col gap-2">
                     {q.options.map((o) => {
                       const on = picked.includes(o.label);
+                      const recommended = RECOMMENDED.test(o.label);
                       return (
                         <Button
                           key={o.label}
                           variant={q.multiSelect && on ? "default" : "outline"}
                           aria-pressed={q.multiSelect ? on : undefined}
                           disabled={busy !== null}
-                          className="h-auto min-h-11 w-full flex-col items-start gap-0.5 py-1.5 text-left whitespace-normal md:min-h-9"
+                          className="h-auto min-h-11 w-full flex-col items-start gap-1 px-4 py-3 text-left whitespace-normal md:h-auto md:min-h-10"
                           onClick={() => (q.multiSelect ? tick(n, o.label) : send(n, { labels: [o.label] }))}
                         >
-                          <span className="font-medium">
+                          <span className="flex w-full items-baseline gap-2 font-medium">
                             {q.multiSelect &&
                               (on ? (
-                                <Check className="mr-1.5 inline size-3.5 align-[-2px]" />
+                                <Check className="inline size-3.5 shrink-0 self-center" />
                               ) : (
-                                <span aria-hidden className="mr-1.5 inline-block size-3 rounded-[3px] border border-current align-[-1px] opacity-70" />
+                                <span aria-hidden className="inline-block size-3 shrink-0 self-center rounded-[3px] border border-current opacity-70" />
                               ))}
-                            {o.label}
+                            <span className="min-w-0">{o.label.replace(RECOMMENDED, "")}</span>
+                            {recommended && (
+                              <Badge variant="secondary" className="ml-auto shrink-0 self-center">
+                                Recommended
+                              </Badge>
+                            )}
                           </span>
-                          {o.description && <span className="text-xs font-normal opacity-80">{o.description}</span>}
+                          {o.description && (
+                            <span className={cn("text-[13px] leading-snug font-normal", !(q.multiSelect && on) && "text-muted-foreground")}>
+                              {o.description}
+                            </span>
+                          )}
                         </Button>
                       );
                     })}
@@ -184,7 +232,18 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
           );
         })}
         {view.status && <p className="text-sm">{view.status}</p>}
-      </CardContent>
+    </>
+  );
+  if (inline) return <div data-testid="question-card" className={cn("flex flex-col gap-4", className)}>{body}</div>;
+  return (
+    <Card data-testid="question-card" className={cn(open && "border-warning/70 bg-warning/5 ring-1 ring-warning/30", className)}>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-2">
+          <CardTitle className="text-sm">Question</CardTitle>
+          <Badge variant={open ? "warning" : "secondary"}>{open ? "Awaiting an answer" : approvalStateWord(approval.state)}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">{body}</CardContent>
     </Card>
   );
 }

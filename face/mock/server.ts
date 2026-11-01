@@ -19,6 +19,9 @@ const CODE = process.env.MOCK_CODE ?? "RTNE7K2QXP";
 const COOKIE = "retinue_mock"; // the real one is __Host-retinue (Secure): this mock runs over plain http
 const ORIGINS = new Set(["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:4173", "http://localhost:4173"]);
 const now = () => Date.now() / 1000;
+// what a question's session wrote just before asking (the feed's `said`)
+const SAID =
+  "I'd take the cheapest plan for one month and cancel the renewal right after paying. The higher plans aren't worth it for you.\n\n**Prices.** €12, €36 and €60 a month; only the first opens the talks on the May list.\n\n**The case for buying.** Since April the €12 plan has added three talks on the books you picked:\n- «Reading slowly: a method»;\n- «Notes that you reread»;\n- «The May list, discussed».\n\n**The case against.** Most of it repeats the free part, and a month is enough to read what matters.";
 
 // --- «Waiting for you» (retinue/feed.py): the shown cards, the idle sessions' last summaries, a fixed digest ----------
 
@@ -69,7 +72,7 @@ function mockFeed() {
   const writes = waitingProposals().filter((p) => p.session && sessions.get(p.session));
   const last = (id: string) => [...summaries.values()].filter((x) => x.session === id).at(-1);
   const groups = [
-    { action: "answer", title: "Answer a question", rows: answer.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "answer", source: "question", since: a.created, essence: "", approval: a })) },
+    { action: "answer", title: "Answer the question", rows: answer.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "answer", source: "question", since: a.created, essence: "", approval: a, said: SAID })) },
     { action: "decide", title: "Decide", rows: [
       ...decide.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "decide", source: "approval", since: a.created, essence: "", approval: a })),
       ...offered.map((p) => row(sessions.get(p.session)!, { key: `proposal:${p.id}`, action: "decide", source: "proposal", since: p.created, essence: `Sub-session: ${p.title}`, proposal: p, hint: "Start it or set it aside in the app." })),

@@ -42,6 +42,8 @@ export interface FeedRow {
   /** Its one line: the question, the command, the summary's first line, the assistant's title. */
   essence: string;
   ref: string;
+  /** «Answer»: what the session wrote just before asking — the case and the stakes, Markdown. */
+  said?: string;
   /** «Answer», «Decide»: the card itself, decided in place. */
   approval?: Approval;
   /** «Decide» · «Push»: commits no branch of the remote has, and in which repositories (retinue/topush.py). */

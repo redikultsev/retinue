@@ -4,7 +4,8 @@ the router as text for `/wait` (`POST /owner/feed`).
 
 Built by code on every read from the platform's own rows — never a copy kept beside them that could drift:
 
-- «Answer the question»: a question card (AskUserQuestion) shown and not answered;
+- «Answer the question»: a question card (AskUserQuestion) shown and not answered, with what its session wrote just
+  before asking (`said`): the case and what each answer leads to, which the question alone seldom says;
 - «Decide»: an approval card shown, a courier card of the last day he has not closed («Done») nor written to its session
   since, a sub-session a session proposed
   («Start» / «Not now», `subs`), and a write to a collection a session proposed («Apply» / «Dismiss», `colltools`);
@@ -47,6 +48,7 @@ ACTIONS = (("answer", "Answer the question"), ("decide", "Decide"), ("reply", "R
 COURIER_S = 86400            # a courier card waits in «Decide» this long, unless he wrote into its session after it
 RECENT_S = 7 * 86400         # a summary older than this leaves nothing to read in the feed
 ESSENCE_CHARS = 200          # the one line a row says
+SAID_CHARS = 4000            # a question's case: what its session wrote just before asking, cut here
 TELEGRAM_ROWS = 10           # `/wait` names this many rows; the rest are counted
 PUSH_HINT = "Press «Push» under its result or open it in the app."
 PROPOSAL_HINT = "Start it or set it aside in the app."
@@ -340,6 +342,15 @@ def _essence(text: object) -> str:
     return line(re.sub(r"\*\*|__", "", first).strip(" #*>-"), ESSENCE_CHARS)
 
 
+def _said(text: str) -> str:
+    """A question's case as its session wrote it, Markdown kept: whole, or cut at a line's end before SAID_CHARS."""
+    text = text.strip()
+    if len(text) <= SAID_CHARS:
+        return text
+    cut = text[:SAID_CHARS]
+    return cut[: cut.rfind("\n")].rstrip() + "\n\n…" if "\n" in cut else cut.rstrip() + "…"
+
+
 def _call(tool: str, tool_input: dict) -> str:
     """A card's call in one line: the command, the file, or the input."""
     for key in ("command", "file_path", "notebook_path", "url", "pattern", "path"):
@@ -427,7 +438,8 @@ class Feed:
             out["answer" if question else "decide"].append(
                 {**self._row(f"card:{approval_id}", "answer" if question else "decide", approval["kind"], session,
                              approval["created"], essence),
-                 "approval": approval, "card": questions.key(approval_id, n) if question else None})
+                 "approval": approval, "card": questions.key(approval_id, n) if question else None,
+                 **({"said": _said(self.store.said_before(session["id"], approval["tool_use_id"]))} if question else {})})
         topush = getattr(self, "topush", None)  # «Push»: commits no branch of the remote has yet
         for session in sessions.values():
             if session.get("push") and topush is not None and (repos := topush.unpushed(session["id"])):

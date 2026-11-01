@@ -62,6 +62,33 @@ const writeInput = { file_path: "/work/notes/work/acme-call-2026-10-26.md", cont
 
 export const approvals: Approval[] = [
   {
+    id: "9a0b1c2d",
+    session: "ee55ff66",
+    tool_use_id: "toolu_club",
+    kind: "question",
+    state: "shown",
+    tool: "AskUserQuestion",
+    input: {
+      questions: [
+        {
+          header: "Club",
+          question: "What do we do with the reading club subscription?",
+          multiSelect: false,
+          options: [
+            { label: "One month, the €12 plan (Recommended)", description: "You pay on the web and cancel the renewal; I log the Decision and a task to read the three talks." },
+            { label: "Buy when a book is picked", description: "Wait until the May book is set, then buy for that one month." },
+            { label: "Don't buy", description: "I record the reason and close the question; the free part stays as the source." },
+          ],
+        },
+      ],
+    },
+    cwd: "/work/notes",
+    digest: "1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d",
+    view: { answers: {}, picks: {}, status: "" } as unknown as CardView,
+    created: T0 - 7200,
+    at: T0 - 7200,
+  },
+  {
     id: "5f3a9c21",
     session: "a1b2c3d4",
     tool_use_id: "toolu_bash_2",

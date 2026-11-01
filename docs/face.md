@@ -657,7 +657,7 @@ session, a card, a summary or a proposal changes on the stream (once per burst) 
 
 | Group | What is in it | Its action, in place |
 |---|---|---|
-| “Answer the question” | a question card that asks | the question's buttons, “Own answer…” |
+| “Answer the question” | a question card that asks, under what its session wrote just before asking (`said`: the case and what each answer leads to — a few lines, “Show all” for the rest) | the question's options — each its label, a “Recommended” mark for the label's “(Recommended)” and what it leads to under it — and “Own answer…”; no frame or header of its own: the row says whose it is |
 | “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a sub-session a session proposed, of the last 7 days (“Sub-session: <title>”, [platform.md](platform.md#proposals)); a write to a collection a session proposed, of the last 7 days (“deals: 2 changes proposed”, [collections.md](collections.md#proposals)) | “Allow” / “Deny”; a courier's “Copy command”; “Start” / “Not now” under the proposal's brief; “Apply” / “Dismiss” under what a proposed write would change. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first, a brief longer than 6 lines or 400 characters “Show the brief”: nothing is decided unseen |
 | “Reply” | a session waiting for your message with no card shown | “Open and answer” |
 | “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
@@ -667,7 +667,8 @@ Each row: an icon of where it came from, its sphere (or track), the session's ti
 waited and its one line — the question, the command, the summary's first line, her title. A card is the same object
 as everywhere (`approval`), decided by the same rules; the app shows its newest copy, so a press in Telegram shows at
 once. A row is `{key, action, source, session, track, sphere, sphere_title, sphere_icon, title, since, essence, ref}`
-plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row,
+plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row, `said` on a question's (Markdown, cut at
+a line's end before 4000 characters),
 `proposal` (the object of the `proposal` event) on a
 proposal's row (`source: proposal`), `t` (the row's token) on a person's row of hers.
 A pressed row leaves the feed at once and stays hidden while the feed still has its `t`, ten minutes at most — a press

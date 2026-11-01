@@ -66,6 +66,19 @@ describe("QuestionCard", () => {
     expect(screen.getAllByRole("button", { name: "Own answer…" })).toHaveLength(2);
   });
 
+  it("in a row: the session's case above the question, no frame of its own, «(Recommended)» as a mark but sent as written", async () => {
+    const answer = vi.fn().mockResolvedValue({ toast: "", approval: null });
+    const recommended = {
+      questions: [{ ...ASK.questions[0]!, options: [{ label: "Centre (Recommended)", description: "the old town" }, ASK.questions[0]!.options[1]!] }],
+    };
+    render(<ApprovalCard approval={question({ input: recommended })} context={"**Centre** is €20 a night more."} inline live={fakeLive()} answer={answer} />);
+    expect(screen.getByTestId("question-context").textContent).toContain("Centre is €20 a night more.");
+    expect(screen.queryByText("Awaiting an answer")).toBeNull();
+    const pick = screen.getByRole("button", { name: /^Centre\s*Recommended\s*the old town$/ });
+    fireEvent.click(pick);
+    await waitFor(() => expect(answer).toHaveBeenCalledWith(expect.anything(), 0, { labels: ["Centre (Recommended)"] }));
+  });
+
   it("a single choice is sent by its tap with the card's digest, and the card shows what came back", async () => {
     const live = fakeLive();
     const answered = question({ view: { answers: { "0": { value: "Outskirts", other: false } }, picks: {} } as never, at: 2 });

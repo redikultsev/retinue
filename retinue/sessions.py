@@ -951,6 +951,18 @@ class PlatformStore:
                               "ORDER BY created, rowid", (session,)).fetchall()
         return [self.face_approval(approval) for (approval,) in ids]
 
+    def said_before(self, session: str, call_id: str) -> str:
+        """What the session wrote to the owner last before this call — a question's case and its stakes, which the
+        question alone does not carry. The session's last words when the call is not in its transcript yet; "" when
+        it wrote nothing."""
+        at = self.db.execute("SELECT turn, n FROM items WHERE session = ? AND kind = 'question' AND "
+                             "json_extract(data, '$.id') = ?", (session, call_id)).fetchone()
+        before, args = ("AND (turn < ? OR (turn = ? AND n < ?))", (at[0], at[0], at[1])) if at else ("", ())
+        row = self.db.execute("SELECT data FROM items WHERE session = ? AND kind = 'message' AND "
+                              f"json_extract(data, '$.role') = 'assistant' {before} ORDER BY turn DESC, n DESC LIMIT 1",
+                              (session, *args)).fetchone()
+        return str(json.loads(row[0]).get("text") or "") if row else ""
+
     def face_items(self, session: str) -> list[dict]:
         rows = self.db.execute("SELECT turn, n, kind, data FROM items WHERE session = ? ORDER BY turn, n", (session,))
         return [_face_item(session, turn, n, kind, data) for turn, n, kind, data in rows]

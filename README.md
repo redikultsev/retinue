@@ -9,8 +9,9 @@
   classifier will not allow comes to you as an approval card, in Telegram or in the app.
 
 Around them sit optional parts: mail and calendar triage, replies to people that go out only by your button, a
-knowledge base the sessions can read and commit to, your code repositories with a push-to-PR card, reminders and a
-morning summary, trip search, read-only pages for your devices, backups and health checks.
+knowledge base the sessions write to (the platform commits and pushes after every turn), tables of your records on
+each Space's screen, your code repositories with a push-to-PR card, reminders and a morning summary, trip search,
+pages for your devices, backups and health checks.
 
 > **Status: personal pilot.** It runs every day on one server, for one person. It is not a product: there is no
 > multi-user mode, no hosted version, and breaking changes land on `main` without notice. Read it, borrow from it,
@@ -41,6 +42,7 @@ flowchart LR
     face["face<br/>PWA / Mini App"]
     room["lane-private: the room<br/>claude CLI, sandboxed<br/>Base, code, web"]
     sni["SNI guard"]
+    reach["page reader<br/>holds nothing"]
     open["open proxy<br/>public hosts, 443"]
     pegress["platform-egress<br/>git, model API"]
   end
@@ -50,6 +52,7 @@ flowchart LR
   router <--> platform
   face <--> platform
   platform <--> room --> sni --> open
+  platform --> reach --> open
   platform --> pegress
 ```
 
@@ -63,15 +66,19 @@ flowchart LR
   sessions, keeps every line of every run in its own SQLite, and answers the gate hook that the CLI calls before
   each tool call. A session can hand separable work to sub-sessions of its own through the platform's MCP server
   (`retinue/subs.py`) and is told when each one's turn ends; work it noticed itself it proposes to you instead, as a
-  card with «Start» / «Not now». The platform holds no bot token and has no route out
-  except its own proxy.
+  card with «Start» / «Not now». The same server gives sessions `read_page` (a page's or a PDF's own text, fetched by
+  the page reader, `retinue/reach.py`, a container that holds nothing) and travel-ops' search tools. A turn that cites
+  three or more addresses gets a source check: a clean side session opens them and says whether they say what the
+  turn claims (`retinue/citecheck.py`). The platform holds no bot token and has no route out except its own proxy.
 - **the room** (`lane-private`, `retinue/lane_host.py`, `deploy/lanes/`) is the one lane container sessions run in:
   your knowledge base (the Base), clones of your repositories and the web through the CLI's `WebFetch` and
   `WebSearch`. Bash is sandboxed and reaches only GitHub and the package registries (with one documented gap,
   see [Limits and known gaps](#limits-and-known-gaps)).
 - **face** (`face/`) is a React PWA, also opened from Telegram as a Mini App, reachable only over WireGuard from your
-  devices: tabs **Today · Sessions · ＋ · Spaces · Read** (＋ is `/new`, a new task), a live transcript,
-  approval cards, a session's diff, the Spaces of the Base, pages to read, and voice input.
+  devices: tabs **Today · Sessions · ＋ · Spaces · Pages** (＋ is `/new`, a new task), plus «Week» in the sidebar.
+  «Today» is an inbox of what waits for you, each question with its brief; a session has a live transcript, approval
+  cards, its diff (a tap on a line comments on it) and a line of what its turn wrote to the Base; a Space has its
+  Records and its screen of collections (a board, a queue, the numbers against their goal); voice input everywhere.
 
 Each optional part has its own `setup.sh` switch and its own guide (see [Documentation](#documentation)).
 
@@ -98,7 +105,8 @@ path of a leak:
 | The SNI guard | Bash's TLS must name the host it asked the proxy for, so an allowed CDN cannot front another site | `retinue/sniguard.py` |
 | Egress allow lists | Bash reaches GitHub, PyPI and npm only; the open proxy refuses private ranges | `deploy/egress/`, `deploy/lanes/managed-settings-private.json` |
 | Tokens out of reach | the subscription token reaches the CLI through a pipe; no git or registry credential and no bot token enters the room | [docs/platform.md](docs/platform.md#the-token-out-of-reach) |
-| Writes by your button | a commit to the Base («To the Base») or a pushed branch with its pull request («Push») is made by the platform after you press, with your rights | [docs/base.md](docs/base.md), [docs/code.md](docs/code.md) |
+| Writes by the platform | no git credential is in the room: the platform commits and pushes the Base after every turn, said in one line with «Undo», and pushes a branch with its pull request only when you press «Push» | [docs/base.md](docs/base.md#the-commit-after-a-turn), [docs/code.md](docs/code.md) |
+| The page reader | `read_page` fetches a page in a container on its own network that holds no data and no token | `retinue/reach.py` |
 | The container | non-root user, read-only root, AppArmor and seccomp profiles, no capabilities | `deploy/lanes/`, `deploy/compose.yml` |
 
 None of these is a wall on its own, and the docs say where each one stops: see
@@ -149,9 +157,10 @@ which needs a WireGuard VPN.
 | Guide | What |
 |---|---|
 | [install.md](docs/install.md) | the server, the bot, the stack, the egress allow list, tests |
-| [platform.md](docs/platform.md) | Claude Code sessions: tracks, spheres, sub-sessions, the room, the gate, approvals, questions, the courier card |
+| [platform.md](docs/platform.md) | Claude Code sessions: tracks, spheres, sub-sessions, the room, the gate, approvals, questions, the courier card, the page reader, the source check, the replay set |
 | [face.md](docs/face.md) | the phone app: WireGuard, login, the shell and its tabs, voice, the face API |
-| [base.md](docs/base.md) | the knowledge base as a clone in the room, Spaces, «To the Base» commits |
+| [design.md](docs/design.md) | the face's look: its rules, held by a test |
+| [base.md](docs/base.md) | the knowledge base as a clone in the room, Spaces, the commit after every turn and its «Undo» |
 | [code.md](docs/code.md) | your repositories in the room, mirrors, tokens, the «Push» push-to-PR card |
 | [instructions.md](docs/instructions.md) | what a session follows: lane rules, the repository's `CLAUDE.md`, your skills, the owner-memory snapshot |
 | [memory.md](docs/memory.md) | the knowledge base the assistant writes, and its hub |
@@ -159,7 +168,7 @@ which needs a WireGuard VPN.
 | [courier.md](docs/courier.md) | your chosen Telegram chats and replies to people, sent only by your button |
 | [proactive.md](docs/proactive.md) | the time zone, deadlines, the week's numbers of your collections, the heartbeat |
 | [pages.md](docs/pages.md) | your HTML pages for your devices, keeping what you do in them; public sites of the ones you share |
-| [collections.md](docs/collections.md) | the platform's own tables beside the Base: the files you upload, any type, kept as they came; records, their views on a Space's screen, the owner's writes from it, a session's, the Mac's (`/mcp/mac`) and the assistant's, with what they propose to him and the evening list of hers |
+| [collections.md](docs/collections.md) | the platform's own tables beside the Base: records, their views on a Space's screen, the owner's writes from it, a session's, the Mac's (`/mcp/mac`) and the assistant's, with what they propose to him and the evening list of hers |
 | [backup.md](docs/backup.md) | the nightly restic backup and the monthly check from your own computer |
 | [health.md](docs/health.md) | the containers checked every two minutes, told to you when one goes bad |
 
@@ -177,7 +186,7 @@ docs/               one guide per part
 ## Language: English throughout
 
 The code, the comments, the docs, the commit messages and everything the owner reads in the product are in English:
-the bot's messages, the buttons («Allow», «To the Base», «Push»), the app's tabs, the assistant's and the lanes'
+the bot's messages, the buttons («Allow», «Undo», «Push»), the app's tabs, the assistant's and the lanes'
 instructions (`agents/assistant/CLAUDE.md`, `deploy/lanes/instructions/`). The docs quote those strings as they are,
 in «guillemets», so you can find them in the code and in the app. There is no translation layer: the product has one
 user. Where the owner types a command or a reply the code parses (a time zone, `/initiative`, a card's reply), the
@@ -201,6 +210,9 @@ transcription uses [ElevenLabs](https://elevenlabs.io) Scribe and is optional.
 - **The room can leak by a path the guards do not see.** Plain words under every threshold of the exfil guard pass;
   a CDN that routes by the HTTP `Host` (Fastly does) lets Bash reach other sites through PyPI. Both are written up
   in [docs/platform.md](docs/platform.md#the-room), with what would close them.
+- **The room writes to your Base unasked.** What a session changes there is committed and pushed after its turn
+  with your rights; the hub's own check, «Undo» and the evening's list of commits stand between, not a button
+  ([docs/base.md](docs/base.md#the-commit-after-a-turn)).
 - **Tied to Claude today.** See [Model access](#model-access).
 - **The Matrix channel** is still in the code and off by default ([docs/install.md](docs/install.md#matrix-optional)).
 - **No CI.** Run the tests locally before a pull request.

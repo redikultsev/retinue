@@ -1,9 +1,10 @@
 # Retinue face
 
-The owner's web app for the platform: sessions by track, a live transcript, approval and courier cards with the
-full input, the changes of a code session with line comments, two sessions side by side. A PWA served as static
-files by nginx; `/api/*` goes to the platform's face API ([docs/face.md](../docs/face.md#api)). Russian UI, mobile first, dark and
-light by `prefers-color-scheme`.
+The owner's web app for the platform: «Today» as an inbox of what waits, sessions by sphere, a live transcript,
+approval and courier cards with the full input, diffs with line comments, the line of what a turn wrote to the Base,
+the Spaces with their screens of collections, two sessions side by side. A PWA served as static files by nginx;
+`/api/*` goes to the platform's face API ([docs/face.md](../docs/face.md#api)). English UI, mobile first, dark and
+light by `prefers-color-scheme`; the look's rules are [docs/design.md](../docs/design.md).
 
 ## Commands
 
@@ -16,7 +17,8 @@ All from the repository root with `pnpm -C face …` (Node 24, pnpm 11):
 | `RETINUE_API=http://… pnpm -C face dev` | Vite only, proxying `/api/*` to a real face API |
 | `pnpm -C face mock` | the mock API alone (`MOCK_PORT`, `MOCK_CODE` to change port and login code) |
 | `pnpm -C face build` | typecheck, then the static app in `face/dist/` |
-| `pnpm -C face test` | Vitest + Testing Library: the event reducer, the stream (one EventSource, 410, iOS reconnect), the approval card, login, transcript items, the service worker's routing |
+| `pnpm -C face test` | Vitest + Testing Library: the event reducer, the stream (one EventSource, 410, iOS reconnect), the cards, login, transcript items, the service worker's routing, the look's rules |
+| `pnpm -C face e2e` | Playwright: the main screens in Chromium against the mock at a phone's, a tablet's and a desktop's width, no sideways scroll, no error in the page |
 | `pnpm -C face typecheck` | `tsc -b` (strict) over the app, the tests, the mock and the scripts |
 | `pnpm -C face lint` | Biome |
 | `node face/scripts/icons.ts` | redraws the PWA icons in `public/icons/` |
@@ -28,8 +30,8 @@ start) and by Telegram init data (shape only, no HMAC), `meta`, the session list
 with `delta`, input, stop, new sessions (each runs a short scripted turn with streamed text), decisions with the
 digest check, and the diff. Fixtures cover every transcript item kind, a long Bash command, an Edit, a TodoWrite
 plan, a subagent, a question, a shown card, a card whose input is over Telegram's 4096 limit, and a courier card;
-for the compact look and «Сводка», a turn of eight calls in a row (Bash, reads, an MCP tool, WebFetch, an error),
-sub-sessions (one queued), a ping with its replies, unpushed commits and a pushed PR, Base files, a pinned row, and
+for the compact look and «Summary», a turn of eight calls in a row (Bash, reads, an MCP tool, WebFetch, an error),
+sub-sessions (one queued), a ping with its replies, unpushed commits and a pushed PR, a commit to the Base after a turn with its line, a pinned row, and
 every snapshot's `about` (folder, model, context, MCP servers).
 Session `5566aabb` streams forever, for watching two panels at once.
 
@@ -50,11 +52,12 @@ The mock's cookie is `retinue_mock` without `Secure` (plain http); the real one 
   401 → login. A different `schema` reloads the page. Back after more than 45 s hidden (iOS freezes background
   PWAs), the stream is reopened from the last event id.
 - **Routes** (the whole table is in docs/face.md, «The shell»): `/login` (code, `#code` from the bot's link, or the
-  Mini App's `tgWebAppData`), `/` (goes to `/today`, «Сегодня»), `/sessions`, `/spaces…`, `/s/<id>` (`?tab=changes`, `?with=<id>` for a
+  Mini App's `tgWebAppData`), `/` (goes to `/today`), `/sessions`, `/new`, `/spaces…`, `/week`, `/s/<id>` (`?tab=changes`, `?with=<id>` for a
   second panel on screens ≥ 1280 px), `/a/<approval id>` (one card from `GET /api/approvals/{id}` — the Mini App deep link;
-  `startapp=a_<id>` works too), `/read` («Читать»: the hub's pages, each opened on the hub; docs/face.md).
+  `startapp=a_<id>` works too), `/f/<id>` (a file a session handed over), `/p/<id>` (a push card), `/pages` (your pages;
+  the old `/read` lands there).
 - **Cards** show the header lines the platform built, the full input in a scrollable monospace block (invisible
-  characters written as `⟦U+…⟧`, as the platform does), and «Разрешить» / «Отказать», which post the action
+  characters written as `⟦U+…⟧`, as the platform does), and «Allow» / «Deny», which post the action
   with the card's `digest`.
 - **PWA**: `public/manifest.webmanifest`, icons, `apple-touch-icon` and iOS meta tags; `public/sw.js` caches the
   app shell only and never intercepts `/api/*`.
@@ -96,7 +99,7 @@ Runtime (in the bundle):
 | react, react-dom | 19.3.0 | the UI |
 | @tanstack/react-router | 1.170.42 | typed routes and search params (`/s/<id>?with=…`); code-based, no generator plugin |
 | streamdown | 2.7.0 | markdown that renders half-written text safely while it streams (`delta`), sanitised (rehype-sanitize/harden) |
-| @pierre/diffs | 1.5.2 | the «Изменения» tab: parses `git diff`, highlights, and has line click + line annotations, which the line comments need. Loaded lazily (its own chunk) |
+| @pierre/diffs | 1.5.2 | the «Changes» tab and the Base's diffs: parses `git diff`, highlights, and has line click + line annotations, which the line comments need. Loaded lazily (its own chunk) |
 | react-resizable-panels | 4.14.4 | two sessions side by side, resizable (E8) |
 | class-variance-authority, clsx, tailwind-merge | 0.7.1, 2.1.1, 3.7.0 | what the copied shadcn/ui components are written with |
 

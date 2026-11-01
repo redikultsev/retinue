@@ -5,11 +5,12 @@
 // Mock-only endpoints (not in the contract), for trying the edges by hand:
 //   POST /api/_mock/approval {session?}  a new shown approval card arrives (an `approval` event)
 //   POST /api/_mock/prune                old events are pruned and streams cut: clients get 410 and resync
-//   POST /api/_mock/collection           a deal of the «work» Space moves a column on (a `collection` event)
+//   POST /api/_mock/collection[?quiet=1] a deal of the «work» Space moves a column on (a `collection` event; quiet:
+//                                        none, so the app's next write of that deal meets a conflict)
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as fx from "./fixtures.ts";
-import { mockCollections, moveDeal } from "./collections.ts";
+import { mockCollections, mockProposals, mockWrite, moveDeal, seedProposals, waitingProposals } from "./collections.ts";
 import { mockSpaces } from "./spaces.ts";
 import type { Approval, Input, Item, Proposal, Session, Summary } from "../src/lib/types.ts";
 
@@ -65,12 +66,14 @@ function mockFeed() {
   const decide = cards.filter((a) => a.kind === "approval" && sessions.get(a.session));
   const read = [...sessions.values()].filter((s) => s.state === "idle");
   const offered = [...proposals.values()].filter((p) => p.state === "open" && sessions.get(p.session));
+  const writes = waitingProposals().filter((p) => p.session && sessions.get(p.session));
   const last = (id: string) => [...summaries.values()].filter((x) => x.session === id).at(-1);
   const groups = [
     { action: "answer", title: "Answer a question", rows: answer.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "answer", source: "question", since: a.created, essence: "", approval: a })) },
     { action: "decide", title: "Decide", rows: [
       ...decide.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "decide", source: "approval", since: a.created, essence: "", approval: a })),
       ...offered.map((p) => row(sessions.get(p.session)!, { key: `proposal:${p.id}`, action: "decide", source: "proposal", since: p.created, essence: `Sub-session: ${p.title}`, proposal: p, hint: "Start it or set it aside in the app." })),
+      ...writes.map((p) => row(sessions.get(p.session!)!, { key: `cproposal:${p.id}`, action: "decide", source: "collection_proposal", since: p.created, essence: `${p.collection}: ${p.changes.length} change${p.changes.length === 1 ? "" : "s"} proposed`, collection_proposal: p, hint: "Apply it or dismiss it in the app." })),
     ] },
     { action: "read", title: "Read", rows: read.map((s) => row(s, { key: `read:${s.id}`, action: "read", source: "session", since: s.at, essence: last(s.id)?.text.split("\n")[0] ?? "" })) },
     { action: "assistant", title: "From the assistant", rows: [
@@ -96,6 +99,7 @@ function mockFeed() {
 // --- state and the event log -----------------------------------------------------------------------------------
 
 const sessions = new Map<string, Session>(fx.sessions.map((s) => [s.id, { ...s }]));
+seedProposals(fx.sessions[0]!.id); // what its first session proposed to write to the «work» Space's deals
 const items = new Map<string, Item>(fx.items().map((it) => [`${it.session}/${it.turn}/${it.n}`, it]));
 const approvals = new Map<string, Approval>(fx.approvals.map((a) => [a.id, { ...a }]));
 // keyed `<session>/<note seq>`, as the platform keys summary events
@@ -392,8 +396,21 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   if (views) return json(res, views.status, views.data);
   if (path === "/api/_mock/collection" && method === "POST") {
     const moved = moveDeal();
-    emit("collection", moved.name, moved);
+    if (url.searchParams.get("quiet") !== "1") emit("collection", moved.name, moved);
     return json(res, 200, moved);
+  }
+  // …what the sessions proposed to write to them, and his press on it (docs/collections.md «From a session»).
+  const decided = mockProposals(path, method, url.searchParams);
+  if (decided) {
+    if (decided.moved) emit("collection", decided.moved.name, decided.moved);
+    if (decided.proposal) emit("collection_proposal", decided.proposal.id, decided.proposal);
+    return json(res, decided.status, decided.data);
+  }
+  // …and the owner's writes to them, each at the version shown (docs/collections.md «From the screen»).
+  const wrote = method === "POST" && path !== "/api/c/_files" ? mockWrite(path, await body(req)) : null;
+  if (wrote) {
+    if (wrote.moved) emit("collection", wrote.moved.name, wrote.moved);
+    return json(res, wrote.status, wrote.data);
   }
 
   // «Uploads»: the bytes read whole (the real limit is nginx's and the platform's), a new file told to every stream.

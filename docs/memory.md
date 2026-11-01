@@ -50,17 +50,18 @@ hub's own folder, which the containers' group may not write. So a new clone name
 
 ## Your own words: `owner.yaml`
 
-A few things the code keeps generic are yours to name: the Record whose header holds your zone and what your tracker
-tracks ([proactive.md](proactive.md#the-tracker)). They are keys of `memory:` in `router.yaml`, which `setup.sh` writes
-anew on every run, so they live in a file of the server only, `/srv/retinue/memory/owner.yaml`: its lines go under
-`memory:` as they are, and `setup.sh` refuses any key but these two. Without the file every key keeps its neutral
-default.
+A few things the code keeps generic are yours to name: the Record whose header holds your zone, and the `stat`
+views of your collections that are the week's numbers ([proactive.md](proactive.md#the-weeks-numbers)). `setup.sh`
+writes `router.yaml` anew on every run, so they live in a file of the server only, `/srv/retinue/memory/owner.yaml`:
+`location` goes under `memory:` as it is, `week` under `proactive:` — only with the platform, whose collections it
+counts — and `setup.sh` refuses any key but these two. Without the file each keeps its neutral default: the Record
+`profile/location.md`, no numbers.
 
 ```yaml
 location: profile/location.md          # the Record whose header field `tz` names your zone
-tracker:
-  path: profile/tracker.md             # all keys: proactive.md, «The tracker»
-  title: Tracker
+week:                                  # `<collection>/<view>`: proactive.md, «The week's numbers»
+  - followups/done
+  - deals/moved
 ```
 
 Run `setup.sh` again and restart the router after changing it. The file is yours and never in the repository.
@@ -95,4 +96,5 @@ and committed by your «To the Base» button with your rights — the hub sees a
 At 21:00 (`digest_at` in the `memory:` section of `router.yaml`) a message lists her commits of the day: the files,
 your own records she changed or deleted first, and whether someone else's text was on her input (a forward, an
 attachment, travel results). Each commit has a «Revert» button for a day; later, `git revert <commit>` on your
-computer. What a refused turn wrote is kept in `/srv/retinue/memory/git/refused/`.
+computer. What a refused turn wrote is kept in `/srv/retinue/memory/git/refused/`. The same message names her changes
+to your collections, and the rules', each with its own «Revert C<n>» ([collections.md](collections.md#the-evening-list)).

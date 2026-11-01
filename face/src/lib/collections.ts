@@ -183,11 +183,8 @@ export function useSpaceViews(space: string, api: ViewsApi = collectionsApi, sou
       else setError(e instanceof ApiError ? e.message : "Did not load.");
     }
   }, [api, space, put]);
-  useEffect(() => {
-    current.current = kept.get(space) ?? null;
-    setData(current.current);
-    void load();
-    const moved = async ({ name, space: theirs, rev }: CollectionEvent) => {
+  const moved = useCallback(
+    async ({ name, space: theirs, rev }: CollectionEvent) => {
       if (!current.current) return;
       const known = current.current.collections.find((c) => c.name === name);
       if (!known || theirs !== space) {
@@ -211,7 +208,13 @@ export function useSpaceViews(space: string, api: ViewsApi = collectionsApi, sou
       } catch {
         // the next event, the next visit or the next resync reads it again
       }
-    };
+    },
+    [api, space, load, put],
+  );
+  useEffect(() => {
+    current.current = kept.get(space) ?? null;
+    setData(current.current);
+    void load();
     const onVisible = () => {
       if (!document.hidden) void load();
     };
@@ -222,6 +225,13 @@ export function useSpaceViews(space: string, api: ViewsApi = collectionsApi, sou
       document.removeEventListener("visibilitychange", onVisible);
       for (const off of offs) off();
     };
-  }, [space, api, source, load, put]);
-  return { data, error, reload: load };
+  }, [space, source, load, moved]);
+  /** What the owner's own write made, read at once rather than when the stream tells of it. */
+  const refresh = useCallback(
+    (name: string, rev: string | null) => {
+      if (rev) void moved({ name, space, rev });
+    },
+    [moved, space],
+  );
+  return { data, error, reload: load, refresh };
 }

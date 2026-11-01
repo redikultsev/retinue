@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, citecheck, cliengine, collections_admin, courier, episodes, face, feed, finish, followups, inbox,
+from . import (approvals, attachments, citecheck, cliengine, collections_admin, colltools, courier, episodes, face, feed, finish, followups, inbox,
                lanetravel, outfiles, pings, questions, signals, subs, tobase, topush, transcript, views)
 from .base import BaseRepo, under
 from . import library as library_mod
@@ -118,12 +118,14 @@ class Platform:
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
         self.followups = followups.FollowUps(self)  # a session brought back to a task that waits (`followups.py`)
+        self.colltools = colltools.CollTools(self)  # the agents' tools for the collections, and their proposals
         self._stopped_runs: set[str] = set()  # runs the owner's «Stop» ended: not errors (`episodes`)
         # travel-ops' tools on the same server, for every session (`lanetravel.py`); None: no travel-ops in this stack.
         self.travel = lanetravel.LaneTravel(cfg.travel_url) if cfg.travel_url else None
         # The page reader's read_page on the same server, for every session (`reach.py`); None: no reader here.
         self.reach = reach_mod.LaneReach(cfg.reach_url) if cfg.reach_url else None
         self.feed.subs = self.subs  # the feed's proposals of sub-sessions, under «Decide»
+        self.feed.colltools = self.colltools  # and of writes to the collections
         # The owner's Base cloned into a lane (`base.py`): kept fresh here, committed by his button.
         self.base = base if base is not None or cfg.base is None else BaseRepo(cfg.base, _lane_view(cfg))
         if self.base is not None:
@@ -158,7 +160,7 @@ class Platform:
                         web.post("/owner/waiting/asked", self.owner_waiting_asked),
                         web.post("/owner/waiting/detail", self.owner_waiting_detail),
                         web.post("/owner/library", self.owner_library), web.post("/owner/stats", self.owner_stats),
-                        *self.views.owner_routes(),
+                        *self.views.owner_routes(), *self.colltools.owner_routes(),
                         web.post("/items", self.items),
                         web.post("/items/confirm", self.confirm)])
         return app
@@ -1301,6 +1303,7 @@ class Platform:
         self._mark_idle(now)  # the cards still shown after the expiry
         self.subs.deliver()  # a report that waited for its siblings, or for a limit to pass: `_clock` drains
         self.subs.expire()  # the proposals past their week: their cards told
+        self.colltools.expire()
         self.followups.tick()  # the follow-ups due, to sessions that are free: `_clock` drains
         episodes.trim(self.store, now)
         self.tobase.tick(now)

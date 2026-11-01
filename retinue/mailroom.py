@@ -44,6 +44,7 @@ HOUR = 3600               # urgent letters of one sender within this are one mes
 SUMMARY_ITEMS = 15        # letters that waited till morning, named in the summary; the rest are counted
 STILL_OPEN = ("decide", "attend", "pay", "act")  # a later reply in the chat does not close these: said is not done
 STALE_S = 1800            # a source not synced for this long is not counted as working (it syncs every 10 min)
+LINES_S = 5               # the platform's list of the collections she may write waits no longer: none is said then
 URGENT_DAY = 8            # more urgent messages a day than this: the summary asks what could have waited
 TELEGRAM = "telegram"     # the source of the Business gateway's items
 OWN = ("own", "своё")     # an attachment's origin that is the owner's: today's word and the one archived before it
@@ -438,13 +439,29 @@ class Mailroom:
 
     # --- her judgement and what code does with it ---------------------------------------------------------------
 
-    def _owner_lines(self) -> list[str]:
-        """What the owner's config tells the judgement run: his tracker, when there is one."""
-        from .pages import Tracker
-
-        memory = self.core.memory
-        lines = [Tracker.of(memory).line(str(getattr(memory, "tree", "") or ""))]
-        return [line for line in lines if line]
+    async def _owner_lines(self) -> list[str]:
+        """What the owner's setup tells the judgement run: the collections her rights let her write, and what she may
+        change in each, when she has the tools for them."""
+        core = self.core
+        agent = core.agents[core.default_agent]
+        if not agent.collections or core.platform is None:
+            return []
+        try:
+            data = await core.platform("collections/describe", {"actor": "assistant", "via": "mail", "foreign": [],
+                                                                "call": "mail-lines", "arguments": {}}, LINES_S)
+        except Exception as exc:  # noqa: BLE001 — the judgement goes on without the line
+            log.warning("the collections she may write not read: %s", exc)
+            return []
+        writable = [c for c in data.get("writable") or [] if isinstance(c, dict)]
+        if not writable:
+            return []
+        said = "; ".join(f"{c['name']} — " + ", ".join(
+            [*(["add"] if c.get("add") else []),
+             *([f"set {'any field' if c['set'] == '*' else ', '.join(c['set'])}"] if c.get("set") else [])])
+            for c in writable)
+        return [f"The owner's collections you may write from a letter: {said}. Read the record first "
+                "(collection_query: its id and version), then collection_apply with src — the item's archive id — in "
+                "every operation; what your rights leave to him becomes a proposal by itself."]
 
     def _entry(self, number: int, item: dict) -> list[str]:
         event = self.core.archive.get(item["event_id"] or "")
@@ -593,7 +610,8 @@ class Mailroom:
                     said = " ".join(str(i["data"].get("text") or "") for i in items)
                     context += self._lookup(event, said, batch | shown)  # what she sees already is not repeated
             entries += self._entry(number, item)
-        prompt = [EVENT_HEAD, *self._owner_lines(), *context, f"Now: {clock.stamp(now, core.tz)}.", "New items:",
+        lines = await self._owner_lines() if items[0]["source"] != TELEGRAM else []  # a chat writes nothing
+        prompt = [EVENT_HEAD, *lines, *context, f"Now: {clock.stamp(now, core.tz)}.", "New items:",
                   *entries]
         events = [e for e in (core.archive.get(i["event_id"] or "") for i in items) if e]
         files = core.files(events)

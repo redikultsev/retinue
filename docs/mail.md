@@ -137,5 +137,13 @@ What her judgement said asks you to act — reply, decide, pay, attend, act — 
 ## What she may write
 
 The judgement run has her tools: she may write a Record to the knowledge base from a letter (a meeting that was
-set, a document's deadline) and move a row of your tracker (docs/proactive.md, «The tracker»). Its commit carries `Foreign-Input: mail` and shows in the evening list with
-«Revert».
+set, a document's deadline). Its commit carries `Foreign-Input: mail` and shows in the evening list with «Revert».
+
+She may also move a record of your collections ([collections.md](collections.md#from-the-assistant)) — a customer's
+answer, a refusal — as far as their rights give the class `assistant`. The run's note names each collection
+she may write and what she may change in it (“The owner's collections you may write from a letter: deals — set
+stage; …”), read from the platform; without the grant, the platform or any right, there is no such line. Every
+operation she makes names the letter it comes from (`src: mail:<account>/<id>`, the item's archive id) — the router
+refuses one that does not — so the same letter judged again changes nothing more. Her change is marked as from mail
+(`via: mail`, `foreign: mail`) and shows in the evening list with its own «Revert C<n>». A judgement of a Telegram chat
+reads the collections and writes nothing.

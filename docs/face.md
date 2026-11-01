@@ -6,11 +6,12 @@ can add to the home screen) and the same page opened from a card in Telegram as 
 through WireGuard, from your own devices.
 
 ```
-phone ── WireGuard ── Traefik (allow list: your devices; TLS; adds the key) ── face (nginx: the app; /api/* on)
+phone ── WireGuard ── Traefik (allow list: your devices; TLS; adds the key) ── face (nginx: the app; /api/*, /mcp/mac on)
                                                     └── face-platform (internal) ── platform 172.16.96.10:9600
 ```
 
-The **face API** is `/api/*` on the platform's second port (9600), on its own address on its own network
+The **face API** is `/api/*` — and `/mcp/mac`, the collections for the agents on your Mac, by a device's token instead
+of the login ([collections.md](collections.md#from-the-mac)) — on the platform's second port (9600), on its own address on its own network
 `face-platform`, where only the face's nginx is besides the platform. The router, the lanes' hooks and the lanes stay
 on 9500 and never see that network. nginx in front adds nothing secret: who may do what is decided by the face API
 alone.
@@ -161,6 +162,7 @@ in the snapshot, never wrapped in an envelope. The kinds and their keys:
 | `proposal` | the proposal's id | `{id, session, tool_use_id, title, brief, created, at, state, child, from_report}`: a sub-session the session proposed ([platform.md](platform.md#proposals)); `state` `open` · `started` (`child` the sub-session) · `declined` · `expired` (past its week: the platform's clock sends the event); `from_report`: proposed in a turn a report started, which its card says |
 | `upload` | the file's SHA-256 | `{sha256, name, size, mime, created}`: a file uploaded from any device ([below](#uploads)) |
 | `collection` | the collection's name | `{name, space, rev}`: a collection changed — its records, form, views or rights; `space` its Space, `rev` its newest change ([collections.md](collections.md#views)) |
+| `collection_proposal` | the proposal's id | a write to a collection a session proposed, as `GET /api/c/_proposals` lists it: made, applied, dismissed or expired ([collections.md](collections.md#proposals)) |
 | `delta` | none, no `id` | `{session, text}`: text being written, never replayed |
 
 An approval is `{id, session, tool_use_id, kind, state, tool, input, cwd, digest, view, created, at}`; `kind` is
@@ -223,7 +225,9 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/library` | `{schema, hub, at, pages: [{id, title, url, updated, section, section_title, section_icon, minutes, opened, done}]}` — “Pages”, [below](#pages) |
 | `POST /api/library/{id}/open` · `/done {done}` | `{page}`: you opened the page; “Finished” (`done: true`) or taken back (`false`); 404 for a page not in the list |
 | `POST /api/c/_files` · `GET /api/c/_files` · `GET /api/c/_files/{sha256}` | “Uploads”: a file in, any type up to 40 MB, `{file, new}`; the list `{schema, files, max}`; a file back as a download — [collections.md](collections.md#uploads) |
-| `GET /api/c/_space?space=` · `GET /api/c/{collection}?view=` · `GET /api/c/{collection}/{id}` | a Space's collections and their views `{space, tz, today, at, collections}`; one view again `{name, rev, …, view}`; one record with its newest changes `{name, rev, record, changes}` — [collections.md](collections.md#views) |
+| `GET /api/c/_space?space=` · `GET /api/c/{collection}?view=` · `GET /api/c/{collection}/{id}` | a Space's collections and their views `{space, tz, today, at, collections}`; one view again `{name, rev, …, view}`; one record with its form's fields, its newest changes and the words of its refs `{name, rev, title, fields, record, changes, words}` — [collections.md](collections.md#views) |
+| `GET /api/c/_proposals?space=` · `POST /api/c/_proposals/{id}/apply` · `/dismiss` | the writes the sessions proposed `{proposals}`, a Space's alone; the owner's «Apply» or «Dismiss» `{proposal, answer?}` (409 for one decided or a record that moved on) — [collections.md](collections.md#proposals) |
+| `POST /api/c/{collection}` · `GET /api/c/{collection}/_form` · `GET /api/c/_changes?space=&before=` | the owner's write `{ops, idem}` — `apply`'s answer, or `{error, kind, record, change}` (409 when the record moved on since it was shown); what an add asks for `{name, rev, fields, options}`; a Space's newest changes `{space, changes, next, words}` — [collections.md](collections.md#from-the-screen) |
 
 ## Voice
 
@@ -577,8 +581,12 @@ is as of opening the session.
 - **“Spaces”** (`/spaces`, `pages/spaces.tsx`): the Base, read only ([base.md](base.md#reading-the-base-in-the-app)).
   The grid has a tile per Space — the sphere's icon and title when a sphere has its name, else the Showcase's title —
   with “N waiting”, “N working” (from the live sessions, as the list counts them) and “N questions” (its Open questions).
-  A Space (`/spaces/<space>`) is its Showcase as a screen, in this order — first what waits for you: its collections'
-  views, read only ([collections.md](collections.md#views), `components/views/`), each `queue` (“Waiting on me (5)”:
+  A Space (`/spaces/<space>`) is its Showcase as a screen, in this order — first what waits for you: “Proposed (2)”,
+  the writes to its collections the sessions proposed, each a card (`components/collection-proposal-card.tsx`) with
+  what each operation would change (“Hooli · deleted”, “Initech · Stage: Qualified → Proposal”; five, then “Show all
+  7”), the session's words, “Yours to apply: …” when its rights left it to you, “Apply” and “Dismiss” — a record that
+  moved on since says “Changed by the assistant 2 min ago: … Dismiss it, or ask the session again.” and leaves only
+  “Dismiss”; then its collections' views ([collections.md](collections.md#views), `components/views/`), each `queue` (“Waiting on me (5)”:
   the longest silent first, a `ref` by its record's words, days of silence and, past the form's threshold, “overdue ·
   4 days” in red; a phone shows three and “Show all 5”), and the sphere's sessions (waiting first, then working, then
   the rest of the week) with “＋ New”; then the numbers, a tile per `stat` of every collection (“3 of 10” with a bar
@@ -586,7 +594,7 @@ is as of opening the session.
   screen; “as of 31.10 · Europe/Berlin” once above them); each `board` — its columns side by side, narrowing so that
   five fit, with each card's days in it (“stuck · 9 days” past the threshold), the folded values below as closed
   lists; on a phone a switch of columns, opened at the first with a stuck card; fewer than three records are a list,
-  each with its column's name;
+  each with its column's name; and, folded, “Changes”, the Space's newest changes with who, when and “Undo”;
   then the Open questions, each with “Discuss”; the Tasks; the Records
   by nature (Knowledge, Profile, Journal, Artifacts; a subfolder as a small label), each with the two or three words that
   matter for it (“verified 21.09 · practice diverges”; a Profile's “until 01.03.2030”; “stale since” when it is), and a
@@ -596,7 +604,17 @@ is as of opening the session.
   views are read with the Showcase, again when the app comes back to the front and after a resync; the stream's
   `collection` event reads that collection's views again once its `rev` is past the one shown, and a collection of
   this Space the screen did not have (a define brought it in), or one that left it, reads the Space anew. A Space without views — or a platform without
-  the route — shows its Showcase alone, as before. A Record
+  the route — shows its Showcase alone, as before.
+  **The owner writes from the views** ([collections.md](collections.md#from-the-screen), `components/views/edit.tsx`):
+  a row or a card opens its record's sheet (a bottom sheet on a phone) — its fields, “Move to” the board's other
+  columns (the phone's way, and the keyboard's), its changes, each “Undo”, and “Delete”; on a wide screen a card is
+  dragged to another column, a folded one included, and shows there at once; a queue's `done` is a button on each row
+  (“Done”, “Sent”) — the row leaves at once — and “Mark all 4: Sent” below, asked once with the rows named; a view's
+  `add` is “＋ Add a touch” in its header, a sheet of the view's fields with the required ones waited for, a date
+  that is required started at today, a ref picked by its record's words. Each write is at the version shown, its toast
+  “Moved to Interview. Undo” for 8 s; one the record moved on since asks “Changed by the assistant 2 min ago: Stage:
+  Applied → Closed.” with “Apply mine” (the write again, at the new version) or “Keep”; an add that may be a record
+  there already asks “Add anyway”; an “Undo” of a change something changed after says so, and changes nothing. A Record
   (`/spaces/<space>/r/<path>`) opens to read: its title, its head in words — “Knowledge · verified 21.09 · practice
   diverges · stale after 21.12 · written by Claude Code”, then “created · updated · id” smaller, “Source” folded, the
   fields the app does not know raw at the bottom — and its body as markdown under the transcript's rules (no raw
@@ -626,7 +644,7 @@ session, a card, a summary or a proposal changes on the stream (once per burst) 
 | Group | What is in it | Its action, in place |
 |---|---|---|
 | “Answer the question” | a question card that asks | the question's buttons, “Own answer…” |
-| “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted (“To the Base: N files”, since the first of them); a sub-session a session proposed, of the last 7 days (“Sub-session: <title>”, [platform.md](platform.md#proposals)) | “Allow” / “Deny”; a courier's “Copy command”; “To the Base · N”, the card in a dialog; “Start” / “Not now” under the proposal's brief. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first, a brief longer than 6 lines or 400 characters “Show the brief”: nothing is decided unseen |
+| “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a session with Base files uncommitted (“To the Base: N files”, since the first of them); a sub-session a session proposed, of the last 7 days (“Sub-session: <title>”, [platform.md](platform.md#proposals)); a write to a collection a session proposed, of the last 7 days (“deals: 2 changes proposed”, [collections.md](collections.md#proposals)) | “Allow” / “Deny”; a courier's “Copy command”; “To the Base · N”, the card in a dialog; “Start” / “Not now” under the proposal's brief; “Apply” / “Dismiss” under what a proposed write would change. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first, a brief longer than 6 lines or 400 characters “Show the brief”: nothing is decided unseen |
 | “Reply” | a session waiting for your message with no card shown | “Open and answer” |
 | “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
 | “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and the way to the thing. A person's row or a draft — its words, or › “Details” — opens [its sheet](#her-rows-sheet); a base's date — its words, or ↗ “Open the Record” — opens the Record in Spaces. Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |

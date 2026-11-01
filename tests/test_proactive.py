@@ -1,5 +1,6 @@
-"""What the router says unasked: the zone that follows the owner, the base's deadlines, the week of the tracker, a
-Mac that has not pushed, and the heartbeat that stays silent — and runs no model — when nothing needs him."""
+"""What the router says unasked: the zone that follows the owner — and the platform's screen with it —, the base's
+deadlines, the week's numbers of his collections, a Mac that has not pushed, and the heartbeat that stays silent — and
+runs no model — when nothing needs him."""
 
 import asyncio
 import dataclasses
@@ -110,12 +111,42 @@ def test_a_zone_is_an_area_and_a_city_wherever_it_is_taken(tmp_path):
     assert Core([ASSISTANT], store, "owner", proactive=Proactive()).tz == "UTC"
 
 
-def make_core(tmp_path, ask=None, memory=None, rand=lambda: 1.0, backup=None):
+def make_core(tmp_path, ask=None, memory=None, rand=lambda: 1.0, backup=None, platform=None):
     store = Store(str(tmp_path / "r.sqlite"))
     core = Core([ASSISTANT], store, "owner", ask=ask, archive=Archive(str(tmp_path / "a.sqlite")),
-                backup_status=backup, proactive=Proactive(rand=rand))
+                backup_status=backup, proactive=Proactive(rand=rand, week=WEEK if platform else None))
     core.memory = memory
+    core.platform = platform
     return core
+
+
+WEEK = ["followups/done", "deals/moved"]
+
+
+def tile(title, value, previous, goal=None, window="week"):
+    return {"name": title.lower(), "kind": "stat", "title": title, "value": value, "goal": goal, "previous": previous,
+            "window": window, "first": "2026-10-12", "last": "2026-10-18"}
+
+
+class FakePlatform:
+    """The platform's `/owner/<call>` as the router calls it: the week's tiles it holds, every call kept."""
+
+    def __init__(self, *tiles):
+        self.tiles, self.calls, self.down, self.zone = list(tiles), [], False, None
+
+    async def __call__(self, path, body, timeout=60):
+        self.calls.append((path, body, timeout))
+        if self.down:
+            raise RuntimeError("unavailable: the platform")
+        if path == "zone":
+            self.zone = body["tz"]
+            return {"tz": body["tz"]}
+        if path == "collections/stat":
+            return {"tz": body["tz"], "today": "2026-10-15", "at": 0.0, "screen_tz": self.zone,
+                    "stats": [{"collection": "followups", **t} for t in self.tiles]}
+        if path == "stats":
+            return {}
+        raise AssertionError(path)
 
 
 def test_the_zone_is_changed_in_words_kept_across_restarts_and_checked(tmp_path):
@@ -148,42 +179,27 @@ def test_the_zone_is_changed_in_words_kept_across_restarts_and_checked(tmp_path)
     asyncio.run(run())
 
 
-TRACKER_HEAD = "---\nid: tracker\nweekly_goal: 7\n---\n\n| # | Date | Item | Detail | Score | Status |\n|---|---|---|---|---|---|\n"
-
-
-def tracker(*rows):
-    return TRACKER_HEAD + "".join(f"| {n} | 2026-10-01 | C{n} | R | N/A | {status} |\n" for n, status in rows)
-
-
-def fake_memory(tmp_path, history, last_mac):
-    """The base: files in a folder, the hub's log as two answers."""
+def fake_memory(tmp_path, last_mac):
+    """The base: files in a folder, the hub's log as one answer."""
     tree = tmp_path / "kb"
-    (tree / "profile").mkdir(parents=True, exist_ok=True)
-    (tree / "profile/tracker.md").write_text(history[-1][1], encoding="utf-8")
-
-    def file_at(path, ts):
-        known = [text for moment, text in history if moment <= ts]
-        return known[-1] if known else None
-
+    tree.mkdir(parents=True, exist_ok=True)
     return SimpleNamespace(tree=str(tree), cfg=SimpleNamespace(digest_at="21:00"), sync=lambda: None,
-                           file_at=file_at, last_foreign_commit=lambda: last_mac, changed_since=lambda ts: {})
+                           last_foreign_commit=lambda: last_mac, changed_since=lambda ts: {})
 
 
-def test_the_monday_summary_gets_deadlines_the_trackers_week_and_the_mac(tmp_path, monkeypatch):
+def test_the_monday_summary_gets_deadlines_last_weeks_numbers_and_the_mac(tmp_path, monkeypatch):
     clock = [local(12, 8, 0)]
     monkeypatch.setattr(time, "time", lambda: clock[0])
-    memory = fake_memory(tmp_path, [
-        (local(1, 0), tracker((1, "New"), (2, "Sent"))),
-        (local(8, 12), tracker((1, "Sent"), (2, "Sent"), (3, "Sent"), (4, "New"))),
-        (local(12, 7), tracker((1, "Sent"), (2, "Lost"), (3, "Sent"), (4, "Sent")))],
-        last_mac=local(7, 10))
+    memory = fake_memory(tmp_path, last_mac=local(7, 10))
+    platform = FakePlatform(tile("Follow-ups done", 1, 4, goal=10), tile("Inbound *moved*", 0, 2),
+                            tile("Inbound in play", 3, None, window=None))
     record(tmp_path / "kb", "personal/profile/gym.md", title="Абонемент", until="2026-10-20")
 
     async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None):
         return Reply("done", "Доброе утро.", [], {})
 
     async def run():
-        core = make_core(tmp_path, ask=fake_ask, memory=memory)
+        core = make_core(tmp_path, ask=fake_ask, memory=memory, platform=platform)
         telegram = FakeChannel("telegram", False)
         await core.start([telegram])
         core.jobs.ensure_summary(clock[0])
@@ -197,18 +213,22 @@ def test_the_monday_summary_gets_deadlines_the_trackers_week_and_the_mac(tmp_pat
     parts = card.split("\n\n")
     assert parts[:4] == ["Доброе утро.", "Deadlines, 14 days:\n- in 8 days (20 October): Абонемент — valid until · "
                          "personal/profile/gym.md",
-                         "Tracker for the week: 2 (goal 7).",
+                         "Last week: Follow-ups done — 4 (goal 10); Inbound moved — 2; Inbound in play — 3 (now).",
                          "Mac has not pushed for 5 days: its last commit in the hub is from 7 October."], \
-        "rows 1 and 3 were sent last week; row 4 this Monday morning belongs to this week"
+        "on Monday the tiles' week before, a title's markup dropped, a count of now said so"
     assert parts[4].startswith("Health for the day:")
-    assert asyncio.run(core.proactive.weekly_line(local(12, 9))) == "Tracker for the week: 1 (goal 7).", \
-        "the weekly review counts since this Monday"
+    assert ("collections/stat", {"views": WEEK, "tz": "UTC"}, 10.0) in platform.calls, \
+        "the views the config names, in the router's zone, waited for 10 s"
+    assert asyncio.run(core.proactive.weekly_line(local(12, 9))) == \
+        "This week: Follow-ups done — 1 (goal 10); Inbound moved — 0; Inbound in play — 3 (now).", \
+        "the weekly review says this week's"
 
 
 def test_the_heartbeat_speaks_only_when_something_needs_him(tmp_path, monkeypatch):
     thursday = local(15, 13)
     monkeypatch.setattr(time, "time", lambda: thursday)
-    memory = fake_memory(tmp_path, [(local(1, 0), tracker((1, "Sent")))], last_mac=thursday)
+    memory = fake_memory(tmp_path, last_mac=thursday)
+    platform = FakePlatform(tile("Follow-ups done", 0, 4, goal=10), tile("Inbound moved", 2, 0))
     tree = tmp_path / "kb"
     record(tree, "personal/profile/gym.md", title="Абонемент", until="2026-10-17")
     record(tree, "personal/knowledge/rules.md", title="Правила", stale_after="2026-10-16")
@@ -223,15 +243,16 @@ def test_the_heartbeat_speaks_only_when_something_needs_him(tmp_path, monkeypatc
         return Reply("done", "x", [], {})
 
     async def run():
-        core = make_core(tmp_path, ask=fake_ask, memory=memory, backup=str(backup))
+        core = make_core(tmp_path, ask=fake_ask, memory=memory, backup=str(backup), platform=platform)
         core.store.set("proactive.seeded", "2026-10-01")  # not the first heartbeat since the deploy
         telegram = FakeChannel("telegram", False)
         await core.start([telegram])
         said = await core.proactive.heartbeat(thursday)
         assert said == ["In the Base (profile/location.md) your zone is now Asia/Tokyo. Change it?",
                         "Due soon:\n- in 2 days (17 October): Абонемент — valid until · personal/profile/gym.md",
-                        "Thursday, and «Tracker» has zero for the week (goal 7). One today?",
-                        "Backup: no backup for 3 d: repository locked."], "stale knowledge waits for the summary"
+                        "Thursday, and «Follow-ups done» (goal 10) is at zero for the week. One today?",
+                        "Backup: no backup for 3 d: repository locked."], \
+            "stale knowledge waits for the summary; what moved on inbound deals is not his own follow-up"
         assert await core.proactive.heartbeat(thursday + 900) == [], "each is said once"
         assert await core.proactive.heartbeat(local(15, 23)) == [], "quiet hours"
         (_, buttons, _) = telegram.cards[0]
@@ -247,12 +268,13 @@ def test_the_heartbeat_speaks_only_when_something_needs_him(tmp_path, monkeypatc
 def test_the_first_heartbeat_after_a_deploy_takes_stock_and_bursts_nothing(tmp_path, monkeypatch):
     thursday = local(15, 23)  # deployed late on Thursday: quiet hours, and the stock is taken all the same
     monkeypatch.setattr(time, "time", lambda: thursday)
-    memory = fake_memory(tmp_path, [(local(1, 0), tracker((1, "Sent")))], last_mac=thursday)
+    memory = fake_memory(tmp_path, last_mac=thursday)
+    platform = FakePlatform(tile("Follow-ups done", 0, 0, goal=10))
     record(tmp_path / "kb", "personal/profile/gym.md", title="Абонемент", until="2026-10-17")
     record(tmp_path / "kb", "personal/profile/card.md", title="Карта", until="2026-10-14")
 
     async def run():
-        core = make_core(tmp_path, memory=memory)
+        core = make_core(tmp_path, memory=memory, platform=platform)
         await core.start([FakeChannel("telegram", False)])
         assert await core.proactive.heartbeat(thursday) == []
         assert await core.proactive.heartbeat(local(16, 10)) == [], \
@@ -263,8 +285,62 @@ def test_the_first_heartbeat_after_a_deploy_takes_stock_and_bursts_nothing(tmp_p
             "Due soon:\n- in 3 days (21 October): Аренда — valid until · personal/profile/lease.md"], \
             "a date that comes due after the deploy is pushed"
         assert await core.proactive.heartbeat(local(22, 13)) == [
-            "Thursday, and «Tracker» has zero for the week (goal 7). One today?"], \
+            "Thursday, and «Follow-ups done» (goal 10) is at zero for the week. One today?"], \
             "the next week's Thursday is told"
+
+    asyncio.run(run())
+
+
+def test_a_platform_that_does_not_answer_leaves_the_week_not_counted_and_the_nudge_for_the_next_beat(tmp_path):
+    """The numbers are the platform's: it silent for 10 s (or away), the line says «not counted» and the Thursday
+    nudge is asked again at the next beat, never spent on a zero nobody counted."""
+    thursday = local(15, 13)
+    platform = FakePlatform(tile("Follow-ups done", 0, 4, goal=10))
+
+    async def run():
+        core = make_core(tmp_path, platform=platform)
+        core.store.set("proactive.seeded", "2026-10-01")
+        await core.start([FakeChannel("telegram", False)])
+        platform.down = True
+        assert await core.proactive.weekly_line(thursday) == "This week: not counted — the platform did not answer."
+        assert await core.proactive.heartbeat(thursday) == [], "no nudge on numbers nobody counted"
+        assert {t for _, _, t in platform.calls} == {10.0}, "every call waits 10 s at most"
+        platform.down = False
+        assert await core.proactive.heartbeat(thursday + 900) == [
+            "Thursday, and «Follow-ups done» (goal 10) is at zero for the week. One today?"]
+        platform.tiles = [tile("Follow-ups done", 1, 4, goal=10), tile("Inbound moved", 0, 0)]
+        core.store.db.execute("DELETE FROM kv WHERE key LIKE 'proactive.nudged.%'")
+        assert await core.proactive.heartbeat(thursday + 1800) == [], "one of his own this week: no nudge"
+        core.proactive.week = []
+        calls = len(platform.calls)
+        assert await core.proactive.weekly_line(thursday) == "" and await core.proactive.summary_lines(local(12, 9)) == []
+        assert not [c for c in platform.calls[calls:] if c[0] == "collections/stat"], "no numbers named: none asked"
+
+    asyncio.run(run())
+
+
+def test_the_platform_hears_the_routers_zone_at_the_start_and_with_every_change(tmp_path):
+    """The screen counts its weeks in the router's zone: told at the first beat, at once when the owner moves it,
+    and told again at the next beat while the platform was away."""
+    platform = FakePlatform()
+
+    async def run():
+        core = make_core(tmp_path, platform=platform)
+        core.store.set("proactive.seeded", "2026-10-01")
+        await core.start([FakeChannel("telegram", False)])
+        await core.proactive.heartbeat(local(15, 13))
+        assert platform.calls[0] == ("zone", {"tz": "UTC"}, 10.0)
+        await core.proactive.heartbeat(local(15, 13) + 900)
+        assert [c for c in platform.calls if c[0] == "zone"] == [platform.calls[0]], "told once"
+        platform.down = True
+        core.proactive.set_zone("Asia/Tokyo", local(15, 14))
+        await core.proactive.zone_task
+        platform.down = False
+        await core.proactive.heartbeat(local(15, 15))
+        assert [c[1] for c in platform.calls if c[0] == "zone"] == [{"tz": "UTC"}, {"tz": "Asia/Tokyo"},
+                                                                    {"tz": "Asia/Tokyo"}], \
+            "the change at once, and once more after the platform was away"
+        assert core.proactive.zone_told == "Asia/Tokyo"
 
     asyncio.run(run())
 
@@ -360,3 +436,55 @@ def test_a_backup_line_is_an_alert_in_either_language(tmp_path):
         p.core = SimpleNamespace(backup_status=str(tmp_path / "none.json"), backup=lambda now, s=said: s,
                                  store=SimpleNamespace(get=store.get, set=store.__setitem__))
         assert bool(p.backup_alert(0.0)) is alert, said
+
+
+def test_a_weekly_review_run_late_says_the_week_it_was_due_in(tmp_path):
+    """Sunday 18:00's review, the router down until Monday: its numbers are the week it was for — the tiles'
+    `previous` once a new week has begun —, never the new week's zeros."""
+    sunday, monday = local(18, 18), local(19, 9)
+    platform = FakePlatform(tile("Follow-ups done", 0, 6, goal=10))
+
+    async def run():
+        core = make_core(tmp_path, platform=platform)
+        await core.start([FakeChannel("telegram", False)])
+        assert await core.proactive.weekly_line(sunday + 600, sunday) == "This week: Follow-ups done — 0 (goal 10)."
+        assert await core.proactive.weekly_line(monday, sunday) == "Last week: Follow-ups done — 6 (goal 10)."
+
+    asyncio.run(run())
+
+
+def test_a_week_whose_every_number_is_wrongly_named_is_not_spent_on_no_nudge(tmp_path):
+    """A typo in `proactive.week`: every name «no such stat». The week is not marked nudged — a warning says why —,
+    so the name put right is nudged that same Thursday."""
+    thursday = local(15, 13)
+    platform = FakePlatform({"name": "folowups", "error": "no such stat"})
+
+    async def run():
+        core = make_core(tmp_path, platform=platform)
+        core.store.set("proactive.seeded", "2026-10-01")
+        await core.start([FakeChannel("telegram", False)])
+        assert await core.proactive.heartbeat(thursday) == []
+        assert not core.store.db.execute("SELECT 1 FROM kv WHERE key LIKE 'proactive.nudged.%'").fetchone()
+        platform.tiles = [tile("Follow-ups done", 0, 4, goal=10)]
+        assert await core.proactive.heartbeat(thursday + 900) == [
+            "Thursday, and «Follow-ups done» (goal 10) is at zero for the week. One today?"]
+
+    asyncio.run(run())
+
+
+def test_a_screen_counted_in_another_zone_is_told_the_routers_again(tmp_path):
+    """The platform's kv restored from an older backup: its screen counts in a zone the router no longer has. The
+    numbers' answer says so, and the next beat tells the zone again."""
+    platform = FakePlatform(tile("Follow-ups done", 1, 0, goal=10))
+
+    async def run():
+        core = make_core(tmp_path, platform=platform)
+        await core.start([FakeChannel("telegram", False)])
+        await core.proactive.tell_zone()
+        assert platform.zone == core.tz
+        platform.zone = "Pacific/Kiritimati"
+        await core.proactive.week_line()
+        await core.proactive.tell_zone()
+        assert platform.zone == core.tz
+
+    asyncio.run(run())

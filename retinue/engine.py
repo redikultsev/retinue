@@ -18,9 +18,10 @@ from typing import Protocol
 
 import httpx
 from claude_agent_sdk import (ClaudeAgentOptions, HookMatcher, RateLimitEvent, RateLimitInfo, ResultError,
-                              ResultMessage, StreamEvent, SystemMessage, create_sdk_mcp_server, query, tool)
+                              ResultMessage, StreamEvent, SystemMessage, ToolAnnotations, create_sdk_mcp_server, query,
+                              tool)
 
-from . import courier, kbcheck, pages, travel
+from . import colltools, courier, kbcheck, pages, travel
 from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
@@ -104,6 +105,7 @@ class Engine(Protocol):
 
 
 BUS_PREFIX = "mcp__retinue__"  # how the model sees the tools below
+QUERY_CHARS = 70_000  # a query's answer (at most 60 KB of records) kept inline, never put in a file
 SEARCH_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["query"],
     "properties": {
@@ -249,9 +251,24 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         data = response.json()
         return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
+    def collection_tool(spec: dict):
+        """One of the collections' tools: the very schema and words a session gets (`colltools.TOOLS`), sent to the
+        router's bus, which names her and her turn's marks to the platform; the platform checks the rights."""
+        action = spec["name"].removeprefix("collection_")
+        hints = {**spec["annotations"], **({"maxResultSizeChars": QUERY_CHARS} if action == "query" else {})}
+
+        @tool(spec["name"], spec["description"], spec["inputSchema"], ToolAnnotations(**hints))
+        async def call(args):
+            async with client(60) as http:
+                response = await http.post(f"{bus_url}/collections/{action}", headers=headers,
+                                           json={"turn": turn_id, "arguments": args})
+            data = response.json()
+            return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
+        return call
+
     return {t.name: t for t in (ask_agent, list_agents, search_archive, set_reminder, list_reminders,
                                 cancel_reminder, move_reminder, set_timezone, get_attachment, publish_trip,
-                                draft_reply)}
+                                draft_reply, *map(collection_tool, colltools.TOOLS))}
 
 
 TRAVEL = "travel"  # the MCP server's name: its tools are mcp__travel__<tool>

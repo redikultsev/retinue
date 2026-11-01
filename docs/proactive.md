@@ -1,8 +1,8 @@
 # What the assistant says unasked
 
 Besides the reminders you set, the router writes to you on its own: the morning summary (09:00), the weekly review
-(Sunday 18:00), the evening list of her commits (21:00), and what this page covers — the time zone that follows you,
-deadlines from your knowledge base, the week of your tracker, a Mac that has not pushed, and the assistant
+(Sunday 18:00), the evening list of her commits and her changes to your collections (21:00), and what this page covers — the time zone that follows you,
+deadlines from your knowledge base, the week's numbers of your collections, a Mac that has not pushed, and the assistant
 speaking first now and then. All of it lives in `retinue/proactive.py`; every state is in the router's SQLite.
 
 ## Your time zone follows you
@@ -48,38 +48,36 @@ past `stale_after` and `deadline` are. A Record whose header does not read (a da
 logged once. An `until` of a profile Record and any `deadline` are also pushed once, 3 days before
 (or as soon as the router sees one nearer).
 
-## The tracker
+## The week's numbers
 
-The tracker is a table of items with statuses in a Record of your base — `| # | Date | Item | Detail | Score |
-Status | Report | Notes |`, read by its header — with a weekly goal in the Record's header (`weekly_goal: 5`). Its
-rows are counted in the hub's history: a row whose status reached one of the counted states between two moments.
-A row's own Date is when it was added, not when it moved, so it is not used. The judgement of a letter about an
-item may move its row.
-
-- Monday's summary: «Tracker for the week: N (goal 5).» for the week before.
-- The weekly review: the same line for this week, at the end; the assistant sees it among the week's facts.
-- Thursday from 12:00, none this week: one nudge.
-
-What it tracks is yours to say in `memory.tracker` (in the server's `owner.yaml`, [memory.md](memory.md#your-own-words-owneryaml)); each key
-has a neutral default:
+The week is counted in your collections on the platform ([collections.md](collections.md#views)): the `stat` views
+you name, each the same tile a Space's screen shows. The router asks the platform for them
+(`POST /owner/collections/stat`) in its own zone, and tells the platform that zone at its start and with every change
+(`POST /owner/zone`), so the screen's week and Telegram's are one week and the numbers one number. Name them, in
+order, in `week` of the server's `owner.yaml` ([memory.md](memory.md#your-own-words-owneryaml)); each is
+`<collection>/<view>`, at most 8; none — no numbers are said:
 
 ```yaml
-memory:
-  tracker:
-    path: profile/tracker.md          # the Record
-    title: Tracker                    # the page, the tab, the lines above
-    item: item                        # the table's columns of the item and its detail
-    detail: detail
-    states: {new: new, sent: sent, answered: answered, meeting: meeting, won: won, lost: lost,
-             dropped: dropped}        # the Status column's words (any case, any language) and how the page names them
-    groups:                           # the page's groups; «next» is sorted by score, «closed» is folded
-      - {key: live, title: Live, states: [meeting, answered]}
-      - {key: waiting, title: Waiting for an answer, states: [sent]}
-      - {key: next, title: Next, states: [new]}
-      - {key: closed, title: Closed, states: [won, lost, dropped]}
-    counted: [sent, answered, meeting, won, lost]  # in the order a row moves; a new row starts at the first
-    meetings: [meeting, call]         # a calendar event with one of these (or an item's name) is the tracker's
+week:
+  - followups/done          # e.g. «Follow-ups done», the ones you sent yourself, with the form's goal
+  - deals/moved             # and «Inbound moved», what moved on deals that came to you
 ```
+
+Several numbers stand side by side, never summed: what you did yourself and what moved on its own are different
+things.
+
+- Monday's summary: «Last week: Follow-ups done — 4 (goal 10); Inbound moved — 2.» — each tile's week before.
+- The weekly review: «This week: …» at the end; the assistant sees it among the week's facts.
+- Thursday from 12:00: the numbers that have a goal, all still at zero this week (every weekly number, when none has
+  one) — one nudge: «Thursday, and «Follow-ups done» (goal 10) is at zero for the week. One today?»
+
+A tile without a window says «(now)», a month's «(this month)»; one the platform cannot count says why — «not
+counted: field not found: 'stage'», «no such stat». A platform that does not answer within 10 s is said so —
+«This week: not counted — the platform did not answer.» — and the Thursday nudge is asked again at the next beat.
+
+**Upgrading an install.** The tracker in a Record of the base is gone, and with it `memory.tracker`: an `owner.yaml`
+that still has `tracker:` is refused by `setup.sh`, and a `router.yaml` with it stops the router. Take the key out, add
+`week:` with the views that count what it counted, run `setup.sh` again and restart the router.
 
 ## How the week went
 
@@ -125,8 +123,8 @@ push reads as old.
 
 ## The heartbeat and the initiative knob
 
-Every 15 minutes the router runs a checklist in code: a deadline 3 days off, a failed or missing backup, nothing
-counted in the tracker by Thursday, a new zone in the base. It writes only when one of them needs you, in its own words, outside
+Every 15 minutes the router runs a checklist in code: a deadline 3 days off, a failed or missing backup, the week's
+numbers still at zero by Thursday, a new zone in the base. It writes only when one of them needs you, in its own words, outside
 your quiet hours (22:00–09:00 your time by default). Nothing due — nothing said, and no model run. Important mail
 is not on the list: the mail room already tells it at once ([mail.md](mail.md)).
 

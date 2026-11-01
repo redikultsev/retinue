@@ -1,6 +1,7 @@
 """`retinue-platform collections …`: the owner's commands for his collections, run on the server's terminal inside
 the platform's container (docs/collections.md#from-the-servers-terminal). They are the one way a form and the rights
-are set: no route of the platform's reaches them, so neither the Router nor an agent can.
+are set and a Mac's token made or revoked: no route of the platform's reaches them, so neither the Router nor an agent
+can.
 
 Each command opens the file itself, in this process, through the same store as the platform: its writes take the
 file's lock like any other (`BEGIN IMMEDIATE`, refused past 2 s), and the platform's thread takes in what they wrote at
@@ -18,7 +19,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from .collections import RIGHTS_ELSEWHERE, RIGHTS_KEYS, Collections, Refused, Rejected, Writer
+from .collections import RIGHTS_ELSEWHERE, RIGHTS_KEYS, SCOPES, Collections, Refused, Rejected, Writer
 
 OWNER = Writer("owner", "define")
 
@@ -44,6 +45,15 @@ def add_parser(commands: argparse._SubParsersAction) -> None:
     revert.add_argument("batch")
     export = actions.add_parser("export", help="write everything to an empty folder")
     export.add_argument("folder", type=Path)
+    device = actions.add_parser("device", help="the owner's Macs that reach the collections at /mcp/mac")
+    steps = device.add_subparsers(dest="step", required=True)
+    add = steps.add_parser("add", help="a new device and its token, shown once")
+    add.add_argument("name")
+    add.add_argument("--scope", choices=SCOPES, required=True,
+                     help="read: describe and query; write: apply and propose too")
+    steps.add_parser("list", help="every device, its scope, and when it last wrote")
+    revoke = steps.add_parser("revoke", help="its token opens nothing from now on")
+    revoke.add_argument("name")
 
 
 def run(args: argparse.Namespace, path: str, ask: Callable[[str], str] | None = None,
@@ -194,8 +204,34 @@ async def _export(store: Collections, args, ask, say, clock) -> int:
     return 0
 
 
+async def _device(store: Collections, args, ask, say, clock) -> int:
+    """A device's token is shown once, here; a revoke takes effect at the next call, asked nothing: a lost Mac is
+    shut out with one command."""
+    if args.step == "add":
+        token = await store.add_device(args.name, args.scope, clock())
+        say(f"Device {args.name} ({args.scope}). Its token, shown this once — put it in the Mac's keychain "
+            f"(docs/collections.md#from-the-mac):\n{token}")
+    elif args.step == "revoke":
+        revoked = await store.revoke_device(args.name, clock())
+        say(f"Revoked: {args.name}'s token opens nothing now." if revoked else f"{args.name} was revoked already.")
+    else:
+        shown = await store.devices()
+        if not shown:
+            say("No devices yet: add one with `collections device add <name> --scope write`.")
+        for d in shown:
+            say(f"{d['name']}  {d['scope']}  added {_utc(d['created'])}"
+                + (f"  last wrote {_utc(d['written'])}" if d["written"] else "  never wrote")
+                + (f"  REVOKED {_utc(d['revoked'])}" if d["revoked"] else ""))
+    return 0
+
+
+def _utc(moment: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M", time.gmtime(moment)) + " UTC"
+
+
 COMMANDS = {"list": _list, "show": _show, "define": _define, "rights": _rights, "import": _import,
-            "revert-batch": _revert_batch, "export": _export}
+            "revert-batch": _revert_batch, "export": _export,
+            "device": _device}
 
 
 def _read(path: Path):

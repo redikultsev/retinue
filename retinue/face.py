@@ -21,6 +21,9 @@ The owner's voice (`/api/speech`): what he dictated, as text for him to edit and
 for word and sent at once by the app. One recording at a time, held in memory only; the transcript is deleted at
 ElevenLabs (`speech.Scribe`) and never written to a log.
 
+The agents on his Mac reach his collections at `/mcp/mac` (`mac.py`), an app of its own on the same address, by a
+device's token instead of the login.
+
 The owner's actions here are the platform's own (`Platform.new_session`, `side`, `write`, `decide`, `answer`, `stop`):
 a card decided or a question answered in the face obeys exactly the rules of a Telegram press, and the Telegram card
 is rewritten.
@@ -44,7 +47,7 @@ from urllib.parse import parse_qsl, quote, unquote
 
 from aiohttp import web
 
-from . import changes, feed, inbox, signals, spaces, tobase, topush
+from . import changes, feed, inbox, mac, signals, spaces, tobase, topush
 from .cliengine import UUID4
 from .collections import FILE_MAX, Full, Refused
 from .sessions import PlatformStore
@@ -272,6 +275,7 @@ class Face:
         self.hearing = False                    # one recording at a time
         self.finishing: set[asyncio.Task] = set()  # cancelled ones ElevenLabs already had, ending to be deleted
         self.sweeper: asyncio.Task | None = None
+        self.mac_app: web.Application | None = None  # the Mac's, made with the face's app
 
     def clock(self) -> float:
         return self.platform.clock()
@@ -332,7 +336,11 @@ class Face:
             # «Uploads» (`collections.py`): any file the owner sends up, kept as it came.
             web.post("/api/c/_files", self.upload), web.get("/api/c/_files", self.uploads),
             web.get("/api/c/_files/{sha}", self.uploaded),
+            *self.platform.colltools.routes(),  # the agents' proposals of writes to them (`colltools.py`)
             *self.platform.views.routes()])  # a Space's collections, their views and records (`views.py`)
+        # The agents on the owner's Mac (`mac.py`): their own app, their own check — a device's token, not the cookie.
+        self.mac_app = mac.Mac(self.platform).app()
+        app.add_subapp(mac.PATH, self.mac_app)
         app.on_startup.append(self._sweep)
         return app
 
@@ -344,7 +352,10 @@ class Face:
 
     async def _guarded(self, request: web.Request, handler) -> web.StreamResponse:
         """A POST carries `X-Retinue: 1` and no foreign origin; a login is refused while logins are closed; every
-        other call needs a live cookie, which a use extends."""
+        other call needs a live cookie, which a use extends. `/mcp/mac` is none of these: its app checks a device's
+        token itself, and neither the cookie nor the header opens it (`mac.py`)."""
+        if self.mac_app is not None and self.mac_app in request.match_info.apps:  # the router's own answer: a handler of that app, or its 404
+            return await handler(request)
         now = self.clock()
         if request.method == "POST":
             origin = request.headers.get("Origin")

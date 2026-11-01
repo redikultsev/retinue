@@ -62,6 +62,7 @@ class RouterAgent:
     attachments: bool = False             # may fetch what the owner sent (#N) again through the bus
     trips: bool = False                   # may publish a trip page among the owner's pages through the bus
     drafts: bool = False                  # may propose a reply to a person; the owner sends it with his button
+    collections: bool = False             # may read and write the owner's collections on the platform, by their rights
 
 
 @dataclass
@@ -103,7 +104,15 @@ class MemoryConfig:
     sensitive: list[str] = field(default_factory=lambda: ["*"])
     # The owner's own words for what the code keeps generic; the server's own file fills them (docs/memory.md).
     location: str = ""                  # the Record whose header names his zone; '' — proactive.LOCATION
-    tracker: dict = field(default_factory=dict)   # what his tracker tracks: path, title, states… (pages.Tracker)
+
+
+WEEK_NAME = re.compile(r"[a-z][a-z0-9_]{0,39}/[a-z][a-z0-9_]{0,39}")  # as collections.NAME: `<collection>/<view>`
+
+
+@dataclass
+class ProactiveConfig:
+    """What the router says unasked that is the owner's to name (docs/proactive.md); the server's own file fills it."""
+    week: list[str] = field(default_factory=list)  # the week's numbers: `stat` views of his collections, in order
 
 
 @dataclass
@@ -125,6 +134,7 @@ class RouterConfig:
     travel_url: str = ""                # travel-ops' MCP over HTTP: the router collects price alerts there
     link_hosts: list[str] = field(default_factory=list)  # travel-ops' sites: a link there is clickable in Telegram
     memory: MemoryConfig | None = None  # the knowledge base she writes; without the section she has no base
+    proactive: ProactiveConfig = field(default_factory=ProactiveConfig)
     collector_url: str = ""             # the mail collector: the owner's mail and calendar; empty = no mail
     collector_token: str = ""           # from RETINUE_COLLECTOR_TOKEN: the router signs its calls to the collector
     pages_url: str = ""                 # the owner's pages' address, https://<host>; empty = no pages
@@ -145,6 +155,7 @@ class RouterConfig:
         matrix = MatrixConfig(**raw.pop("matrix")) if raw.get("matrix") else None
         telegram = TelegramConfig(**raw.pop("telegram")) if raw.get("telegram") else None
         memory = MemoryConfig(**raw.pop("memory")) if raw.get("memory") else None
+        proactive = ProactiveConfig(**(raw.pop("proactive", None) or {}))
         raw.pop("matrix", None)
         raw.pop("telegram", None)
         raw.pop("memory", None)
@@ -153,7 +164,7 @@ class RouterConfig:
         if retired := [key for key in ("lifehub_url", "lifehub_data", "lifehub_build") if raw.pop(key, None)]:
             log.warning("router config: %s is the retired life hub's — run setup.sh PAGES=1 (docs/pages.md)",
                         ", ".join(retired))
-        cfg = cls(agents=agents, matrix=matrix, telegram=telegram, memory=memory, **raw)
+        cfg = cls(agents=agents, matrix=matrix, telegram=telegram, memory=memory, proactive=proactive, **raw)
         if not (cfg.matrix or cfg.telegram):
             raise SystemExit("router config: no channel — add a `telegram:` or a `matrix:` section")
         if cfg.matrix:
@@ -173,6 +184,12 @@ class RouterConfig:
             if not cfg.telegram:
                 raise SystemExit("router config: the platform talks to the owner through Telegram — add `telegram:`")
             cfg.platform_token = _env("RETINUE_PLATFORM_TOKEN")
+        week = cfg.proactive.week
+        if not isinstance(week, list) or len(week) > 8 or not all(isinstance(w, str) and WEEK_NAME.fullmatch(w)
+                                                                   for w in week):
+            raise SystemExit(f"router config: proactive.week is up to 8 of <collection>/<view>, not {week!r}")
+        if week and not cfg.platform_url:
+            raise SystemExit("router config: proactive.week counts the platform's collections — add `platform_url`")
         if cfg.face_url and not (cfg.platform_url and FACE_ORIGIN.fullmatch(cfg.face_url)):
             raise SystemExit(f"router config: face_url {cfg.face_url!r} is not https://<host>, or no platform_url")
         if cfg.pages_url and not re.fullmatch(r"https://[a-z0-9.-]+", cfg.pages_url):
@@ -695,7 +712,8 @@ BRANCH = re.compile(r"(?!.*\.\.)(?!.*//)(?!.*/\.)(?!.*@\{)(?!.*\.lock(?:/|$))[A-
 
 # What an agent can be given through the router.
 BUS_TOOLS = ("ask_agent", "list_agents", "search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-             "move_reminder", "set_timezone", "get_attachment", "publish_trip", "draft_reply")
+             "move_reminder", "set_timezone", "get_attachment", "publish_trip", "draft_reply",
+             "collection_describe", "collection_query", "collection_apply", "collection_propose")
 
 
 @dataclass

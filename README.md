@@ -157,9 +157,9 @@ which needs a WireGuard VPN.
 | [memory.md](docs/memory.md) | the knowledge base the assistant writes, and its hub |
 | [mail.md](docs/mail.md) | Gmail and Google Calendar, read-only, and their triage |
 | [courier.md](docs/courier.md) | your chosen Telegram chats and replies to people, sent only by your button |
-| [proactive.md](docs/proactive.md) | the time zone, deadlines, a tracker with a weekly goal, the heartbeat |
+| [proactive.md](docs/proactive.md) | the time zone, deadlines, the week's numbers of your collections, the heartbeat |
 | [pages.md](docs/pages.md) | your HTML pages for your devices, keeping what you do in them; public sites of the ones you share |
-| [collections.md](docs/collections.md) | the platform's own tables beside the Base: the files you upload, any type, kept as they came |
+| [collections.md](docs/collections.md) | the platform's own tables beside the Base: the files you upload, any type, kept as they came; records, their views on a Space's screen, the owner's writes from it, a session's, the Mac's (`/mcp/mac`) and the assistant's, with what they propose to him and the evening list of hers |
 | [backup.md](docs/backup.md) | the nightly restic backup and the monthly check from your own computer |
 | [health.md](docs/health.md) | the containers checked every two minutes, told to you when one goes bad |
 

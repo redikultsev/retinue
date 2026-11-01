@@ -239,7 +239,8 @@ Code on the Mac («Travel» runs «stay», «a trip to the sea») — and is tol
 under the run's own hook token, which the CLI puts in the header from `RETINUE_HOOK_RUN` (no command sees it). Three
 tools: `start_subsession(title, brief)`, `propose_subsession(title, brief)` ([below](#proposals)),
 `message_subsession(id, text)`, `read_subsession(id)` (the child's last summary again, up to 8000 characters, no
-turn). It is chosen over a convention the gate would intercept because MCP is what
+turn); beside them, the follow-ups' ([below](#follow-ups)) and the owner's collections'
+([collections.md](collections.md#from-a-session)). It is chosen over a convention the gate would intercept because MCP is what
 every engine the lanes may run speaks, and a real tool gets a real result where an intercepted call reads «denied».
 
 - **Every call passes the gate.** The tools are ordinary calls: PreToolUse fires for `mcp__retinue__*`, no rule names

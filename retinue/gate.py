@@ -24,7 +24,7 @@ rule's marker fired (PermissionRequest) is denied and goes to the owner when it 
 A subagent's calls pass the same hooks, marked by its `agent_id`, and the same rules — but a subagent cannot wait: a
 call that would be deferred to the owner is denied instead (`SUBAGENT`), and the main agent makes it itself.
 
-The platform's own MCP tools (`subs`: sub-sessions) pass here like any call — the classifier judges them — and the
+The platform's own MCP tools (`subs`: sub-sessions, follow-ups, the owner's collections) pass here like any call — the classifier judges them — and the
 gate remembers each one it let through (`passed`): the platform's server runs a `tools/call` only for a call this gate
 saw with the same arguments. A subagent, a side question and a sub-session never get them past the gate.
 """
@@ -41,12 +41,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from . import approvals, citecheck, episodes, exfil, finish, followups, questions, reach, signals, subs
+from . import approvals, citecheck, colltools, episodes, exfil, finish, followups, questions, reach, signals, subs
 from .approvals import Mark, Unbindable
 from .config import LaneRef
 from .sessions import PlatformStore
 
 log = logging.getLogger("retinue.gate")
+
+MACHINE_CARDS = {subs.PREFIX + subs.START: subs.FROM_REPORT_CARD,  # what a machine's turn asks the owner, and why
+                 subs.PREFIX + colltools.APPLY: colltools.FROM_MACHINE_CARD}
 
 MARK_WAIT_S = 1.0     # how long the general PreToolUse waits for the call's marker hooks
 # Retries the gate lets one run make after classifier blocks. The CLI aborts a headless run after 3 classifier denials
@@ -372,8 +375,10 @@ class Gate:
             if leak := exfil.why(_web(tool), tool_input) or self.budget.over(run.id, _web(tool), tool_input):
                 return _decision("deny", leak)
             return _decision("allow", "an address the source check was given")
-        if subs.own(_call_of(body)[0]) and (_subagent(body) or not run.subs):
-            return _decision("deny", subs.NO_DEPTH)  # depth 1: not a subagent's, a side question's or a child's
+        if subs.own(tool := _call_of(body)[0]) and (_subagent(body) or not run.subs):
+            # depth 1: not a subagent's, a side question's or a child's — sub-sessions, follow-ups, collections
+            return _decision("deny", colltools.NO_LANE if colltools.has(tool.removeprefix(subs.PREFIX))
+                             else subs.NO_DEPTH)
         if self.closing:
             return _decision("deny" if _subagent(body) else "defer", CLOSING)
         call_id = str(body.get("tool_use_id") or "")
@@ -443,10 +448,12 @@ class Gate:
                 return _decision("deny", SUBAGENT)
             # One card per ask or block: the same call made after the owner's answer is asked about anew.
             return self._to_owner(run, call_id, body, file_hash, digest, self._reasks.pop((run.session, key)).why)
-        if tool == subs.PREFIX + subs.START and run.turn_by in followups.MACHINE_TURNS:
+        if tool in MACHINE_CARDS and run.turn_by in followups.MACHINE_TURNS:
+            # A turn a report or a follow-up started, not the owner: its sub-session and its write to his collections
+            # are his to allow, on a card — nobody watches that turn, and it may have read someone else's text.
             if digest is None:
                 return _decision("deny", UNBINDABLE)
-            return self._to_owner(run, call_id, body, file_hash, digest, subs.FROM_REPORT_CARD)
+            return self._to_owner(run, call_id, body, file_hash, digest, MACHINE_CARDS[tool])
         if card := next((m for m in call.marks if m.kind == "card"), None):
             if digest is None:
                 return _decision("deny", UNBINDABLE)

@@ -41,6 +41,20 @@ export interface Column {
   rows: ViewRow[];
 }
 
+/** A queue's one press on a row: its `field` set to `value` — «Sent» — which takes the row off the queue. */
+export interface Done {
+  field: string;
+  value: string | number | boolean;
+  label: string;
+}
+
+/** A view's «add»: the button's words, the fields its sheet asks for, in order, and what they start as. */
+export interface AddSpec {
+  label: string;
+  fields: string[];
+  values: Record<string, unknown>;
+}
+
 export interface BoardView extends Named {
   kind: "board";
   group: string;
@@ -48,6 +62,7 @@ export interface BoardView extends Named {
   fields: string[];
   columns: Column[];
   dropped: number;
+  add?: AddSpec | null;
 }
 
 export interface QueueView extends Named {
@@ -57,6 +72,8 @@ export interface QueueView extends Named {
   count: number;
   rows: ViewRow[];
   dropped: number;
+  done?: Done | null;
+  add?: AddSpec | null;
 }
 
 /** A view the platform could not make: a field its form lacks, a goal or a threshold it does not have. */
@@ -92,4 +109,137 @@ export interface OneView extends Moment {
   name: string;
   rev: string | null;
   view: View;
+}
+
+// --- writing (docs/collections.md#from-the-screen) ------------------------------------------------------------------
+
+export interface FieldSpec {
+  type: "text" | "int" | "enum" | "date" | "bool" | "ref";
+  values?: string[];
+  /** A ref's collection. */
+  to?: string;
+  required?: boolean;
+}
+
+export interface CollectionRecord {
+  id: string;
+  fields: Record<string, unknown>;
+  version: number;
+  created: number;
+  updated: number;
+  /** When it was deleted (the platform's clock, in seconds); null for a live record. */
+  deleted: number | null;
+}
+
+/** One change of a record, as the platform keeps it: `_deleted` in `before`/`after` is its deleted state. */
+export interface Change {
+  change_id: string;
+  ts: number;
+  as_of: string | null;
+  batch: string | null;
+  collection: string;
+  id: string | null;
+  op: "add" | "set" | "delete" | "restore" | "revert" | "define";
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  actor: string;
+  model: string | null;
+  via: string;
+  src: string | null;
+  foreign: string[];
+  reverts: string | null;
+  idem: string | null;
+}
+
+export interface RecordAnswer {
+  name: string;
+  rev: string | null;
+  title: string | null;
+  fields: Record<string, FieldSpec>;
+  record: CollectionRecord;
+  /** The newest first. */
+  changes: Change[];
+  /** The words of the records its refs name, by id. */
+  words: Record<string, string>;
+}
+
+export interface FormAnswer {
+  name: string;
+  rev: string | null;
+  fields: Record<string, FieldSpec>;
+  /** For each ref field, the records it may name. */
+  options: Record<string, { id: string; title: string }[]>;
+}
+
+export interface SpaceChange extends Change {
+  /** The record's words now; null for one with none. */
+  title: string | null;
+  /** The record's version now, which its «Undo» goes by. */
+  version: number | null;
+  deleted: number | null;
+  /** A revert took it back already: no «Undo» for it. */
+  reverted: boolean;
+}
+
+export interface ChangesAnswer {
+  space: string;
+  changes: SpaceChange[];
+  /** The change to read on from; null at the oldest. */
+  next: string | null;
+  words: Record<string, string>;
+}
+
+export type Op =
+  | { op: "add"; fields: Record<string, unknown>; distinct?: boolean }
+  | { op: "set"; id: string; version: number; fields: Record<string, unknown>; distinct?: boolean }
+  | { op: "delete" | "restore"; id: string; version: number }
+  | { op: "revert"; change_id: string; version: number };
+
+export interface WriteAnswer {
+  name: string;
+  rev: string | null;
+  /** Per operation: the change it made, null when the record was already so. */
+  change_ids: (string | null)[];
+  records: CollectionRecord[];
+}
+
+/** A write refused: `stale` the record moved on since it was shown, `after` a revert's change was changed after,
+ * `duplicate` the form's key matches `record`, `taken` a unique value `record` holds. */
+export interface Refusal {
+  error: string;
+  kind: "stale" | "after" | "duplicate" | "taken" | null;
+  record: CollectionRecord | null;
+  change: Change | null;
+}
+
+export type CollectionProposalState = "open" | "applying" | "applied" | "dismissed" | "expired";
+
+/** A write to a collection an agent proposed instead of making it (retinue/colltools.py): «Apply» writes it as the
+ * owner's own, «Dismiss» sets it aside. `changes` is what each operation would change, tried when it was proposed;
+ * `needs` the rights' words when its writer could not make it itself, `why` the writer's own. */
+export interface CollectionProposal {
+  id: string;
+  /** The call it was proposed by. */
+  tool_use_id: string;
+  /** The session it came from, if a session's. */
+  session: string | null;
+  actor: string;
+  collection: string;
+  space: string;
+  changes: (Pick<Change, "op" | "id" | "before" | "after"> & { title: string | null })[];
+  fields: Record<string, FieldSpec>;
+  words: Record<string, string>;
+  why: string | null;
+  needs: string | null;
+  created: number;
+  /** Its last change: a copy older than another never replaces it. */
+  at: number;
+  state: CollectionProposalState;
+  /** What «Apply» wrote. */
+  change_ids: (string | null)[] | null;
+}
+
+export interface ProposalDecided {
+  proposal: CollectionProposal;
+  answer?: WriteAnswer;
 }

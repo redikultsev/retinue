@@ -11,6 +11,7 @@ import { ApiError, api } from "./api";
 import { type Action, initialState, reduce, type State, waitsOnOwner } from "./store";
 import { type Approval, type CollectionEvent, EVENT_KINDS, type Meta, SCHEMA, type StreamEvent } from "./types";
 import type { Upload } from "./uploads";
+import type { CollectionProposal } from "./view-types";
 
 export const HIDDEN_RECONNECT_MS = 45_000;
 const RETRY_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
@@ -44,6 +45,7 @@ export class Live {
   private cardListeners = new Set<(approval: Approval) => void>();
   private uploadListeners = new Set<(file: Upload) => void>();
   private collectionListeners = new Set<(event: CollectionEvent) => void>();
+  private proposalListeners = new Set<(proposal: CollectionProposal) => void>();
   private resyncListeners = new Set<() => void>();
   private source: EventSource | null = null;
   private watched = new Set<string>();
@@ -196,6 +198,12 @@ export class Live {
       const event = JSON.parse((e as MessageEvent<string>).data) as CollectionEvent;
       for (const l of this.collectionListeners) l(event);
     });
+    // A write to a collection an agent proposed, or the owner's press on one: «Waiting for you» and its Space read
+    // their proposals again.
+    source.addEventListener("collection_proposal", (e) => {
+      const proposal = JSON.parse((e as MessageEvent<string>).data) as CollectionProposal;
+      for (const l of this.proposalListeners) l(proposal);
+    });
     source.addEventListener("delta", (e) => {
       const data = JSON.parse((e as MessageEvent<string>).data) as { session: string; text: string };
       this.dispatch({ type: "delta", session: data.session, text: data.text });
@@ -243,6 +251,12 @@ export class Live {
   onCollection(listener: (event: CollectionEvent) => void): () => void {
     this.collectionListeners.add(listener);
     return () => this.collectionListeners.delete(listener);
+  }
+
+  /** Told of each proposal of a write to a collection as it is made, applied, dismissed or expires. */
+  onCollectionProposal(listener: (proposal: CollectionProposal) => void): () => void {
+    this.proposalListeners.add(listener);
+    return () => this.proposalListeners.delete(listener);
   }
 
   isWatched(id: string): boolean {

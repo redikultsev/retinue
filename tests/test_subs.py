@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from retinue import followups, pings, subs
+from retinue import colltools, followups, pings, subs
 from retinue.config import Sphere
 from test_face import FaceWorld
 from test_platformd import World, decision, short_wait  # noqa: F401 — the fixture is autouse
@@ -111,7 +111,8 @@ def test_the_server_speaks_mcp_over_plain_json():
         assert await subs.rpc({"jsonrpc": "2.0", "method": "notifications/initialized"}, "", call) == (202, None)
         listed = (await subs.rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, "", call))[1]
         assert [t["name"] for t in listed["result"]["tools"]] == [subs.START, subs.PROPOSE, subs.MESSAGE, subs.READ,
-                                                                  subs.NAME, followups.FOLLOW, followups.CANCEL]
+                                                                  subs.NAME, followups.FOLLOW, followups.CANCEL,
+                                                                  *colltools.NAMES]
         found = (await subs.rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "t", "arguments": {"x": 1}, "_meta": {"claudecode/toolUseId": "toolu_1"}}}, "", call))[1]
         assert found["result"] == {"content": [{"type": "text", "text": "t:1:toolu_1"}], "isError": False}

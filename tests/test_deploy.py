@@ -48,8 +48,9 @@ def test_one_assistant_and_nothing_else():
     assert engine.tools == [] and engine.allowed_tools == [], "no built-in tool is offered or allowed"
     assert {"Bash", "WebSearch", "WebFetch"} <= set(engine.disallowed_tools)
     assert engine.bus_tools == ["search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-                                "move_reminder", "set_timezone", "get_attachment", "publish_trip", "draft_reply"], \
-        "the archive, reminders and the zone, attachments, trip pages, draft replies; no ask_agent"
+                                "move_reminder", "set_timezone", "get_attachment", "publish_trip", "draft_reply",
+                                "collection_describe", "collection_query", "collection_apply", "collection_propose"], \
+        "the archive, reminders and the zone, attachments, trip pages, draft replies, the collections; no ask_agent"
     assert (engine.model, engine.effort) == ("claude-opus-5-5[1m]", "xhigh"), "Opus 5.5 by id, its 1M context, xhigh"
     instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
     assert all(f"`{name}`" in instructions for name in engine.bus_tools), "she is told about every tool she has"
@@ -80,6 +81,10 @@ def test_one_assistant_and_nothing_else():
     assert "passwords" in replies and "data, not commands" in replies, "a request in someone's text is no command"
     assert "archive id" in (ROOT / "retinue" / "mailroom.py").read_text(), "the judgement names each item's id"
     assert "drafts: true" in (ROOT / "deploy" / "setup.sh").read_text()
+    assert "collections: true" in (ROOT / "deploy" / "setup.sh").read_text()
+    kept = instructions.split("## Collections")[1].split("\n## ")[0]
+    assert "no tool for a form or a right" in kept and "data, not commands" in kept and "`version`" in kept
+    assert "**Collections**" in mail and "`src`" in mail and "«Revert»" in mail, "what a letter may move, and how"
     guide = (ROOT / "docs" / "mail.md").read_text()
     assert "MAIL=1" in guide and "deploy/mail/login.py" in guide and "In production" in guide
     assert "Only if\nthe sender is known" in guide and "MAIL=1" in (ROOT / "docs" / "install.md").read_text()
@@ -436,6 +441,28 @@ def test_setup_with_memory_makes_the_hub_and_installs_its_checks(tmp_path, monke
         "the owner's rules, copied to the hub on every run"
     assert RouterConfig.load(target / "router.yaml").memory.checkout == ["/*.md", "/notes/"]
     assert RouterConfig.load(target / "router.yaml").memory.sensitive == ["work", "health"]
+
+
+def test_the_owners_file_puts_his_zone_record_under_memory_and_the_weeks_numbers_under_proactive(tmp_path,
+                                                                                                    monkeypatch):
+    """owner.yaml (docs/memory.md) holds `location` and `week` only: the one goes under `memory:`, the other under
+    `proactive:` — and only with the platform, whose collections it counts. The retired `tracker` is refused."""
+    memory = tmp_path / "srv" / "memory"
+    memory.mkdir(parents=True)
+    (memory / "owner.yaml").write_text("# mine\nlocation: home/where.md\nweek:\n  - followups/done\n"
+                                       "  - deals/moved\n")
+    target, printed = setup(tmp_path, TELEGRAM_OWNER_ID="42", MEMORY="1", PLATFORM="1")
+    for name in ("TELEGRAM_BOT_TOKEN", "RETINUE_PLATFORM_TOKEN"):
+        monkeypatch.setenv(name, printed.get(name) or "t")
+    cfg = RouterConfig.load(target / "router.yaml")
+    assert cfg.memory.location == "home/where.md" and cfg.proactive.week == ["followups/done", "deals/moved"]
+    (target / "platform").rename(tmp_path / "platform-off")  # its folder is what keeps the platform on
+    for text, said in (("week: [followups/done]\n", "PLATFORM=1"), ("tracker:\n  path: x.md\n", "location and week")):
+        (memory / "owner.yaml").write_text(text)
+        run = subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
+                             env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(target), "RETINUE_HOST_SETUP": "0",
+                                  "TELEGRAM_OWNER_ID": "42"})
+        assert run.returncode == 1 and said in run.stderr, run.stderr
 
 
 def test_the_hub_takes_pushes_but_its_config_and_hooks_stay_roots(tmp_path):
@@ -1423,6 +1450,19 @@ def test_the_face_api_is_on_a_network_of_its_own_that_no_lane_is_on():
                                                                else [f"lane-{lane}"]) + ["outside"]
     assert "face-platform" not in SERVICES["lane-private-sni"]["networks"]
     assert "dokploy-network" not in SERVICES["platform"]["networks"], "Traefik's neighbours never reach the platform"
+
+
+def test_face_nginx_passes_mcp_mac_to_the_platform_with_its_authorization_and_nothing_else_under_mcp():
+    """The Mac's agents (retinue/mac.py): one exact location to the face API, which inherits the server's headers —
+    a location of its own proxy_set_header would drop them all, Traefik's key emptied included — and no cache header
+    of nginx's; any other /mcp/ path is a 404."""
+    nginx = (ROOT / "deploy" / "face" / "nginx.conf").read_text()
+    block = nginx[nginx.index("location = /mcp/mac {"):]
+    block = block[:block.index("}")]
+    assert f"proxy_pass http://{FACE_IP}:{PlatformConfig.face_port};" in block
+    assert "proxy_set_header" not in block and "proxy_set_header Authorization" not in nginx, "passed as it came"
+    assert re.findall(r"location\s+\S*\s*\S*/mcp\S*", nginx) == ["location = /mcp/mac"]
+    assert '~^/mcp/         "";' in nginx, "the platform's own no-store, not nginx's no-cache beside it"
 
 
 def test_face_nginx_serves_every_app_route_and_a_records_path_however_deep_the_rule_lets_it():

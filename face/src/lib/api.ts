@@ -25,6 +25,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The answer's body, when it was JSON: a refusal's own words beside its message. */
+    readonly data?: unknown,
   ) {
     super(message);
   }
@@ -84,13 +86,14 @@ async function call<T>(path: string, init: RequestInit): Promise<T> {
   if (res.status === 401 && !path.startsWith("/api/auth/")) loggedOut();
   if (!res.ok) {
     let message = MESSAGES[res.status] ?? `Error ${res.status}.`;
+    let data: { error?: string; toast?: string } | undefined;
     try {
-      const data = (await res.json()) as { error?: string; toast?: string };
+      data = (await res.json()) as { error?: string; toast?: string };
       message = data.error ?? data.toast ?? message;
     } catch {
       // not JSON: keep the generic message
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, data);
   }
   return (await res.json()) as T;
 }

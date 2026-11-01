@@ -2,11 +2,14 @@
 (docs/collections.md#views). Read only, computed on the collections' thread from each collection's `views`, in one
 read transaction with the `rev` they are of — a screen that hears of a newer one reads again.
 
-Three kinds, a closed set (`collections.VIEW_KEYS`):
+Five kinds, a closed set (`collections.VIEW_KEYS`):
 - `stat`, one number: the records a filter matches, or those whose field changed, this week or this month — with its
   goal from the form and the same number for the period before;
 - `board`, the records in columns by an enum, each with the days since that field last changed;
-- `queue`, the records a filter matches, the longest silent first, with the days since.
+- `queue`, the records a filter matches, the longest silent first (or by a field), with the days since;
+- `agenda`, the records whose date falls in the days ahead, today first;
+- `chart`, the records counted by the week their date falls in, split by an enum.
+A view's `tab` names the tab of the screen it shows in; none, the Space's first.
 
 A view that names a field its form lacks shows «field not found» in its place, and the others still show. Weeks and
 days are counted in one time zone: the one the Router last told (`POST /owner/zone`), the config's `owner_tz` until it
@@ -40,6 +43,9 @@ if TYPE_CHECKING:
 VIEW_MAX = 256 * 2**10      # bytes of one answer: a view, or a Space's views
 ROWS_MAX = VIEW_MAX - 16 * 2**10  # of them the rows' share; the rest is the views' own words
 RECORDS_MAX = 2000          # records one board or queue reads, the oldest first: more than its rows can ever hold
+AGENDA_DAYS = 7             # the days an agenda looks ahead by default, today among them
+CHART_WEEKS = 8             # the weeks a chart counts by default, this one among them
+RELATED_MAX = 30            # records of other collections that name a record, its sheet lists
 IDS_CHUNK = 500             # ids in one statement's IN (…)
 ZONE_KEY = "collections.zone"  # the platform's kv: the zone the Router last told
 NOT_FOUND = "field not found"
@@ -317,26 +323,76 @@ def _board(store: Collections, collection: str, form: dict, view: dict, when: Wh
             "dropped": dropped}
 
 
+def _sorted(field: str | None, days: dict):
+    """A queue's order: by `field` when it names one — the least first, those without it last — then the longest
+    since."""
+    longest = _longest(days)
+    if field is None:
+        return longest
+    return lambda record: (record["fields"].get(field) is None, record["fields"].get(field), longest(record))
+
+
 def _queue(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
-    fields, rot, since = _shown(form, view), _rot(form, view), view.get("since")
+    fields, rot, since, sort = _shown(form, view), _rot(form, view), view.get("since"), view.get("sort")
     if since is not None:
         _field(form, since, "date")
+    if sort is not None:
+        _field(form, sort, "int", "date", "text", "enum")
     records, total = _records(store, collection, form, _conditions(form, view))
     days, srcs = _marks(store, collection, [r["id"] for r in records], None, when)
     if since is not None:
         days = {r["id"]: dt.date.fromisoformat(r["fields"][since]) for r in records if since in r["fields"]}
     rows, dropped, refs = [], total - len(records), _refs(store, form, records, fields)
-    for record in sorted(records, key=_longest(days)):
+    for record in sorted(records, key=_sorted(sort, days)):
         row = _row(record, fields, refs, days.get(record["id"]), srcs.get(record["id"]), when, rot, budget)
         if row is None:
             dropped += 1
         else:
             rows.append(row)
     return {"rot": rot, "fields": fields or list(form["fields"]), "count": total, "rows": rows,
-            "dropped": dropped}
+            "dropped": dropped, "mark": view.get("mark", "act")}
 
 
-KINDS = {"stat": _stat, "board": _board, "queue": _queue}
+def _agenda(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+    """The records whose `date` falls from today to the last of `days`, the soonest first; each row's `days` below
+    zero, today's zero."""
+    date, fields = view["date"], _shown(form, view)
+    _field(form, date, "date")
+    last = when.today + (view.get("days", AGENDA_DAYS) - 1) * DAY
+    span = [{"field": date, "op": "between", "value": [when.today.isoformat(), last.isoformat()]}]
+    records, total = _records(store, collection, form, _conditions(form, view) + span)
+    refs, rows, dropped = _refs(store, form, records, fields), [], total - len(records)
+    for record in sorted(records, key=lambda r: (r["fields"][date], r["id"])):
+        row = _row(record, fields, refs, dt.date.fromisoformat(record["fields"][date]), None, when, None, budget)
+        if row is None:
+            dropped += 1
+        else:
+            rows.append(row)
+    return {"date": date, "fields": fields or list(form["fields"]), "first": when.today.isoformat(),
+            "last": last.isoformat(), "count": total, "rows": rows, "dropped": dropped}
+
+
+def _chart(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+    """The records the filter matches counted by the week (Monday to Sunday) their `date` falls in, the last `weeks`
+    of them, this one last — each split by the enum `group` names, when it names one."""
+    date, group = view["date"], view.get("group")
+    _field(form, date, "date")
+    values = _field(form, group, "enum")["values"] if group else []
+    this, _ = window("week", when.today)
+    weeks = [this - 7 * DAY * n for n in range(view.get("weeks", CHART_WEEKS) - 1, -1, -1)]
+    conditions = _conditions(form, view)
+    counted = []
+    for first in weeks:
+        span = [{"field": date, "op": "between", "value": [first.isoformat(), (first + 6 * DAY).isoformat()]}]
+        if group:
+            counts = {c["value"]: c["count"] for c in store._count(collection, conditions + span, group)}
+        else:
+            counts = {None: store._count(collection, conditions + span, None)}
+        counted.append({"first": first.isoformat(), "counts": [{"value": v, "count": n} for v, n in counts.items()]})
+    return {"date": date, "group": group, "values": values, "weeks": counted}
+
+
+KINDS = {"stat": _stat, "board": _board, "queue": _queue, "agenda": _agenda, "chart": _chart}
 
 
 def _done(store: Collections, form: dict, view: dict) -> dict | None:
@@ -363,15 +419,16 @@ def _add(store: Collections, form: dict, view: dict) -> dict | None:
 
 
 def _view(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
-    shown = {"name": view["name"], "kind": view["kind"], "title": view.get("title", view["name"])}
+    shown = {"name": view["name"], "kind": view["kind"], "title": view.get("title", view["name"]),
+             **({"tab": view["tab"]} if "tab" in view else {})}
     try:
         shown.update(KINDS[view["kind"]](store, collection, form, view, when, budget))
         if view["kind"] == "queue":
             shown["done"] = _done(store, form, view)
-        if view["kind"] != "stat":
+        if view["kind"] in ("board", "queue"):
             shown["add"] = _add(store, form, view)
     except Rejected as exc:  # a field the form lacks, a value its enum does not have: this view only
-        shown = {k: shown[k] for k in ("name", "kind", "title")} | {"error": exc.reason}
+        shown = {k: shown[k] for k in ("name", "kind", "title", "tab") if k in shown} | {"error": exc.reason}
     return shown
 
 
@@ -390,8 +447,15 @@ def space_views(store: Collections, space: str, when: When) -> dict:
                 if (view["kind"] == "stat") == first:
                     made[name, n] = _view(store, name, form, view, when, budget)
     return {"space": space, **when.shown(), "collections": [
-        {"name": name, "rev": store._rev(name), "views": [made[name, n] for n in range(len(views))]}
-        for name, _, views in schemas]}
+        {"name": name, "rev": store._rev(name), "labels": _labels(form),
+         "views": [made[name, n] for n in range(len(views))]}
+        for name, form, views in schemas]}
+
+
+def _labels(form: dict) -> dict[str, dict[str, str]]:
+    """Every enum of the form, with the words it gives its values — `{"stage": {"pack_ready": "Ready to send"},
+    "origin": {}}` — so the screen puts each value in words, one without them as itself made readable."""
+    return {name: dict(spec.get("labels", {})) for name, spec in form["fields"].items() if spec["type"] == "enum"}
 
 
 def one_view(store: Collections, collection: str, name: str, when: When) -> dict | None:
@@ -423,7 +487,7 @@ def stats(store: Collections, named: list[tuple[str, str]], when: When) -> dict:
 
 def _fields(form: dict) -> dict:
     """A form's fields as the screen asks for them: each one's type, and its values, `to` and `required`."""
-    return {name: {k: v for k, v in spec.items() if k in ("type", "values", "to", "required")}
+    return {name: {k: v for k, v in spec.items() if k in ("type", "values", "labels", "to", "required")}
             for name, spec in form["fields"].items()}
 
 
@@ -446,7 +510,27 @@ def record_view(store: Collections, collection: str, rid: str) -> dict | None:
     changes = store._history(collection, rid, HISTORY)
     values = [record["fields"], *(c["before"] for c in changes), *(c["after"] for c in changes)]
     return {"name": collection, "rev": store._rev(collection), "title": _title(store, form, record["fields"]),
-            "fields": _fields(form), "record": record, "changes": changes, "words": _ref_words(store, form, values)}
+            "fields": _fields(form), "record": record, "changes": changes, "words": _ref_words(store, form, values),
+            "related": _related(store, collection, rid)}
+
+
+def _related(store: Collections, collection: str, rid: str) -> list[dict]:
+    """The records of the Space's other collections whose ref names this one — the touches of a deal, its rounds —
+    each collection's newest RELATED_MAX by their first date field: `[{name, fields, date, records}]`."""
+    space = store._db.execute("SELECT space FROM schemas WHERE collection = ?", (collection,)).fetchone()
+    related = []
+    for name, form, _ in _schemas(store, space[0]) if space else []:
+        refs = [f for f, spec in form["fields"].items() if spec["type"] == "ref" and spec["to"] == collection]
+        if not refs:
+            continue
+        date = next((f for f, spec in form["fields"].items() if spec["type"] == "date"), None)
+        where, params = store._where(name, form, [{"field": refs[0], "op": "ref_is", "value": rid}], False)
+        order = f"{_path(date)} DESC, id DESC" if date else "id DESC"
+        records = [_record(row) for row in store._db.execute(
+            f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} ORDER BY {order} LIMIT ?", (*params, RELATED_MAX))]
+        if records:
+            related.append({"name": name, "fields": _fields(form), "date": date, "ref": refs[0], "records": records})
+    return related
 
 
 def form_view(store: Collections, collection: str) -> dict | None:

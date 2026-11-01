@@ -90,7 +90,7 @@ terminal (an agent's way to propose one comes later), and a `define` that change
 |---|---|
 | `text` | a string of at most 2000 characters, kept without control (but newlines and tabs), bidi or private-use characters |
 | `int` | a whole JSON number, within ±2^53 |
-| `enum` | one of the field's `values` (1–200, each lowercase letters, digits and `_`) |
+| `enum` | one of the field's `values` (1–200, each lowercase letters, digits and `_`); `labels` gives some of them words for the screen, plain text of at most 40 characters: `{"pack_ready": "Ready to send"}` |
 | `date` | `YYYY-MM-DD`, a real date |
 | `bool` | `true` or `false` |
 | `ref` | the id of a record, not deleted, in the collection the field's `to` names |
@@ -245,14 +245,18 @@ held to the form there: a view whose field the form lacks shows “field not fou
 ]
 ```
 
-Every view has a `name` (unique in its collection), a `kind` and an optional `title`, plain text of at most 80
-characters. A `filter` is the one [Reading](#reading) takes.
+Every view has a `name` (unique in its collection), a `kind`, an optional `title`, plain text of at most 80
+characters, and an optional `tab`, at most 24: the tab of the Space's screen it shows in — none, the first, where the
+boards are strips of their columns over the queues, and the agendas and numbers stand in a column beside them; a tab a
+view names shows its numbers as tiles, its boards whole. A `filter` is the one [Reading](#reading) takes.
 
 | Kind | Takes | Shows |
 |---|---|---|
 | `stat` | `count`: `records` (the default) — those the filter matches, by their `date` field when there is a window — or `changed` — those the filter matches now whose `field` a change gave a value (one of `to`, when it names some); `window`: `week` (Monday to Sunday) or `month`, none for all the time; `goal`: a name of the form's `goals` | `{value, goal, previous, window, first, last}`: the number in this week or month, the same for the one before, the window's first and last day |
 | `board` | `group`: an enum; `folded`: its values shown folded; `fields`; `rot`: a name of the form's `rot`; `add` | `{group, rot, fields, columns: [{value, count, folded, rows}], dropped, add}`: a column per value, in the enum's order, then one for the records it is unknown in; in each, the longest in it first |
-| `queue` | `since`: a date field, else the record's last change; `fields`; `rot`; `done`; `add` | `{rot, fields, count, rows, dropped, done, add}`: the longest silent first |
+| `queue` | `since`: a date field, else the record's last change; `sort`: a field to list them by, the least first and those without it last; `mark`: `act` (the default) — the owner's to do — or `wait` — his to wait for; `fields`; `rot`; `done`; `add` | `{rot, fields, count, rows, dropped, mark, done, add}`: the longest silent first, or by `sort` |
+| `agenda` | `date`: a date field; `days`: how many days ahead, today among them (1–31, 7 by default); `fields` | `{date, fields, first, last, count, rows, dropped}`: the records whose `date` falls from today (`first`) to `last`, the soonest first; a row's `days` is 0 today and below zero after |
+| `chart` | `date`: a date field; `group`: an enum to split by; `weeks`: how many (2–26, 8 by default) | `{date, group, values, weeks: [{first, counts: [{value, count}]}]}`: the records counted by the week (Monday to Sunday) their `date` falls in, this week last, each split by `group`'s values |
 
 Two keys are buttons, for the owner's [writes from the screen](#from-the-screen):
 
@@ -284,9 +288,9 @@ rest as `dropped`.
 
 | Call | Answer |
 |---|---|
-| `GET /api/c/_space?space=<space>` | `{space, tz, today, at, collections: [{name, rev, views}]}`: every collection of the Space, by name, with its views in their order |
+| `GET /api/c/_space?space=<space>` | `{space, tz, today, at, collections: [{name, rev, labels, views}]}`: every collection of the Space, by name, with its views in their order and `labels` — each enum field of its form with the words it gives its values |
 | `GET /api/c/<collection>?view=<name>` | `{name, rev, tz, today, at, view}`: one view again; 404 for no such view |
-| `GET /api/c/<collection>/<id>` | `{name, rev, title, fields, record, changes, words}`: one record, a deleted one too, with its form's fields (each `{type, values, to, required}`), its 50 newest changes, its title (below) and `words` for every id its refs name, now and in those changes; 404 for none |
+| `GET /api/c/<collection>/<id>` | `{name, rev, title, fields, record, changes, words, related}`: one record, a deleted one too, with its form's fields (each `{type, values, labels, to, required}`), its 50 newest changes, its title (below), `words` for every id its refs name, now and in those changes, and `related` — for each collection of its Space with a `ref` to this one, `{name, fields, date, ref, records}`: the 30 newest of the records that name it, by their first date field; 404 for none |
 | `POST /owner/zone {tz}` | `{tz}`: the Router's zone, an IANA name; 400 for anything else |
 | `POST /owner/collections/stat {views, tz}` | `{tz, today, at, stats: [{collection, name, title, value, goal, previous, window, first, last}]}`: the `stat` views the Router names (`views`: 1 to 8 of `<collection>/<view>`, its config's `proactive.week`), in its order and in the zone it names; one that is not a collection's `stat` is `{collection, name, error: "no such stat"}`, one the view cannot count `{…, error}`; 400 for anything else |
 

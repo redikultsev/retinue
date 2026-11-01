@@ -55,3 +55,33 @@ export function StatStrip({ stats }: { stats: Placed[] }) {
     </ul>
   );
 }
+
+/** The numbers as a short list beside the work: each its value — against its goal, «0/7» — and its title. */
+export function StatList({ stats }: { stats: Placed[] }) {
+  return (
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2.5 text-[13px]" data-testid="stat-list">
+      {stats.map(({ collection, view }) => {
+        const key = `${collection.name}/${view.name}`;
+        if (view.error !== undefined || view.kind !== "stat")
+          return (
+            <div key={key} className="contents text-muted-foreground">
+              <dt>—</dt>
+              <dd className="truncate" title={view.error}>{`${view.title}: not counted`}</dd>
+            </div>
+          );
+        const goal = progress(view);
+        const none = collection.rev === null;
+        return (
+          <div key={key} className="contents" data-testid={`stat-${view.name}`}>
+            <dt className={cn("text-right font-semibold tabular-nums", goal && !goal.met && "text-amber-700 dark:text-warning", none && "text-muted-foreground")}>
+              {none ? "—" : view.goal !== null ? `${view.value}/${view.goal}` : view.value}
+            </dt>
+            <dd className="min-w-0 truncate text-muted-foreground" title={windowWords(view)}>
+              {view.title}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}

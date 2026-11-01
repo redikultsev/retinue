@@ -632,3 +632,102 @@ def test_a_queues_press_and_a_views_add_are_held_to_the_form_and_an_add_offers_t
         assert (await world.call("GET", "/api/c/nothing/_form"))[0] == 404
 
     faced(tmp_path, body)
+
+
+def test_an_agenda_lists_the_days_ahead_soonest_first_and_a_chart_counts_each_week_by_an_enum(tmp_path):
+    async def body():
+        store = Collections(str(tmp_path / "collections.sqlite"))
+        deals = {**DEALS, "fields": {**DEALS["fields"], "call": {"type": "date"}, "found": {"type": "date"}}}
+        await store.define(DEFINE, "deals", "work", deals, NOW, views=[
+            {"name": "calls", "kind": "agenda", "title": "Calls", "date": "call", "days": 3, "fields": ["company"]},
+            {"name": "weekly", "kind": "chart", "title": "New deals", "date": "found", "group": "origin", "weeks": 3,
+             "tab": "Numbers"},
+        ])
+        for company, call, found, origin in (("Acme", "2026-09-18", "2026-09-15", "inbound"),
+                                             ("Globex", "2026-09-16", "2026-09-14", "outbound"),
+                                             ("Initech", "2026-09-19", "2026-09-08", "inbound"),
+                                             ("Umbrella", "2026-09-15", "2026-08-30", "inbound")):
+            await add(store, "deals", {"company": company, "call": call, "found": found, "origin": origin}, NOW)
+        got = (await shown(store))["deals"]
+        calls = got["calls"]
+        assert [(r["fields"]["company"], r["days"]) for r in calls["rows"]] == [("Globex", 0), ("Acme", -2)], \
+            "today and the two days after it, the soonest first; yesterday's and the fourth day's are not ahead"
+        assert (calls["first"], calls["last"], calls["count"]) == ("2026-09-16", "2026-09-18", 2)
+        weekly = got["weekly"]
+        assert weekly["tab"] == "Numbers" and weekly["values"] == ["inbound", "outbound"]
+        assert [(w["first"], {c["value"]: c["count"] for c in w["counts"]}) for w in weekly["weeks"]] == [
+            ("2026-08-31", {}), ("2026-09-07", {"inbound": 1}), ("2026-09-14", {"inbound": 1, "outbound": 1})], \
+            "the last three weeks, this one last; the 30th of August is in the week before them"
+        await store.close()
+
+    run(body)
+
+
+def test_a_queue_goes_by_its_sort_field_says_its_mark_and_the_screen_has_the_forms_words_for_its_values(tmp_path):
+    async def body():
+        store = Collections(str(tmp_path / "collections.sqlite"))
+        deals = {**DEALS, "fields": {**DEALS["fields"], "priority": {"type": "int"},
+                                     "stage": {"type": "enum", "values": ["lead", "qualified", "won"],
+                                               "labels": {"lead": "New lead"}}}}
+        await store.define(DEFINE, "deals", "work", deals, NOW, views=[
+            {"name": "next", "kind": "queue", "sort": "priority", "mark": "wait", "tab": "Leads",
+             "fields": ["company"]}])
+        for company, priority in (("Acme", 2), ("Globex", None), ("Initech", 1)):
+            await add(store, "deals", {"company": company, **({"priority": priority} if priority else {})}, NOW)
+        answer = await store.read(lambda: views.space_views(store, "work", When("UTC", NOW)))
+        assert answer["collections"][0]["labels"] == {"origin": {}, "stage": {"lead": "New lead"}}
+        queue = answer["collections"][0]["views"][0]
+        assert [r["fields"]["company"] for r in queue["rows"]] == ["Initech", "Acme", "Globex"], \
+            "the least priority first, the one without it last"
+        assert (queue["mark"], queue["tab"]) == ("wait", "Leads")
+        await store.close()
+
+    run(body)
+
+
+def test_a_records_sheet_lists_the_records_of_other_collections_that_name_it_the_newest_first(tmp_path):
+    async def body():
+        store = Collections(str(tmp_path / "collections.sqlite"))
+        await work(store)
+        acme = await add(store, "deals", {"company": "Acme"}, NOW)
+        other = await add(store, "deals", {"company": "Globex"}, NOW)
+        for date, deal in (("2026-09-10", acme), ("2026-09-14", acme), ("2026-09-12", other)):
+            await add(store, "followups", {"deal": deal["id"], "date": date, "channel": "mail"}, NOW)
+        sheet = await store.read(lambda: views.record_view(store, "deals", acme["id"]))
+        (followups,) = sheet["related"]
+        assert (followups["name"], followups["ref"], followups["date"]) == ("followups", "deal", "date")
+        assert [r["fields"]["date"] for r in followups["records"]] == ["2026-09-14", "2026-09-10"]
+        assert followups["fields"]["direction"]["values"] == ["in", "out"]
+        lone = await store.read(lambda: views.record_view(store, "followups", followups["records"][0]["id"]))
+        assert lone["related"] == [], "nothing names a follow-up"
+        await store.close()
+
+    run(body)
+
+
+def test_the_new_view_keys_and_an_enums_labels_are_checked_in_their_shape(tmp_path):
+    for given, reason in [
+        ([{"name": "x", "kind": "queue", "tab": ""}], '"tab" is plain text'),
+        ([{"name": "x", "kind": "queue", "tab": "x" * 25}], '"tab" is plain text'),
+        ([{"name": "x", "kind": "queue", "mark": "urgent"}], '"mark" is one of act, wait'),
+        ([{"name": "x", "kind": "queue", "sort": "a b"}], '"sort" names a field'),
+        ([{"name": "x", "kind": "agenda"}], 'names the date field'),
+        ([{"name": "x", "kind": "agenda", "date": "d", "days": 0}], '"days" is a whole number from 1 to 31'),
+        ([{"name": "x", "kind": "chart", "date": "d", "weeks": 27}], '"weeks" is a whole number from 2 to 26'),
+        ([{"name": "x", "kind": "chart", "date": "d", "fields": ["a"]}], "not 'fields'"),
+        ([{"name": "x", "kind": "stat", "mark": "act"}], "not 'mark'"),
+    ]:
+        with pytest.raises(Rejected, match=re.escape(reason)):
+            parse_views(given)
+
+    async def body():
+        store = Collections(str(tmp_path / "collections.sqlite"))
+        for labels, reason in (({"won": "Won"}, '"labels" gives some of its values words'),
+                               ({"lead": ""}, '"labels" gives some of its values words'),
+                               ([], '"labels" gives some of its values words')):
+            form = {"fields": {"stage": {"type": "enum", "values": ["lead"], "labels": labels}}}
+            with pytest.raises(Rejected, match=re.escape(reason)):
+                await store.define(DEFINE, "deals", "work", form, NOW)
+        await store.close()
+
+    run(body)

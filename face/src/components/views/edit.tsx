@@ -9,7 +9,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Plus } from "@/components/icons";
 import { ApiError } from "@/lib/api";
-import type { AddSpec, FieldSpec, FormAnswer, RecordAnswer, Refusal } from "@/lib/collections";
+import type { AddSpec, CollectionRecord, FieldSpec, FormAnswer, RecordAnswer, Refusal, Related } from "@/lib/collections";
 import { valueWords } from "@/lib/collections";
 import {
   actorWords,
@@ -70,12 +70,15 @@ export function Editor({
   today,
   refresh,
   reload,
+  moves = {},
   children,
 }: {
   api?: EditApi;
   today: string;
   refresh: (collection: string, rev: string | null) => void;
   reload: () => void;
+  /** By collection: the columns a record's sheet offers to move it to when the view that opened it names none. */
+  moves?: Record<string, Move>;
   children: React.ReactNode;
 }) {
   const [asked, setAsked] = useState<Asked | null>(null);
@@ -83,6 +86,8 @@ export function Editor({
   const [adding, setAdding] = useState<{ collection: string; spec: AddSpec } | null>(null);
   const [writes, setWrites] = useState(0);
   const writeRef = useRef<Editing["write"]>(async () => false);
+  const movesRef = useRef(moves);
+  movesRef.current = moves;
 
   const write = useCallback(
     async (collection: string, steps: Step[], what: string): Promise<boolean> => {
@@ -114,7 +119,10 @@ export function Editor({
   const editing = useMemo<Editing>(
     () => ({
       write,
-      open: (collection, id, move) => setRecord({ collection, id, ...(move ? { move } : {}) }),
+      open: (collection, id, move) => {
+        const given = move ?? movesRef.current[collection];
+        setRecord({ collection, id, ...(given ? { move: given } : {}) });
+      },
       add: (collection, spec) => setAdding({ collection, spec }),
       writes,
     }),
@@ -235,8 +243,12 @@ function RecordSheet({
   const record = data?.record;
   const live = record && record.deleted === null;
   const target = record?.id ?? null;
+  const moveSpec = move ? data?.fields[move.field] : undefined;
+  // The facts first, the long ones (more than a line) after them; the field it moves by is the «Move to» row.
+  const facts = data && record ? Object.entries(data.fields).filter(([name]) => !EMPTY.has(record.fields[name] as never) && name !== move?.field) : [];
+  const long = (v: unknown) => typeof v === "string" && v.length > LONG;
   return (
-    <Dialog open sheet onClose={onClose} title={data?.title ?? "Record"}>
+    <Dialog open sheet side onClose={onClose} title={data?.title ?? "Record"}>
       <div className="flex flex-col gap-4 p-4" data-testid="record-sheet">
         {error && <p className="text-sm text-muted-foreground">{error}</p>}
         {!data && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -245,7 +257,7 @@ function RecordSheet({
             {record.deleted !== null && <p className="text-sm font-medium text-destructive">Deleted.</p>}
             {move && live && (
               <fieldset className="flex flex-col gap-1.5">
-                <legend className="mb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Move to</legend>
+                <legend className="mb-1 text-xs font-medium text-muted-foreground">{`${valueWords(move.field)} — move to`}</legend>
                 <div className="flex flex-wrap gap-1.5">
                   {move.values
                     .filter((v): v is string => v !== null)
@@ -260,32 +272,42 @@ function RecordSheet({
                           onClick={() =>
                             void run(
                               [{ op: { op: "set", id: record.id, version: record.version, fields: { [move.field]: value } }, target }],
-                              said(`moved to ${valueWords(value)}.`),
+                              said(`moved to ${valueWords(value, moveSpec?.labels)}.`),
                               true,
                             )
                           }
                           className={cn(
-                            "min-h-11 rounded-full border px-3 text-sm md:min-h-9",
+                            "min-h-11 rounded-full border px-3 text-sm md:min-h-8 md:text-[13px]",
                             here ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:bg-accent",
                           )}
                         >
-                          {valueWords(value)}
+                          {valueWords(value, moveSpec?.labels)}
                         </button>
                       );
                     })}
                 </div>
               </fieldset>
             )}
-            <dl className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 gap-y-1.5 text-sm">
-              {Object.entries(data.fields)
-                .filter(([name]) => record.fields[name] !== undefined)
+            <dl className="grid grid-cols-[minmax(5.5rem,auto)_1fr] gap-x-3 gap-y-1.5 text-sm">
+              {facts
+                .filter(([name]) => !long(record.fields[name]))
                 .map(([name, spec]) => (
                   <Field key={name} name={name} spec={spec} value={record.fields[name]} words={data.words} />
                 ))}
             </dl>
-            <section className="flex flex-col gap-1" aria-label="Changes">
-              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Changes</h3>
-              <ul className="flex flex-col divide-y rounded-lg border">
+            {facts
+              .filter(([name]) => long(record.fields[name]))
+              .map(([name, spec]) => (
+                <Long key={name} name={name} text={valueText(record.fields[name], spec, data.words)} />
+              ))}
+            {(data.related ?? []).map((related) => (
+              <Timeline key={related.name} related={related} onOpen={(r) => editing.open(related.name, r.id)} />
+            ))}
+            <details className="group/changes rounded-lg border" aria-label="Changes">
+              <summary className="flex min-h-10 cursor-pointer items-center px-3 text-[13px] text-muted-foreground">
+                {`Changes · ${data.changes.length}`}
+              </summary>
+              <ul className="flex flex-col divide-y border-t">
                 {data.changes.map((change) => (
                   <li key={change.change_id} className="flex items-start gap-2 px-3 py-2">
                     <span className="min-w-0 flex-1">
@@ -315,7 +337,7 @@ function RecordSheet({
                   </li>
                 ))}
               </ul>
-            </section>
+            </details>
             <div className="flex justify-end">
               {live ? (
                 <Button
@@ -336,6 +358,64 @@ function RecordSheet({
         )}
       </div>
     </Dialog>
+  );
+}
+
+const EMPTY = new Set<unknown>([undefined, null, ""]);
+/** Characters past which a text is not a fact on a line but a paragraph of its own. */
+const LONG = 120;
+
+/** A long text field — notes — as a paragraph, its first lines shown and the rest on «More». */
+function Long({ name, text }: { name: string; text: string }) {
+  const [all, setAll] = useState(false);
+  return (
+    <section className="flex flex-col gap-1">
+      <h3 className="text-xs font-medium text-muted-foreground">{valueWords(name)}</h3>
+      <p dir="auto" className={cn("text-sm break-words whitespace-pre-wrap", !all && "line-clamp-4")}>
+        {text}
+      </p>
+      {!all && text.length > LONG * 2 && (
+        <button type="button" className="self-start text-xs text-primary hover:underline" onClick={() => setAll(true)}>
+          More
+        </button>
+      )}
+    </section>
+  );
+}
+
+/** The records of another collection that name this one — its touches, its rounds — the newest first, each on a line:
+ * its day, its enums in words, its text. */
+function Timeline({ related, onOpen }: { related: Related; onOpen: (record: CollectionRecord) => void }) {
+  const fields = Object.entries(related.fields).filter(([name]) => name !== related.ref && name !== related.date);
+  return (
+    <section className="flex flex-col gap-1" aria-label={valueWords(related.name)}>
+      <h3 className="text-xs font-medium text-muted-foreground">{`${valueWords(related.name)} · ${related.records.length}`}</h3>
+      <ol className="flex flex-col">
+        {related.records.map((r) => {
+          const tags = fields.filter(([n, spec]) => spec.type === "enum" && !EMPTY.has(r.fields[n] as never)).map(([n, spec]) => valueText(r.fields[n], spec));
+          const text = fields.filter(([n, spec]) => spec.type === "text" && !EMPTY.has(r.fields[n] as never)).map(([n]) => String(r.fields[n]));
+          return (
+            <li key={r.id}>
+              <button
+                type="button"
+                onClick={() => onOpen(r)}
+                className="grid w-full grid-cols-[3rem_minmax(0,1fr)] gap-2 rounded-md px-1 py-1 text-left text-[13px] hover:bg-accent/50"
+              >
+                <span className="text-muted-foreground tabular-nums">
+                  {related.date && r.fields[related.date] ? valueText(r.fields[related.date], { type: "date" }) : "—"}
+                </span>
+                <span className="min-w-0">
+                  {tags.length > 0 && <span className="text-muted-foreground">{`${tags.join(" · ")} — `}</span>}
+                  <span dir="auto" className="break-words">
+                    {text.join(" · ")}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }
 
@@ -433,7 +513,7 @@ function AddSheet({
                     {field.type === "enum"
                       ? (field.values ?? []).map((v) => (
                           <option key={v} value={v}>
-                            {valueWords(v)}
+                            {valueWords(v, field.labels)}
                           </option>
                         ))
                       : (form.options[name] ?? []).map((o) => (

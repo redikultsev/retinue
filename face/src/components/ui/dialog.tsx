@@ -1,5 +1,6 @@
 // shadcn/ui Dialog's look (MIT) on the native <dialog> element instead of Radix: focus trap, Esc and the top layer
-// come from the browser, one dependency fewer. `sheet`: a bottom sheet on a phone (a centred panel on a wide screen),
+// come from the browser, one dependency fewer. `sheet`: a bottom sheet on a phone (a centred panel on a wide screen —
+// or, `side`, a drawer at its right edge over the page, which a press beside it closes),
 // its own header with «Close», its body scrolling above the home indicator. Rendered into <body>: a dialog opened from
 // a control shown only on hover (a session row's menu) would otherwise go when the hover does — its ancestor hidden,
 // the top layer shows nothing.
@@ -13,9 +14,11 @@ interface DialogProps extends Omit<React.ComponentProps<"dialog">, "open"> {
   onClose: () => void;
   title: string;
   sheet?: boolean;
+  /** A sheet's place on a wide screen: the right edge, full height, rather than the centre. */
+  side?: boolean;
 }
 
-function Dialog({ open, onClose, title, sheet = false, className, children, ...props }: DialogProps) {
+function Dialog({ open, onClose, title, sheet = false, side = false, className, children, ...props }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = ref.current;
@@ -33,6 +36,9 @@ function Dialog({ open, onClose, title, sheet = false, className, children, ...p
         "m-auto w-[calc(100%-2rem)] max-w-lg rounded-xl border bg-background p-0 text-foreground shadow-lg backdrop:bg-black/50",
         sheet &&
           "mx-0 mt-auto mb-0 max-h-[85dvh] w-full max-w-none rounded-t-2xl rounded-b-none md:m-auto md:max-h-[80dvh] md:w-[28rem] md:rounded-xl",
+        sheet &&
+          side &&
+          "md:mt-0 md:mr-0 md:mb-0 md:ml-auto md:h-dvh md:max-h-dvh md:w-[32rem] md:rounded-none md:border-y-0 md:border-r-0 md:backdrop:bg-black/40",
         className,
       )}
       {...props}

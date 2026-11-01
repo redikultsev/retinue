@@ -30,7 +30,7 @@ const board = (columns: Array<[string | null, number, boolean?, ViewRow[]?]>): B
 });
 
 describe("layout", () => {
-  it("puts every collection's numbers in one strip, then the queues, then the boards — a broken view in its kind's place", () => {
+  it("puts every tab's numbers together, then its queues, then its boards — a broken view in its kind's place, the first tab always there", () => {
     const answer: SpaceViews = {
       space: "work", tz: "Europe/Berlin", today: "2026-09-16", at: 0,
       collections: [
@@ -41,14 +41,20 @@ describe("layout", () => {
         { name: "followups", rev: null, views: [
           { name: "made", kind: "stat", title: "Made", value: 0, goal: 7, previous: 0, window: "week", first: "2026-09-14", last: "2026-09-20" },
           { name: "waiting", kind: "queue", title: "Waiting on me", rot: 2, fields: [], count: 0, rows: [], dropped: 0 },
+          { name: "weekly", kind: "chart", title: "Weekly", tab: "Numbers", date: "date", group: null, values: [], weeks: [] },
         ] },
       ],
     };
-    const { stats, queues, boards } = layout(answer);
+    const [first, numbers, ...more] = layout(answer);
+    const { stats, queues, boards } = first!.places;
+    expect(first!.title).toBeNull();
     expect(stats.map((p) => `${p.collection.name}/${p.view.name}`)).toEqual(["deals/moved", "followups/made"]);
     expect(queues.map((p) => p.view.name)).toEqual(["waiting"]);
     expect(boards.map((p) => p.view.error)).toEqual(["field not found: 'stage'"]);
-    expect(layout(null)).toEqual({ stats: [], queues: [], boards: [] });
+    expect(numbers!.title).toBe("Numbers");
+    expect(numbers!.places.charts.map((p) => p.view.name)).toEqual(["weekly"]);
+    expect(more).toEqual([]);
+    expect(layout(null)).toEqual([{ title: null, places: { stats: [], queues: [], boards: [], agendas: [], charts: [] } }]);
   });
 });
 

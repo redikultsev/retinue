@@ -47,14 +47,17 @@ const FIELDS: Record<"deals" | "followups", Record<string, FieldSpec>> = {
     company: { type: "text", required: true },
     contact: { type: "text" },
     value: { type: "int" },
-    stage: { type: "enum", values: STAGES, required: true },
+    stage: { type: "enum", values: STAGES, required: true, labels: { negotiation: "In negotiation" } },
+    next: { type: "text" },
+    call: { type: "date" },
+    found: { type: "date" },
     reason: { type: "text" },
   },
   followups: {
     deal: { type: "ref", to: "deals", required: true },
     date: { type: "date", required: true },
     channel: { type: "enum", values: ["mail", "phone", "chat"], required: true },
-    state: { type: "enum", values: ["draft", "done"], required: true },
+    state: { type: "enum", values: ["draft", "done"], required: true, labels: { draft: "Not sent" } },
     note: { type: "text" },
   },
 };
@@ -111,27 +114,28 @@ function seed(collection: Name, fields: Record<string, unknown>, ageDays: number
   return rec;
 }
 
+const ahead = (days: number) => iso(Date.now() + days * DAY_MS);
 const DEALS: [Record<string, unknown>, number][] = [
-  [{ company: "Globex", contact: "Anna Petrova", value: 12000, stage: "lead" }, 11],
-  [{ company: "Vandelay Industries", value: 4000, stage: "lead" }, 2],
-  [{ company: "Initech", contact: "Ivan Example", value: 30000, stage: "qualified" }, 9],
-  [{ company: "Example Ltd", value: 8500, stage: "qualified" }, 4],
-  [{ company: "Soylent", value: 2000, stage: "qualified" }, 1],
-  [{ company: "Acme", contact: "Jane Example", value: 54000, stage: "proposal" }, 3],
+  [{ company: "Globex", contact: "Anna Petrova", value: 12000, stage: "lead", next: "Send the price list", found: ahead(-40) }, 11],
+  [{ company: "Vandelay Industries", value: 4000, stage: "lead", found: ahead(-12) }, 2],
+  [{ company: "Initech", contact: "Ivan Example", value: 30000, stage: "qualified", next: "Demo call, agree the pilot", call: ahead(1), found: ahead(-20) }, 9],
+  [{ company: "Example Ltd", value: 8500, stage: "qualified", found: ahead(-9) }, 4],
+  [{ company: "Soylent", value: 2000, stage: "qualified", found: ahead(-3) }, 1],
+  [{ company: "Acme", contact: "Jane Example", value: 54000, stage: "proposal", next: "Answer the legal questions", call: ahead(3), found: ahead(-25) }, 3],
   [{ company: "Wonka Industries", value: 7000, stage: "won" }, 20],
   [{ company: "Umbrella Corp", reason: "went with a cheaper vendor", stage: "lost" }, 30],
   [{ company: "Hooli", reason: "no budget this year", stage: "lost" }, 25],
 ];
 const seeded = DEALS.map(([fields, days]) => seed("deals", fields, days));
 const dealOf = (company: string) => seeded.find((r) => r.fields.company === company)!;
-for (const [company, channel, days] of [
-  ["Initech", "mail", 4],
-  ["Globex", "phone", 3],
-  ["Acme", "mail", 1],
-  ["Example Ltd", "chat", 0],
-  ["Soylent", "mail", -2],
+for (const [company, channel, days, note] of [
+  ["Initech", "mail", 4, "Asked for the pilot's scope and dates"],
+  ["Globex", "phone", 3, "Call back about the price list"],
+  ["Acme", "mail", 1, "Answer the legal team's questions"],
+  ["Example Ltd", "chat", 0, "Confirm the delivery window"],
+  ["Soylent", "mail", -2, "Check in after their board meeting"],
 ] as const)
-  seed("followups", { deal: dealOf(company).id, date: iso(Date.now() - days * DAY_MS), channel, state: "draft" }, Math.max(days, 0));
+  seed("followups", { deal: dealOf(company).id, date: iso(Date.now() - days * DAY_MS), channel, state: "draft", note }, Math.max(days, 0));
 {
   // the assistant moved one on from a mail an hour ago: its change shows with its mark
   const acme = dealOf("Acme");
@@ -141,6 +145,10 @@ for (const [company, channel, days] of [
   acme.updated = at / 1000;
   change("deals", acme.id, "set", { stage: "qualified" }, { stage: "proposal" }, at, "assistant", { foreign: ["mail"], src: "mail:work/<msg-1@example.com>" });
 }
+
+/** Every enum of a collection's form, with its words. */
+const labelsOf = (name: Name) =>
+  Object.fromEntries(Object.entries(FIELDS[name]).flatMap(([f, spec]) => (spec.type === "enum" ? [[f, spec.labels ?? {}]] : [])));
 
 const live = (collection: Name) => [...records.values()].filter((r) => r.collection === collection && r.deleted === null);
 
@@ -191,6 +199,39 @@ function dealViews(): View[] {
     { name: "moved", kind: "stat", title: "Deals moved on", value: thisWeek("deals", (c) => !!c.after && "stage" in c.after), goal: null, previous: 1, window: "week", first, last },
     { name: "revenue", kind: "stat", title: "Revenue", error: "field not found: 'amount'" },
     {
+      name: "calls",
+      kind: "agenda",
+      title: "Calls",
+      date: "call",
+      fields: ["company", "contact"],
+      first: iso(Date.now()),
+      last: ahead(6),
+      count: live("deals").filter((r) => r.fields.call).length,
+      rows: live("deals")
+        .filter((r) => r.fields.call && String(r.fields.call) >= iso(Date.now()) && String(r.fields.call) <= ahead(6))
+        .sort((a, b) => String(a.fields.call).localeCompare(String(b.fields.call)))
+        .map((r) => row(r, ["company", "contact", "call"], -Math.round((Date.parse(String(r.fields.call)) - Date.parse(iso(Date.now()))) / DAY_MS), null)),
+      dropped: 0,
+    },
+    {
+      name: "weekly",
+      kind: "chart",
+      title: "New deals by week",
+      tab: "Numbers",
+      date: "found",
+      group: "stage",
+      values: STAGES,
+      weeks: Array.from({ length: 8 }, (_, k) => {
+        const start = week().start - (7 - k) * 7 * DAY_MS;
+        const inWeek = live("deals").filter((r) => {
+          const at = Date.parse(String(r.fields.found ?? ""));
+          return at >= start && at < start + 7 * DAY_MS;
+        });
+        const counts = STAGES.map((value) => ({ value, count: inWeek.filter((r) => r.fields.stage === value).length })).filter((c) => c.count);
+        return { first: iso(start), counts };
+      }),
+    },
+    {
       name: "pipeline",
       kind: "board",
       title: "Pipeline",
@@ -212,14 +253,14 @@ function dealViews(): View[] {
 
 function followupViews(): View[] {
   const { first, last } = week();
-  const fields = ["deal", "channel", "date"];
+  const fields = ["deal", "channel", "note", "date"];
   const rows = live("followups")
     .filter((r) => r.fields.state === "draft")
     .map((r) => row(r, fields, Math.round((Date.now() - Date.parse(String(r.fields.date))) / DAY_MS), REPLY))
     .sort((a, b) => (b.days ?? 0) - (a.days ?? 0));
   return [
     { name: "made", kind: "stat", title: "Follow-ups done", value: 3 + live("followups").filter((r) => r.fields.state === "done" && since(r, "state") >= week().start).length, goal: 10, previous: 7, window: "week", first, last },
-    { name: "replied", kind: "stat", title: "Replies this month", value: 12, goal: 10, previous: 9, window: "month", ...month() },
+    { name: "replied", kind: "stat", title: "Replies this month", tab: "Numbers", value: 12, goal: 10, previous: 9, window: "month", ...month() },
     {
       name: "waiting",
       kind: "queue",
@@ -241,6 +282,7 @@ const partners: View[] = [
     name: "partners",
     kind: "board",
     title: "Partners",
+    tab: "Partners",
     group: "status",
     rot: null,
     fields: ["name"],
@@ -256,8 +298,8 @@ const partnersRev = ulid(Date.now() - 9 * DAY_MS);
 function collections(space: string): CollectionViews[] {
   if (space !== "work") return [];
   return [
-    { name: "deals", rev: revs.deals, views: dealViews() },
-    { name: "followups", rev: revs.followups, views: followupViews() },
+    { name: "deals", rev: revs.deals, labels: labelsOf("deals"), views: dealViews() },
+    { name: "followups", rev: revs.followups, labels: labelsOf("followups"), views: followupViews() },
     { name: "partners", rev: partnersRev, views: partners },
     { name: "suppliers", rev: null, views: [{ name: "open", kind: "queue", title: "Suppliers to call", rot: null, fields: ["name"], count: 0, rows: [], dropped: 0 }] },
   ];
@@ -324,6 +366,21 @@ export function mockCollections(path: string, query: URLSearchParams): { status:
       record: shown(rec),
       changes: mine,
       words: words([rec.fields, ...mine.flatMap((c) => [c.before, c.after])]),
+      related:
+        rec.collection === "deals"
+          ? [
+              {
+                name: "followups",
+                fields: FIELDS.followups,
+                date: "date",
+                ref: "deal",
+                records: live("followups")
+                  .filter((f) => f.fields.deal === rec.id)
+                  .sort((a, b) => String(b.fields.date).localeCompare(String(a.fields.date)))
+                  .map(shown),
+              },
+            ].filter((r) => r.records.length)
+          : [],
     };
     return { status: 200, data };
   }

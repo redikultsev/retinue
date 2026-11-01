@@ -6,7 +6,7 @@ import { ApiError, request } from "./api";
 import { live as theLive, type Live } from "./live";
 import { day } from "./spaces";
 import type { CollectionEvent } from "./types";
-import type { BoardView, CollectionViews, Moment, OneView, SpaceViews, StatView, View, ViewRow } from "./view-types";
+import type { BoardView, CollectionViews, Labels, Moment, OneView, SpaceViews, StatView, View, ViewRow } from "./view-types";
 
 export * from "./view-types";
 
@@ -24,18 +24,36 @@ export interface Placed<V extends View = View> {
   view: V;
 }
 
-/** The screen's three places: the numbers in one strip, then the queues, then the boards — each in the order the
- * collections come in (by name) and their views within them. A broken view stays in the place of its kind. */
-export function layout(answer: SpaceViews | null | undefined) {
-  const out = { stats: [] as Placed[], queues: [] as Placed[], boards: [] as Placed[] };
+/** One tab's places: its numbers, queues, boards, agendas and charts — each in the order the collections come in
+ * (by name) and their views within them. A broken view stays in the place of its kind. */
+export interface Places {
+  stats: Placed[];
+  queues: Placed[];
+  boards: Placed[];
+  agendas: Placed[];
+  charts: Placed[];
+}
+
+const KIND_PLACE = { stat: "stats", queue: "queues", board: "boards", agenda: "agendas", chart: "charts" } as const;
+
+export const NO_PLACES: Places = { stats: [], queues: [], boards: [], agendas: [], charts: [] };
+
+/** The screen's tabs, in the order their first view comes in: the views without a `tab` in the first (`title` null),
+ * which is there even when it has none. */
+export function layout(answer: SpaceViews | null | undefined): { title: string | null; places: Places }[] {
+  const tabs = new Map<string | null, Places>([[null, { stats: [], queues: [], boards: [], agendas: [], charts: [] }]]);
   for (const collection of answer?.collections ?? []) {
     for (const view of collection.views) {
-      const place = view.kind === "stat" ? out.stats : view.kind === "queue" ? out.queues : out.boards;
-      place.push({ collection, view });
+      const key = view.tab ?? null;
+      if (!tabs.has(key)) tabs.set(key, { stats: [], queues: [], boards: [], agendas: [], charts: [] });
+      tabs.get(key)![KIND_PLACE[view.kind]].push({ collection, view });
     }
   }
-  return out;
+  return [...tabs].map(([title, places]) => ({ title, places }));
 }
+
+/** How many views a tab's places hold. */
+export const placedCount = (p: Places) => p.stats.length + p.queues.length + p.boards.length + p.agendas.length + p.charts.length;
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -61,29 +79,48 @@ export function emptyWords(collection: CollectionViews, now: Date = new Date()):
   return at === null ? "No data yet: nothing was written here." : `Nothing here — no change since ${day(isoDay(at), now)}.`;
 }
 
-/** An enum's value as the owner reads it: `pack_ready` → «Pack ready», none → «Unknown». */
-export function valueWords(value: string | null): string {
+/** An enum's value as the owner reads it: the form's words for it when it gives some, else `pack_ready` → «Pack
+ * ready»; none → «Unknown». */
+export function valueWords(value: string | null, labels?: Record<string, string>): string {
   if (value === null) return "Unknown";
+  if (labels?.[value]) return labels[value];
   const text = value.replace(/_/g, " ");
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** One field of a row in words, or null when there is nothing to say: a ref by its record's words (never its id),
- * a day as «21.09», a number with its thousands marked, a yes as the field's own name. */
-export function cell(row: ViewRow, field: string, now: Date = new Date()): string | null {
+ * an enum's value by the form's words (`labels`), a day as «21.09», a number with its thousands marked, a yes as the
+ * field's own name. */
+export function cell(row: ViewRow, field: string, now: Date = new Date(), labels: Labels = {}): string | null {
   if (row.refs[field]) return row.refs[field];
   const value = row.fields[field];
   if (value === undefined || value === null || value === "" || value === false) return null;
   if (value === true) return valueWords(field);
   if (typeof value === "number") return value.toLocaleString("en-US");
   if (typeof value !== "string" || ULID.test(value)) return null;
+  if (labels[field]) return valueWords(value, labels[field]);
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? day(value, now) : value;
 }
 
 /** A row's head and the rest of its words, in the view's order of fields; one with none at all is «Untitled». */
-export function rowWords(row: ViewRow, fields: string[], now: Date = new Date()): { title: string; rest: string[] } {
-  const words = fields.map((f) => cell(row, f, now)).filter((w): w is string => w !== null);
+export function rowWords(row: ViewRow, fields: string[], now: Date = new Date(), labels: Labels = {}): { title: string; rest: string[] } {
+  const words = fields.map((f) => cell(row, f, now, labels)).filter((w): w is string => w !== null);
   return { title: words[0] ?? "Untitled", rest: words.slice(1) };
+}
+
+/** A row as a line of a list shows it: its head, the field beside it, the line under it, and the enums at its right —
+ * each field by its place in the view's `fields` (the first three) and the enums after them. */
+export function lineWords(row: ViewRow, fields: string[], labels: Labels = {}, now: Date = new Date()) {
+  const say = (f: string | undefined) => (f === undefined ? null : cell(row, f, now, labels));
+  const [head, beside, under, ...rest] = fields;
+  const first = say(head);
+  return {
+    // a row without its head is headed by the field beside it
+    title: first ?? say(beside) ?? "Untitled",
+    beside: first === null ? null : say(beside),
+    under: say(under),
+    tags: rest.map(say).filter((w): w is string => w !== null),
+  };
 }
 
 /** The days in words — «today», «4 days», «in 3 days» — and, past the threshold, the word that says so as well as

@@ -19,6 +19,8 @@ export interface ViewRow {
 interface Named {
   name: string;
   title: string;
+  /** The tab of the screen it shows in; none, the Space's first. */
+  tab?: string;
   error?: undefined;
 }
 
@@ -72,24 +74,54 @@ export interface QueueView extends Named {
   count: number;
   rows: ViewRow[];
   dropped: number;
+  /** Its rows are the owner's to act on (`act`), or his to wait for (`wait`). */
+  mark?: "act" | "wait";
   done?: Done | null;
   add?: AddSpec | null;
+}
+
+/** The records whose `date` falls in the days ahead, `first` (today) to `last`, the soonest first: each row's `days`
+ * is zero today and below zero after. */
+export interface AgendaView extends Named {
+  kind: "agenda";
+  date: string;
+  fields: string[];
+  first: string;
+  last: string;
+  count: number;
+  rows: ViewRow[];
+  dropped: number;
+}
+
+/** The records counted by the week their `date` falls in, this week last, each split by the enum `group` names. */
+export interface ChartView extends Named {
+  kind: "chart";
+  date: string;
+  group: string | null;
+  /** The enum's values, in its order: the series. */
+  values: string[];
+  weeks: { first: string; counts: { value: string | null; count: number }[] }[];
 }
 
 /** A view the platform could not make: a field its form lacks, a goal or a threshold it does not have. */
 export interface BrokenView {
   name: string;
-  kind: "stat" | "board" | "queue";
+  kind: "stat" | "board" | "queue" | "agenda" | "chart";
   title: string;
+  tab?: string;
   error: string;
 }
 
-export type View = StatView | BoardView | QueueView | BrokenView;
+export type View = StatView | BoardView | QueueView | AgendaView | ChartView | BrokenView;
+
+/** Every enum field of a form, with the words it gives some of its values. */
+export type Labels = Record<string, Record<string, string>>;
 
 export interface CollectionViews {
   name: string;
   /** Its newest change, a ULID; null for a collection nothing was ever written to. */
   rev: string | null;
+  labels?: Labels;
   views: View[];
 }
 
@@ -116,6 +148,8 @@ export interface OneView extends Moment {
 export interface FieldSpec {
   type: "text" | "int" | "enum" | "date" | "bool" | "ref";
   values?: string[];
+  /** An enum's words for some of its values. */
+  labels?: Record<string, string>;
   /** A ref's collection. */
   to?: string;
   required?: boolean;
@@ -161,6 +195,18 @@ export interface RecordAnswer {
   changes: Change[];
   /** The words of the records its refs name, by id. */
   words: Record<string, string>;
+  /** The records of the Space's other collections whose `ref` names this one, each collection's newest by `date`. */
+  related?: Related[];
+}
+
+export interface Related {
+  name: string;
+  fields: Record<string, FieldSpec>;
+  /** Its first date field, the records' order; null for none. */
+  date: string | null;
+  /** The field that names the record. */
+  ref: string;
+  records: CollectionRecord[];
 }
 
 export interface FormAnswer {

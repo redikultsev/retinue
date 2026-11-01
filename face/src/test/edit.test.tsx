@@ -33,7 +33,7 @@ const BOARD: View = {
 };
 const WORK: SpaceViews = {
   space: "work", tz: "Europe/Berlin", today: "2026-09-16", at: 0,
-  collections: [{ name: "deals", rev: REV, views: [BOARD] }, { name: "followups", rev: REV, views: [QUEUE] }] satisfies CollectionViews[],
+  collections: [{ name: "deals", rev: REV, views: [{ ...BOARD, tab: "Board" } as View] }, { name: "followups", rev: REV, views: [QUEUE] }] satisfies CollectionViews[],
 };
 const SHOWCASE: SpaceView = {
   name: "work", title: "Work", rules: "", marker: true, counts: { questions: 0, tasks: 0 }, sections: [],
@@ -111,6 +111,7 @@ describe("writing from the screen", () => {
       change: { change_id: REV, ts: Date.now() / 1000 - 120, as_of: null, batch: null, collection: "deals", id: ids.initech, op: "set", before: { stage: "lead" }, after: { stage: "lost" }, actor: "assistant", model: null, via: "assistant", src: null, foreign: ["mail"], reverts: null, idem: null },
     };
     const api = mount({ write: vi.fn().mockRejectedValueOnce(refused(moved)).mockResolvedValueOnce(answered("deals", ids.initech, 4)) });
+    fireEvent.click(await screen.findByRole("tab", { name: "Board" }));
     const wide = await screen.findByTestId("board-wide-pipeline");
     const card = within(wide).getByText("Initech").closest("li")!;
     const data = new Map<string, string>();
@@ -139,6 +140,7 @@ describe("writing from the screen", () => {
       words: {},
     };
     const api = mount({ record: vi.fn().mockResolvedValue(record), write: vi.fn().mockResolvedValue(answered("deals", ids.acme, 3)) });
+    fireEvent.click(await screen.findByRole("tab", { name: "Board" }));
     const wide = await screen.findByTestId("board-wide-pipeline");
     fireEvent.click(within(wide).getByRole("button", { name: /Acme/ }));
     const sheet = await screen.findByTestId("record-sheet");

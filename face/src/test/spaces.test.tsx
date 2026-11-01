@@ -137,9 +137,10 @@ describe("SpacePage", () => {
     });
     mount(<SpacePage space="travel" read={vi.fn().mockResolvedValue({ head: "h", space: SPACE })} />);
     await screen.findByText("Take the transit through the hub?");
-    expect(screen.getByText("1 waiting · 1 Open question")).toBeTruthy();
+    expect(screen.getByText("1 waiting")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Base1" }).getAttribute("aria-selected")).toBe("true");
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Sessions (1)", "Open questions (1)", "Tasks (1)", "Records (3)"]);
+    expect(headings).toEqual(["Open questions", "Tasks", "Records", "Sessions"]);
     expect(screen.getByRole("link", { name: /Tickets for June/ })).toBeTruthy();
     expect(screen.queryByText("Quarterly report")).toBeNull();
     expect(screen.getByRole("link", { name: "transit" }).getAttribute("href")).toBe("/spaces/travel/r/knowledge/transit.md");

@@ -4,7 +4,7 @@
 // make no board: they are a list, each with its column's name. Where the screen writes, a card opens its record's
 // sheet with «Move to» the other columns — the phone's way, and the keyboard's — and on a wide screen it is dragged
 // to another column, the folded ones included; a card moved shows in its new column at once.
-import { useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import {
   BOARD_MIN,
   type BoardView,
@@ -15,6 +15,7 @@ import {
   emptyWords,
   openColumn,
   rowWords,
+  type Labels,
   type ViewRow,
   valueWords,
 } from "@/lib/collections";
@@ -31,8 +32,17 @@ interface Moving {
 
 const DRAGGED = "application/x-retinue-record";
 
+/** The form's words for the board's values, and for the enums its cards show. */
+const Words = createContext<{ labels: Labels; group: string }>({ labels: {}, group: "" });
+
+/** A column's value in the form's words. */
+function useColumnWords() {
+  const { labels, group } = useContext(Words);
+  return (value: string | null) => valueWords(value, labels[group]);
+}
+
 function Card({ row, fields, moving }: { row: ViewRow; fields: string[]; moving: Moving | null }) {
-  const { title, rest } = rowWords(row, fields);
+  const { title, rest } = rowWords(row, fields, undefined, useContext(Words).labels);
   const { text, late } = daysWords(row, "board");
   const words = (
     <>
@@ -91,14 +101,15 @@ function useDrop(moving: Moving | null, value: string | null) {
   return { over, props };
 }
 
-const heading = (c: Column) => `${valueWords(c.value)} (${c.count})`;
+const heading = (c: Column, words: (v: string | null) => string) => `${words(c.value)} (${c.count})`;
 
 function Rows({ column, fields, moving }: { column: Column; fields: string[]; moving: Moving | null }) {
+  const { labels } = useContext(Words);
   return column.rows.length ? (
     <ul className={LIST}>
       {column.rows.map((row) => (
         <li key={row.id}>
-          <Row row={row} fields={fields} kind="board" onOpen={moving ? () => moving.open(row) : undefined} />
+          <Row row={row} fields={fields} kind="board" labels={labels} onOpen={moving ? () => moving.open(row) : undefined} />
         </li>
       ))}
     </ul>
@@ -110,6 +121,7 @@ function Rows({ column, fields, moving }: { column: Column; fields: string[]; mo
 /** The phone's board: one column at a time. */
 function Switched({ view, moving }: { view: BoardView; moving: Moving | null }) {
   const [at, setAt] = useState(() => openColumn(view));
+  const words = useColumnWords();
   const column = view.columns[at] ?? view.columns[0];
   return (
     <div className="flex flex-col gap-2 sm:hidden" data-testid={`board-phone-${view.name}`}>
@@ -126,7 +138,7 @@ function Switched({ view, moving }: { view: BoardView; moving: Moving | null }) 
               c.rows.some((r) => r.rotten) && i !== at && "border-destructive/60",
             )}
           >
-            {valueWords(c.value)}
+            {words(c.value)}
             <span className="tabular-nums opacity-80">{c.count}</span>
           </button>
         ))}
@@ -140,14 +152,15 @@ function Switched({ view, moving }: { view: BoardView; moving: Moving | null }) 
  * within the board only past that; the folded ones below, closed. */
 function OpenColumn({ column, fields, moving }: { column: Column; fields: string[]; moving: Moving | null }) {
   const { over, props } = useDrop(moving, column.value);
+  const words = useColumnWords();
   return (
     <section
-      aria-label={heading(column)}
+      aria-label={heading(column, words)}
       data-testid={`column-${column.value}`}
       className={cn("flex min-w-32 flex-1 basis-0 flex-col gap-1.5 rounded-xl bg-muted/60 p-2 transition-shadow", over && "ring-2 ring-primary")}
       {...props}
     >
-      <h3 className={cn("px-0.5 text-xs font-semibold", !column.count && "text-muted-foreground")}>{heading(column)}</h3>
+      <h3 className={cn("px-0.5 text-xs font-semibold", !column.count && "text-muted-foreground")}>{heading(column, words)}</h3>
       {column.rows.length > 0 && (
         <ul className="flex flex-col gap-1.5">
           {column.rows.map((row) => (
@@ -161,9 +174,10 @@ function OpenColumn({ column, fields, moving }: { column: Column; fields: string
 
 function FoldedColumn({ column, fields, moving }: { column: Column; fields: string[]; moving: Moving | null }) {
   const { over, props } = useDrop(moving, column.value);
+  const words = useColumnWords();
   return (
     <details data-testid={`column-${column.value}`} className={cn("rounded-lg border px-3 py-2", over && "ring-2 ring-primary")} {...props}>
-      <summary className="cursor-pointer text-sm font-medium">{heading(column)}</summary>
+      <summary className="cursor-pointer text-sm font-medium">{heading(column, words)}</summary>
       <div className="pt-2">
         <Rows column={column} fields={fields} moving={moving} />
       </div>
@@ -223,7 +237,8 @@ function useMoving(collection: CollectionViews, view: BoardView, editing: Editin
         if (!card || value === null || (moved[id] ?? card.at) === value) return;
         setMoved((m) => ({ ...m, [id]: value }));
         const step = { op: { op: "set" as const, id, version: card.r.version, fields: { [view.group]: value } }, target: id };
-        void editing.write(collection.name, [step], `${rowWords(card.r, view.fields).title}: moved to ${valueWords(value)}.`).then((written) => {
+        const said = `${rowWords(card.r, view.fields, undefined, collection.labels).title}: moved to ${valueWords(value, collection.labels?.[view.group])}.`;
+        void editing.write(collection.name, [step], said).then((written) => {
           if (!written)
             setMoved((m) => {
               const { [id]: _, ...rest } = m;
@@ -232,18 +247,20 @@ function useMoving(collection: CollectionViews, view: BoardView, editing: Editin
         });
       },
     };
-  }, [collection.name, editing, moved, view]);
+  }, [collection.name, collection.labels, editing, moved, view]);
   return { shown, moving };
 }
 
 /** Too few for a board: one list, each row with its column's name. */
 function Few({ view, moving }: { view: BoardView; moving: Moving | null }) {
+  const words = useColumnWords();
+  const { labels } = useContext(Words);
   return (
     <ul className={LIST} data-testid={`board-list-${view.name}`}>
       {view.columns.flatMap((c) =>
         c.rows.map((row) => (
           <li key={row.id}>
-            <Row row={row} fields={view.fields} kind="board" label={valueWords(c.value)} onOpen={moving ? () => moving.open(row) : undefined} />
+            <Row row={row} fields={view.fields} kind="board" labels={labels} label={words(c.value)} onOpen={moving ? () => moving.open(row) : undefined} />
           </li>
         )),
       )}
@@ -254,8 +271,10 @@ function Few({ view, moving }: { view: BoardView; moving: Moving | null }) {
 export function Board({ collection, view: given }: { collection: CollectionViews; view: BoardView }) {
   const { shown: view, moving } = useMoving(collection, given, useEditing());
   const total = boardTotal(view);
+  const words = useMemo(() => ({ labels: collection.labels ?? {}, group: view.group }), [collection.labels, view.group]);
   if (total === 0) return <p className="px-1 py-2 text-sm text-muted-foreground">{emptyWords(collection)}</p>;
   return (
+    <Words.Provider value={words}>
     <div className="flex flex-col gap-1">
       {total < BOARD_MIN ? (
         <Few view={view} moving={moving} />
@@ -267,5 +286,6 @@ export function Board({ collection, view: given }: { collection: CollectionViews
       )}
       <Dropped n={view.dropped} />
     </div>
+    </Words.Provider>
   );
 }

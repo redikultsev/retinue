@@ -20,7 +20,9 @@ const emit = () => {
 
 export function toast(text: string, tone: Toast["tone"] = "info", ms = 4000, href?: string, action?: Toast["action"]): void {
   const id = next++;
-  toasts = [...toasts, { id, text, tone, ...(href ? { href } : {}), ...(action ? { action } : {}) }];
+  // One «Undo» at a time: a newer write's replaces the older one's, rather than a stack over the page.
+  const kept = action ? toasts.filter((t) => !t.action) : toasts;
+  toasts = [...kept, { id, text, tone, ...(href ? { href } : {}), ...(action ? { action } : {}) }];
   emit();
   setTimeout(() => dismiss(id), ms);
 }

@@ -6,12 +6,15 @@ import { PageHeader, PAGE_X } from "@/components/page-header";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { BaseMarkdown } from "@/components/base-markdown";
+import { Agenda } from "@/components/views/agenda";
 import { Board } from "@/components/views/board";
 import { SpaceChanges } from "@/components/views/changes";
-import { AddButton, Editor } from "@/components/views/edit";
+import { Chart } from "@/components/views/chart";
+import { AddButton, Editor, type Move } from "@/components/views/edit";
 import { SpaceProposals } from "@/components/views/proposals";
 import { Queue } from "@/components/views/queue";
-import { StatStrip } from "@/components/views/stat";
+import { StatList, StatStrip } from "@/components/views/stat";
+import { Strip } from "@/components/views/strip";
 import { ArrowLeft, ChevronRight, MessageCircle, Plus } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +22,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
-import { collectionsApi, layout, type Placed, useSpaceViews } from "@/lib/collections";
+import { collectionsApi, layout, type Placed, type Places, placedCount, type SpaceViews, useSpaceViews } from "@/lib/collections";
 import { type EditApi, editApi, type ProposalsApi, proposalsApi } from "@/lib/edit";
 import { plural, sessionStateWord, when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
@@ -79,9 +82,10 @@ function useRead<T>(key: string, read: () => Promise<T>): { data: T | undefined;
   return { data, error };
 }
 
-/** For tests: forget what was read. */
+/** For tests: forget what was read, and the tab each Space was left on. */
 export function forgetRead() {
   seen.clear();
+  tabOf.clear();
 }
 
 function useSpheres(): Sphere[] {
@@ -120,12 +124,11 @@ function Header({
 
 function Section({ title, count, children, action }: { title: string; count?: number; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <section className="flex flex-col gap-1">
-      <div className="flex min-h-9 items-center px-1">
-        <h2 className="flex-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          {title}
-          {count !== undefined && <span className="tabular-nums"> ({count})</span>}
-        </h2>
+    <section className="flex flex-col gap-1.5">
+      <div className="flex min-h-8 items-center gap-2 px-1">
+        <h2 className="text-[13px] font-semibold">{title}</h2>
+        {count !== undefined && <span className="text-[13px] text-muted-foreground tabular-nums">{count}</span>}
+        <span className="flex-1" />
         {action}
       </div>
       {children}
@@ -391,7 +394,7 @@ function Records({ space, view }: { space: string; view: SpaceView }) {
 /** A board or a queue in its own section; one the platform could not make says why in its place. */
 function Shown({ placed }: { placed: Placed }) {
   const { collection, view } = placed;
-  const add = view.error === undefined && view.kind !== "stat" ? view.add : null;
+  const add = view.error === undefined && (view.kind === "queue" || view.kind === "board") ? view.add : null;
   return (
     <Section
       title={view.title}
@@ -404,10 +407,91 @@ function Shown({ placed }: { placed: Placed }) {
         <Queue collection={collection} view={view} />
       ) : view.kind === "board" ? (
         <Board collection={collection} view={view} />
+      ) : view.kind === "chart" ? (
+        <Chart collection={collection} view={view} />
       ) : null}
     </Section>
   );
 }
+
+// --- one Space's tabs --------------------------------------------------------------------------------------------------
+
+/** The first tab: the boards as strips over the work, the queues down the middle, and — when the Space has them — the
+ * days ahead and the numbers in a narrow column at the right, which stays in view; on a phone it comes after. */
+function FirstTab({ places, today, tz }: { places: Places; today: string; tz: string }) {
+  const side = places.agendas.length > 0 || places.stats.length > 0;
+  return (
+    <div className="flex flex-col gap-3">
+      {places.boards.map(({ collection, view }) =>
+        view.error === undefined && view.kind === "board" ? (
+          <Strip key={`${collection.name}/${view.name}`} collection={collection} view={view} />
+        ) : (
+          <Shown key={`${collection.name}/${view.name}`} placed={{ collection, view }} />
+        ),
+      )}
+      <div className={cn("grid gap-x-5 gap-y-4", side && "lg:grid-cols-[minmax(0,1fr)_18rem]")}>
+        <div className="flex min-w-0 flex-col gap-4">
+          {places.queues.map((p) => (
+            <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
+          ))}
+          {places.charts.map((p) => (
+            <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
+          ))}
+        </div>
+        {side && (
+          <aside className="flex flex-col gap-4 lg:sticky lg:top-16 lg:self-start">
+            {places.agendas.length > 0 && (
+              <Section title="Days ahead">
+                <Agenda agendas={places.agendas} />
+              </Section>
+            )}
+            {places.stats.length > 0 && (
+              <Section title="Numbers" action={<span className="text-xs text-muted-foreground">{today ? `${day(today)} · ${tz}` : ""}</span>}>
+                <StatList stats={places.stats} />
+              </Section>
+            )}
+          </aside>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Another tab the views name: its numbers as tiles, its charts, then its boards and queues whole, its days ahead. */
+function ViewsTab({ places }: { places: Places }) {
+  return (
+    <div className="flex flex-col gap-4">
+      {places.stats.length > 0 && <StatStrip stats={places.stats} />}
+      {[...places.charts, ...places.boards, ...places.queues].map((p) => (
+        <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
+      ))}
+      {places.agendas.length > 0 && (
+        <Section title="Days ahead">
+          <Agenda agendas={places.agendas} />
+        </Section>
+      )}
+    </div>
+  );
+}
+
+/** The rows of a tab's queues that are the owner's to act on: the count its tab shows. */
+const actsOf = (places: Places) =>
+  places.queues.reduce((n, { view }) => n + (view.error === undefined && view.kind === "queue" && view.mark !== "wait" ? view.count : 0), 0);
+
+/** The column a record's sheet offers to move it to, by the first board of its collection. */
+export function movesOf(answer: SpaceViews | null | undefined): Record<string, Move> {
+  const moves: Record<string, Move> = {};
+  for (const collection of answer?.collections ?? [])
+    for (const view of collection.views)
+      if (view.error === undefined && view.kind === "board" && !moves[collection.name])
+        moves[collection.name] = { field: view.group, values: view.columns.map((c) => c.value) };
+  return moves;
+}
+
+/** The tab a Space was left on, kept while the app is open. */
+const tabOf = new Map<string, string>();
+
+const BASE_TAB = "Base";
 
 export function SpacePage({
   space,
@@ -424,11 +508,13 @@ export function SpacePage({
 }) {
   const { sessions } = useLiveState();
   const shown = useSpaceViews(space, views);
-  const placed = useMemo(() => layout(shown.data), [shown.data]);
+  const tabs = useMemo(() => layout(shown.data), [shown.data]);
+  const moves = useMemo(() => movesOf(shown.data), [shown.data]);
   const spheres = useSpheres();
   const sphere = sphereOf(spheres, space);
   const { data, error } = useRead(`space:${space}`, () => read(space));
   const [topic, setTopic] = useState<Topic | null>(null);
+  const [picked, setPicked] = useState<string>(() => tabOf.get(space) ?? "");
   const view = data?.space;
   const mine = useMemo(() => sessionsOf(listed(sessions), space, Date.now() / 1000), [sessions, space]);
   const waiting = mine.filter((s) => s.state === "waiting" || s.waiting > 0).length;
@@ -437,84 +523,131 @@ export function SpacePage({
   const tasks = view?.sections.filter((s) => s.kind === "tasks").flatMap((s) => s.items) ?? [];
   const other = view?.sections.filter((s) => s.kind === "other" && s.items.length) ?? [];
   const count = (items: ShowcaseItem[]) => items.filter((i) => i.list).length;
-  const summary = [
-    waiting && `${waiting} waiting`,
-    working && `${working} working`,
-    count(questions) && `${count(questions)} ${plural(count(questions), "Open question", "Open questions")}`,
-  ].filter(Boolean);
+  const summary = [waiting && `${waiting} waiting`, working && `${working} working`].filter(Boolean);
   const revs = shown.data?.collections.map((c) => c.rev).join() ?? "";
+  // A Space without collections has only its Base: it opens there, as it always did.
+  const viewTabs = tabs.filter((t, i) => i > 0 || placedCount(t.places) > 0);
+  const names = [...viewTabs.map((t) => t.title ?? "Now"), BASE_TAB];
+  const tab = names.includes(picked) ? picked : names[0]!;
+  const pick = (name: string) => {
+    tabOf.set(space, name);
+    setPicked(name);
+  };
+  const counts: Record<string, number | undefined> = Object.fromEntries(
+    viewTabs.map((t) => [t.title ?? "Now", t.title === null ? actsOf(t.places) || undefined : t.places.queues.reduce((n, p) => n + (p.view.error === undefined && p.view.kind === "queue" ? p.view.count : 0), 0) || undefined]),
+  );
+  counts[BASE_TAB] = count(questions) || undefined;
+  const current = viewTabs.find((t) => (t.title ?? "Now") === tab);
+  const title = `${sphere?.icon ? `${sphere.icon} ` : ""}${spaceTitle(space, sphere, view?.title)}`;
   return (
-    <Editor api={edit} today={shown.data?.today ?? ""} refresh={shown.refresh} reload={() => void shown.reload()}>
+    <Editor api={edit} today={shown.data?.today ?? ""} refresh={shown.refresh} reload={() => void shown.reload()} moves={moves}>
     <div className="flex flex-col">
-      <Header up={{ label: "To the Spaces" }} title={`${sphere?.icon ? `${sphere.icon} ` : ""}${spaceTitle(space, sphere, view?.title)}`} />
-      <main className={cn("mx-auto flex w-full max-w-3xl flex-col gap-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]", PAGE_X)}>
-        {summary.length > 0 && <p className="px-1 text-sm text-muted-foreground">{summary.join(" · ")}</p>}
-        {shown.error && !shown.data && <Empty>{`The views did not load: ${shown.error}`}</Empty>}
-        <SpaceProposals space={space} api={proposals} />
-        {placed.queues.map((p) => (
-          <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
-        ))}
-        <Section
-          title="Sessions"
-          count={mine.length}
-          action={
-            <Button size="sm" variant="ghost" onClick={() => setTopic({})} aria-label="New session here">
-              <Plus />
-              <span>New</span>
-            </Button>
-          }
-        >
-          {mine.length ? (
-            <ul className="flex flex-col">
-              {mine.map((s) => (
-                <SessionRow key={s.id} s={s} />
-              ))}
-            </ul>
-          ) : (
-            <Empty>No sessions here.</Empty>
-          )}
-        </Section>
-        {placed.stats.length > 0 && shown.data && (
-          <Section
-            title="Numbers"
-            action={<span className="text-xs text-muted-foreground">{`as of ${day(shown.data.today)} · ${shown.data.tz}`}</span>}
+      <header className="sticky top-0 z-10 shrink-0 border-b bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur">
+        <div className="mx-auto flex min-h-12 w-full max-w-[90rem] items-stretch gap-1 overflow-x-auto px-3 [scrollbar-width:none] md:px-5">
+          <Link
+            to="/spaces"
+            aria-label="To the Spaces"
+            title="To the Spaces"
+            className="hit inline-flex size-8 shrink-0 items-center justify-center self-center rounded-md hover:bg-accent"
           >
-            <StatStrip stats={placed.stats} />
-          </Section>
+            <ArrowLeft className="size-4" />
+          </Link>
+          <h1 className="max-w-[40vw] shrink-0 self-center truncate pr-3 text-[15px] font-semibold md:max-w-none">{title}</h1>
+          <div role="tablist" aria-label="Views of the Space" className="flex shrink-0 items-stretch">
+            {names.map((name) => (
+              <button
+                key={name}
+                type="button"
+                role="tab"
+                aria-selected={tab === name}
+                onClick={() => pick(name)}
+                className={cn(
+                  "-mb-px inline-flex items-center gap-1 border-b-2 px-2.5 text-[13.5px] whitespace-nowrap transition-colors",
+                  tab === name ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {name}
+                {counts[name] !== undefined && <span className="text-xs text-muted-foreground tabular-nums">{counts[name]}</span>}
+              </button>
+            ))}
+          </div>
+          <span className="ml-auto hidden shrink-0 self-center pl-3 text-xs text-muted-foreground md:inline">{summary.join(" · ")}</span>
+        </div>
+      </header>
+      <main
+        className={cn(
+          "mx-auto flex w-full flex-col gap-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]",
+          tab === BASE_TAB ? "max-w-3xl" : "max-w-[90rem]",
+          PAGE_X,
+          "md:px-5",
         )}
-        {placed.boards.map((p) => (
-          <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
-        ))}
-        {(shown.data?.collections.length ?? 0) > 0 && <SpaceChanges space={space} api={edit} revs={revs} />}
-        {error && !view && <Empty>{error}</Empty>}
-        {!error && !view && <Empty>Loading the Showcase…</Empty>}
-        {view && (
+      >
+        {shown.error && !shown.data && <Empty>{`The views did not load: ${shown.error}`}</Empty>}
+        {tab !== BASE_TAB && current && (
           <>
-            <Section title="Open questions" count={count(questions)}>
-              {questions.length ? (
-                <Lines items={questions} onDiscuss={(item) => setTopic({ question: item.text })} />
+            {current.title === null && <SpaceProposals space={space} api={proposals} />}
+            {current.title === null ? (
+              <FirstTab places={current.places} today={shown.data?.today ?? ""} tz={shown.data?.tz ?? ""} />
+            ) : (
+              <ViewsTab places={current.places} />
+            )}
+          </>
+        )}
+        {tab === BASE_TAB && (
+          <>
+            {viewTabs.length === 0 && <SpaceProposals space={space} api={proposals} />}
+            {error && !view && <Empty>{error}</Empty>}
+            {!error && !view && <Empty>Loading the Showcase…</Empty>}
+            {view && (
+              <>
+                <Section title="Open questions" count={count(questions)}>
+                  {questions.length ? (
+                    <Lines items={questions} onDiscuss={(item) => setTopic({ question: item.text })} />
+                  ) : (
+                    <Empty>No Open questions.</Empty>
+                  )}
+                </Section>
+                <Section title="Tasks" count={count(tasks)}>
+                  {tasks.length ? <Lines items={tasks} /> : <Empty>No Tasks.</Empty>}
+                </Section>
+                <Records space={space} view={view} />
+                {other.map((s) => (
+                  <details key={s.heading} className="rounded-lg border px-3 py-2">
+                    <summary className="cursor-pointer text-sm font-medium">{s.heading || "Untitled"}</summary>
+                    <div className="pt-2">
+                      <Lines items={s.items} />
+                    </div>
+                  </details>
+                ))}
+                {view.rules && (
+                  <details className="rounded-lg border px-3 py-2">
+                    <summary className="cursor-pointer text-sm font-medium">Rules of the Space</summary>
+                    <BaseMarkdown text={view.rules} className="pt-2" />
+                  </details>
+                )}
+              </>
+            )}
+            <Section
+              title="Sessions"
+              count={mine.length}
+              action={
+                <Button size="sm" variant="ghost" onClick={() => setTopic({})} aria-label="New session here">
+                  <Plus />
+                  <span>New</span>
+                </Button>
+              }
+            >
+              {mine.length ? (
+                <ul className="flex flex-col">
+                  {mine.map((s) => (
+                    <SessionRow key={s.id} s={s} />
+                  ))}
+                </ul>
               ) : (
-                <Empty>No Open questions.</Empty>
+                <Empty>No sessions here.</Empty>
               )}
             </Section>
-            <Section title="Tasks" count={count(tasks)}>
-              {tasks.length ? <Lines items={tasks} /> : <Empty>No Tasks.</Empty>}
-            </Section>
-            <Records space={space} view={view} />
-            {other.map((s) => (
-              <details key={s.heading} className="rounded-lg border px-3 py-2">
-                <summary className="cursor-pointer text-sm font-medium">{s.heading || "Untitled"}</summary>
-                <div className="pt-2">
-                  <Lines items={s.items} />
-                </div>
-              </details>
-            ))}
-            {view.rules && (
-              <details className="rounded-lg border px-3 py-2">
-                <summary className="cursor-pointer text-sm font-medium">Rules of the Space</summary>
-                <BaseMarkdown text={view.rules} className="pt-2" />
-              </details>
-            )}
+            {(shown.data?.collections.length ?? 0) > 0 && <SpaceChanges space={space} api={edit} revs={revs} />}
           </>
         )}
       </main>

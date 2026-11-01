@@ -92,28 +92,49 @@ afterEach(() => {
 const section = (title: RegExp) => screen.getByRole("heading", { name: title }).closest("section") as HTMLElement;
 
 describe("a Space's views", () => {
-  it("shows the numbers with their goal, the zone and the day; one not counted says why", async () => {
+  it("shows the numbers beside the work, each against its goal, with the zone and the day; one not counted says so", async () => {
     mount(<SpacePage space="work" read={read} views={views(WORK)} />);
-    const tile = await screen.findByTestId("stat-made");
-    expect(tile.textContent).toBe("Follow-ups done3of 10this week, 14.09–20.09last week: 7");
-    expect(within(tile).getByRole("img").getAttribute("aria-label")).toBe("3 of 10");
-    expect(within(section(/^Numbers/)).getByText("as of 16.09 · Europe/Berlin")).toBeTruthy();
-    expect(screen.getByText("Not counted: field not found: 'amount'")).toBeTruthy();
+    const made = await screen.findByTestId("stat-made");
+    expect(made.textContent).toBe("3/10Follow-ups done");
+    expect(within(made).getByTitle("this week, 14.09–20.09")).toBeTruthy();
+    expect(within(section(/^Numbers/)).getByText("16.09 · Europe/Berlin")).toBeTruthy();
+    expect(screen.getByTitle("field not found: 'amount'").textContent).toBe("Revenue: not counted");
+  });
+
+  it("puts a view in the tab it names: its numbers as tiles there, the first tab without them", async () => {
+    const tabbed = answer([{ name: "deals", rev: REV, views: [{ ...STATS[0]!, tab: "Numbers" } as View, QUEUE] }]);
+    mount(<SpacePage space="work" read={read} views={views(tabbed)} />);
+    await screen.findByTestId("queue-waiting");
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Now4", "Numbers", "Base1"]);
+    expect(screen.queryByTestId("stat-made")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Numbers" }));
+    expect((await screen.findByTestId("stat-made")).textContent).toBe("Follow-ups done3of 10this week, 14.09–20.09last week: 7");
+    expect(screen.queryByTestId("queue-waiting")).toBeNull();
   });
 
   it("lists «Waiting on me» the longest silent first, a ref by its record's words, overdue in a word; three on a phone", async () => {
     mount(<SpacePage space="work" read={read} views={views(WORK)} />);
     const queue = await screen.findByTestId("queue-waiting");
     const rows = within(queue).getAllByRole("listitem");
-    expect(rows.map((r) => r.textContent)).toEqual(["Initechmailoverdue · 4 days", "Globexphone1 day", "chattoday", "mailin 2 days"]);
+    expect(rows.map((r) => r.textContent)).toEqual(["Initech · mail4 days, overdue", "Globex · phone1 day", "chattoday", "mailin 2 days"]);
     expect(rows[3]!.className).toContain("hidden sm:block");
     fireEvent.click(screen.getByRole("button", { name: "Show all 4" }));
     expect(rows[3]!.className).not.toContain("hidden");
-    expect(within(section(/^Waiting on me/)).getByText("(4)")).toBeTruthy();
+    expect(within(section(/^Waiting on me/)).getByText("4")).toBeTruthy();
   });
 
-  it("shows a board by columns, the folded below; on a phone one column at a time, opened at the stuck one", async () => {
+  it("shows a board on the first tab as a strip of its columns, a column's cards on a press", async () => {
     mount(<SpacePage space="work" read={read} views={views(WORK)} />);
+    const strip = await screen.findByTestId("strip-pipeline");
+    expect(within(strip).getAllByRole("button").map((b) => b.textContent)).toEqual(["Lead1", "Qualified2, something stuck", "Lost1"]);
+    fireEvent.click(within(strip).getByRole("button", { name: /Qualified/ }));
+    expect(within(strip).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["Initech9 days, stuck", "Example Ltd1 day"]);
+    expect(screen.queryByTestId("board-wide-pipeline")).toBeNull();
+  });
+
+  it("shows a board on its own tab by columns, the folded below; on a phone one column at a time, opened at the stuck one", async () => {
+    mount(<SpacePage space="work" read={read} views={views(answer([{ name: "deals", rev: REV, views: [{ ...BOARD, tab: "Board" } as View] }]))} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Board" }));
     const wide = await screen.findByTestId("board-wide-pipeline");
     expect(within(wide).getAllByRole("heading").map((h) => h.textContent)).toEqual(["Lead (1)", "Qualified (2)"]);
     expect(within(wide).getByText("stuck · 9 days")).toBeTruthy();
@@ -129,11 +150,13 @@ describe("a Space's views", () => {
   });
 
   it("makes a list, not a board, of fewer than three records; an empty view says since when, not nothing", async () => {
-    mount(<SpacePage space="work" read={read} views={views(WORK)} />);
+    const tabbed = answer([{ name: "partners", rev: REV, views: [{ ...FEW, tab: "Partners" } as View] }, { name: "suppliers", rev: null, views: [EMPTY] }]);
+    mount(<SpacePage space="work" read={read} views={views(tabbed)} />);
+    expect(within(await screen.findByRole("region", { name: "Suppliers to call" }).catch(() => section(/^Suppliers to call/))).getByText("No data yet: nothing was written here.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Partners" }));
     const list = await screen.findByTestId("board-list-partners");
     expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["Example StudioTalking5 days", "Acme HostingSigned40 days"]);
     expect(screen.queryByTestId("board-wide-partners")).toBeNull();
-    expect(within(section(/^Suppliers to call/)).getByText("No data yet: nothing was written here.")).toBeTruthy();
   });
 
   it("leaves a Space without views as it was, and one whose platform has no views route", async () => {
@@ -143,7 +166,8 @@ describe("a Space's views", () => {
       mount(<SpacePage space="work" read={read} views={api} />);
       await screen.findByText("Which vendor first?");
       await waitFor(() => expect(api.space).toHaveBeenCalledWith("work"));
-      expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(["Sessions (0)", "Open questions (1)", "Tasks (0)", "Records (0)"]);
+      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Base1"]);
+      expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(["Open questions", "Tasks", "Records", "Sessions"]);
       cleanup();
     }
   });

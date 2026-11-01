@@ -142,7 +142,7 @@ VIA = ("screen", "session", "mac", "assistant", "mail", "import", "define")
 SRC = re.compile(r"(?:mail|tg|owner_words|cal|file|record|web):\S{1,1000}")
 LABEL = re.compile(r"[a-z][a-z0-9_]{0,31}")      # a mark of foreign text the writer read (core.FOREIGN's keys)
 TYPES = {  # each type, and the keys its field takes beside `type`, `required` and `index`
-    "text": (), "int": (), "enum": ("values",), "date": (), "bool": (), "ref": ("to",),
+    "text": (), "int": (), "enum": ("values", "labels"), "date": (), "bool": (), "ref": ("to",),
 }
 OP_KEYS = {  # each operation of `apply`, and the keys it takes
     "add": {"op", "fields", "as_of", "src", "distinct"},
@@ -163,10 +163,17 @@ DEFAULT_RIGHTS = {  # a new collection's: sessions add and set, deleting by a pr
 }
 FILTER_OPS = ("eq", "in", "between", "empty", "not_empty", "ref_is")
 VIEW_KEYS = {  # each kind of view (`views.py`), and the keys it takes
-    "stat": {"name", "kind", "title", "count", "filter", "date", "field", "to", "window", "goal"},
-    "board": {"name", "kind", "title", "group", "filter", "fields", "folded", "rot", "add"},
-    "queue": {"name", "kind", "title", "filter", "fields", "since", "rot", "done", "add"},
+    "stat": {"name", "kind", "title", "tab", "count", "filter", "date", "field", "to", "window", "goal"},
+    "board": {"name", "kind", "title", "tab", "group", "filter", "fields", "folded", "rot", "add"},
+    "queue": {"name", "kind", "title", "tab", "filter", "fields", "since", "sort", "mark", "rot", "done", "add"},
+    "agenda": {"name", "kind", "title", "tab", "filter", "date", "fields", "days"},
+    "chart": {"name", "kind", "title", "tab", "filter", "date", "group", "weeks"},
 }
+MARKS = ("act", "wait")     # a queue's rows: the owner's to act on, or his to wait for
+TAB_MAX = 24                # characters of a view's tab
+LABEL_WORDS_MAX = 40        # characters of an enum value's label
+AGENDA_DAYS = (1, 31)       # the days an agenda looks ahead, today among them
+CHART_WEEKS = (2, 26)       # the weeks a chart counts, this one among them
 DONE_KEYS = {"field", "value", "label"}  # a queue's one press on a row: its field set to the value
 ADD_KEYS = {"label", "fields", "values"}  # a view's «add»: the fields its form asks for, and what they start as
 LABEL_MAX = 40              # characters of a button's label
@@ -361,6 +368,11 @@ def parse_form(form: Any) -> dict:
                     or not all(isinstance(v, str) and ENUM_VALUE.fullmatch(v) for v in values)):
                 raise Rejected(f"field {name!r}: \"values\" is a list of 1 to {ENUM_MAX} distinct values, each "
                                "lowercase letters, digits and _, starting with a letter")
+            labels = spec.get("labels", {})
+            if (not isinstance(labels, dict) or not set(labels) <= set(values)
+                    or not all(_plain(v, LABEL_WORDS_MAX) for v in labels.values())):
+                raise Rejected(f"field {name!r}: \"labels\" gives some of its values words, plain text of at most "
+                               f"{LABEL_WORDS_MAX} characters: {{\"pack_ready\": \"Ready to send\"}}")
         if spec["type"] == "ref" and not (isinstance(spec.get("to"), str) and NAME.fullmatch(spec["to"])):
             raise Rejected(f"field {name!r}: \"to\" names the collection its records are in")
         kept[name] = dict(spec)
@@ -412,7 +424,14 @@ def parse_views(views: Any) -> list[dict]:
         names.add(name)
         if "title" in view and not _plain(view["title"], TITLE_MAX):
             raise Rejected(f"{where}: \"title\" is plain text of at most {TITLE_MAX} characters")
-        for key in ("group", "date", "field", "since", "goal", "rot"):
+        if "tab" in view and not _plain(view["tab"], TAB_MAX):
+            raise Rejected(f"{where}: \"tab\" is plain text of at most {TAB_MAX} characters: the tab it shows in")
+        if "mark" in view and view["mark"] not in MARKS:
+            raise Rejected(f"{where}: \"mark\" is one of {', '.join(MARKS)}")
+        for key, (least, most) in (("days", AGENDA_DAYS), ("weeks", CHART_WEEKS)):
+            if key in view and not (type(view[key]) is int and least <= view[key] <= most):
+                raise Rejected(f"{where}: \"{key}\" is a whole number from {least} to {most}")
+        for key in ("group", "date", "field", "since", "sort", "goal", "rot"):
             if key in view and not (isinstance(view[key], str) and NAME.fullmatch(view[key])):
                 raise Rejected(f"{where}: \"{key}\" names a field of the form")
         for key in ("fields", "folded", "to"):
@@ -428,6 +447,8 @@ def parse_views(views: Any) -> list[dict]:
             _adding(view["add"], where)
         if kind == "board" and "group" not in view:
             raise Rejected(f"{where}: \"group\" names the enum its columns are")
+        if kind in ("agenda", "chart") and "date" not in view:
+            raise Rejected(f"{where}: \"date\" names the date field it goes by")
         if kind == "stat":
             count, window = view.get("count", "records"), view.get("window")
             if count not in ("records", "changed"):

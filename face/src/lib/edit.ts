@@ -86,7 +86,7 @@ export function valueText(value: unknown, spec?: FieldSpec, words: Record<string
   if (typeof value === "number") return value.toLocaleString("en-US");
   if (typeof value !== "string") return JSON.stringify(value);
   if (spec?.type === "ref" || (!spec && ULID.test(value))) return words[value] ?? "another record";
-  if (spec?.type === "enum" || (!spec && /^[a-z][a-z0-9_]*$/.test(value))) return valueWords(value);
+  if (spec?.type === "enum" || (!spec && /^[a-z][a-z0-9_]*$/.test(value))) return valueWords(value, spec?.labels);
   if (spec?.type === "date" || (!spec && /^\d{4}-\d{2}-\d{2}$/.test(value))) return day(value, now);
   return value;
 }

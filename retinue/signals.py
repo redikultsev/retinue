@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from . import episodes
 from .sessions import PlatformStore
 
 GATE, TOOL_ERROR, COMPACTION, RUN_ERROR, OWNER_STOP = "gate", "tool_error", "compaction", "run_error", "owner_stop"
@@ -143,6 +144,7 @@ def tally(store: PlatformStore, since: float, until: float) -> dict:
                                            "AND at < ? GROUP BY what", span).fetchall()),
                   "web_failures": dict(db.execute("SELECT what, COUNT(*) FROM signals WHERE kind = 'web' AND at >= ? "
                                                   "AND at < ? GROUP BY what", span).fetchall())},
+        "episodes": episodes.tally(store, since, until),
         "gate": {"calls": sum(how.values()), "by_decision": dict(how),
                  "reasons": dict([(w, n) for w, n in gate.most_common() if ":" in w][:TOP])},
         "cards": {"approval": _states(cards, "approval"), "question": _states(cards, "question"),

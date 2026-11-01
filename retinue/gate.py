@@ -40,7 +40,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from . import approvals, exfil, finish, questions, signals, subs
+from . import approvals, episodes, exfil, finish, followups, questions, signals, subs
 from .approvals import Mark, Unbindable
 from .config import LaneRef
 from .sessions import PlatformStore
@@ -235,6 +235,7 @@ class Gate:
         if not how:
             return {}
         self._signal(signals.LOOP, run, body, how)
+        self._mark(run, episodes.LOOP)
         answer = _decision("deny", reason)
         return {"continue": False, "stopReason": reason, **answer} if how == "cut" else answer
 
@@ -272,6 +273,8 @@ class Gate:
         if reason:
             self._signal(signals.FINISH, run, body, "stop_block")
             return {"decision": "block", "reason": reason}
+        if self.checks.ended_unchecked:
+            self._mark(run, episodes.UNCHECKED_END)
         self.turn_over(run.session)
         return {}
 
@@ -280,6 +283,12 @@ class Gate:
         unchecked and its counts are not the next turn's."""
         self.checks.forget(session)
         self.loops.end(session)
+
+    def _mark(self, run: Run, why: str) -> None:
+        try:
+            episodes.mark(self.store, run.session, why, self.clock(), run=run.id)
+        except Exception:  # noqa: BLE001 — a mark that failed never holds a call back
+            log.exception("episode not marked")
 
     def _signal(self, kind: str, run: Run, body: dict, what: str) -> None:
         try:
@@ -399,7 +408,7 @@ class Gate:
                 return _decision("deny", SUBAGENT)
             # One card per ask or block: the same call made after the owner's answer is asked about anew.
             return self._to_owner(run, call_id, body, file_hash, digest, self._reasks.pop((run.session, key)).why)
-        if tool == subs.PREFIX + subs.START and run.turn_by == "report":
+        if tool == subs.PREFIX + subs.START and run.turn_by in followups.MACHINE_TURNS:
             if digest is None:
                 return _decision("deny", UNBINDABLE)
             return self._to_owner(run, call_id, body, file_hash, digest, subs.FROM_REPORT_CARD)

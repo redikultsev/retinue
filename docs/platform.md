@@ -358,6 +358,26 @@ sets the sphere, never the main mark, and the session's sub-sessions follow — 
 a title it has stays; a sphere set by you (`sphere_by: owner`) or by the session stays. A sub-session has its title
 from its start and its parent's sphere; a side question its question's — neither is asked.
 
+## Follow-ups
+
+A session cannot wake itself — the CLI's schedulers are denied — so a promise to «check again tomorrow» is one nothing
+keeps. A session you started has `follow_up(after_hours, why)` and `cancel_follow_up(id)` on the platform's own server
+(`retinue/followups.py`, beside the sub-sessions' tools, through the gate like them). When one is due and the session
+is free — idle or closed, no run, nothing queued, no limit being waited out — the platform writes into it, in its own
+words, «The follow-up f1a2b3 you set on … is due. Go back to the task…», and that is a turn like a report's: it pings
+when done, as a turn nobody watched. The message never carries `why`, which is the model's text and may repeat a
+page; `why` is yours to read, in the call in the transcript.
+
+| Limit | Value |
+|---|---|
+| open per session (`OPEN_MAX`) / in all (`ALL_MAX`) | 3 / 15 |
+| how far ahead | 1 hour to 21 days: past that the CLI's transcript may be gone |
+| from a follow-up's own turn | none: it cannot set another, and a sub-session it asks for is your card, as from a report's turn |
+| your «Stop» of the session | drops its open follow-ups, and a fired one not yet started |
+| an archived session, or one whose lane or track is gone | its follow-up is dropped when it comes due |
+
+Not in «Waiting for you»: a follow-up asks nothing of you until its turn ends, and then its ping does.
+
 ## Travel prices in a session
 
 With travel on (`setup.sh TRAVEL=1`, [install](install.md#6-travel-optional)), every session — yours, a sub-session,
@@ -1071,8 +1091,22 @@ and cards with how you decided them. Rows older than 400 days go when the platfo
 `POST /owner/stats` (the router's token, as every `/owner/*` call) with `{since, until}` answers the tally: sessions
 and sub-sessions started, runs, your messages and stops, tool errors by tool, compactions, failed turns, the gate's
 calls by how they went and its five most frequent reasons, turns sent on to their check, loops, fetches that failed
-by how, and cards by how they ended. The weekly review puts it
+by how, turns that went badly by mark, and cards by how they ended. The weekly review puts it
 in words at its end, «How the week went» ([proactive.md](proactive.md#how-the-week-went)).
+
+### Turns that went badly
+
+Beside the counts, the platform marks the turns that went badly by what happened in them, never by asking you
+(`retinue/episodes.py`): your «Stop» while it ran (`owner_stop` — its end is then not also an error), an error it
+ended in (`run_error`), a card of it you denied (`card_rejected`), your «Undo» of its Base commit (`base_undo` — the
+turn whose result the card was under), an end over files still unchecked after the gate sent it on (`unchecked_end`),
+a loop the gate denied or cut (`loop`), and the request that started it written again in other words within 10
+minutes of its end, when it did not end asking you something (`asked_again`: most of the longer words of both
+shared). A mark lands on the turn of the run it happened in. One row per turn with its marks, its summary as you got
+it, and your next message in that session within an hour as the newest marked turn's `correction` — what you wanted
+instead, in your words. A marked turn's raw lines outlive the store's 90 days while its row is kept: the newest 200,
+for at most 180 days. The weekly review counts them by mark; they are the material a later lesson or replay set is
+built from.
 
 ## A turn's end and its loops
 

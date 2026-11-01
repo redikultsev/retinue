@@ -237,6 +237,14 @@ def week_lines(stats: dict, runs: dict[str, int]) -> list[str]:
                      + ("; fetches that failed: " + ", ".join(f"{how} — {n}" for how, n in
                                                              sorted(web.items(), key=lambda i: -i[1])[:4])
                         if web else "") + ".")
+    marked = stats.get("episodes") or {}
+    if marked.get("turns"):
+        names = {"owner_stop": "your «Stop»", "run_error": "an error", "card_rejected": "a denied card",
+                 "base_undo": "a Base undo", "unchecked_end": "done without a check", "loop": "a loop",
+                 "asked_again": "asked again"}
+        by = sorted((marked.get("by_mark") or {}).items(), key=lambda i: -i[1])
+        lines.append(f"- Turns that went badly: {marked['turns']} ("
+                     + ", ".join(f"{names.get(why, why)} — {n}" for why, n in by) + ").")
     if runs:
         failed = sum(n for status, n in runs.items() if status not in ("done", "limit"))
         lines.append(f"- The assistant: runs {sum(runs.values())}, failed {failed}"

@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, cliengine, courier, face, feed, finish, inbox, lanetravel, outfiles, pings,
+from . import (approvals, attachments, cliengine, courier, episodes, face, feed, finish, followups, inbox, lanetravel, outfiles, pings,
                questions, signals, subs, tobase, topush, transcript)
 from .base import BaseRepo, under
 from . import library as library_mod
@@ -107,8 +107,11 @@ class Platform:
         self.collections = Collections(_beside(cfg.state_db, "collections.sqlite"))
         self._looking = asyncio.Lock()
         pings.prepare(store)
+        episodes.prepare(store, clock())  # the turns that went badly (`episodes`)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
+        self.followups = followups.FollowUps(self)  # a session brought back to a task that waits (`followups.py`)
+        self._stopped_runs: set[str] = set()  # runs the owner's «Stop» ended: not errors (`episodes`)
         # travel-ops' tools on the same server, for every session (`lanetravel.py`); None: no travel-ops in this stack.
         self.travel = lanetravel.LaneTravel(cfg.travel_url) if cfg.travel_url else None
         self.feed.subs = self.subs  # the feed's proposals of sub-sessions, under «Decide»
@@ -488,6 +491,7 @@ class Platform:
             return "The session already has this message."
         if by is None:  # the owner's own word: his questions answered, his family's exchanges counted again
             self.subs.owner_wrote(session)
+            episodes.owner_wrote(self.store, session_id, text, now)  # a correction, or the same request again
             self.store.db.execute("UPDATE sessions SET owner_joined = 1 WHERE id = ?", (session_id,))
             self.store.db.commit()  # the turn's ping answers him: it rings (`_summary`)
             for approval in self.store.approvals(session=session_id, kind=questions.KINDS, states=("pending", "shown")):
@@ -528,6 +532,8 @@ class Platform:
         if not self.store.move(approval["id"], ("shown",), "granted" if granted else "rejected", now, note=telegram,
                                view=view):
             return STALE, None
+        if not granted:
+            episodes.mark(self.store, approval["session"], episodes.CARD_REJECTED, now, run=approval["run"])
         self.store.enqueue(approval["session"], None, now)  # a bare resume: the CLI asks PreToolUse again
         self.store.mark_seen(approval["session"], now)
         self._set_state(approval["session"], "active", now)
@@ -541,6 +547,10 @@ class Platform:
         if session is None:
             return False
         signals.add(self.store, signals.OWNER_STOP, session_id, self.clock())
+        if (open_run := next((r["run"] for r in self.store.open_runs() if r["session"] == session_id), None)):
+            episodes.mark(self.store, session_id, episodes.OWNER_STOP, self.clock(), run=open_run)
+            self._stopped_runs.add(open_run)  # its end is his stop, not an error (`_result`)
+        self.followups.stopped(session_id)
         stopped = await self._stop_family(session)  # a parent's sub-sessions stop with it, a run of its own or not
         if session["lane"] not in self.lanes:
             return stopped
@@ -1109,6 +1119,9 @@ class Platform:
         elif self._failed(line):
             why = str(line.get("result") or "") or str(line.get("subtype") or "") or "no description"
             signals.add(self.store, signals.RUN_ERROR, session["id"], now, key=f"run:{run}")
+            if run not in self._stopped_runs:
+                episodes.mark(self.store, session["id"], episodes.RUN_ERROR, now, run=run)
+            episodes.ended(self.store, session["id"], run, f"Turn ended with an error: {why}")
             self._summary(session, f"Turn ended with an error: {why}", pings.FAILED, run)
             self._set_state(session["id"], "idle", now)
             self._owe_look(session)
@@ -1116,6 +1129,7 @@ class Platform:
         else:
             text = str(line.get("result") or "") or "Turn finished without text."
             self._summary(session, text, run=run)
+            episodes.ended(self.store, session["id"], run, text)  # the turn's summary, for a mark before or after
             self._set_state(session["id"], "closed" if session["kind"] == "code" else "idle", now)
             self._owe_look(session)
             self._turn_over(session, text, run=run)
@@ -1248,6 +1262,8 @@ class Platform:
         self._mark_idle(now)  # the cards still shown after the expiry
         self.subs.deliver()  # a report that waited for its siblings, or for a limit to pass: `_clock` drains
         self.subs.expire()  # the proposals past their week: their cards told
+        self.followups.tick()  # the follow-ups due, to sessions that are free: `_clock` drains
+        episodes.trim(self.store, now)
         self.tobase.tick(now)
         self.topush.tick(now)
 

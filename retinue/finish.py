@@ -104,6 +104,7 @@ class Checks:
         self.trees = list(trees or [])
         self._pending: dict[str, dict[tuple[str, str], list[str]]] = {}  # session -> (kind, root) -> files
         self._blocked: set[str] = set()  # sessions whose turn was sent on once already
+        self.ended_unchecked = False     # the last Stop let through ended a turn sent on and still unchecked
 
     def _scope(self, lane: str, path: str) -> tuple[str, str] | None:
         for tree in self.trees:
@@ -148,8 +149,11 @@ class Checks:
         `stop_hook_active`, or the next one after a card's resume — passes and forgets what was pending."""
         pending = self._pending.get(session)
         if body.get("stop_hook_active") or not pending or session in self._blocked:
+            # Sent on once and still unchecked: the turn ends so all the same (`episodes`, `unchecked_end`).
+            self.ended_unchecked = bool(pending) and (session in self._blocked or bool(body.get("stop_hook_active")))
             self.forget(session)
             return ""
+        self.ended_unchecked = False
         self._blocked.add(session)
         what, how = [], []
         for (kind, root), files in pending.items():

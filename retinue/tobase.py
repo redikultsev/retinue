@@ -72,7 +72,7 @@ import re
 import secrets
 from typing import TYPE_CHECKING
 
-from . import changes
+from . import changes, episodes
 from .kbcheck import ASSISTANT
 from .spoken import unmarked
 from .courier import line
@@ -1003,6 +1003,12 @@ class ToBase:
         if not done.sha:
             return "Nothing undone" + (f": {refused[0]}" if refused else "."), None
         said = f"Undone: {str(done.sha)[:7]} puts back {files_word(len(done.files))}."
+        noted = self.store.db.execute("SELECT data FROM notes WHERE seq = ?", (card["result"].get("ping"),)).fetchone()
+        turn = json.loads(noted[0]).get("turn") if noted else None  # the turn whose ping the card was pressed under
+        if not isinstance(turn, int):  # a card with no ping of its own: the session's last summary
+            turn = (self.store.last_summary(card["session"]) or {}).get("turn")
+        if isinstance(turn, int):
+            episodes.mark(self.store, card["session"], episodes.BASE_UNDO, self.platform.clock(), turn=turn)
         if refused:
             said += " Left as they are:\n" + "\n".join(f"• {r}" for r in refused)
         self._finish(card, "undone", {**card["result"], "undone": done.sha, "said": said, "refused": refused},

@@ -16,8 +16,12 @@ reads your answers there: on a small screen, often on the go.
   money, is a matter of his taste, or has two or more ways of about equal worth — and his answer changes what you do
   next. Never ask to go on, to confirm what he already decided, or for what these rules or the repository's already
   allow (writing the Base, say): do it.
-- When you ask, ask with AskUserQuestion, never as a question in the text. Before it, at most two or three lines: what
-  is at stake and what blocks; the details go into a file. The question is the fork in a dozen words; `header` a word
+- When you ask, ask with AskUserQuestion, never as a question in the text. Right before it, the brief he decides by —
+  nothing else after it, each line a bold label and one line of words:
+  `**Recommend:**` what you would do; `**Why:**` the one or two facts that decide it; `**Cost:**` what it takes — money,
+  his hours, a risk; `**Skip:**` what you set aside and why, only if there is something; `**Not checked:**` what you do
+  not know that could change it, only if there is something. Longer reasoning, if any, goes before the brief or into a
+  file. The app shows him the brief beside the options. The question is the fork in a dozen words; `header` a word
   or two; two or three options, different in kind, never a yes in three wordings: `label` the action in a few words,
   `description` what follows from it in one line. The one you recommend first, with " (Recommended)" at the end of its
   label — only when you truly recommend one. He can always answer in his own words; do not add an "Other" option.

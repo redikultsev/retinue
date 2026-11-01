@@ -21,7 +21,7 @@ const ORIGINS = new Set(["http://127.0.0.1:5173", "http://localhost:5173", "http
 const now = () => Date.now() / 1000;
 // what a question's session wrote just before asking (the feed's `said`)
 const SAID =
-  "I'd take the cheapest plan for one month and cancel the renewal right after paying. The higher plans aren't worth it for you.\n\n**Prices.** €12, €36 and €60 a month; only the first opens the talks on the May list.\n\n**The case for buying.** Since April the €12 plan has added three talks on the books you picked:\n- «Reading slowly: a method»;\n- «Notes that you reread»;\n- «The May list, discussed».\n\n**The case against.** Most of it repeats the free part, and a month is enough to read what matters.";
+  "Since April the €12 plan has added three talks on the books you picked, and a month is enough to read what matters.\n\n**Recommend:** one month on the €12 plan, cancel the renewal right after paying\n**Why:** three new talks on the May list; the rest repeats the free part\n**Cost:** €12 and about four evenings\n**Not checked:** whether old posts stay open to new members";
 
 // --- «Waiting for you» (retinue/feed.py): the shown cards, the idle sessions' last summaries, a fixed digest ----------
 

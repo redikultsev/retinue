@@ -157,7 +157,7 @@ get «The press did not apply: the list is out of date.». Applying it is wrappe
 «The press did not apply: a server error. Try again.», and the note is confirmed, so a press never holds back
 the cards behind it.
 
-**A row's sheet** ([face.md](face.md#her-rows-sheet)) needs what only the router has — her judgement whole, the
+**A row's pane** ([face.md](face.md#her-rows-pane)) needs what only the router has — her judgement whole, the
 deadline, where the letter or the chat is, a draft's text — and the digest stays minimal, so the router is asked for
 it one row at a time, when the owner opens it, and the platform relays the answer without keeping it. The face takes
 `POST /api/waiting/detail {ref, t?}` — a row of the digest on record: a person's with its own token, or a draft —
@@ -1061,8 +1061,9 @@ split as before; a reply to any of its messages goes into the session.
 itself what is reversible, stays on the server and has an obvious best way — and to ask you only when the decision is
 yours: it cannot be undone, leaves the server under your name, costs money, is a matter of your taste, or has ways of
 about equal worth, and your answer changes what it does. Never to go on, to confirm, or for what the rules already
-allow. Then it asks with AskUserQuestion ([Questions](#questions)), never in the text: at most two or three lines of
-what is at stake before it; the fork in a dozen words; two or three options different in kind, each an action and
+allow. Then it asks with AskUserQuestion ([Questions](#questions)), never in the text: right before it the brief you decide by — labelled lines «**Recommend:**», «**Why:**»,
+«**Cost:**», and «**Skip:**», «**Not checked:**» when there is something, which “Today” shows beside the options; the
+fork in a dozen words; two or three options different in kind, each an action and
 what follows from it in a line; the one it recommends first, marked «(Recommended)», only when it truly recommends
 one. You can always answer in your own words. So a decision is a question card — its options described, an answer of
 your own always open, alive 7 days and through restarts — and the run stops on it, holding no room on its lane.

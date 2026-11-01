@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ApprovalCard } from "@/components/approval-card";
+import { briefOf, QuestionDecide } from "@/components/question-decide";
 import { Transcript } from "@/components/transcript/transcript";
 import { Live } from "@/lib/live";
 import { shownApprovals } from "@/lib/store";
@@ -66,19 +67,6 @@ describe("QuestionCard", () => {
     expect(screen.getAllByRole("button", { name: "Own answer…" })).toHaveLength(2);
   });
 
-  it("in a row: the session's case above the question, no frame of its own, «(Recommended)» as a mark but sent as written", async () => {
-    const answer = vi.fn().mockResolvedValue({ toast: "", approval: null });
-    const recommended = {
-      questions: [{ ...ASK.questions[0]!, options: [{ label: "Centre (Recommended)", description: "the old town" }, ASK.questions[0]!.options[1]!] }],
-    };
-    render(<ApprovalCard approval={question({ input: recommended })} context={"**Centre** is €20 a night more."} inline live={fakeLive()} answer={answer} />);
-    expect(screen.getByTestId("question-context").textContent).toContain("Centre is €20 a night more.");
-    expect(screen.queryByText("Awaiting an answer")).toBeNull();
-    const pick = screen.getByRole("button", { name: /^Centre\s*Recommended\s*the old town$/ });
-    fireEvent.click(pick);
-    await waitFor(() => expect(answer).toHaveBeenCalledWith(expect.anything(), 0, { labels: ["Centre (Recommended)"] }));
-  });
-
   it("a single choice is sent by its tap with the card's digest, and the card shows what came back", async () => {
     const live = fakeLive();
     const answered = question({ view: { answers: { "0": { value: "Outskirts", other: false } }, picks: {} } as never, at: 2 });
@@ -131,5 +119,45 @@ describe("QuestionCard", () => {
     render(<Transcript items={[item]} approvals={[question()]} running={false} />);
     expect(screen.getAllByText("Where to stay?")).toHaveLength(1);
     expect(screen.queryByText(/Awaiting an answer — in the question card/)).toBeNull();
+  });
+});
+
+describe("QuestionDecide", () => {
+  const ONE = { questions: [{ ...ASK.questions[0]!, options: [ASK.questions[0]!.options[0]!, { label: "Outskirts (Recommended)", description: "quiet" }] }] };
+  const SAID = "Looked at both.\n\n**Recommend:** the outskirts, by the park\n**Why:** half the price\n**Not checked:** the bus at night";
+
+  it("reads the session's brief by its labels, and nothing from a text not in that shape", () => {
+    expect(briefOf(SAID)).toEqual([
+      ["Recommend", "the outskirts, by the park"],
+      ["Why", "half the price"],
+      ["Not checked", "the bus at night"],
+    ]);
+    expect(briefOf("**Prices.** go up\nplain words")).toEqual([]);
+  });
+
+  it("shows the brief, the reasoning a tap away, the recommendation picked, and answers with one button", async () => {
+    const answer = vi.fn().mockResolvedValue({ toast: "", approval: null });
+    render(<QuestionDecide approval={question({ input: ONE })} said={SAID} live={fakeLive()} answer={answer} />);
+    expect(within(screen.getByTestId("question-brief")).getByText("the outskirts, by the park")).toBeTruthy();
+    expect(screen.getByText("The session's full reasoning")).toBeTruthy();
+    const picked = screen.getByRole("radio", { checked: true }).closest("label")!;
+    expect(picked.textContent).toContain("Outskirts");
+    expect(picked.textContent).toContain("Recommended");
+    fireEvent.click(screen.getByRole("radio", { name: /Centre/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Answer · Centre" }));
+    await waitFor(() => expect(answer).toHaveBeenCalledWith(expect.anything(), 0, { labels: ["Centre"] }));
+  });
+
+  it("picks by number and answers by Enter; his own words win over a pick", async () => {
+    const answer = vi.fn().mockResolvedValue({ toast: "", approval: null });
+    render(<QuestionDecide approval={question({ input: ONE })} said="" live={fakeLive()} answer={answer} />);
+    fireEvent.keyDown(window, { key: "1" });
+    expect(screen.getByRole("radio", { checked: true }).closest("label")!.textContent).toContain("Centre");
+    fireEvent.keyDown(window, { key: "Enter" });
+    await waitFor(() => expect(answer).toHaveBeenCalledWith(expect.anything(), 0, { labels: ["Centre"] }));
+    fireEvent.change(screen.getByLabelText("Your own answer"), { target: { value: "Near the station" } });
+    expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send your answer" }));
+    await waitFor(() => expect(answer).toHaveBeenLastCalledWith(expect.anything(), 0, { text: "Near the station" }));
   });
 });

@@ -1,5 +1,5 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Feed } from "@/lib/feed";
 import { live } from "@/lib/live";
@@ -149,7 +149,7 @@ const FEED: Feed = {
 };
 
 describe("TodayView", () => {
-  it("shows what waits, what runs, what is done, the week's dates and the chips — each once", async () => {
+  it("lists what waits, what runs, what is done and the week's dates — each once — under a header of one line", async () => {
     vi.spyOn(live, "watch").mockResolvedValue(undefined);
     const sessions = [
       session("run", { state: "active", at: NOW - 5, turn_started: NOW - 720, sphere: "travel", title: "Trip to Ensk" }),
@@ -162,34 +162,39 @@ describe("TodayView", () => {
     const waiting = await screen.findByRole("region", { name: "Waiting for you" });
     expect(within(waiting).getByText("Session old")).toBeTruthy();
     expect(within(waiting).queryByText("Session new")).toBeNull(); // it is under «Done», not twice
-    expect(within(waiting).getByRole("heading", { name: /Waiting for you \(2\)/ })).toBeTruthy();
-    expect(within(waiting).queryByText("today: Gym membership — valid until")).toBeNull(); // under «Deadlines», not twice
+    expect(within(waiting).queryByText(/Gym membership/)).toBeNull(); // under «Dates», not twice
     expect(within(waiting).getByText("Anna Petrova")).toBeTruthy();
+    expect(screen.getByText("· 2 waiting")).toBeTruthy();
 
     const busy = screen.getByRole("region", { name: "Working" });
-    const row = within(busy).getByTestId("running-row");
+    const row = within(busy).getByTestId("inbox-row");
     expect(row.textContent).toContain("Trip to Ensk");
-    expect(row.textContent).toContain("Travel");
     expect(row.textContent).toContain("12 min");
-    expect(row.getAttribute("href")).toBe("/s/run");
     expect(live.watch).toHaveBeenCalledWith("run"); // its transcript is read once for the last line
 
-    const done = screen.getByRole("region", { name: "Done" });
-    expect(within(done).getAllByTestId("done-row").map((r) => r.textContent)).toEqual([expect.stringContaining("Session new")]);
+    const done = screen.getByRole("region", { name: "Done since you looked" });
+    expect(within(done).getAllByTestId("inbox-row").map((r) => r.textContent)).toEqual([expect.stringContaining("Session new")]);
 
-    const dates = screen.getByRole("region", { name: "Deadlines" });
-    const [pass, bill] = within(dates).getAllByTestId("deadline-row");
-    expect(within(pass!).getByRole("button").textContent).toContain("today: Gym membership — valid until");
-    expect(within(bill!).queryByRole("button")).toBeNull(); // no path: nothing to open
+    const dates = screen.getByRole("region", { name: "Dates" });
+    expect(within(dates).getAllByTestId("inbox-row").map((r) => r.textContent)).toEqual([
+      expect.stringContaining("Gym membership — valid until"),
+      expect.stringContaining("Invoice — due"),
+    ]);
+    expect(within(dates).getAllByTestId("inbox-row")[0]!.textContent).toMatch(/^today/);
 
-    const chips = screen.getByRole("list", { name: "Status" });
-    expect(within(chips).getAllByRole("listitem").map((c) => c.textContent)).toEqual(["backup 3 h ago", "limit 91 %"]);
+    const status = screen.getByRole("list", { name: "Status" });
+    expect(within(status).getAllByRole("listitem").map((c) => c.textContent)).toEqual(["backup 3 h ago", "limit 91 %"]);
+
+    fireEvent.click(row);
+    const pane = await screen.findByRole("region", { name: "Trip to Ensk" });
+    expect(within(pane).getByText(/Travel · working for 12 min/)).toBeTruthy();
+    expect(within(pane).getAllByRole("link", { name: /Open the session/ })[0]!.getAttribute("href")).toBe("/s/run");
   });
 
-  it("leaves out a section with nothing in it", async () => {
+  it("leaves out a part with nothing in it", async () => {
     mount(<TodayView feed={{ ...FEED, groups: [], count: 0, deadlines: [], chips: [] }} sessions={[]} spheres={[]} since={0} now={NOW} />);
     expect(await screen.findByText("Nothing is waiting for you.")).toBeTruthy();
-    for (const name of ["Working", "Done", "Deadlines"]) expect(screen.queryByRole("region", { name })).toBeNull();
+    for (const name of ["Working", "Done since you looked", "Dates"]) expect(screen.queryByRole("region", { name })).toBeNull();
     expect(screen.queryByRole("list", { name: "Status" })).toBeNull();
   });
 });

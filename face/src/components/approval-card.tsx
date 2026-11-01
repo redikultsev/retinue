@@ -23,9 +23,6 @@ interface Props {
   courierDone?: typeof api.courierDone;
   /** A question card's answer (QuestionCard). */
   answer?: typeof api.answer;
-  /** A question card's case and its place in a row (QuestionCard). */
-  context?: string;
-  inline?: boolean;
   className?: string;
   /** Called with the card as it now reads once a press decided it (not when it was stale). */
   onDecided?: (approval: Approval) => void;
@@ -33,8 +30,8 @@ interface Props {
 
 export function ApprovalCard(props: Props) {
   if (props.approval.kind === "question") {
-    const { approval, live, answer, className, onDecided, context, inline } = props;
-    return <QuestionCard approval={approval} {...{ live, answer, className, onDecided, context, inline }} />;
+    const { approval, live, answer, className, onDecided } = props;
+    return <QuestionCard approval={approval} {...{ live, answer, className, onDecided }} />;
   }
   return <DecisionCard {...props} />;
 }

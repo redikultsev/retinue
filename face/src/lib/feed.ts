@@ -317,3 +317,20 @@ export function waited(since: number, now: number = Date.now() / 1000): string {
   if (hours < 24) return `${hours} h`;
   return `${Math.round(hours / 24)} d`;
 }
+
+const NEEDS: Record<string, string> = { reply: "Reply", decide: "Decide", pay: "Pay", attend: "Attend", act: "Do", do: "Do" };
+
+/** Her title in its parts: «pay: Acme Hosting is blocked… · deadline Fri (+3)» → the verb, the words, the due. A due the
+ * router masked («‹number›») says nothing and is left out. */
+export function herLine(essence: string): { verb: string; text: string; due: string } {
+  const m = /^([a-z]+):\s*/i.exec(essence);
+  const verb = m ? (NEEDS[m[1]!.toLowerCase()] ?? "") : "";
+  let text = m && verb ? essence.slice(m[0].length) : essence;
+  let due = "";
+  const tail = / · deadline (.+?)(?: \(\+\d+\))?$/.exec(text);
+  if (tail) {
+    text = text.slice(0, tail.index);
+    due = tail[1]!.includes("‹") ? "" : tail[1]!;
+  }
+  return { verb, text: text.replace(/ · $/, "").trim(), due };
+}

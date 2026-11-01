@@ -2,9 +2,8 @@
 // description on a second line. A single choice is sent by its tap; a multi-select is ticked and sent by «Done»;
 // «Own answer…» opens a field for the owner's own words. Every answer is bound to the card's digest, by the same rules
 // as a Telegram press — an answer here retires that question's Telegram buttons, and one there shows here.
-import { useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Check } from "@/components/icons";
-import { Markdown } from "@/components/transcript/item";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,56 +43,16 @@ export function questionsOf(input: Record<string, unknown>): Question[] {
   });
 }
 
-const viewOf = (approval: Approval): QuestionView => {
+export const viewOf = (approval: Approval): QuestionView => {
   const view = approval.view as unknown as Partial<QuestionView>;
   return { answers: view.answers ?? {}, picks: view.picks ?? {}, status: view.status ?? "" };
 };
 
 /** «(Recommended)» at a label's end, as AskUserQuestion's convention writes it: shown as a mark, sent as written. */
-const RECOMMENDED = /\s*\(recommended\)\s*$/i;
-
-/** What the session wrote just before asking: the case and the stakes. A few lines at rest, the rest a tap away;
- * measured once a text (keyed by it). */
-function Context({ text }: { text: string }) {
-  const box = useRef<HTMLDivElement>(null);
-  const [whole, setWhole] = useState(false);
-  const [long, setLong] = useState(false);
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (el && !whole) setLong(el.scrollHeight > el.clientHeight + 4);
-  }, [whole]);
-  return (
-    <div data-testid="question-context" className="flex flex-col gap-1">
-      <div
-        ref={box}
-        className={cn(
-          "min-w-0 break-words text-muted-foreground",
-          !whole && "max-h-36 overflow-hidden",
-          !whole && long && "[mask-image:linear-gradient(to_bottom,black_60%,transparent)]", // ui-craft: allow — the cut text fades, no colour
-        )}
-      >
-        <Markdown text={text} />
-      </div>
-      {(long || whole) && (
-        <button
-          type="button"
-          aria-expanded={whole}
-          className="hit w-fit rounded-sm text-sm text-primary underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-          onClick={() => setWhole((w) => !w)}
-        >
-          {whole ? "Show less" : "Show all"}
-        </button>
-      )}
-    </div>
-  );
-}
+export const RECOMMENDED = /\s*\(recommended\)\s*$/i;
 
 interface Props {
   approval: Approval;
-  /** What the session wrote just before asking (the feed's `said`): shown above the question. */
-  context?: string;
-  /** In a row of «Waiting for you»: no frame and no header of its own — the row and its group say both. */
-  inline?: boolean;
   live?: Live;
   answer?: typeof api.answer;
   className?: string;
@@ -101,7 +60,7 @@ interface Props {
   onDecided?: (approval: Approval) => void;
 }
 
-export function QuestionCard({ approval, context, inline = false, live = defaultLive, answer = api.answer, className, onDecided }: Props) {
+export function QuestionCard({ approval, live = defaultLive, answer = api.answer, className, onDecided }: Props) {
   const questions = questionsOf(approval.input);
   const view = viewOf(approval);
   const open = approval.state === "shown";
@@ -133,14 +92,13 @@ export function QuestionCard({ approval, context, inline = false, live = default
 
   const body = (
     <>
-        {context && open && <Context key={context} text={context} />}
         {questions.map((q, n) => {
           const answered = view.answers[String(n)];
           const picked = ticks[n] ?? [];
           const text = writing[n];
           return (
             <section key={n} data-testid="question" className="flex flex-col gap-2">
-              {q.header && !inline && <div className="text-xs text-muted-foreground">{q.header}</div>}
+              {q.header && <div className="text-xs text-muted-foreground">{q.header}</div>}
               <div className="font-medium break-words whitespace-pre-wrap">{q.question}</div>
               {answered ? (
                 <div data-testid="question-answer" className="text-sm">
@@ -234,7 +192,6 @@ export function QuestionCard({ approval, context, inline = false, live = default
         {view.status && <p className="text-sm">{view.status}</p>}
     </>
   );
-  if (inline) return <div data-testid="question-card" className={cn("flex flex-col gap-4", className)}>{body}</div>;
   return (
     <Card data-testid="question-card" className={cn(open && "border-warning/70 bg-warning/5 ring-1 ring-warning/30", className)}>
       <CardHeader>

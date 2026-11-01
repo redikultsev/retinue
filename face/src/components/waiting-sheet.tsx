@@ -1,7 +1,7 @@
-// A row of «From the assistant» opened: what it is about and what to do with it. What the digest already says — who,
+// A row of «From the assistant» opened in «Today»'s pane: what it is about and what to do with it. What the digest already says — who,
 // the sphere, how long it waits, her one line — shows at once; the rest only the router has (her judgement whole, the
 // deadline, the letter's thread or the chat, a draft's text), so the sheet asks for it (`api.waitingDetail`) and fills
-// in a moment later. Nothing of it is kept: not by the platform, not here once the sheet closes. The actions go where
+// in a moment later. Nothing of it is kept: not by the platform, not here once another row is opened. The actions go where
 // the thing is — the Gmail thread, the person's chat, her card in Telegram for a draft's «Send» — and «Ask the
 // assistant» starts a session of its own about the row, its context written into the new task for the owner to add his
 // question to. «Done», «Not a task», «Tomorrow» close the row as on the row itself.
@@ -9,9 +9,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AlertCircle, ArrowUpRight, Ban, Check, Clock, SphereMark } from "@/components/icons";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
 import { ApiError, api } from "@/lib/api";
-import { type DetailAsk, type DetailLink, type FeedRow, feedSource, linkOk, type Press, type WaitingDetail, waited } from "@/lib/feed";
+import { type DetailAsk, type DetailLink, type FeedRow, feedSource, herLine, linkOk, type Press, type WaitingDetail, waited } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { openOutside } from "@/lib/telegram";
 import { startNew } from "@/pages/new";
@@ -102,7 +101,7 @@ function Out({ link, primary = false }: { link: DetailLink; primary?: boolean })
       href={link.url}
       target="_blank"
       rel="noopener noreferrer"
-      className={cn(buttonVariants({ variant: primary ? "default" : "outline" }), "w-full sm:w-auto")}
+      className={buttonVariants({ variant: primary ? "default" : "outline" })}
       onClick={(event) => {
         if (openOutside(link.url)) event.preventDefault();
       }}
@@ -163,15 +162,13 @@ export function askContext(row: FeedRow, detail: WaitingDetail | null): string {
 }
 
 /** «Ask the assistant»: a new session about the row, in its sphere when the platform has one by that name, else «Auto». */
-function AskButton({ row, detail, primary, onClose }: { row: FeedRow; detail: WaitingDetail | null; primary: boolean; onClose: () => void }) {
+function AskButton({ row, detail, primary }: { row: FeedRow; detail: WaitingDetail | null; primary: boolean }) {
   const navigate = useNavigate();
   return (
     <Button
-      variant={primary ? "default" : "outline"}
-      className="w-full sm:w-auto"
+      variant={primary ? "default" : "ghost"}
       onClick={() => {
         startNew(askContext(row, detail), row.sphere);
-        onClose();
         void navigate({ to: "/new" });
       }}
     >
@@ -194,7 +191,7 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
   if (!loaded || loaded.state === "loading")
     return (
       <div className="flex flex-col gap-3" aria-busy="true">
-        <p className="text-sm text-muted-foreground">{row.essence}</p>
+        <p className="text-sm text-muted-foreground">{herLine(row.essence).text}</p>
         <Skeleton />
         <p className="text-xs text-muted-foreground" role="status">
           Asking the assistant…
@@ -204,7 +201,7 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
   if (loaded.state === "error")
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-muted-foreground">{row.essence}</p>
+        <p className="text-sm text-muted-foreground">{herLine(row.essence).text}</p>
         <div role="alert" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
           <span className="min-w-0 flex-1">
@@ -266,84 +263,78 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
   );
 }
 
-export function WaitingSheet({
+/** Her row in «Today»'s pane: where it came from, what it asks (filled in from the router), and what to do with it —
+ * «Done» first, the way to where it is, «Tomorrow», «Not a task», «Ask the assistant». */
+export function WaitingPane({
   row,
   bot,
-  onClose,
   now = Date.now() / 1000,
   load,
 }: {
-  row: FeedRow | null;
+  row: FeedRow;
   bot: string;
-  onClose: () => void;
   now?: number;
   load?: typeof api.waitingDetail;
 }) {
   const [loaded, retry] = useDetail(row, load);
   const detail = loaded?.state === "ok" ? loaded.detail : null;
   // her chat with the owner, only where the thing itself is there: a draft's «Send»
-  const botLink: DetailLink | null = bot && row?.source === "draft" ? { url: `https://t.me/${bot}`, label: "Send in Telegram" } : null;
+  const botLink: DetailLink | null = bot && row.source === "draft" ? { url: `https://t.me/${bot}`, label: "Send in Telegram" } : null;
   const open = linkOk(detail?.open) ? detail.open : null;
-  const press = async (action: Press, label: string) => {
-    if (!row?.t) return;
-    onClose();
-    await pressRow(row.t, action, label);
-  };
-  const where = row ? row.sphere_title || row.track : null;
+  const where = row.sphere_title || row.track;
+  const pressable = !!row.t && !(loaded?.state === "error" && loaded.status === 410);
   return (
-    <Dialog open={!!row} onClose={onClose} title={row?.title ?? ""} sheet>
-      {row && (
-        <div className="flex flex-col">
-          <div className="flex flex-col gap-4 px-4 py-4">
-            <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-              <span>{KIND_WORDS[row.source] ?? row.source}</span>
-              {where && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    <SphereMark icon={row.sphere_icon} className="mr-1 inline size-3.5 align-[-2px]" />
-                    {where}
-                  </span>
-                </>
-              )}
+    <section aria-label={row.title} className="flex flex-col gap-6">
+      <div className="flex flex-col gap-1">
+        <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+          <span>{KIND_WORDS[row.source] ?? row.source}</span>
+          {where && (
+            <>
               <span aria-hidden="true">·</span>
-              <span className="tabular-nums">waits {waited(row.since, now)}</span>
-              {detail?.account && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="min-w-0 truncate">to {detail.account}</span>
-                </>
-              )}
-            </p>
-            <Body row={row} loaded={loaded} retry={retry} now={now} />
-          </div>
-          <div className="sticky bottom-0 flex flex-col gap-2 border-t bg-background px-4 py-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-              {row.source === "draft" ? (
-                <>
-                  {botLink && <Out link={botLink} primary />}
-                  {open && <Out link={{ ...open, label: "Open the thread" }} />}
-                </>
-              ) : (
-                <>
-                  {open && <Out link={open} primary />}
-                  <AskButton row={row} detail={detail} primary={!open} onClose={onClose} />
-                </>
-              )}
-            </div>
-            {row.t && !(loaded?.state === "error" && loaded.status === 410) && (
-              <div className="flex flex-wrap gap-1">
-                {PRESSES.map(([action, label]) => (
-                  <Button key={action} variant="ghost" size="sm" onClick={() => void press(action, label)}>
-                    {action === "done" ? <Check /> : action === "later" ? <Clock /> : <Ban />}
-                    {label}
-                  </Button>
-                ))}
-              </div>
+              <span>
+                <SphereMark icon={row.sphere_icon} className="mr-1 inline size-3.5 align-[-2px]" />
+                {where}
+              </span>
+            </>
+          )}
+          <span aria-hidden="true">·</span>
+          <span className="tabular-nums">waits {waited(row.since, now)}</span>
+          {detail?.account && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="min-w-0 truncate">to {detail.account}</span>
+            </>
+          )}
+        </p>
+        <h2 className="text-xl font-medium text-balance">{row.title}</h2>
+      </div>
+      <Body row={row} loaded={loaded} retry={retry} now={now} />
+      <div className="flex flex-wrap items-center gap-2">
+        {row.source === "draft" ? (
+          <>
+            {botLink && <Out link={botLink} primary />}
+            {open && <Out link={{ ...open, label: "Open the thread" }} />}
+          </>
+        ) : (
+          <>
+            {pressable && (
+              <Button onClick={() => void pressRow(row.t!, "done", "Done")}>
+                <Check />
+                Done
+              </Button>
             )}
-          </div>
-        </div>
-      )}
-    </Dialog>
+            {open && <Out link={open} />}
+            {pressable &&
+              PRESSES.slice(1).map(([action, label]) => (
+                <Button key={action} variant="outline" onClick={() => void pressRow(row.t!, action, label)}>
+                  {action === "later" ? <Clock /> : <Ban />}
+                  {label}
+                </Button>
+              ))}
+            <AskButton row={row} detail={detail} primary={false} />
+          </>
+        )}
+      </div>
+    </section>
   );
 }

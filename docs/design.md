@@ -10,7 +10,8 @@ The screens themselves are in [face.md](face.md); the hard rules below are held 
 - **Useful space over chrome.** A screen's header is one line — back, its mark and name, its tabs with their counts,
   its status at the right, 48 px. Lists run the full width (up to 90rem); reading columns stop at about 70 characters.
 - **Details over the page, on demand.** A record opens as a drawer at the right edge (a bottom sheet on a phone), not
-  as a column that is always there.
+  as a column that is always there. The exception is a screen whose work is going through a queue — «Today»: there
+  the opened row *is* the work, so it stands in a pane beside the list (below).
 - **Every colour means one thing** across the app (below). Data is brighter than the chrome around it.
 - **A phone does another job**: lists of two lines a record, no board, targets of 44 px.
 
@@ -59,6 +60,22 @@ icon for gets a neutral one.
 - **Numbers beside the work** are a grid of figures; on their own tab, tiles with the goal and the period before.
 - **A chart** is drawn at its own width (text never scales), one accent for the first series, a dashed grid, totals
   over the peak and this week only.
+
+## An inbox
+
+A queue the owner works through to its end is a list and a pane (`components/inbox.tsx`, «Today»):
+
+- **The list**, 360 px (400 from 1280), one grid for every row — `8px` mark · `52px` what to do · the title · the time
+  in mono, a second line under the title. The rows of every part line up on it, and so do the parts' titles. The row
+  picked is a step of surface (`bg-accent`), never a coloured edge.
+- **The mark** is the owner's move: amber filled — a session stands until he answers; amber empty — a person or a
+  thing waits; nothing — nothing waits on him.
+- **The pane**: a top line (where from · how long, «Open the session ↗» at its right), the thing's name at 20 px, its
+  content, then its actions — one primary (blue), the rest outlined, a way elsewhere as a link with ↗.
+- **A decision** is the brief as a two-column table (label · words; the first line in the foreground), the reasoning
+  folded under it, the options as radio buttons with the recommended one picked, and one button that names what it
+  sends. No line explaining the mechanics («Undo for 10 s») under it.
+- On a narrow screen the list is the screen and a row opens over it with «All» to come back.
 
 ## Copy
 

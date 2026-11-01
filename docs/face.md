@@ -208,7 +208,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/files/{id}/meta` | `{file}` — one file's row, for the page `/f/<id>` that Telegram's “Open” opens |
 | `GET /api/feed` | `{schema, count, groups: [{action, title, rows}], bot, assistant_at, deadlines, chips, closed_today, expired_week}` — “Waiting for you”, “Deadlines” and the status chips, [below](#the-feed) |
 | `POST /api/waiting/press {t, action: done\|dismissed\|later\|open}` | `{ok}`: “Done”, “Not a task”, “Tomorrow” or “Undo” on a row of “From the assistant”, by its token; the router applies it ([platform.md](platform.md#the-assistants-digest)) |
-| `POST /api/waiting/detail {ref, t?}` | `{detail}`: [a row's sheet](#her-rows-sheet) of “From the assistant” — a person's row by its id and token, a draft by its id — asked of the router and relayed, never kept; 410 when the row is not in the digest any more or the router no longer knows it, 504 when the router said nothing within 12 s, 502 when what it said was off the contract, 429 while 8 already wait |
+| `POST /api/waiting/detail {ref, t?}` | `{detail}`: [a row's pane](#her-rows-pane) of “From the assistant” — a person's row by its id and token, a draft by its id — asked of the router and relayed, never kept; 410 when the row is not in the digest any more or the router no longer knows it, 504 when the router said nothing within 12 s, 502 when what it said was off the contract, 429 while 8 already wait |
 | `GET /api/stats` | `{schema, now, weeks: [tally…]}` — the platform's tally (`signals.tally`) of the last eight seven-day spans, the newest first, for “Week” ([below](#week)) |
 | `GET /api/base/{id}` | `{card}` — the platform's own commit to the Base after a turn ([base.md](base.md#the-commit-after-a-turn)): its line (`said`), files, sha, whether “Undo” can be pressed |
 | `GET /api/base/{id}/diff` | `{diff, truncated}`: what the commit changed, at most 1 MB |
@@ -385,25 +385,48 @@ made after what the good chat apps share (studied from public sources):
 
 ### Today
 
-From what the app already reads — the session rows, the stream, the feed — top to bottom:
+An inbox (`components/inbox.tsx`): the list at the left — 360 px, 400 from 1280 — and the row opened whole at the
+right; nothing opens a dialog. Under a header of one line, 48 px: «Today», the day, «· N waiting», and the hub's status
+at the right — what is fine is one green dot (its words in the tooltip), what is off is said («limit 89 %»).
 
-- **The day and the chips**: the status as the router last pushed it — anything broken, the last backup's age,
-  the subscription limit's share, whether the pages' last build went through ([platform.md](platform.md#the-assistants-digest)).
-  A chip the router does not have is not shown.
-- **“Waiting for you”**: the feed, grouped by action as everywhere ([below](#the-feed)), but for a finished session that is
-  already under “Done”.
-- **“Working”**: each session running a turn — its sphere, its title, how long it runs (since `turn_started`: set
-  when a turn begins, kept through a resume after a card; ticking every second in its first minute, then every 30 s),
-  and its last line: the text being written, else the newest item that says
-  something (a message's last line, `Bash: <command>`, “editing <path>”…). A running session's transcript is read
-  once for it (at most five), then the stream keeps it. A tap opens the session.
-- **“Done”**: sessions that finished since you last had the app in front of you and that you have not read — when
-  you last left it is kept on the device (`localStorage`); coming back after more than a minute starts a new visit.
-- **“Deadlines”**: the base's dates of the next seven days and the overdue — a `deadline` of any Record, an `until` of
-  a profile Record — as the router pushed them, by day; one whose Record path it sent opens that Record. A date
-  already due under “From the assistant” is left out of “Waiting for you” on this screen (`/wait` still lists it).
+**The list**, every row on one grid: a mark, what you do, who or what, how long — and a second line under the title
+when there is one. The mark says whose move: a filled amber square — a session stands until you answer; an empty one —
+a person or a thing waits; none — nothing waits on you. What you do is a word: Answer, Allow, Run, Push, Start, Apply,
+Reply, Read for the sessions' rows; her rows by her ask — Pay, Do, Reply, Decide, Attend, Send for a draft — the prefix
+taken off her line («pay: …»), and a due she gave in a column of its own (one the router masked, «‹number›», is left
+out). Under what waits, each part only when it has something:
 
-A section with nothing in it is not shown.
+- **“Working”**: each session running a turn — «Runs», its title, how long it runs (since `turn_started`), its last
+  line: the text being written, else the newest item that says something. Its transcript is read once (at most five),
+  then the stream keeps it.
+- **“Done since you looked”**: sessions that finished since you last had the app in front of you and that you have not
+  read — when you last left is kept on the device (`localStorage`); after more than a minute away a new visit starts.
+- **“Dates”**: the base's dates of the next seven days and the overdue, as the router pushed them — «today»,
+  «tomorrow», else «4 Nov»; red when overdue.
+
+Each thing once: a finished session under “Done” is not again among what waits, nor a base's date under “Dates”. At
+the list's end: «Closed today M · ran out unmarked this week N», and when her list is older than two hours, so.
+
+**The pane** shows the row picked — the first at the start; once a row is gone (answered, closed) the one now in its
+place. Its top line says where it is from and how long it waits, with «Open the session ↗» when it has one:
+
+- **a question**: the question large; the session's brief — what it wrote just before asking, when in the brief's
+  shape (labelled lines «**Recommend:** …», `**Why:**`, `**Cost:**`, `**Skip:**`, `**Not checked:**`: the lanes'
+  instructions ask for it) — as a table, its whole text under «The session's full reasoning»; a text not in that shape
+  a few lines and «Show all». Then the options to pick (radio buttons; checkboxes for a multi-select), the
+  recommended one picked at the start, «(Recommended)» shown as a mark; «Or answer in your own words»; one button —
+  «Answer · <the pick>», «Send your answer» once words are written. 1–9 pick, Enter answers, ⌘Enter in the words;
+- **an approval or a courier card, a proposed sub-session, a proposed write, a push**: the card itself, with its
+  buttons;
+- **a session waiting for your message, or a turn to read**: its last summary, and a box whose text goes into it as
+  your next message;
+- **her row**: [what it asks](#her-rows-pane), «Done» first;
+- **“Working”**: «Now» — its last line — and the lines before it, «Open the session», «Stop»;
+- **“Done since you looked”**: its last summary and a reply box;
+- **a date**: the Record's place and «Open the Record».
+
+J / K or the arrows go down and up the list, E marks her row done — never while you type. On a screen narrower than
+1024 the list takes the screen, a row opens over it, and «All» comes back.
 
 ### The look
 
@@ -651,20 +674,21 @@ is as of opening the session.
 
 ## The feed
 
-“Waiting for you” is one queue grouped by what you do, not by where it came from (`retinue/feed.py`). The platform builds
+“Waiting for you” is one queue grouped by what you do, not by where it came from (`retinue/feed.py`); “Today” shows it
+as [an inbox](#today), and the groups below say what each row is and what the pane does with it. The platform builds
 it from its own rows at each read — nothing is kept beside them that could drift — and the app reads it again when a
 session, a card, a summary or a proposal changes on the stream (once per burst) and once a minute.
 
 | Group | What is in it | Its action, in place |
 |---|---|---|
-| “Answer the question” | a question card that asks, under what its session wrote just before asking (`said`: the case and what each answer leads to — a few lines, “Show all” for the rest) | the question's options — each its label, a “Recommended” mark for the label's “(Recommended)” and what it leads to under it — and “Own answer…”; no frame or header of its own: the row says whose it is |
+| “Answer the question” | a question card that asks, with what its session wrote just before asking (`said`) | in the pane on “Today”: [the question](#today), its brief, the options, «Answer» |
 | “Decide” | an approval card that waits; a courier card of the last 24 h whose session you have not written to since; a sub-session a session proposed, of the last 7 days (“Sub-session: <title>”, [platform.md](platform.md#proposals)); a write to a collection a session proposed, of the last 7 days (“deals: 2 changes proposed”, [collections.md](collections.md#proposals)) | “Allow” / “Deny”; a courier's “Copy command”; “Start” / “Not now” under the proposal's brief; “Apply” / “Dismiss” under what a proposed write would change. A call longer than 4 lines or 240 characters shows its one line and “Show and decide” first, a brief longer than 6 lines or 400 characters “Show the brief”: nothing is decided unseen |
-| “Reply” | a session waiting for your message with no card shown | “Open and answer” |
-| “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | the title opens it |
-| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | on the row's right: “✓ Done”, then “Not a task” and “Tomorrow” as icons named in their tooltips, and the way to the thing. A person's row or a draft — its words, or › “Details” — opens [its sheet](#her-rows-sheet); a base's date — its words, or ↗ “Open the Record” — opens the Record in Spaces. Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |
+| “Reply” | a session waiting for your message with no card shown | its last summary and a reply box |
+| “Read” | a session with a dot — a summary or a card since you last looked (`unread`, [Spheres](platform.md#spheres)) — of the last 7 days | its last summary and a reply box |
+| “From the assistant” | what waits in her world: the router's digest ([platform.md](platform.md#the-assistants-digest)) — a base's date from three days before it | a person's row or a draft: [its pane](#her-rows-pane) — «Done», the way to the thing, «Not a task», «Tomorrow»; a base's date: «Open the Record». Sending and deciding stay in Telegram, under her cards' buttons ([mail.md](mail.md#closing-what-waits)) |
 
-Each row: an icon of where it came from, its sphere (or track), the session's title (her rows: who), how long it has
-waited and its one line — the question, the command, the summary's first line, her title. A card is the same object
+Each row: what you do, the session's title (her rows: who), how long it has waited and its one line — the question,
+the command, the summary's first line, her title. A card is the same object
 as everywhere (`approval`), decided by the same rules; the app shows its newest copy, so a press in Telegram shows at
 once. A row is `{key, action, source, session, track, sphere, sphere_title, sphere_icon, title, since, essence, ref}`
 plus `approval` and `card` (a question's `<approval>/<n>`) on a card's row, `said` on a question's (Markdown, cut at
@@ -673,19 +697,17 @@ a line's end before 4000 characters),
 proposal's row (`source: proposal`), `t` (the row's token) on a person's row of hers.
 A pressed row leaves the feed at once and stays hidden while the feed still has its `t`, ten minutes at most — a press
 that did not go through brings it back; the toast “Done · Undo” stays 10 seconds, and “Undo” sends `open`
-with the same `t`. Under her rows: “Closed today: M · Ran out unmarked this week: N” (`closed_today`,
-`expired_week`), at the feed's end when none of her rows waits and either is not zero.
+with the same `t`. `closed_today` and `expired_week` count what closed today and what ran out unmarked in the week.
 `bot` is the bot's username as the router last pushed it; `assistant_at` when it last pushed — a list older than two
 hours says so. `deadlines`: the digest's dates, `{id, when, title, sphere, sphere_title, sphere_icon, path}` by day —
 the next week's and the overdue, also those days ahead that wait for no one yet (“Deadlines” on “Today”). `chips`: the
 hub's status chips `{key, text, level}` as the router last pushed them (`[]` before). A sphere's title and icon come from `platform.yaml`'s spheres when they are there.
 
 
-### Her row's sheet
+### Her row's pane
 
-A tap on a person's row of hers or on a draft opens a sheet — a bottom sheet on a phone, a panel in the middle on a
-wider screen. What the digest already says shows at once: who, where it came from, the sphere, how long it waits, her
-one line. The rest only the router has, so the sheet asks for it (`POST /api/waiting/detail`) and fills in a moment
+A person's row of hers or a draft opens in “Today”'s pane. What the digest already says shows at once: who, where it came from, the sphere, how long it waits, her
+one line. The rest only the router has, so the pane asks for it (`POST /api/waiting/detail`) and fills in a moment
 later, “Asking the assistant…” meanwhile:
 
 - **what they ask** — each item still open under the row, newest first, at most 10 (“And N older — in Telegram.”):
@@ -696,22 +718,21 @@ later, “Asking the assistant…” meanwhile:
   answers;
 - the mailbox it came to (“to you@example.com”), and a line on what to do by her most pressing ask.
 
-At the bottom, the way to where the thing is — the router builds it from the ids it holds, never from her words, and
+Under it, «Done» first, then the way to where the thing is — the router builds it from the ids it holds, never from her words, and
 the platform and the app each draw only these shapes: **“Open in Gmail”**
 (`https://mail.google.com/mail/?authuser=<mailbox>#all/<threadId>`: the thread in the mailbox it came to), **“Open
 the chat”** (`https://t.me/<username>`; a person with no @username has no link that opens the chat — Telegram's
-`tg://user?id=` is for bots and its apps ignore it — so the sheet says so), **“Send in Telegram”** first on a draft,
+`tg://user?id=` is for bots and its apps ignore it — so the pane says so), **“Send in Telegram”** first on a draft,
 whose card is there, and **“Ask the assistant”**: a session of its own about the row, not her Telegram chat — the
-sheet closes and “New” opens with the row's context as the new task's text (where it came from and who, the list's
+“New” opens with the row's context as the new task's text (where it came from and who, the list's
 line, her words, the thread's link) and the cursor under it for your question, in the row's sphere when the platform
-has one by that name, else “Auto” (`startNew`: this tab's sessionStorage, like any draft of “New”). Then “Done”,
-“Not a task” and “Tomorrow”, as on the row. Inside the Mini App a t.me link goes to Telegram itself (`web_app_open_tg_link`) and
+has one by that name, else “Auto” (`startNew`: this tab's sessionStorage, like any draft of “New”). Then “Not a task” and “Tomorrow”. Inside the Mini App a t.me link goes to Telegram itself (`web_app_open_tg_link`) and
 Gmail to its browser (`web_app_open_link`), each from the tap itself.
 
-When the router is silent the sheet says “The assistant's side did not answer in time.” with “Try again”; when the row is out of date
-it says so, drops the buttons and reads the feed again. Nothing of the sheet is kept: not by the platform (it relays
+When the router is silent the pane says “The assistant's side did not answer in time.” with “Try again”; when the row is out of date
+it says so, drops the buttons and reads the feed again. Nothing of it is kept: not by the platform (it relays
 the router's answer to the request that waits for it — [platform.md](platform.md#the-assistants-digest)), not by the
-app once the sheet closes.
+app once another row is opened.
 
 ## Pages
 

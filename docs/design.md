@@ -78,6 +78,18 @@ A queue the owner works through to its end is a list and a pane (`components/inb
 - What a row is about opens in the pane itself — a date's Record too — never in a second pane beside it.
 - On a narrow screen the list is the screen and a row opens over it with «All» to come back.
 
+## A plan: tasks, a day, a week
+
+- **A row of a task** is the queue's row: the circle that closes it first, the title and its meta line (goal swatch ·
+  how long · by when · from where), the slot in mono at the right, one outlined button («Plan», «Move»).
+- **A goal's swatch** is a series colour by the goal's place in the form (`bg-chart-N`), a 2 px-rounded square — never
+  a meaning of its own; amber stays the owner's move (planned time in the strip and the week's load bars).
+- **A menu over a list** is drawn into the page's top layer at its button (below it, or above when the screen has no
+  room) and follows it when the page scrolls: a list's rounded, clipped frame never cuts it.
+- **The day** is a list of time rows (the time in a 48 px mono column, start over end), not a grid of hours: a grid is
+  unreadable on a laptop beside the sidebar. Free stretches are quiet rows of their own, where a dragged task lands.
+- **The week** keeps each day at least 10rem and scrolls sideways rather than squeeze seven columns until words break.
+
 ## Copy
 
 What the owner reads is in his words: a form's `labels` for values, no field names or zones on screen, no trailing

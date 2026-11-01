@@ -102,8 +102,10 @@ TOOLS = [
                                     "why": {"type": "string", "description": "why, in a line or two, for the owner"}}}},
 ]
 
-ROUTER_VIA = ("assistant", "mail")  # the paths a Router's writer comes by: her turn, or her judgement of mail
+ROUTER_VIA = ("assistant", "mail", "code")  # a Router's writer comes by her turn, her judgement of mail, or its own code
 CHANGES_MAX = 200           # changes one `/owner/collections/changes` returns
+EXCLUDED_MAX = 8            # rules one call leaves out of them
+RULE = re.compile(r"code:[a-z][a-z0-9_-]{0,39}")
 CHANGES_SQL = "(actor = 'assistant' OR actor LIKE 'code:%')"  # the machines' changes: what the evening list names
 OWNER_PRESS = Writer("owner", "assistant")  # his press in Telegram under the evening list: through her channel
 NOT_FOUND = ("Change not found — nothing was taken back. The collections may have been restored from a backup "
@@ -178,9 +180,10 @@ class CollTools:
     # --- the tools ------------------------------------------------------------------------------------------------
 
     async def call(self, writer: Writer, session: dict | None, name: str, arguments: dict, call_id: str,
-                   read: list[str] | None = None) -> tuple[str, bool]:
+                   read: list[str] | None = None, out: dict | None = None) -> tuple[str, bool]:
         """One tool call, as `writer`: (what to answer, whether it is an error). The ids of the records the answer
-        shows go into `read`, when one is given: what the Router marks her turn by."""
+        shows go into `read`, when one is given: what the Router marks her turn by; a query's answer itself into
+        `out`, for the Router's own code, which reads records, not words."""
         read = [] if read is None else read
         try:
             if name == DESCRIBE:
@@ -188,6 +191,8 @@ class CollTools:
             if name == QUERY:
                 text, answer = await self._query(arguments)
                 read += [row["id"] for row in answer["rows"]]
+                if out is not None:
+                    out["answer"] = answer
                 return text, False
             if name == APPLY:
                 return await self.apply(writer, session, arguments, call_id, read)
@@ -445,10 +450,13 @@ class CollTools:
 
     async def _router_writer(self, body: dict) -> Writer | str:
         """The writer a Router's call names, or why there is none: `assistant`, or a `code:` rule the rights of some
-        collection name, by `assistant` or `mail`; never the owner, whatever the call says."""
+        collection name, by `assistant` or `mail` — or by `code`, a rule's own, never hers; never the owner, whatever
+        the call says."""
         actor, via, model, foreign = body.get("actor"), body.get("via"), body.get("model"), body.get("foreign", [])
         if via not in ROUTER_VIA:
             return f"via is {' or '.join(ROUTER_VIA)}"
+        if via == "code" and not (isinstance(actor, str) and actor.startswith("code:")):
+            return "via code is a rule's own: actor code:<rule>"
         if model is not None and not _plain(model, 100):
             return "model: a model's name"
         if not isinstance(foreign, list) or not all(isinstance(f, str) and LABEL.fullmatch(f) for f in foreign):
@@ -472,8 +480,11 @@ class CollTools:
         if not isinstance(arguments, dict) or not _plain(call, 100):
             return web.json_response({"ok": False, "text": "arguments: the tool's object; call: the call's own id"})
         read: list[str] = []
-        text, error = await self.call(writer, None, name, arguments, f"router:{call}", read)
+        out: dict = {}
+        text, error = await self.call(writer, None, name, arguments, f"router:{call}", read, out)
         said: dict = {"ok": not error, "text": text}
+        if writer.via == "code" and "answer" in out:  # the Router's code reads the rows themselves
+            said["answer"] = out["answer"]
         if name == DESCRIBE and arguments.get("collection") is None and not error:
             said["writable"] = await self.writable(writer)
         collection = arguments.get("collection")
@@ -484,17 +495,22 @@ class CollTools:
     async def owner_changes(self, request: web.Request) -> web.Response:
         """The assistant's and the rules' changes, oldest first: after the change `after`, or else since the moment
         `since` — `{changes, next, words}`, each change with its collection's Space, its record's title and whether
-        a revert took it back; `next` set when more are left than `limit` (≤ CHANGES_MAX)."""
+        a revert took it back; `next` set when more are left than `limit` (≤ CHANGES_MAX). `exclude_actors` leaves
+        out the rules whose writes are the owner's own moves carried out — a plan's slots, a calendar's echo — so
+        they neither fill the list nor push the rest off it."""
         body = await _body(request)
         after, since, limit = body.get("after"), body.get("since"), body.get("limit", CHANGES_MAX)
+        exclude = body.get("exclude_actors", [])
         if (after is not None and not (isinstance(after, str) and ULID.fullmatch(after))) or \
                 (since is not None and type(since) not in (int, float)) or \
-                type(limit) is not int or not 0 < limit <= CHANGES_MAX:
-            return web.json_response({"error": f"after: a change's id; since: a moment; limit: 1 to {CHANGES_MAX}"},
-                                     status=400)
+                type(limit) is not int or not 0 < limit <= CHANGES_MAX or \
+                not isinstance(exclude, list) or len(exclude) > EXCLUDED_MAX or \
+                not all(isinstance(a, str) and RULE.fullmatch(a) for a in exclude):
+            return web.json_response({"error": f"after: a change's id; since: a moment; limit: 1 to {CHANGES_MAX}; "
+                                               f"exclude_actors: up to {EXCLUDED_MAX} code:<rule>"}, status=400)
         try:
             return web.json_response(await self.collections.read(
-                lambda: machine_changes(self.collections, after, since, limit)))
+                lambda: machine_changes(self.collections, after, since, limit, tuple(exclude))))
         except Refused as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
@@ -553,15 +569,18 @@ def _taken(store, change_ids: list[str]) -> set[str]:
         f"SELECT reverts FROM changes WHERE reverts IN ({', '.join('?' * len(change_ids))})", change_ids)}
 
 
-def machine_changes(store, after: str | None, since: float | None, limit: int) -> dict:
+def machine_changes(store, after: str | None, since: float | None, limit: int, exclude: tuple[str, ...] = ()) -> dict:
     """On the collections' thread: the assistant's and the rules' changes to records after the change `after` (a
     ULID: the cursor survives a restore, whose new changes are always later), or since the moment `since` — each
-    with whether a revert took it back, and, for a revert, whose change it took back (`reverts_actor`)."""
+    with whether a revert took it back, and, for a revert, whose change it took back (`reverts_actor`). The rules in
+    `exclude` are left out."""
     sql, params = f"SELECT {CHANGE_COLUMNS} FROM changes WHERE {CHANGES_SQL} AND id IS NOT NULL", []
+    if exclude:
+        sql, params = sql + f" AND actor NOT IN ({', '.join('?' * len(exclude))})", [*exclude]
     if after is not None:
-        sql, params = sql + " AND change_id > ?", [after]
+        sql, params = sql + " AND change_id > ?", [*params, after]
     elif since is not None:
-        sql, params = sql + " AND ts > ?", [since]
+        sql, params = sql + " AND ts > ?", [*params, since]
     rows = [_change(r) for r in store._db.execute(sql + " ORDER BY change_id LIMIT ?", (*params, limit + 1))]
     shown, words, forms = rows[:limit], {}, {}
     taken = _taken(store, [c["change_id"] for c in shown])

@@ -540,7 +540,7 @@ def test_a_form_is_checked_strictly(tmp_path):
             ({"fields": {"a": {"type": "enum", "values": ["x"], "set_by": {}}}}, "rights are the owner's alone"),
             ({"fields": {}}, "at least one field"),
             ({"fields": {"A": {"type": "text"}}}, "a field's name"),
-            ({"fields": {"a": {"type": "money"}}}, '"type" is one of text, int, enum, date, bool, ref'),
+            ({"fields": {"a": {"type": "money"}}}, '"type" is one of text, int, enum, date, instant, bool, ref'),
             ({"fields": {"a": {"type": "text", "values": ["x"]}}}, "a text takes no 'values'"),
             ({"fields": {"a": {"type": "text", "required": "yes"}}}, '"required" is true or false'),
             ({"fields": {"a": {"type": "enum", "values": ["x", "x"]}}}, '"values" is a list'),

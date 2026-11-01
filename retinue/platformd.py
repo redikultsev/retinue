@@ -30,7 +30,7 @@ from zoneinfo import ZoneInfo
 from aiohttp import web
 
 from . import (approvals, attachments, citecheck, cliengine, collections_admin, colltools, courier, episodes, face, feed, finish, followups, inbox,
-               lanetravel, outfiles, pings, questions, signals, subs, tobase, topush, transcript, views)
+               lanetravel, outfiles, pings, plan, questions, signals, subs, tobase, topush, transcript, views)
 from .base import BaseRepo, under
 from . import library as library_mod
 from . import reach as reach_mod
@@ -119,6 +119,7 @@ class Platform:
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
         self.followups = followups.FollowUps(self)  # a session brought back to a task that waits (`followups.py`)
         self.colltools = colltools.CollTools(self)  # the agents' tools for the collections, and their proposals
+        self.plan = plan.Plan(self)  # «Today»'s tasks, day and week, and the busy window the Router pushes
         self._stopped_runs: set[str] = set()  # runs the owner's «Stop» ended: not errors (`episodes`)
         # travel-ops' tools on the same server, for every session (`lanetravel.py`); None: no travel-ops in this stack.
         self.travel = lanetravel.LaneTravel(cfg.travel_url) if cfg.travel_url else None
@@ -160,7 +161,7 @@ class Platform:
                         web.post("/owner/waiting/asked", self.owner_waiting_asked),
                         web.post("/owner/waiting/detail", self.owner_waiting_detail),
                         web.post("/owner/library", self.owner_library), web.post("/owner/stats", self.owner_stats),
-                        *self.views.owner_routes(), *self.colltools.owner_routes(),
+                        *self.views.owner_routes(), *self.colltools.owner_routes(), *self.plan.owner_routes(),
                         web.post("/items", self.items),
                         web.post("/items/confirm", self.confirm)])
         return app

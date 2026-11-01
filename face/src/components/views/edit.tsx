@@ -537,7 +537,7 @@ function AddSheet({
                   </select>
                 ) : (
                   <Input
-                    type={field.type === "int" ? "number" : field.type === "date" ? "date" : "text"}
+                    type={field.type === "int" ? "number" : field.type === "date" ? "date" : field.type === "instant" ? "datetime-local" : "text"}
                     inputMode={field.type === "int" ? "numeric" : undefined}
                     step={field.type === "int" ? 1 : undefined}
                     value={String(value ?? "")}

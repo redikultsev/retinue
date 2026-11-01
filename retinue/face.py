@@ -336,7 +336,8 @@ class Face:
             web.post("/api/c/_files", self.upload), web.get("/api/c/_files", self.uploads),
             web.get("/api/c/_files/{sha}", self.uploaded),
             *self.platform.colltools.routes(),  # the agents' proposals of writes to them (`colltools.py`)
-            *self.platform.views.routes()])  # a Space's collections, their views and records (`views.py`)
+            *self.platform.views.routes(),  # a Space's collections, their views and records (`views.py`)
+            *self.platform.plan.routes()])  # «Today»'s tasks, day and week (`plan.py`)
         # The agents on the owner's Mac (`mac.py`): their own app, their own check — a device's token, not the cookie.
         self.mac_app = mac.Mac(self.platform).app()
         app.add_subapp(mac.PATH, self.mac_app)
@@ -450,13 +451,22 @@ class Face:
         return web.json_response({"schema": SCHEMA, "now": now, "weeks": weeks})
 
     async def waiting_press(self, request: web.Request) -> web.Response:
-        """«Done», «Not a task», «Tomorrow» or «Undo» (`open`) on a row of «From the assistant» `{t, action}`: only its
-        shape is checked here — the router alone knows what the row's token names — and it goes to the router as a
-        note (`waiting-press`), which the bridge pulls like any other."""
+        """«Done», «Not a task», «Tomorrow», «Undo» (`open`) or «Make it a task» (`task`) on a row of «From the
+        assistant» `{t, action}` — or «Make it a task» on a reminder of the digest `{ref, action}`: only its shape is
+        checked here — the router alone knows what the row's token names — and it goes to the router as a note
+        (`waiting-press`), which the bridge pulls like any other."""
         body = await _body(request)
-        token, action = body.get("t"), body.get("action")
-        if not isinstance(token, str) or not feed.TOKEN.fullmatch(token) or action not in feed.PRESSES:
-            return _error(400, "Need t — the row's token — and action: done, dismissed, later or open.")
+        token, action, ref = body.get("t"), body.get("action"), body.get("ref")
+        if action == feed.TASK_PRESS and isinstance(ref, str) and feed.REMINDER_ID.fullmatch(ref):
+            items, _, _ = self.platform.feed.digest()
+            if not any(i["id"] == ref for i in items):
+                return _error(410, "This reminder is not in the list any more.")
+            self.store.add_note("waiting-press", "", {"ref": ref, "action": action})
+            return web.json_response({"ok": True})
+        if not isinstance(token, str) or not feed.TOKEN.fullmatch(token) or \
+                action not in (*feed.PRESSES, feed.TASK_PRESS):
+            return _error(400, "Need t — the row's token — and action: done, dismissed, later, open or task; or a "
+                               "reminder's ref and action task.")
         self.store.add_note("waiting-press", "", {"t": token, "action": action})
         return web.json_response({"ok": True})
 

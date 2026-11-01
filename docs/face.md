@@ -207,7 +207,8 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/files/{id}/view` | a handed-over HTML file, for the app's sandboxed frame — see below |
 | `GET /api/files/{id}/meta` | `{file}` — one file's row, for the page `/f/<id>` that Telegram's “Open” opens |
 | `GET /api/feed` | `{schema, count, groups: [{action, title, rows}], bot, assistant_at, deadlines, chips, closed_today, expired_week}` — “Waiting for you”, “Deadlines” and the status chips, [below](#the-feed) |
-| `POST /api/waiting/press {t, action: done\|dismissed\|later\|open}` | `{ok}`: “Done”, “Not a task”, “Tomorrow” or “Undo” on a row of “From the assistant”, by its token; the router applies it ([platform.md](platform.md#the-assistants-digest)) |
+| `POST /api/waiting/press {t, action: done\|dismissed\|later\|open\|task}` · `{ref, action: task}` | `{ok}`: “Done”, “Not a task”, “Tomorrow”, “Undo” or “Make it a task” on a row of “From the assistant”, by its token — or “Make it a task” on a reminder of the digest, by its id (410 when it is not in the digest any more); the router applies it ([platform.md](platform.md#the-assistants-digest)) |
+| `GET /api/plan` | `{schema, now, tz, tasks: {rows, rev, space, goals, missing}, calendar: {events, at, failed, stale}, asks, reminders}` — what [Tasks, Day, Week](#tasks-day-week) show: the open tasks and every one with a slot from yesterday to two weeks on, the busy window the Router last pushed, the digest's person's rows and reminders |
 | `POST /api/waiting/detail {ref, t?}` | `{detail}`: [a row's pane](#her-rows-pane) of “From the assistant” — a person's row by its id and token, a draft by its id — asked of the router and relayed, never kept; 410 when the row is not in the digest any more or the router no longer knows it, 504 when the router said nothing within 12 s, 502 when what it said was off the contract, 429 while 8 already wait |
 | `GET /api/stats` | `{schema, now, weeks: [tally…]}` — the platform's tally (`signals.tally`) of the last eight seven-day spans, the newest first, for “Week” ([below](#week)) |
 | `GET /api/base/{id}` | `{card}` — the platform's own commit to the Base after a turn ([base.md](base.md#the-commit-after-a-turn)): its line (`said`), files, sha, whether “Undo” can be pressed |
@@ -385,9 +386,13 @@ made after what the good chat apps share (studied from public sources):
 
 ### Today
 
-An inbox (`components/inbox.tsx`): the list at the left — 360 px, 400 from 1280 — and the row opened whole at the
-right; nothing opens a dialog. Under a header of one line, 48 px: «Today», the day, «· N waiting» (the feed's count, the same as on the sidebar and the header), and the hub's status
-at the right — what is fine is one green dot (its words in the tooltip), what is off is said («limit 89 %»).
+Four tabs under a header of one line, 48 px: «Today», the day, the tabs — «Waiting N» (the feed's count, the same as on
+the sidebar and the header), «Tasks N» (the open ones), «Day», «Week» ([below](#tasks-day-week)), `?tab=` in the
+address — and the hub's status at the right: what is fine is one green dot (its words in the tooltip), what is off is
+said («limit 89 %»). On a phone the title gives its room to the tabs, and the week's numbers are an icon.
+
+«Waiting» is an inbox (`components/inbox.tsx`): the list at the left — 360 px, 400 from 1280 — and the row opened whole at the
+right; nothing opens a dialog.
 
 **The list**, every row on one grid: a mark, what you do, who or what, how long — and a second line under the title
 when there is one. The mark says whose move: a filled amber square — a session stands until you answer; an empty one —
@@ -421,13 +426,39 @@ place. Its top line says where it is from and how long it waits, with «Open the
   buttons;
 - **a session waiting for your message, or a turn to read**: its last summary, and a box whose text goes into it as
   your next message;
-- **her row**: [what it asks](#her-rows-pane), «Done» first;
+- **her row**: [what it asks](#her-rows-pane), «Done» first, «Make it a task» among the rest;
 - **“Working”**: «Now» — its last line — and the lines before it, «Open the session», «Stop»;
 - **“Done since you looked”**: its last summary and a reply box;
 - **a date**: its day, and the Record itself under it — the same view as in Spaces, with «Discuss».
 
 J / K or the arrows go down and up the list, E marks her row done — never while you type. On a screen narrower than
 1024 the list takes the screen, a row opens over it, and «All» comes back.
+
+### Tasks, Day, Week
+
+What to do, and when ([collections.md](collections.md#tasks)): one read for the three tabs (`GET /api/plan`), again
+once a minute and at once when `tasks` changes; every write is the owner's write of `tasks` through the views' editor —
+its «Undo» in the toast, its question when the record moved on —, and a task's title opens its record in the drawer.
+Days and times are the owner's zone's (the platform's, as the Router last told it).
+
+- **Tasks**: «By when» or «By goal»; a box that adds a task by its title; **Needs you** — a person's ask the digest
+  carries, or a reminder of the next seven days, that no open task names yet, each with «Make it a task»; **To plan** —
+  the open tasks without a slot, the due soonest first; **Planned** — those with one, the soonest first; **Done today**.
+  A row: the circle that closes it (or opens it again), its title, its goal, how long, by when — red once that day has
+  passed —, where it came from, its slot, and «Plan» («Move» once planned).
+- **«Plan»**: how long (15, 30, 60, 90 min) and a day of the next seven, each with the first free start of its hours —
+  17–23 on a weekday, 10–23 at the weekend —, clear of what keeps him busy and of the slots already there; or an exact
+  time, which is his and stays (`locked`); «Take off the day».
+- **Day**: a strip of seven days, each with its planned time (amber) or its free hours; «X planned of Y free in your
+  hours» with the split by goal; the day in order — the calendar's meetings (a dashed edge for free time), the tasks in
+  their slots, the reminders at their time, and the free stretches of its hours, onto which a task is dragged to start
+  there (`locked`). The whole-day events are tags by the day's title; a busy window older than 30 minutes says how old.
+  At the right (below, on a narrow screen): Needs you, and To plan — dragged from there, or planned by «Plan».
+- **Week**: seven columns from today, each with its load (planned of free), its whole-day events, its meetings, tasks
+  and reminders in order; a task dragged to another day keeps its time of day there and becomes the owner's; above
+  them the week's planned time by goal. Columns keep 10rem and scroll sideways when the screen has no room for seven.
+
+Without the collection the tabs say how it is set up. Dragging is the mouse's; on a touch screen «Plan» and «Move» do it.
 
 ### The look
 

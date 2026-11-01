@@ -37,6 +37,7 @@ BACKFILL_DAYS = 30       # the first sync of a mailbox takes the letters of this
 CALENDAR_BACK_DAYS = 30  # the first sync of a calendar takes events from this many days back on
 BOXES = ("INBOX", "SENT")  # what is collected: letters to the owner and his own; Spam and drafts are not
 TEXT = {"summary": 300, "location": 300, "description": 4000}  # an event's own text kept, at most
+PRIVATE_KEYS, PRIVATE_CHARS = 8, 200  # an event's private properties kept: this many, each this long at most
 
 
 class State:
@@ -174,15 +175,23 @@ async def sync_mail(state: State, account: google.Google, now: float) -> int:
 # --- Calendar ------------------------------------------------------------------------------------------------------
 
 def brief(event: dict) -> dict:
-    """An event as it is kept and handed on: its times, its own text cut, who invited whom, and the owner's answer."""
+    """An event as it is kept and handed on: its times, its own text cut, who invited whom, and the owner's answer —
+    and what the busy window and the tasks' calendar need of it: whether it keeps him busy (`transparency`), its kind
+    (`eventType`: a focus block, out of office), and the private properties an app set on it (`private`, small
+    strings only: the tasks' own mark of the task an event is)."""
     attendees = [a for a in event.get("attendees") or [] if isinstance(a, dict)]
     me = next((a for a in attendees if a.get("self")), {})
     organizer = event.get("organizer") or {}
+    private = (event.get("extendedProperties") or {}).get("private") or {}
     kept = {"id": str(event.get("id", "")), "status": str(event.get("status") or "confirmed"),
             "start": event.get("start") or {}, "end": event.get("end") or {}, "updated": str(event.get("updated", "")),
             "organizer": str(organizer.get("email") or ""), "mine": bool(organizer.get("self")),
             "answer": str(me.get("responseStatus") or ""), "attendees": len(attendees),
-            "recurring": bool(event.get("recurrence") or event.get("recurringEventId"))}
+            "recurring": bool(event.get("recurrence") or event.get("recurringEventId")),
+            "transparency": "transparent" if event.get("transparency") == "transparent" else "opaque",
+            "eventType": str(event.get("eventType") or "default")[:40],
+            "private": {str(k)[:PRIVATE_CHARS]: str(v)[:PRIVATE_CHARS] for k, v in list(private.items())[:PRIVATE_KEYS]}
+            if isinstance(private, dict) else {}}
     for field, cap in TEXT.items():
         kept[field] = str(event.get(field) or "")[:cap]
     return kept
@@ -246,6 +255,7 @@ async def agenda(accounts: list[google.Google], start: float, end: float) -> tup
             for calendar in await account.calendars():
                 for event in await account.agenda(str(calendar.get("id", "")), start, end):
                     found.append({**brief(event), "account": account.key.account,
+                                  "calendar": str(calendar.get("id", "")),
                                   "calendar_name": str(calendar.get("summary") or "")[:100]})
         except google.GoogleError as exc:
             failed.append(f"{account.key.account}: {'needs a new sign-in' if isinstance(exc, google.InvalidGrant) else exc}")

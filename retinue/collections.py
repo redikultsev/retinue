@@ -134,15 +134,16 @@ NAME = re.compile(r"[a-z][a-z0-9_]{0,39}")      # a collection's name, and a fie
 ENUM_VALUE = re.compile(r"[a-z][a-z0-9_]{0,31}")
 SPACE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")  # as spaces.py names a Space
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z")  # a moment in UTC: 2026-11-04T17:30:00Z
 ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 ACTOR = re.compile(r"owner|assistant|session:[A-Za-z0-9_-]{1,64}|mac:[a-z0-9][a-z0-9_-]{0,39}/[A-Za-z0-9_-]{1,64}"
                    r"|code:[a-z][a-z0-9_-]{0,39}|import:[0-9A-HJKMNP-TV-Z]{26}|define:[1-9][0-9]{0,8}")
-VIA = ("screen", "session", "mac", "assistant", "mail", "import", "define")
+VIA = ("screen", "session", "mac", "assistant", "mail", "code", "import", "define")
 SRC = re.compile(r"(?:mail|tg|owner_words|cal|file|record|web):\S{1,1000}")
 LABEL = re.compile(r"[a-z][a-z0-9_]{0,31}")      # a mark of foreign text the writer read (core.FOREIGN's keys)
 TYPES = {  # each type, and the keys its field takes beside `type`, `required` and `index`
-    "text": (), "int": (), "enum": ("values", "labels"), "date": (), "bool": (), "ref": ("to",),
+    "text": (), "int": (), "enum": ("values", "labels"), "date": (), "instant": (), "bool": (), "ref": ("to",),
 }
 OP_KEYS = {  # each operation of `apply`, and the keys it takes
     "add": {"op", "fields", "as_of", "src", "distinct"},
@@ -306,6 +307,18 @@ def _date(value: object) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _instant(value: object) -> str | None:
+    """A moment in UTC as it is kept — `YYYY-MM-DDTHH:MM:SSZ`, seconds always written, so that the kept strings sort as
+    the moments do — or None when it is not one."""
+    if not isinstance(value, str) or not INSTANT.fullmatch(value):
+        return None
+    try:
+        moment = datetime.datetime.strptime(value[:-1] if len(value) == 20 else value[:-1] + ":00", "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _json(value: object) -> str | None:
@@ -1294,6 +1307,11 @@ class Collections:
         elif kind == "date":
             if not _date(value):
                 raise Rejected(f"{name!r} is a date, YYYY-MM-DD: not {value!r}")
+        elif kind == "instant":
+            kept = _instant(value)
+            if kept is None:
+                raise Rejected(f"{name!r} is a moment in UTC, YYYY-MM-DDTHH:MM:SSZ: not {value!r}")
+            value = kept
         elif kind == "bool":
             if type(value) is not bool:
                 raise Rejected(f"{name!r} is true or false: not {value!r}")
@@ -1784,8 +1802,14 @@ class Collections:
                 raise Rejected(f"in takes a list of 1 to {IN_MAX} values")
             return (f"{_path(name)} IN ({', '.join('?' * len(value))})",
                     [self._value(name, spec, v, probe=True) for v in value])
+        if spec["type"] == "instant":
+            kept = [_instant(v) for v in value] if isinstance(value, list) and len(value) == 2 else [None]
+            if None in kept or kept[0] > kept[1]:
+                raise Rejected("between takes [first, last], two moments YYYY-MM-DDTHH:MM:SSZ, the first not after "
+                               "the last")
+            return f"{_path(name)} BETWEEN ? AND ?", kept
         if spec["type"] != "date":
-            raise Rejected(f"between is for dates: {name!r} is a {spec['type']}")
+            raise Rejected(f"between is for dates and moments: {name!r} is a {spec['type']}")
         if not isinstance(value, list) or len(value) != 2 or not all(map(_date, value)) or value[0] > value[1]:
             raise Rejected("between takes [first, last], two dates YYYY-MM-DD, the first not after the last")
         return f"{_path(name)} BETWEEN ? AND ?", list(value)

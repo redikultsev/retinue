@@ -75,3 +75,19 @@ test("a message with a long unbroken run wraps inside the column", async ({ page
   );
   expect(outside, "bubbles wider than their column").toBe(0);
 });
+
+test("«Today»'s tasks, day and week open and fit, and a task plans from its menu", async ({ page }) => {
+  await login(page);
+  await page.goto("/today?tab=tasks");
+  await expect(page.getByText("Needs you").first()).toBeVisible();
+  await fits(page);
+  await page.goto("/today?tab=day");
+  await expect(page.getByText("Daily stand-up").first()).toBeVisible();
+  await fits(page);
+  await page.getByRole("button", { name: /^Plan: / }).first().click(); // the mock is shared by the widths: any left
+  await page.getByRole("menuitem", { name: /Tomorrow/ }).click();
+  await expect(page.getByText(/Planned: Tomorrow/)).toBeVisible();
+  await page.goto("/today?tab=week");
+  await expect(page.getByText("This week, by goal")).toBeVisible();
+  await fits(page);
+});

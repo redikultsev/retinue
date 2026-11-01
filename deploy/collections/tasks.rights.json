@@ -1,0 +1,66 @@
+{
+  "writers": {
+    "assistant": {
+      "add": true,
+      "set": [
+        "title",
+        "goal",
+        "due",
+        "minutes",
+        "notes",
+        "state",
+        "ask"
+      ],
+      "delete": false
+    },
+    "session": {
+      "add": true,
+      "set": [
+        "title",
+        "goal",
+        "due",
+        "minutes",
+        "notes",
+        "state"
+      ],
+      "delete": false
+    },
+    "mac": {
+      "add": true,
+      "set": [
+        "title",
+        "goal",
+        "due",
+        "minutes",
+        "notes",
+        "state"
+      ],
+      "delete": false
+    },
+    "code:plan": {
+      "add": false,
+      "set": [
+        "slot"
+      ],
+      "delete": false
+    },
+    "code:calsync": {
+      "add": false,
+      "set": [
+        "slot",
+        "locked"
+      ],
+      "delete": false
+    },
+    "code:waiting": {
+      "add": true,
+      "set": [
+        "title",
+        "state",
+        "ask",
+        "due"
+      ],
+      "delete": false
+    }
+  }
+}

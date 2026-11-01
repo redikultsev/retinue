@@ -88,10 +88,22 @@ export function valueText(value: unknown, spec?: FieldSpec, words: Record<string
   if (spec?.type === "ref" || (!spec && ULID.test(value))) return words[value] ?? "another record";
   if (spec?.type === "enum" || (!spec && /^[a-z][a-z0-9_]*$/.test(value))) return valueWords(value, spec?.labels);
   if (spec?.type === "date" || (!spec && /^\d{4}-\d{2}-\d{2}$/.test(value))) return day(value, now);
+  if (spec?.type === "instant" || (!spec && INSTANT.test(value))) return moment(value, now);
   return value;
 }
 
 const fieldWords = (name: string) => valueWords(name);
+
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+/** A moment in this device's own time: «21 Sep, 18:30». */
+function moment(value: string, now: Date): string {
+  const t = new Date(value);
+  if (Number.isNaN(t.getTime())) return value;
+  const hm = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+  const local = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  return `${day(local, now)}, ${hm}`;
+}
 
 /** What a change did, in a few words each: «Stage: Applied → Interview», «added», «deleted», «restored». A revert
  * says what it set back, and that it was one. */
@@ -153,7 +165,8 @@ export function addFields(given: Record<string, string | boolean>, fields: Recor
       continue;
     }
     if (typeof value !== "string" || value.trim() === "") continue;
-    out[name] = spec.type === "int" ? Number(value) : spec.type === "text" ? value.trim() : value;
+    out[name] = spec.type === "int" ? Number(value) : spec.type === "text" ? value.trim()
+      : spec.type === "instant" ? new Date(value).toISOString().replace(/\.\d{3}Z$/, "Z") : value;
   }
   return out;
 }

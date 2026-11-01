@@ -24,7 +24,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit
 
 import httpx
@@ -74,9 +74,10 @@ DETAIL_SPIN_S = 0.5          # the sheets' long call answered empty at once (an 
 DECIDE_HINT = "Decide with its card's buttons or in the app."
 STALE_PRESS = "The press did not apply: the list is out of date."
 FAILED_PRESS = "The press did not apply: a server error. Try again."
+STALE_TASK = "No task was made: the list is out of date, or the tasks collection is not set up yet."
 # `/wait`: what each row's icon is, by where it came from.
 ICONS = {"question": "❓", "approval": "⚠️", "courier": "📦", "session": "💬", "letter": "✉️", "chat": "💬",
-         "draft": "📝", "deadline": "⏳", "base": "🗂", "push": "⬆️", "proposal": "🔀",
+         "draft": "📝", "deadline": "⏳", "reminder": "⏰", "base": "🗂", "push": "⬆️", "proposal": "🔀",
          "collection_proposal": "🗃"}
 SPHERES = "platform.spheres"  # the router's kv: the platform's spheres as it last named them, as JSON
 SPHERES_EVERY_S = 600        # how often the pump asks the platform for them again (a restart of it may change them)
@@ -149,6 +150,10 @@ class PlatformBridge:
         self.counts: Callable[[float], dict] | None = None  # its two numbers: closed today, run out in the week
         # A press on a row of it in the app (`waiting.press`): the row's token and the mark; False — not known.
         self.press_waiting: Callable[[str, str, float], bool] | None = None
+        # «Make it a task» on a row in the app (`tasks.Tasks.press`): its token or its id, now; False — not known.
+        self.task_waiting: Callable[[str, str, float], Awaitable[bool]] | None = None
+        # What each look at the digest does first (`tasks.Tasks.cycle`): the tasks against their rows, the calendar.
+        self.cycle: Callable[[float], Awaitable[None]] | None = None
         # A row's sheet the app asked for (`waiting.detail`): its id, its token, now; None — the router does not know it.
         self.detail_waiting: Callable[[str, str, float], dict | None] | None = None
         self._detailing: asyncio.Task | None = None
@@ -236,6 +241,8 @@ class PlatformBridge:
         if self.waiting is None or now - self._looked < WAITING_LOOK_S:
             return False
         self._looked = now
+        if self.cycle is not None:  # a task closed since the last look closes its row before the rows are read
+            await self.cycle(now)
         body = {"items": self.waiting(now), "bot": getattr(self.channel, "username", "") or ""}
         if self.chips is not None:
             body["chips"] = self.chips(now)
@@ -349,6 +356,14 @@ class PlatformBridge:
         the owner is told. Whatever fails here is logged, the owner is told it did not apply, and the note is done
         with: a press never holds back the cards behind it."""
         try:
+            if data.get("action") == "task":
+                if self.task_waiting is None:
+                    return
+                if await self.task_waiting(str(data.get("t") or ""), str(data.get("ref") or ""), time.time()):
+                    self.poke()
+                else:
+                    await self.say(STALE_TASK)
+                return
             if self.press_waiting is None:
                 return
             if self.press_waiting(str(data.get("t") or ""), str(data.get("action") or ""), time.time()):

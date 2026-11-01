@@ -25,7 +25,7 @@ import { ReadPage } from "@/pages/read";
 import { type SessionSearch, SessionPage } from "@/pages/session";
 import { SessionsPage } from "@/pages/sessions";
 import { RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
-import { TodayPage } from "@/pages/today";
+import { TodayPage, type TodayTab } from "@/pages/today";
 import { WeekPage } from "@/pages/week";
 import { visits } from "@/lib/today";
 
@@ -126,7 +126,22 @@ const shellRoute = createRoute({
   ),
 });
 
-const todayRoute = createRoute({ getParentRoute: () => shellRoute, path: "/today", component: TodayPage });
+const todayTab = (v: unknown): TodayTab | undefined => (v === "tasks" || v === "day" || v === "week" ? v : undefined);
+const todayRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: "/today",
+  validateSearch: (s: Record<string, unknown>): { tab?: TodayTab } => ({ tab: todayTab(s.tab) }),
+  component: function Today() {
+    const { tab } = todayRoute.useSearch();
+    const navigate = todayRoute.useNavigate();
+    return (
+      <TodayPage
+        tab={tab ?? "waiting"}
+        onTab={(t) => void navigate({ search: t === "waiting" ? {} : { tab: t }, replace: true })}
+      />
+    );
+  },
+});
 const sessionsRoute = createRoute({ getParentRoute: () => shellRoute, path: "/sessions", component: SessionsPage });
 // «＋»: a new task, where a session would be (pages/new.tsx).
 const newRoute = createRoute({ getParentRoute: () => shellRoute, path: "/new", component: () => <NewPage /> });

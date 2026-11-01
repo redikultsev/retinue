@@ -91,6 +91,9 @@ DIGEST_AFTER = "collections.digest_after"  # the newest change of the collection
 DIGEST_AT = "21:00"     # the evening list's time when there is no base to take it from (`MemoryConfig.digest_at`)
 DIGEST_CHANGES = 100    # the collections' changes one evening list names; the rest come in the next
 COLLECTIONS_S = 30      # a call of the assistant's to the platform's collections waits no longer
+QUIET_RULES = ("code:plan", "code:calsync")  # the owner's own moves carried out: never in the evening list
+TASKS = "tasks"         # the owner's tasks (docs/collections.md#tasks): closed by her only on his own word
+CLOSED = ("done", "dropped")
 VALUE_CHARS = 40        # a value in a line of the evening list
 MARKUP = re.compile(r"[*_`\[\]]")  # what a record's value could pass for Markdown with
 OPS = {"delete": "deleted", "restore": "restored"}
@@ -1035,7 +1038,8 @@ class Core:
         after = self.store.get(DIGEST_AFTER)
         try:
             data = await self.platform("collections/changes", {**({"after": after} if after else {"since": since}),
-                                                               "limit": DIGEST_CHANGES}, COLLECTIONS_S)
+                                                               "limit": DIGEST_CHANGES,
+                                                               "exclude_actors": list(QUIET_RULES)}, COLLECTIONS_S)
         except Exception as exc:  # noqa: BLE001 — the commits go out whatever the platform does
             log.warning("the collections' changes not read: %s", exc)
             return ["Collections: the platform did not answer — their changes come in the next list."], None
@@ -1707,6 +1711,10 @@ class Core:
                                "archive id: " + ", ".join(sorted(tree.asked)) + ".")
             # The archive names a calendar item `calendar:`, the collections' `src` `cal:`.
             arguments = {**arguments, "ops": [{**op, "src": re.sub(r"^calendar:", "cal:", op["src"])} for op in ops]}
+        if name == "apply" and arguments.get("collection") == TASKS and tree.foreign and _closes(arguments.get("ops")):
+            return False, ("Not done: a task is closed on the owner's own word, and this turn read someone else's "
+                           f"text ({', '.join(FOREIGN.get(f, f) for f in sorted(tree.foreign))}). Say in your answer "
+                           "that it looks done; he closes it with «Done», or propose it with collection_propose.")
         if isinstance(arguments.get("idem"), str):
             arguments = {**arguments, "idem": f"{turn.id}:{arguments['idem']}"}  # hers to name within this turn alone
         # The call's name is its arguments' within the turn: the same call made again — a retry — writes once.
@@ -1822,6 +1830,12 @@ def _shown_value(value, words: dict) -> str:
     said = words.get(value, value) if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     said = " ".join(MARKUP.sub("", str(said)).split())
     return said if len(said) <= VALUE_CHARS else said[:VALUE_CHARS - 1] + "…"
+
+
+def _closes(ops: object) -> bool:
+    """Whether apply's operations close a task: an add or a set that gives `state` done or dropped."""
+    return isinstance(ops, list) and any(isinstance(op, dict) and isinstance(op.get("fields"), dict)
+                                         and op["fields"].get("state") in CLOSED for op in ops)
 
 
 def _machine(actor: str | None) -> bool:

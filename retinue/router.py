@@ -30,6 +30,7 @@ from .memory import Memory
 from .proactive import Proactive
 from .protocol import Store
 from .speech import Scribe
+from .tasks import Tasks
 from .travel import TravelOps
 from .waiting import chips, counts, detail, digest, press
 
@@ -116,6 +117,9 @@ def main() -> None:
         bridge.counts = lambda now: counts(core, now)
         bridge.press_waiting = lambda token, action, now: press(core, token, action, now)
         bridge.detail_waiting = lambda ref, token, now: detail(core, ref, token, now)
+        tasks = Tasks(core)  # the tasks against their rows, «Make it a task», the busy window
+        bridge.task_waiting = tasks.press
+        bridge.cycle = tasks.cycle
         if mail:  # a mark by his Telegram button shows in the app at once too
             mail.changed = bridge.poke
     if bridge and pages:  # the owner's pages, for the face's «Read»

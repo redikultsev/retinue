@@ -1,0 +1,133 @@
+{
+  "space": "home",
+  "form": {
+    "fields": {
+      "title": {
+        "type": "text",
+        "required": true
+      },
+      "goal": {
+        "type": "enum",
+        "values": [
+          "work",
+          "home",
+          "health",
+          "study"
+        ],
+        "labels": {
+          "work": "Work",
+          "home": "Home",
+          "health": "Health",
+          "study": "Study"
+        }
+      },
+      "state": {
+        "type": "enum",
+        "values": [
+          "open",
+          "done",
+          "dropped"
+        ],
+        "required": true,
+        "index": true,
+        "labels": {
+          "open": "Open",
+          "done": "Done",
+          "dropped": "Dropped"
+        }
+      },
+      "due": {
+        "type": "date"
+      },
+      "minutes": {
+        "type": "int"
+      },
+      "slot": {
+        "type": "instant",
+        "index": true
+      },
+      "locked": {
+        "type": "bool"
+      },
+      "ask": {
+        "type": "text",
+        "index": true,
+        "hide": true
+      },
+      "notes": {
+        "type": "text"
+      }
+    }
+  },
+  "views": [
+    {
+      "name": "to_plan",
+      "kind": "queue",
+      "title": "To plan",
+      "mark": "act",
+      "filter": [
+        {
+          "field": "state",
+          "op": "eq",
+          "value": "open"
+        },
+        {
+          "field": "slot",
+          "op": "empty"
+        }
+      ],
+      "fields": [
+        "title",
+        "goal",
+        "due",
+        "minutes"
+      ],
+      "done": {
+        "field": "state",
+        "value": "done",
+        "label": "Done"
+      },
+      "add": {
+        "label": "Add a task",
+        "fields": [
+          "title",
+          "goal",
+          "due",
+          "minutes"
+        ],
+        "values": {
+          "state": "open"
+        }
+      }
+    },
+    {
+      "name": "due",
+      "kind": "agenda",
+      "title": "Due this week",
+      "date": "due",
+      "days": 7,
+      "filter": [
+        {
+          "field": "state",
+          "op": "eq",
+          "value": "open"
+        }
+      ],
+      "fields": [
+        "title",
+        "goal"
+      ]
+    },
+    {
+      "name": "done_week",
+      "kind": "stat",
+      "title": "Done this week",
+      "count": "changed",
+      "field": "state",
+      "to": [
+        "done"
+      ],
+      "window": "week"
+    }
+  ]
+}

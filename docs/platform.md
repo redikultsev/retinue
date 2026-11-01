@@ -128,6 +128,9 @@ What the router counts (`retinue/waiting.py`), each by a rule it already had:
   its day — the heartbeat's own push rule — so one further off has a `since` ahead: the platform keeps it out of «Waiting
   for you» (and `/wait`) until then and shows it only under «Deadlines». It also carries its day (`when`, `YYYY-MM-DD`) and,
   when the path is a plain one, the Record's path in the base (`path`) — never the Record's text.
+- **reminder** — your reminders of the next 14 days, at most 20, the nearest first: `id` `reminder:<n>`, the text masked as
+  her words are, `since` the moment it fires, its day (`when`) and its `repeat`. No queue shows one — it fires in
+  Telegram — but the face's Day and Week show it at its time, with «Make it a task» (`{ref, action: "task"}`).
 
 The digest is minimal: `{items: [{id, kind, who, title, since, sphere?, t?, when?, path?}], bot, chips?,
 closed_today?, expired_week?}` — an id made with an HMAC under the
@@ -175,6 +178,14 @@ most, 8 at once; whatever ends it, the face going away too, forgets it. The shee
 text masked as the digest's title is (`waiting.masked`), a link to the Gmail thread or the person's @username, and the
 owner's own mailbox — never the letter's text, its quote or the sender's address. It is held in the platform's memory
 only while the face's request waits: never written, never logged.
+
+**The busy window.** Beside the digest the router pushes your calendar of today and the next 14 days, read live from
+the collector every 10 minutes (`tasks.Tasks.calendar`): `POST /owner/calendar {events: [{start, end, title, all_day,
+busy}], at, failed}` — each occurrence's moments, its title (cut to 100), whether it is the whole day, and whether it keeps
+you busy (not when it is free time, declined or the whole day). The platform checks it (`plan.clean_calendar`: at most
+400, an end not before its start, nothing further than 40 days) and keeps the last one whole; the face reads it with the
+tasks (`GET /api/plan`), and a window older than 30 minutes is said to be old, never shown as a free day. The titles are
+for your screen: no agent reads them here.
 
 The same push carries the **status chips** (`waiting.chips`, from `Pages.chips`): `[{key, text, level}]`,
 `key` one of `health`, `backup`, `limit`, `build` at most once each, `level` `ok`, `warn` or `bad`, the text folded and

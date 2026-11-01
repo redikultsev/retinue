@@ -50,10 +50,14 @@ from .pages import NEEDS, midnight, named, plural
 from .mail import ASKS, MARKS, ask_row, later_until
 from .outbox import LIVE
 from .proactive import FIELDS, PUSH_DAYS
+from .scheduler import REPEATS
 
 DAY = 86400
 URGENCY = {need: n for n, need in enumerate(ASKS)}
 BASE_WHO = "The Base"        # a deadline's row: a Record's date, no person
+REMINDER_WHO = "Reminder"    # a reminder's row: the owner's own words, set through her
+REMINDER_DAYS = 14           # reminders this far ahead go in the digest…
+REMINDERS_SHOWN = 20         # …this many at most
 TEXT_CHARS = 120             # a Record's title
 SOON_DAYS = 7                # «Deadlines» on the face's «Today»: a Record's date this many days ahead at most
 SAID_CHARS = 80              # her words about somebody's message: a hint of what it is, not what it says
@@ -113,11 +117,31 @@ def digest(core, now: float) -> list[dict]:
     shown = {d.pop("_reply") for d in drafts} - {""}  # a letter whose draft waits is that draft's row
     people = _people(core, now, shown)
     seqs = {row["t"]: row.pop("_seqs") for row in people if "t" in row}
-    rows = (drafts + people + _deadlines(core, now))[:DIGEST_ITEMS]
+    rows = (drafts + people + _deadlines(core, now) + _reminders(core, now))[:DIGEST_ITEMS]
     while rows and len(json.dumps({"items": rows}, ensure_ascii=False).encode()) > DIGEST_BYTES - BYTES_ROOM:
         rows.pop()
     _remember(core, {row["t"]: seqs[row["t"]] for row in rows if "t" in row}, now)
     return rows
+
+
+def rows(core, now: float) -> dict[str, dict]:
+    """Every person's row the last ASKS_LOOK_DAYS knew, by its digest id: `{state, seqs, title, kind}` — `open` while
+    an item under it still asks, `later` while one waits out his «Tomorrow», `closed` once every one was closed by his
+    press or by what code saw him do, `expired` when they ran out. The ids are the digest's own (`_people`), so a task
+    names its row by the id the app showed it under (`tasks`)."""
+    if not core.mail:
+        return {}
+    rank = {"open": 0, "later": 1, "closed": 2, "expired": 3}
+    out: dict[str, dict] = {}
+    for item, state, _ in core.mail.store.ask_states(now, _sent(core)):
+        card, chat = item["card"] or {}, item["source"] == "telegram"
+        row_id = _id(core, "chat" if chat else "letter", ask_row(item))
+        row = out.setdefault(row_id, {"state": state, "seqs": [], "kind": "chat" if chat else "letter",
+                                      "title": f"{NEEDS[card.get('needs_now') or 'reply']}: {said(_judged(item))}"})
+        row["seqs"].append(item["seq"])
+        if rank[state] < rank[row["state"]]:
+            row["state"] = state
+    return out
 
 
 def counts(core, now: float) -> dict:
@@ -333,6 +357,25 @@ def _deadlines(core, now: float) -> list[dict]:
                      "since": midnight(item.day - timedelta(days=PUSH_DAYS), core.tz),
                      "sphere": sphere if SPHERE.fullmatch(sphere) else None, "when": item.day.isoformat(),
                      **({"path": item.path} if RECORD.fullmatch(item.path) else {})})
+    return rows
+
+
+def _reminders(core, now: float) -> list[dict]:
+    """The owner's reminders of the next REMINDER_DAYS, the nearest first, at most REMINDERS_SHOWN: the face's day and
+    week show them at their time, as a calendar does, and each can become a task (`tasks.press`). Its words masked as
+    hers are, its moment as `since`. The queue never shows one (`feed.Feed.rows`): it fires in Telegram, and a fired one
+    is gone from here."""
+    jobs = getattr(core, "jobs", None)
+    if jobs is None:
+        return []
+    rows = []
+    for job in jobs.reminders():
+        if job.due > now + REMINDER_DAYS * DAY or len(rows) == REMINDERS_SHOWN:
+            break
+        rows.append({"id": f"reminder:{job.id}", "kind": "reminder", "who": REMINDER_WHO, "title": said(job.text),
+                     "since": float(job.due), "sphere": None,
+                     "when": clock.local(job.due, core.tz).date().isoformat(),
+                     **({"repeat": job.data["repeat"]} if job.data.get("repeat") in REPEATS else {})})
     return rows
 
 

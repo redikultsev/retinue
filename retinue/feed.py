@@ -22,8 +22,10 @@ chat: sending and deciding stay in Telegram, where an outward action is a button
 be closed in the face — «Done», «Not a task», «Tomorrow», «Undo»: the press goes back to the router as a note by its
 token (`waiting-press`), and only the router knows what the token names. Beside the items, two counts: what closed
 today, what ran out unmarked in the week. A deadline whose time has not come yet (`since`
-ahead) is no one's queue: the face shows it only under «Deadlines». The same push carries the status chips
-(`chips`: the backup, the limit, the pages' build), for the face's «Today».
+ahead) is no one's queue: the face shows it only under «Deadlines». A reminder (its day `when`, its `repeat`) is no
+queue's either: it fires in Telegram, and the face shows it at its time on the day and the week, with «Make it a
+task» — a press that goes back as the same note (`waiting-press`, action `task`, by its id). The same push carries the
+status chips (`chips`: the backup, the limit, the pages' build), for the face's «Today».
 """
 
 from __future__ import annotations
@@ -55,9 +57,13 @@ PROPOSAL_HINT = "Start it or set it aside in the app."
 CPROPOSAL_HINT = "Apply it or dismiss it in the app."
 
 # The digest: what the router may push, and nothing more.
-DIGEST_KINDS = ("letter", "chat", "draft", "deadline")
+DIGEST_KINDS = ("letter", "chat", "draft", "deadline", "reminder")
 DIGEST_KEYS = {"id", "kind", "who", "title", "since", "sphere"}
 DEADLINE_KEYS = {"when", "path"}  # a deadline's own, both optional: its day and its Record's path in the base
+REMINDER_KEYS = {"when", "repeat"}  # a reminder's own: its day, and how it repeats when it does
+REMINDER_ID = re.compile(r"reminder:\d{1,12}")
+REPEATS = ("daily", "weekdays", "weekly", "monthly")
+TASK_PRESS = "task"         # «Make it a task» on a person's row (by `t`) or a reminder's (by `ref`)
 TOKEN = re.compile(r"[0-9a-f]{32}")  # a person's row's `t`: what a press in the app names the row by (`waiting`)
 PRESSES = ("done", "dismissed", "later", "open")  # «Done», «Not a task», «Tomorrow», «Undo»
 COUNTS = ("closed_today", "expired_week")  # the digest's two numbers
@@ -120,8 +126,8 @@ def clean(body: object, now: float) -> tuple[list[dict], str]:
     items, seen = [], set()
     for n, item in enumerate(body["items"]):
         kind = item.get("kind") if isinstance(item, dict) else None
-        allowed = DIGEST_KEYS | DEADLINE_KEYS if kind == "deadline" else \
-            DIGEST_KEYS | {"t"} if kind in ("letter", "chat") else DIGEST_KEYS
+        allowed = DIGEST_KEYS | DEADLINE_KEYS if kind == "deadline" else DIGEST_KEYS | REMINDER_KEYS \
+            if kind == "reminder" else DIGEST_KEYS | {"t"} if kind in ("letter", "chat") else DIGEST_KEYS
         if not isinstance(item, dict) or not allowed >= set(item) or not DIGEST_KEYS - {"sphere"} <= set(item):
             raise Refused(f"items[{n}]: wrong fields")
         if not isinstance(item["id"], str) or not DIGEST_ID.fullmatch(item["id"]) or item["id"] in seen:
@@ -138,10 +144,13 @@ def clean(body: object, now: float) -> tuple[list[dict], str]:
             raise Refused(f"items[{n}]: who and title must be strings")
         if "t" in item and (not isinstance(item["t"], str) or not TOKEN.fullmatch(item["t"])):
             raise Refused(f"items[{n}].t: not a token")
+        if kind == "reminder" and (not REMINDER_ID.fullmatch(item["id"]) or item.get("repeat", "daily") not in REPEATS):
+            raise Refused(f"items[{n}]: not a reminder's id or repeat")
         seen.add(item["id"])
         items.append({"id": item["id"], "kind": item["kind"], "who": _text(item["who"], WHO_CHARS),
                       "title": _text(item["title"], TITLE_CHARS), "since": float(since), "sphere": sphere,
-                      **({"t": item["t"]} if "t" in item else {}), **_deadline(item, n)})
+                      **({"t": item["t"]} if "t" in item else {}),
+                      **({"repeat": item["repeat"]} if "repeat" in item else {}), **_deadline(item, n)})
     return items, bot
 
 
@@ -491,7 +500,8 @@ class Feed:
                              "session": None, "track": None, **self._sphere(i.get("sphere")), "title": i["who"],
                              "since": i["since"], "essence": i["title"], "ref": i["id"],
                              **({"t": i["t"]} if i.get("t") else {})}
-                            for i in items if i["since"] <= now]  # a deadline days ahead waits under «Deadlines» only
+                            # a deadline days ahead waits under «Deadlines» only; a reminder is the day's, not a queue's
+                            for i in items if i["since"] <= now and i["kind"] != "reminder"]
         return [row for action, _ in ACTIONS for row in out[action]]
 
     def _row(self, key: str, action: str, source: str, session: dict, since: float, essence: str) -> dict:

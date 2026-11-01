@@ -158,7 +158,7 @@ export interface OneView extends Moment {
 // --- writing (docs/collections.md#from-the-screen) ------------------------------------------------------------------
 
 export interface FieldSpec {
-  type: "text" | "int" | "enum" | "date" | "bool" | "ref";
+  type: "text" | "int" | "enum" | "date" | "instant" | "bool" | "ref";
   values?: string[];
   /** An enum's words for some of its values. */
   labels?: Record<string, string>;

@@ -581,6 +581,11 @@ class MailStore:
         draft answered, and when it went (`OutboxStore.answered`)."""
         return [item for item, state, _ in self._asks(now, sent or {}) if state == "open"]
 
+    def ask_states(self, now: float, sent: dict[str, float] | None = None) -> list[tuple[dict, str, float]]:
+        """Every item that asked the owner in ASKS_LOOK_DAYS with its state read now — open, later, closed, expired —
+        and when it became so: what the tasks' reconciliation reads a row by (`tasks.reconcile`)."""
+        return list(self._asks(now, sent or {}))
+
     def ask_counts(self, now: float, closed_since: float, expired_since: float,
                    sent: dict[str, float] | None = None) -> tuple[int, int]:
         """How many rows of «Waiting for you» (`ask_row`: a person and an ask) had an ask closed since

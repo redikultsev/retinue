@@ -93,6 +93,7 @@ terminal (an agent's way to propose one comes later), and a `define` that change
 | `int` | a whole JSON number, within ±2^53 |
 | `enum` | one of the field's `values` (1–200, each lowercase letters, digits and `_`); `labels` gives some of them words for the screen, plain text of at most 40 characters: `{"pack_ready": "Ready to send"}` |
 | `date` | `YYYY-MM-DD`, a real date |
+| `instant` | a moment in UTC, `YYYY-MM-DDTHH:MM:SSZ` (`…THH:MMZ` is taken and kept with its seconds, so the kept strings sort as the moments do); a filter's `between` takes two of them. The views (`agenda`, `stat`, `chart`, a queue's `since`) go by `date` fields only: a screen that shows moments reads them itself |
 | `bool` | `true` or `false` |
 | `ref` | the id of a record, not deleted, in the collection the field's `to` names |
 
@@ -435,6 +436,9 @@ until the owner gives her some.
   app.” and its Space's link — a reply to her does not apply it.
 - **The platform away**: the tool answers “The platform did not answer — nothing was read or written”, and nothing
   waits to be sent again.
+- **The router's own code** writes as a rule, via `code` — never as her: `via code` is refused for any actor but a
+  `code:<rule>`, and a query by a rule via `code` answers its rows too (`answer`, `{rows, next}`), for code that
+  reads records rather than words.
 - **Upgrading an install.** Give her the grant — `collections: true` under the assistant in `router.yaml`, or run
   `deploy/setup.sh` again —, install `agents/assistant/CLAUDE.md` and `agent.yaml` again, rebuild the router's and the
   platform's images and restart them. Then give the class `assistant` its rights in each collection
@@ -443,8 +447,48 @@ until the owner gives her some.
 | Call (`/owner/…`, the router's token) | Body → answer |
 |---|---|
 | `collections/describe` · `query` · `apply` · `propose` | `{actor, via, model?, foreign, call, arguments}` → `{ok, text}`, always 200: a refusal is words for the model. An answer that shows records adds `foreign` (one someone else's text wrote); `describe` without a collection adds `writable`, `[{name, space, add, set}]`: what the writer may change, for the note of her judgement of mail |
-| `collections/changes` | `{after?, since?, limit?}` → `{changes, words, next}`: the assistant's and the rules' changes to records, oldest first, after the change_id `after` (else since the moment `since`), at most 200; each with its collection's `space`, its record's `title`, `reverted`, and for a revert `reverts_actor`, whose change it took back |
+| `collections/changes` | `{after?, since?, limit?, exclude_actors?}` → `{changes, words, next}`: the assistant's and the rules' changes to records, oldest first, after the change_id `after` (else since the moment `since`), at most 200, without the rules `exclude_actors` names (up to 8 `code:<rule>`; the evening list leaves out `code:plan` and `code:calsync`, the owner's own moves carried out); each with its collection's `space`, its record's `title`, `reverted`, and for a revert `reverts_actor`, whose change it took back |
 | `collections/revert` | `{change_id}` → `{ok, text}`: takes back that change, as `owner` via `assistant`, if the assistant or a rule made it |
+
+### Tasks
+
+`tasks` is the owner's one list of things to do — what the face's «Today» shows as Tasks, Day and Week
+([face.md](face.md#tasks-day-week)) — a collection like any other, defined and given its rights from the terminal
+(the files beside the deploy, `deploy/collections/tasks.json` and `tasks.rights.json`, with the goals made the
+owner's spheres):
+
+| Field | Type | |
+|---|---|---|
+| `title` | text, required | what to do |
+| `goal` | enum | the sphere it serves: its swatch and the split of the day's time |
+| `state` | enum `open`, `done`, `dropped`, indexed | |
+| `due` | date | the day it is due by; a time of day stays a reminder's |
+| `minutes` | int | how long it takes; 30 when not said |
+| `slot` | instant, indexed | when it is planned to start; none — not planned |
+| `locked` | bool | the owner put it there himself — dragged it, gave it an exact time: nothing moves it |
+| `ask` | text, indexed, hidden | the row of «Waiting for you» it came from — `letter:<id>`, `chat:<id>` (the digest's ids), `reminder:<id>` |
+| `notes` | text | |
+
+The rights the files give: the assistant adds and sets the title, goal, due, minutes, notes, state and ask — and
+closes a task only in a turn that read no one else's text (the router refuses it otherwise: a letter that says «done»
+is not the owner saying it); sessions and the Mac add and set the same but `ask`; `code:waiting` adds and sets the
+title, state, ask and due; `code:plan` sets the slot, `code:calsync` the slot and `locked` (both for the plan and the
+calendar to come); nobody but the owner deletes.
+
+**«Make it a task»** on a person's row of «Waiting for you», or on a reminder, is the owner's press in the app
+(`waiting-press`, action `task`): the router adds the task as `code:waiting`, titled with the row's own masked words, its
+`ask` the row's id (a reminder's: its day as `due`) — none when that row has an open task already. The reminder stays and
+fires as set.
+
+**A task and its row are kept in step by state** (`retinue/tasks.py`): at each look at the digest (every 30 s) the
+router reads the tasks that name a person's row and compares each pair with how it last left them (its kv
+`tasks.synced`). Whichever side moved carries the other — a task closed anywhere closes its row as «Done» would; a row
+closed by a press, an answer or a draft that went closes its task; either opened again («Undo») opens the other. At the
+first look at a pair, what is closed wins. Acting on what moved, not on what differs, lets «Undo» on either side stand. A
+reminder's task is its own: closing it leaves the reminder.
+
+Reminders that were tasks all along are made into tasks once, from the router's container: `python -m retinue.tasks
+from-reminders <id>… [--title <id>=<words>]`.
 
 ### The evening list
 

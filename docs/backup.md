@@ -148,3 +148,7 @@ sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compo
 ```
 
 Then write to the bot and ask about something from before the restore.
+
+With the platform on, a restore brings back the devices as the snapshot had them: a Mac revoked after it has a
+working token again. Run `retinue-platform collections device list` in the platform's container and revoke every
+device the owner had taken back since ([collections.md](collections.md#setting-up-a-mac)).

@@ -6,8 +6,8 @@ Built by code on every read from the platform's own rows — never a copy kept b
 
 - «Answer the question»: a question card (AskUserQuestion) shown and not answered;
 - «Decide»: an approval card shown, a courier card of the last day he has not closed («Done») nor written to its session
-  since, a session with Base files not committed yet («To the Base», `tobase`), and a sub-session a session proposed
-  («Start» / «Not now», `subs`);
+  since, a session with Base files not committed yet («To the Base», `tobase`), a sub-session a session proposed
+  («Start» / «Not now», `subs`), and a write to a collection a session proposed («Apply» / «Dismiss», `colltools`);
 - «Reply»: a session waiting for his message with no card shown;
 - «Read»: a session whose finished turn he has not read (the session's `unread`; nothing without it);
 - «From the assistant»: the assistant's digest.
@@ -53,6 +53,7 @@ BASE_HINT = "Press «To the Base» under its result or open it in the app."
 NOBODY_HINT = "They are on the «To the Base» card of any Base session, turned off: turn on the ones you want and commit."
 PUSH_HINT = "Press «Push» under its result or open it in the app."
 PROPOSAL_HINT = "Start it or set it aside in the app."
+CPROPOSAL_HINT = "Apply it or dismiss it in the app."
 
 # The digest: what the router may push, and nothing more.
 DIGEST_KINDS = ("letter", "chat", "draft", "deadline")
@@ -451,6 +452,20 @@ class Feed:
                 out["decide"].append({**self._row(f"proposal:{proposal['id']}", "decide", "proposal", session,
                                                   proposal["created"], f"Sub-session: {proposal['title']}"),
                                       "proposal": proposal, "hint": PROPOSAL_HINT})
+        colltools = getattr(self, "colltools", None)  # set by the platform: a write to a collection an agent proposed
+        for proposal in colltools.waiting() if colltools is not None else ():
+            n = len(proposal["changes"])
+            key, essence = f"cproposal:{proposal['id']}", (f"{proposal['collection']}: {n} change"
+                                                           f"{'' if n == 1 else 's'} proposed")
+            if (session := sessions.get(proposal["session"] or "")) is not None:
+                row = self._row(key, "decide", "collection_proposal", session, proposal["created"], essence)
+            elif proposal["session"] is None:  # the assistant's, a Mac's or a rule's: no session to name it by
+                row = {"key": key, "action": "decide", "source": "collection_proposal", "session": None,
+                       "track": None, **self._sphere(None), "title": _proposer(proposal["actor"]),
+                       "since": proposal["created"], "essence": essence, "ref": proposal["id"]}
+            else:
+                continue
+            out["decide"].append({**row, "collection_proposal": proposal, "hint": CPROPOSAL_HINT})
         tobase = getattr(self, "tobase", None)  # set by the platform; nobody's files are never left unseen
         if tobase is not None and (nobodys := tobase.nobodys()) and \
                 (carrier := sessions.get(tobase.carrier() or "")) is not None:
@@ -516,6 +531,17 @@ class Feed:
                   "session": r["session"], "approval": r["approval"]["id"] if r.get("approval") else None,
                   "card": r.get("card"), "where": r["sphere_title"] or r["track"] or "",
                   "title": r["title"], "since": r["since"], "essence": r["essence"],
-                  **({"hint": r["hint"]} if r.get("hint") else {})}
+                  **({"hint": r["hint"]} if r.get("hint") else {}),
+                  **({"space": r["collection_proposal"]["space"]} if r.get("collection_proposal") else {})}
                  for r in rows[:TELEGRAM_ROWS]]
         return {"count": len(rows), "rows": shown, "more": max(0, len(rows) - TELEGRAM_ROWS)}
+
+
+def _proposer(actor: str) -> str:
+    """Who proposed a write with no session behind it, as a row's title: the assistant, a Mac by its device's name,
+    or a rule by its name."""
+    if actor == "assistant":
+        return "Assistant"
+    if actor.startswith("mac:"):
+        return f"Mac {actor.removeprefix('mac:').split('/')[0]}"
+    return f"Rule {actor.removeprefix('code:')}"

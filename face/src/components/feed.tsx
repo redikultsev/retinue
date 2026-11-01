@@ -10,6 +10,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { BaseButton } from "@/components/base-card";
+import { CollectionProposalCard } from "@/components/collection-proposal-card";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
 import {
@@ -51,6 +52,7 @@ const ICONS: Record<string, (props: React.SVGProps<SVGSVGElement>) => React.Reac
   base: Database,
   push: GitBranch,
   proposal: Fork,
+  collection_proposal: Database,
 };
 /** A row's small actions: muted at rest, full contrast on the row's hover or focus; never hover-only (NN/g), and a
  * 44 px target on a touch screen (`hit`). */
@@ -70,6 +72,7 @@ const SOURCE_WORDS: Record<string, string> = {
   base: "To the Base",
   push: "Push",
   proposal: "proposed sub-session",
+  collection_proposal: "proposed write",
 };
 
 /** The card as the app knows it now: a press here or in Telegram may be newer than the feed's copy. */
@@ -190,7 +193,7 @@ function Row({ row, now, feed, onOpen }: { row: FeedRow; now: number; feed: Feed
           {row.source === "deadline" ? "" : waited(row.since, now)}
         </span>
       </span>
-      {row.essence && !row.approval && !row.proposal && <span className="line-clamp-2 text-sm break-words text-muted-foreground">{row.essence}</span>}
+      {row.essence && !row.approval && !row.proposal && !row.collection_proposal && <span className="line-clamp-2 text-sm break-words text-muted-foreground">{row.essence}</span>}
     </span>
   );
   return (
@@ -222,6 +225,9 @@ function Row({ row, now, feed, onOpen }: { row: FeedRow; now: number; feed: Feed
       </div>
       {row.approval && <CardAction approval={row.approval} essence={row.essence} />}
       {row.proposal && <ProposalCard proposal={row.proposal} onDecided={() => void feedSource.refresh()} />}
+      {row.collection_proposal && (
+        <CollectionProposalCard proposal={row.collection_proposal} onDecided={() => void feedSource.refresh()} />
+      )}
       {row.source === "base" && row.session && <BaseButton session={row.session} count={row.base ?? 0} />}
       {row.source === "push" && row.session && (
         <PushButton session={row.session} count={row.push ?? 0} repo={row.repos?.length === 1 ? undefined : row.repos?.[0]} />

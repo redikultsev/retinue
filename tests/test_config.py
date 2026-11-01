@@ -189,17 +189,15 @@ def test_the_router_holds_the_knowledge_base_when_the_config_says_so(tmp_path, m
 
 
 def test_the_owners_own_words_for_memory_load_from_router_yaml(tmp_path, monkeypatch):
-    """`location` and `tracker` come from the server's owner.yaml under `memory:` (docs/memory.md):
-    router.yaml takes them, and without them each keeps its neutral default."""
-    from retinue.pages import Tracker
+    """`location` comes from the server's owner.yaml under `memory:` (docs/memory.md): router.yaml takes it, and
+    without it the neutral default holds; the retired `tracker` stops the router."""
     from retinue.proactive import LOCATION, location_record
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     bare = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nmemory:\n  hub: /srv/hub\n").memory
-    assert (bare.location, bare.tracker) == ("", {})
+    assert bare.location == ""
     cfg = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nmemory:\n  hub: /srv/hub\n"
-                                 "  location: home/where.md\n"
-                                 "  tracker: {path: home/flats.md, title: Квартиры}\n").memory
+                                 "  location: home/where.md\n").memory
 
     class Memory:  # what the modules read: the memory's config
         pass
@@ -207,8 +205,26 @@ def test_the_owners_own_words_for_memory_load_from_router_yaml(tmp_path, monkeyp
     memory = Memory()
     memory.cfg = cfg
     assert location_record(memory) == "home/where.md" and location_record(Memory()) == LOCATION
-    tracker = Tracker.of(memory)
-    assert (tracker.path, tracker.title) == ("home/flats.md", "Квартиры")
+    with pytest.raises(TypeError):
+        load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nmemory:\n  tracker: {path: home/flats.md}\n")
+
+
+def test_the_weeks_numbers_are_stat_views_the_config_names_on_the_platform(tmp_path, monkeypatch):
+    """`proactive.week` names the `stat` views the router says each week, `<collection>/<view>`; they are the
+    platform's, so a config without it is refused, and so is anything but such names."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("RETINUE_PLATFORM_TOKEN", "p")
+    head = AGENT + "telegram:\n  owner_id: 42\n"
+    assert load(tmp_path, head).proactive.week == [], "none named: no numbers"
+    on = head + "platform_url: http://platform:9300\n"
+    cfg = load(tmp_path, on + "proactive:\n  week: [followups/done, deals/moved]\n")
+    assert cfg.proactive.week == ["followups/done", "deals/moved"]
+    for bad in ("followups", "[followups]", "[Followups/done]", "[followups/done/x]", "[followups/../done]",
+                "[" + ", ".join(f"c/v{n}" for n in range(9)) + "]"):
+        with pytest.raises(SystemExit):
+            load(tmp_path, on + f"proactive:\n  week: {bad}\n")
+    with pytest.raises(SystemExit, match="platform_url"):
+        load(tmp_path, head + "proactive:\n  week: [followups/done]\n")
 
 
 def test_the_router_reaches_the_mail_collector_with_its_token(tmp_path, monkeypatch):

@@ -3,7 +3,7 @@ gets a turn of the platform's own words when it is due and the session is free â
 
 from __future__ import annotations
 
-from retinue import followups, subs
+from retinue import colltools, followups, subs
 from test_subs import DEFERRED, SubsWorld, subs_scenario
 from test_platformd import short_wait  # noqa: F401 â€” the fixture is autouse
 
@@ -81,6 +81,11 @@ def test_limits_cancel_and_a_follow_up_turn_cannot_set_another(tmp_path):
         assert said == DEFERRED, "a sub-session asked for in a follow-up's turn is the owner's card, as from a report's"
         [card] = world.store.approvals(session=session, tool_use_id="t-start")
         assert card["why"] == subs.FROM_REPORT_CARD
+        said, error = await world.tool(session, colltools.APPLY, {"collection": "deals", "ops": [
+            {"op": "add", "fields": {"company": "Acme"}}]}, "t-apply")
+        assert said == DEFERRED, "a write to his collections in a follow-up's turn is his card too"
+        [card] = world.store.approvals(session=session, tool_use_id="t-apply")
+        assert card["why"] == colltools.FROM_MACHINE_CARD
     subs_scenario(tmp_path, body)
 
 

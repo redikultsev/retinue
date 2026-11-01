@@ -22,6 +22,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from urllib.parse import urlsplit
@@ -75,7 +76,8 @@ STALE_PRESS = "The press did not apply: the list is out of date."
 FAILED_PRESS = "The press did not apply: a server error. Try again."
 # `/wait`: what each row's icon is, by where it came from.
 ICONS = {"question": "❓", "approval": "⚠️", "courier": "📦", "session": "💬", "letter": "✉️", "chat": "💬",
-         "draft": "📝", "deadline": "⏳", "base": "🗂", "push": "⬆️", "proposal": "🔀"}
+         "draft": "📝", "deadline": "⏳", "base": "🗂", "push": "⬆️", "proposal": "🔀",
+         "collection_proposal": "🗃"}
 SPHERES = "platform.spheres"  # the router's kv: the platform's spheres as it last named them, as JSON
 SPHERES_EVERY_S = 600        # how often the pump asks the platform for them again (a restart of it may change them)
 
@@ -738,7 +740,8 @@ class PlatformBridge:
             decide = row.get("action") == "decide"
             if decide:
                 text += f"\n<i>{_tg_escape(str(row.get('hint') or DECIDE_HINT))}</i>"
-            where = f"/a/{row['approval']}" if isinstance(row.get("approval"), str) else f"/s/{session}"
+            where = f"/a/{row['approval']}" if isinstance(row.get("approval"), str) else \
+                f"/spaces/{row['space']}" if _space(row) else f"/s/{session}"
             keyboard = {"inline_keyboard": [[{"text": IN_APP, "web_app": {"url": f"{self.face_url}{where}"}}]]} \
                 if self.face_url else None
             native_id = await self.channel._message(text, keyboard=keyboard)
@@ -757,7 +760,12 @@ class PlatformBridge:
             since = row.get("since")
             waited = f" · {ago(now - since)}" if isinstance(since, (int, float)) and since <= now else ""
             where = f" ({row['where']})" if row.get("where") else ""
-            lines.append(f"- {row.get('title') or ''}{where}: {row.get('essence') or ''}{waited}")
+            line = f"- {row.get('title') or ''}{where}: {row.get('essence') or ''}{waited}"
+            if row.get("source") == "collection_proposal":  # hers to propose, his alone to apply: not a reply's
+                line += f". {row.get('hint') or ''}"
+                if _space(row) and self.face_url:
+                    line += f" {self.face_url}/spaces/{row['space']}"
+            lines.append(line)
         lines.append("Reply to this message — it goes to the assistant.")
         core = getattr(self.channel, "core", None)
         if core is not None:
@@ -854,6 +862,12 @@ def _echo(heard: str) -> str:
         out.append(piece)
         size += len(piece)
     return f"🎙 «{''.join(out)}»"
+
+
+def _space(row: dict) -> bool:
+    """Whether a `/wait` row is a proposal to a collection that names its Space: the screen its card lives on."""
+    return row.get("source") == "collection_proposal" and isinstance(row.get("space"), str) and \
+        bool(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", row["space"]))
 
 
 def _wait_line(row: dict, now: float, group: str) -> str:

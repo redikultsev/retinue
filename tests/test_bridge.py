@@ -810,6 +810,25 @@ class HerCore:
         return "event-1"
 
 
+def test_wait_opens_a_proposal_to_a_collection_on_its_space_and_says_hers_is_applied_in_the_app(tmp_path):
+    ch, bridge, platform = make(tmp_path)
+    ch.core = HerCore()
+    bridge.face_url = FACE
+    hint = "Apply it or dismiss it in the app."
+    rows = [{"action": "decide", "group": "Decide", "source": "collection_proposal", "session": "ab12cd34",
+             "approval": None, "card": None, "where": "", "title": "сделки", "since": 0.0,
+             "essence": "deals: 1 change proposed", "hint": hint, "space": "work"},
+            {"action": "decide", "group": "Decide", "source": "collection_proposal", "session": None, "approval": None,
+             "card": None, "where": "", "title": "Assistant", "since": None, "essence": "deals: 1 change proposed",
+             "hint": hint, "space": "work"}]
+    platform.answers = {"feed": {"count": 2, "rows": rows, "more": 0}}
+    asyncio.run(ch.on_platform_message({"text": "/wait"}, "/wait", "70", None))
+    [_, keyboard] = [p.get("reply_markup") for m, p, _ in ch.sent if m == "sendMessage"]
+    assert keyboard["inline_keyboard"][0][0]["web_app"]["url"] == f"{FACE}/spaces/work", "the card is on its Space"
+    [(said, _)] = ch.core.told
+    assert said.splitlines()[1] == f"- Assistant: deals: 1 change proposed. {hint} {FACE}/spaces/work"
+
+
 def test_wait_says_the_queue_one_replyable_message_per_session_row(tmp_path):
     ch, bridge, platform = make(tmp_path)
     ch.core = HerCore()

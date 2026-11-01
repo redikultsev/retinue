@@ -191,8 +191,17 @@ install -d -m 755 "$MEMORY_DIR" "$MEMORY_DIR/tree" "$MEMORY_DIR/git"
 [[ -f $MEMORY_DIR/policy.json ]] || install -m 644 "$REPO/deploy/memory/policy.example.json" "$MEMORY_DIR/policy.json"
 [[ -f $MEMORY_DIR/checkout.txt ]] || install -m 644 "$REPO/deploy/memory/checkout.example.txt" "$MEMORY_DIR/checkout.txt"
 [[ -f $MEMORY_DIR/sensitive.txt ]] || install -m 644 "$REPO/deploy/memory/sensitive.example.txt" "$MEMORY_DIR/sensitive.txt"
-if [[ -f $MEMORY_DIR/owner.yaml ]] && grep -vE '^([[:space:]]|#|$|(location|tracker):)' "$MEMORY_DIR/owner.yaml" >/dev/null; then
-  echo "$MEMORY_DIR/owner.yaml: only the keys location and tracker go there (docs/memory.md)" >&2; exit 1
+if [[ -f $MEMORY_DIR/owner.yaml ]] && grep -vE '^([[:space:]]|#|$|(location|week):)' "$MEMORY_DIR/owner.yaml" >/dev/null; then
+  echo "$MEMORY_DIR/owner.yaml: only the keys location and week go there (docs/memory.md)" >&2; exit 1
+fi
+# owner.yaml's keys named by the regex $1, each with the lines under it: `location` goes under `memory:`, `week`
+# under `proactive:`
+owner_keys() {
+  [[ -f $MEMORY_DIR/owner.yaml ]] || return 0
+  sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$MEMORY_DIR/owner.yaml" | awk -v keys="^($1):" '/^[^[:space:]]/ { on = $0 ~ keys } on'
+}
+if [[ $PLATFORM_ON != 1 && -n $(owner_keys week) ]]; then
+  echo "$MEMORY_DIR/owner.yaml: week counts the platform's collections — run with PLATFORM=1 (docs/proactive.md)" >&2; exit 1
 fi
 SECRETS="$ROOT/secrets.env"
 [[ -f $SECRETS ]] || (umask 077; : > "$SECRETS")
@@ -234,6 +243,7 @@ agents:
     attachments: true # may fetch what the owner sent (#N) again through the bus
     trips: true       # may publish a trip page in the life hub (refused while there is no hub)
     drafts: true      # may propose a reply to a person; it leaves only by your «Send» (refused with no sender)
+    collections: true # may read and write your collections on the platform, as far as their rights say
     can_call: []      # no other agents at this stage
 YAML
   if [[ $TRAVEL_ON == 1 ]]; then
@@ -256,6 +266,10 @@ YAML
   fi
   if [[ $PLATFORM_ON == 1 ]]; then
     printf 'platform_url: %s\n' "$PLATFORM_URL"    # the lanes' sessions: their cards, your replies and presses
+    if [[ -n $(owner_keys week) ]]; then          # the week's numbers: your collections' stat views (docs/proactive.md)
+      printf 'proactive:\n'
+      owner_keys week | sed 's/^/  /'
+    fi
   fi
   if [[ $FACE_ON == 1 ]]; then
     printf 'face_url: https://%s\n' "$FACE_HOST"   # /app logs you in there; a card opens there as a Mini App
@@ -267,9 +281,7 @@ YAML
     printf '  sensitive:\n'                       # closed Spaces: a draft's card is louder when she read them
     sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e "s/^[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/    - '\1'/" \
       "$MEMORY_DIR/sensitive.txt"
-    if [[ -f $MEMORY_DIR/owner.yaml ]]; then        # your own words for what the code keeps generic (docs/memory.md)
-      sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' -e 's/^/  /' "$MEMORY_DIR/owner.yaml"
-    fi
+    owner_keys location | sed 's/^/  /'          # your own words for what the code keeps generic (docs/memory.md)
   fi
   if [[ -n $TELEGRAM_OWNER_ID ]]; then
     printf 'telegram:\n  owner_id: %s\n' "$TELEGRAM_OWNER_ID"

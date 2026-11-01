@@ -1,9 +1,9 @@
 """What the router says to the owner unasked, beyond his reminders: the zone that follows him, the deadlines in his
-base, the week of his tracker, a Mac that has not pushed, the base's health on Mondays, how the week of work went,
-and the assistant speaking first now and then.
+base, the week's numbers of his collections, a Mac that has not pushed, the base's health on Mondays, how the week of
+work went, and the assistant speaking first now and then.
 
 Everything here is counted by code. The heartbeat (`HEARTBEAT_S`) runs a checklist — a deadline three days off, a
-failed backup, nothing moved in the tracker by Thursday, a new zone in the base — and writes to the owner only when
+failed backup, the week's numbers still at zero by Thursday, a new zone in the base — and writes to the owner only when
 one of them needs him, in code's words, outside his quiet hours; nothing due, nothing said and no model run. The
 one model run is the assistant's own thought (`thought`): rare, random rather than by the clock, scaled by the
 owner's knob (`/initiative less|normal|more|off`), capped per day, and she may answer «—» to stay silent.
@@ -25,7 +25,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from . import clock
-from .pages import Tracker, front_matter
+from .pages import front_matter
 
 log = logging.getLogger("retinue.proactive")
 
@@ -36,7 +36,7 @@ PAST_DAYS = 30             # and past ones up to this age; older passed `stale_a
 SUMMARY_ITEMS = 15         # dates named in the summary at most; the rest are counted
 PUSH_DAYS = 3              # an `until` of a profile Record, or a `deadline`, is pushed this many days before
 MAC_STALE_DAYS = 3         # «Mac has not pushed for N days» past this
-NUDGE_AT = (3, 12)         # Thursday (Monday is 0), from 12:00 his time: nothing moved this week — one nudge
+NUDGE_AT = (3, 12)         # Thursday (Monday is 0), from 12:00 his time: the week's numbers at zero — one nudge
 TALKING_S = 2 * 3600       # he wrote to her this recently: she is in the conversation, no thought of her own
 BUSY_SHARE = 0.8           # the five-hour window used this much: no thought, the conversation needs what is left
 NATURES = ("knowledge", "profile", "journal", "artifacts")
@@ -48,7 +48,7 @@ SHOWCASE_LINES = 200       # a showcase longer than this is loaded whole into ev
 FOLDER_RECORDS = 30        # a folder with more Records than this is no longer seen at a glance: group it
 TASK_OLD_DAYS = 28         # an open Task older than this is named
 HEALTH_NAMED = 3           # Records named under each line of the base's health; the rest are counted
-STATS_TIMEOUT_S = 10.0     # the platform's tally for the weekly review waits no longer
+STATS_TIMEOUT_S = 10.0     # the platform's tally, its numbers and its zone wait no longer
 LINK = re.compile(r"\]\(([^)\s#]+\.md)(?:#[^)\s]*)?\)")  # a relative link to a Record or a showcase
 CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)  # an example in code is no link
 
@@ -258,12 +258,27 @@ def week_lines(stats: dict, runs: dict[str, int]) -> list[str]:
     return lines
 
 
-def counted_rows(text: str | None, tracker: Tracker) -> set[str]:
-    """The tracker's rows that reached a counted state, by their number (or item and detail when a row has none)."""
-    if not text:
-        return set()
-    return {row["n"] or f"{row['item']}|{row['detail']}" for row in tracker.rows(text)
-            if row["key"] in tracker.counted or row["status"].lower() in tracker.counted}
+def stat_title(stat: dict) -> str:
+    """A tile's title as a line to the owner shows it: plain, nothing Markdown would take for markup."""
+    from .core import _shown_value
+
+    return _shown_value(stat.get("title") or stat.get("name"), {})
+
+
+def number_said(stat: dict, last: bool = False) -> str:
+    """One of the week's numbers, a `stat` tile of the platform, in words: «Follow-ups done — 4 (goal 10)»; the week
+    before's with `last` — the tile's `previous`. A tile of no window is a count of now, and says so."""
+    from .core import _shown_value
+
+    title = stat_title(stat)
+    if "error" in stat:
+        return f"{title} — not counted: {_shown_value(stat['error'], {})}"
+    window = stat.get("window")
+    value = stat.get("value") if window is None or not last else stat.get("previous")
+    goal = f"goal {stat['goal']}" if stat.get("goal") is not None else ""
+    when = "now" if window is None else "" if window == "week" else f"{'last' if last else 'this'} {window}"
+    aside = ", ".join(filter(None, [goal, when]))
+    return f"{title} — {value}" + (f" ({aside})" if aside else "")
 
 
 def location_record(memory) -> str:
@@ -290,9 +305,13 @@ def _day(value) -> date | None:
 
 
 class Proactive:
-    def __init__(self, rand=random.random) -> None:
+    def __init__(self, rand=random.random, week: list[str] | None = None) -> None:
         self.core = None
         self.rand = rand                   # the dice of a thought; tests pass their own
+        self.week = list(week or ())       # the week's numbers: `<collection>/<view>` (`proactive.week` in router.yaml)
+        self.zone_told: str | None = None  # the zone the platform took last; told again until it takes the one in
+        #                                    force, and when its numbers come for a screen counted in another
+        self.zone_task: asyncio.Task | None = None
         self.beat = 0.0                    # when the checklist last ran
         self.task: asyncio.Task | None = None
         self.scanned: tuple[float, date, list[Deadline], int] | None = None  # when, for which day, what, how many old
@@ -300,7 +319,6 @@ class Proactive:
     def attach(self, core) -> None:
         """The zone the owner last named wins over router.yaml's: he said it after the operator wrote the file."""
         self.core = core
-        Tracker.of(core.memory)  # a tracker the config names wrongly stops the router here, not at Monday's count
         core.actions["zone"] = self._zone_pressed
         said = core.store.get(ZONE_KEY)
         if said and said != core.tz and clock.valid_zone(said):
@@ -318,6 +336,10 @@ class Proactive:
         core.store.set(ZONE_KEY, tz)
         core.store.set("proactive.location", tz)  # the base saying the same thing is not asked about again
         core._want_now(core.store.conversation(core.default_agent))  # her session's line with the owner's zone is old
+        try:  # the screen counts its weeks in it too
+            self.zone_task = asyncio.get_running_loop().create_task(self.tell_zone())
+        except RuntimeError:  # no loop to run it on: the next beat tells it
+            pass
         text = (f"The zone is now {tz}: it is {clock.stamp(now, tz)} there. The morning brief, the weekly review, the "
                 f"evening list and repeating reminders follow it")
         if kept:
@@ -348,6 +370,22 @@ class Proactive:
         core.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="zone", status=
                        "done" if ok else "rejected", input_chars=len(name), output_chars=len(text), channel="bus")
         return ok, text
+
+    async def tell_zone(self) -> None:
+        """The platform counts the screen's weeks and days in the router's zone (`POST /owner/zone`): told at the
+        first beat after a start and at once with every change; not taken — told again at the next beat."""
+        core = self.core
+        while core.platform is not None and self.zone_told != core.tz:
+            tz = core.tz
+            try:
+                said = await core.platform("zone", {"tz": tz}, STATS_TIMEOUT_S)
+            except Exception as exc:  # noqa: BLE001 — told again at the next beat
+                log.warning("the zone not told to the platform: %s", exc)
+                return
+            if not isinstance(said, dict) or said.get("tz") != tz:
+                log.warning("the platform did not take the zone %s: %s", tz, str(said)[:200])
+                return
+            self.zone_told = tz
 
     async def _zone_pressed(self, value: str) -> str:
         if not value or not clock.valid_zone(value):
@@ -409,20 +447,21 @@ class Proactive:
     async def heartbeat(self, now: float) -> list[str]:
         """The checklist. Returns what it said (for the tests and the log); nothing due — nothing, no model."""
         core = self.core
+        await self.tell_zone()
         local = clock.local(now, core.tz)
-        if core.memory and not core.store.get(SEEDED_KEY):
+        if not core.store.get(SEEDED_KEY):
             await self.seed(now)
         if quiet_at(local.hour, self.quiet()):
             return []
         plain, said = [], []
         if core.memory:
             items, _ = await self.deadlines(now)
-            plain += [self.pushes(items, local.date()), await self.nudge(now)]
+            plain.append(self.pushes(items, local.date()))
             if tz := self.location():
                 ask = f"In the Base ({location_record(core.memory)}) your zone is now {tz}. Change it?"
                 await core.tell_owner(ask, buttons=[_button(f"Yes, {tz}", tz), _button("No", "")])
                 said.append(ask)
-        plain.append(self.backup_alert(now))
+        plain += [await self.nudge(now), self.backup_alert(now)]
         for text in filter(None, plain):
             await core.tell_owner(text)
             said.append(text)
@@ -431,13 +470,15 @@ class Proactive:
         return said
 
     async def seed(self, now: float) -> None:
-        """The first heartbeat with the base takes stock and says nothing: every push already due counts as made (the
-        dates are in the next summary's «Deadlines»), and this week's Thursday nudge as spent once Thursday has come — a
-        deploy is not a reason for a burst of messages. Runs once, quiet hours or not."""
+        """The first heartbeat takes stock and says nothing: every push already due counts as made (the dates are in
+        the next summary's «Deadlines»), and this week's Thursday nudge as spent once Thursday has come — a deploy is
+        not a reason for a burst of messages. Runs once, quiet hours or not; a base connected later is not stocked
+        again."""
         core, local = self.core, clock.local(now, self.core.tz)
-        items, _ = await self.deadlines(now)
-        for key in self._due_pushes(items, local.date()):
-            core.store.set(key, "1")
+        if core.memory:
+            items, _ = await self.deadlines(now)
+            for key in self._due_pushes(items, local.date()):
+                core.store.set(key, "1")
         if (local.weekday(), local.hour) >= (NUDGE_AT[0], 0):
             core.store.set(f"proactive.nudged.{local:%G-W%V}", "1")
         core.store.set(SEEDED_KEY, local.date().isoformat())
@@ -505,80 +546,91 @@ class Proactive:
         core.store.set("proactive.backup", key)
         return f"Backup: {said}."
 
-    # --- the tracker's week -------------------------------------------------------------------------------------
+    # --- the week's numbers -----------------------------------------------------------------------------------
 
-    def week_start(self, now: float, back: int = 0) -> float:
-        local = clock.local(now, self.core.tz)
-        monday = (local - timedelta(days=local.weekday() + 7 * back)).replace(hour=0, minute=0, second=0,
-                                                                                microsecond=0)
-        return monday.timestamp()
+    async def week_stats(self) -> list[dict]:
+        """The week's numbers (`proactive.week`) as the platform counts its screen's tiles, in the router's zone — the
+        same code, so the same number. Raises when the platform does not answer within STATS_TIMEOUT_S or refuses."""
+        data = await self.core.platform("collections/stat", {"views": self.week, "tz": self.core.tz}, STATS_TIMEOUT_S)
+        if not isinstance(data, dict) or "error" in data or not isinstance(data.get("stats"), list):
+            raise ValueError(str(data.get("error") if isinstance(data, dict) else data)[:200])
+        if data.get("screen_tz") != self.core.tz:  # the platform's kv lost the zone: told again at the next beat
+            self.zone_told = None
+        return data["stats"]
 
-    def counted(self, since: float, until: float | None = None) -> tuple[int, str]:
-        """Tracker rows that reached a counted state (`Tracker.counted`) between two moments — a row's own date is
-        when it was added, not when it moved. Git only. Returns (N, goal)."""
-        memory = self.core.memory
-        tracker = Tracker.of(memory)
-        now_text = memory.file_at(tracker.path, until) if until else _read(Path(memory.tree) / tracker.path)
-        count = len(counted_rows(now_text, tracker) - counted_rows(memory.file_at(tracker.path, since), tracker))
-        head = front_matter(Path(memory.tree) / tracker.path) or {}
-        return count, str(head.get("weekly_goal") or "").strip()
-
-    async def week_line(self, since: float, until: float | None = None) -> str:
-        if not self.core.memory:
+    async def week_line(self, last: bool = False) -> str:
+        """«This week: Follow-ups done — 4 (goal 10); Inbound moved — 2.», or the week before (`last`). Nothing
+        when no numbers are named or there is no platform."""
+        if not self.week or self.core.platform is None:
             return ""
-        title = Tracker.of(self.core.memory).title
+        head = "Last week" if last else "This week"
         try:
-            count, goal = await asyncio.to_thread(self.counted, since, until)
-        except Exception:
-            log.exception("the tracker not counted")
-            return f"{title} for the week: not counted — the tracker could not be read."
-        return f"{title} for the week: {count} (goal {goal or 'not recorded: weekly_goal in the tracker header'})."
+            stats = await self.week_stats()
+        except Exception as exc:  # noqa: BLE001 — said in the line
+            log.warning("the week's numbers not counted: %s", exc)
+            return f"{head}: not counted — the platform did not answer."
+        return f"{head}: " + "; ".join(number_said(stat, last) for stat in stats) + "."
 
     async def nudge(self, now: float) -> str:
-        """Thursday from noon, nothing counted since Monday: one line, once a week; the knob «off» silences it."""
+        """Thursday from noon, the week's numbers that have a goal all at zero (every weekly number, when none has
+        one): one line, once a week; the knob «off» silences it. Not counted — asked again at the next beat."""
         local = clock.local(now, self.core.tz)
-        if (local.weekday(), local.hour) < NUDGE_AT or not LEVELS[self.level()].nudges:
+        if not self.week or self.core.platform is None or (local.weekday(), local.hour) < NUDGE_AT or \
+                not LEVELS[self.level()].nudges:
             return ""
         key = f"proactive.nudged.{local:%G-W%V}"
         if self.core.store.get(key):
             return ""
-        count, goal = await asyncio.to_thread(self.counted, self.week_start(now))
-        self.core.store.set(key, "1")
-        if count:
+        try:
+            stats = await self.week_stats()
+        except Exception as exc:  # noqa: BLE001 — the next beat asks again
+            log.warning("the week's numbers not counted for the nudge: %s", exc)
             return ""
-        title = Tracker.of(self.core.memory).title
-        return f"Thursday, and «{title}» has zero for the week" + (f" (goal {goal})" if goal else "") + ". One today?"
+        if stats and all("error" in s for s in stats):  # every name wrong — a typo in `proactive.week` — is not a week
+            log.warning("no number of proactive.week was counted, so no nudge: %s",
+                        "; ".join(f"{s.get('name')}: {s['error']}" for s in stats))
+            return ""
+        self.core.store.set(key, "1")
+        weekly = [s for s in stats if "error" not in s and s.get("window") == "week"]
+        aimed = [s for s in weekly if s.get("goal") is not None] or weekly
+        if not aimed or any(s.get("value") for s in aimed):
+            return ""
+        named = ", ".join(f"«{stat_title(s)}»" + (f" (goal {s['goal']})" if s.get("goal") is not None else "")
+                          for s in aimed)
+        return f"Thursday, and {named} {'is' if len(aimed) == 1 else 'are'} at zero for the week. One today?"
 
     # --- the morning summary and the weekly review -------------------------------------------------------------
 
     async def summary_lines(self, now: float) -> list[str]:
-        """Code's part of the morning summary, after her words: «Deadlines», on Monday the tracker's last week and the
-        base's health, a Mac that has not pushed. Empty without the base."""
+        """Code's part of the morning summary, after her words: «Deadlines», on Monday last week's numbers and the
+        base's health, a Mac that has not pushed, what was worse than the week. The base's lines only with the base,
+        the platform's only with the platform."""
         core = self.core
-        if not core.memory:
-            return []
         lines = []
-        try:
-            items, old = await self.deadlines(now)
-            today = clock.local(now, core.tz).date()
-            if items or old:
-                block = [f"Deadlines, {AHEAD_DAYS} days:", *(deadline_line(item, today) for item in items[:SUMMARY_ITEMS])]
-                if len(items) > SUMMARY_ITEMS:
-                    block.append(f"- and {len(items) - SUMMARY_ITEMS} more — on the hub's «Now» page")
-                if old:
-                    block.append(f"- and {old} more Knowledge {'Record' if old == 1 else 'Records'} overdue by more "
-                                 f"than {PAST_DAYS} days")
-                lines.append("\n".join(block))
-        except Exception:
-            log.exception("deadlines not read")
+        if core.memory:
+            try:
+                items, old = await self.deadlines(now)
+                today = clock.local(now, core.tz).date()
+                if items or old:
+                    block = [f"Deadlines, {AHEAD_DAYS} days:",
+                             *(deadline_line(item, today) for item in items[:SUMMARY_ITEMS])]
+                    if len(items) > SUMMARY_ITEMS:
+                        block.append(f"- and {len(items) - SUMMARY_ITEMS} more — on the hub's «Now» page")
+                    if old:
+                        block.append(f"- and {old} more Knowledge {'Record' if old == 1 else 'Records'} overdue by "
+                                     f"more than {PAST_DAYS} days")
+                    lines.append("\n".join(block))
+            except Exception:
+                log.exception("deadlines not read")
         if clock.local(now, core.tz).weekday() == 0:
-            lines.append(await self.week_line(self.week_start(now, back=1), self.week_start(now)))
+            lines.append(await self.week_line(last=True))
             try:  # once a week: the same list every morning would be read by nobody
-                if health := await asyncio.to_thread(base_health, core.memory.tree, clock.local(now, core.tz).date()):
+                if core.memory and (health := await asyncio.to_thread(base_health, core.memory.tree,
+                                                                       clock.local(now, core.tz).date())):
                     lines.append("\n".join(["The Base's health:", *health]))
             except Exception:
                 log.exception("the base's health not read")
-        if mac := await self.mac_line(now):
+        if core.memory and (mac := await self.mac_line(now)):
             lines.append(mac)
         if worse := await self.worse_lines(now):
             lines.append(worse)
@@ -619,8 +671,12 @@ class Proactive:
         return (f"Mac has not pushed for {days} {_days(days)}: its last commit in the hub is from "
                 f"{moment.day} {clock.MONTHS[moment.month - 1]}.")
 
-    async def weekly_line(self, now: float) -> str:
-        return await self.week_line(self.week_start(now))
+    async def weekly_line(self, now: float, due: float | None = None) -> str:
+        """The weekly review's numbers: this week's, at its end — the week it was due in: a review that runs late, the
+        router down over Sunday's evening, is of the week before once a new one has begun."""
+        tz = self.core.tz
+        late = due is not None and clock.local(now, tz).isocalendar()[:2] != clock.local(due, tz).isocalendar()[:2]
+        return await self.week_line(last=late)
 
     async def work_week(self, now: float) -> str:
         """«How the week went» for the weekly review: the platform's tally of its sessions and the assistant's own runs
@@ -721,9 +777,3 @@ def _button(label: str, value: str):
 
     return Button(label, "zone", value)
 
-
-def _read(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError:
-        return None

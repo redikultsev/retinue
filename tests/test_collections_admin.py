@@ -390,3 +390,35 @@ def test_the_platform_runs_the_command_on_the_file_beside_its_own(tmp_path, monk
     assert exit_.value.code == 0
     assert rows(tmp_path, "SELECT collection FROM schemas") == [("deals",)]
     assert not (tmp_path / "platform.sqlite").exists(), "the platform's own file is not opened"
+
+
+def test_a_device_is_added_with_its_token_shown_once_listed_and_revoked_without_a_question(tmp_path):
+    code, said = cli(tmp_path, "device", "add", "laptop", "--scope", "write")
+    token = said.splitlines()[-1]
+    assert code == 0 and "shown this once" in said and "[asked]" not in said
+    assert rows(tmp_path, "SELECT name, scope, revoked FROM devices") == [("laptop", "write", None)]
+    assert token not in str(rows(tmp_path, "SELECT * FROM devices")), "the file keeps only the token's SHA-256"
+    code, said = cli(tmp_path, "device", "add", "laptop", "--scope", "read")
+    assert code == 1 and "a name is given once" in said
+    code, said = cli(tmp_path, "device", "add", "Laptop!", "--scope", "read")
+    assert code == 1 and "a device's name" in said
+    with pytest.raises(SystemExit):
+        cli(tmp_path, "device", "add", "phone")  # a scope is always said: read, or write
+    code, said = cli(tmp_path, "device", "list")
+    assert code == 0 and said.startswith("laptop  write  added 1970-01-01 00:16 UTC  never wrote")
+
+    code, said = cli(tmp_path, "device", "revoke", "laptop", clock=2000.0)
+    assert code == 0 and said == "Revoked: laptop's token opens nothing now."
+    assert rows(tmp_path, "SELECT revoked FROM devices") == [(2000.0,)]
+    assert cli(tmp_path, "device", "revoke", "laptop") == (0, "laptop was revoked already.")
+    code, said = cli(tmp_path, "device", "revoke", "phone")
+    assert code == 1 and "there is no device 'phone'" in said
+    assert "REVOKED 1970-01-01 00:33 UTC" in cli(tmp_path, "device", "list")[1]
+
+    async def check() -> None:
+        store = Collections(str(tmp_path / "collections.sqlite"))
+        try:
+            assert await store.device(token) is None
+        finally:
+            await store.close()
+    asyncio.run(check())

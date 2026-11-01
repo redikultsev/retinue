@@ -20,8 +20,6 @@ import secrets
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
-from dataclasses import field as dataclass_field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -196,116 +194,11 @@ class Data:
 
 REFRESH_S = 300           # the base is brought to the hub's head and the pages written this often
 AFTER_RUN_S = 60          # and this long after a model run ended: a page she just committed shows soon
-URL = re.compile(r"https?://[^\s<>\"'`]+")
-LINKS = 4                 # addresses taken out of one note at most
 URL_CHARS = 2000          # an address longer than this is not made a link
 SUMMARY_CHARS = 280       # a trip summary's paragraph is cut after a sentence past this
 KIND_NAMES = {"flight": "Flight", "stay": "Stay", "ground": "Overland"}
 NEEDS = {"read": "read", "reply": "reply", "decide": "decide", "attend": "attend", "pay": "pay", "act": "do"}
 CHIP_CHARS = 28           # a sender's name on a chip: her «who» up to its first aside, then cut
-TRACKER_NOTES = 300       # a tracker row's notes, cut to this
-# The tracker's defaults; the owner's own are his config (`Tracker`).
-STATES = {"new": "new", "sent": "sent", "answered": "answered", "meeting": "meeting", "won": "accepted",
-          "lost": "rejected", "dropped": "dropped"}
-# The page's groups of rows: what goes on, where an answer is due, what to do next, the closed. A group keyed «next»
-# is sorted by score; «closed» is folded. Rows of no group's state are «Other».
-GROUPS = (("live", "Ongoing", ("meeting", "answered")), ("waiting", "Awaiting reply", ("sent",)),
-          ("next", "Next", ("new",)), ("closed", "Closed", ("won", "lost", "dropped")))
-COUNTED = ("sent", "answered", "meeting", "won", "lost")  # a row counts for the week when it reached one of these
-MEETING_WORDS = ("meeting", "встреча")  # a calendar event with one of these, or a row's item, in its title (the
-# calendar is the owner's data: Russian titles too)
-
-
-@dataclass(frozen=True)
-class Tracker:
-    """The owner's tracker: a table of items with statuses, kept as a Record of his base, and a weekly goal — the
-    Record's header field `weekly_goal`. What it tracks is his config — `memory.tracker` in router.yaml — not code:
-    the Record's `path`, the page's `title`, the `states` and their names, the page's `groups` (key, title, states),
-    the states a row `counted` for the week once it reached (in the order a row moves; a new row starts at the first),
-    the words of a calendar event that is one of its `meetings`, and the table's columns of the `item` and its
-    `detail`. Each has a neutral default."""
-    path: str = "profile/tracker.md"
-    title: str = "Tracker"
-    states: dict = dataclass_field(default_factory=lambda: dict(STATES))
-    groups: tuple = GROUPS
-    counted: tuple = COUNTED
-    meetings: tuple = MEETING_WORDS
-    item: str = "item"
-    detail: str = "detail"
-
-    @classmethod
-    def of(cls, memory) -> Tracker:
-        raw = dict(getattr(getattr(memory, "cfg", None), "tracker", None) or {})
-        try:
-            if "states" in raw:
-                raw["states"] = {str(k).lower(): str(v) for k, v in dict(raw["states"]).items()}
-            if "groups" in raw:
-                raw["groups"] = tuple((str(g["key"]), str(g["title"]), tuple(str(s).lower() for s in g["states"]))
-                                      for g in raw["groups"])
-            for name in ("counted", "meetings"):
-                if name in raw:
-                    raw[name] = tuple(str(word).lower() for word in raw[name])
-            for name in ("path", "title", "item", "detail"):
-                if name in raw:
-                    raw[name] = str(raw[name]).strip()
-            return cls(**raw)
-        except (TypeError, ValueError, KeyError):
-            raise SystemExit("router config: memory.tracker takes path, title, states, groups (key, title, states), "
-                             f"counted, meetings, item, detail — not {sorted(raw)}")
-
-    def rows(self, text: str) -> list[dict]:
-        """The tracker's table, read by its header — the columns vary between versions: the number, the date, the
-        item, its detail, the score, the status, the report's number, the notes. Markdown is stripped; a status not
-        in `states` is shown as it is. Anything else in the file — the Record's header — is skipped."""
-        header, rows = [], []
-        for line in text.splitlines():
-            if not line.startswith("|"):
-                continue
-            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-            if not header:
-                if any(cell.lower() == "status" for cell in cells):
-                    header = [cell.lower() for cell in cells]
-                continue
-            if all(re.fullmatch(r":?-{2,}:?", cell) for cell in cells if cell):
-                continue
-            row = dict(zip(header, (plain(cell) for cell in cells)))
-            status = row.get("status", "")
-            key = status.lower() if status.lower() in self.states else ""
-            notes, links = unlinked(row.get("notes", ""))
-            rows.append({"n": row.get("#", ""), "date": row.get("date", ""),
-                         "item": row.get(self.item.lower(), "") or "?", "detail": row.get(self.detail.lower(), ""),
-                         "score": row.get("score", ""), "key": key, "status": self.states.get(key, status),
-                         "tone": next((g for g, _, states in self.groups if key in states), "other"),
-                         "report": "".join(re.findall(r"\d+", row.get("report", "")))[:6],
-                         "notes": notes[:TRACKER_NOTES], "links": links})
-        return rows
-
-    def line(self, tree: str) -> str:
-        """The judgement run's line about the tracker, when its Record is in the base: where it is and the states a
-        letter may move a row to."""
-        if not tree or not (Path(tree) / self.path).is_file():
-            return ""
-        moves = ", ".join(f"`{state.capitalize()}`" for state in self.counted)
-        return (f"The owner's tracker \"{self.title}\": `{tree.rstrip('/')}/{self.path}`. Status after sending — "
-                f"exactly one of {moves}; a new row — `{self.counted[0].capitalize()}`." if self.counted else
-                f"The owner's tracker \"{self.title}\": `{tree.rstrip('/')}/{self.path}`.")
-
-
-def unlinked(text: str) -> tuple[str, list[dict]]:
-    """A note's addresses taken out of its words: the text without them, and each https address with its host — a
-    page shows the host on a button, never the address as text that runs off a phone's screen."""
-    links = []
-    for found in URL.findall(text):
-        url = sound(found.rstrip(".,;:!?)»"))
-        if url and all(link["url"] != url for link in links):
-            links.append({"url": url, "host": host_of(url)})
-    words = re.sub(r"\s{2,}", " ", URL.sub("", text)).strip(" ;,:—-")
-    return re.sub(r"\s+([.,;:])", r"\1", words), links[:LINKS]
-
-
-def plain(cell: str) -> str:
-    """A table cell as text: a link is its text, emphasis marks go."""
-    return re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", cell).replace("**", "").replace("`", "").strip()
 
 
 class Pages:
@@ -915,7 +808,7 @@ def offers(kind: str, view: dict):
 
 
 def named(who: str, sender: str = "") -> str:
-    """A person as «Now» and the tracker page name him: her «who» up to its first aside — never an e-mail address; with
+    """A person as «Now» and the waiting list name him: her «who» up to its first aside — never an e-mail address; with
     none, the sender's domain, else «sender»."""
     name = chip(who) if who else ""
     if name and name not in NO_NAME and "@" not in name:

@@ -10,22 +10,29 @@ Three kinds, a closed set (`collections.VIEW_KEYS`):
 
 A view that names a field its form lacks shows «field not found» in its place, and the others still show. Weeks and
 days are counted in one time zone: the one the Router last told (`POST /owner/zone`), the config's `owner_tz` until it
-has. The Router's own numbers (`POST /owner/collections/stat`) come in the zone it names, through the same code as the
-screen's — so one zone gives one number in both.
+has. The Router's own numbers (`POST /owner/collections/stat`, the `stat` views its config names) come in the zone it
+names, through the same code as the screen's — so one zone gives one number in both.
+
+The owner writes from the same screen (`POST /api/c/<collection>`): the operations of `apply`, by `owner` via
+`screen`, each `set`, `delete` and `revert` at the version his screen showed — one that moved on since is answered
+409 with the record as it is and its last change, for the screen to ask «Apply mine» or «Keep». A board moves a
+record by its `group`, a queue's `done` sets one field on a row, a view's `add` opens the form's fields; a record's
+changes, and the Space's newest (`GET /api/c/_changes`), are each taken back by a `revert`.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiohttp import web
 
-from .collections import (HISTORY, NAME, RECORD_COLUMNS, SPACE, Collections, Refused, Rejected, _json, _path,
-                          _record)
+from .collections import (CHANGE_COLUMNS, HISTORY, NAME, RECORD_COLUMNS, SPACE, ULID, Collections, Refused, Rejected,
+                          Writer, _change, _json, _path, _record)
 
 if TYPE_CHECKING:
     from .platformd import Platform
@@ -36,8 +43,15 @@ RECORDS_MAX = 2000          # records one board or queue reads, the oldest first
 IDS_CHUNK = 500             # ids in one statement's IN (…)
 ZONE_KEY = "collections.zone"  # the platform's kv: the zone the Router last told
 NOT_FOUND = "field not found"
+NO_STAT = "no such stat"
+STATS_NAMED = 8             # numbers the Router names in one call
+CHANGES_SHOWN = 50          # the Space's newest changes one answer lists
+OPTIONS_MAX = 500           # records a ref field offers to pick from, the newest changed first
+CONFLICTS = ("stale", "after")  # refusals the screen asks about (409): the record moved on since it was shown
+SCREEN = Writer("owner", "screen")
 COLLECTION = "[a-z][a-z0-9_]{0,39}"  # as `collections.NAME`: never a reserved `_files` or `_space`
 RECORD_ID = "[0-9A-HJKMNP-TV-Z]{26}"
+STAT_NAME = re.compile(f"{NAME.pattern}/{NAME.pattern}")  # a number the Router names: `<collection>/<view>`
 DAY = dt.timedelta(days=1)
 
 
@@ -119,11 +133,13 @@ def _after(field: str) -> str:
 def _changed(store: Collections, collection: str, form: dict, conditions: list, field: str, to: list,
              span: tuple[dt.date, dt.date] | None, when: When) -> int:
     """How many records the filter matches now whose `field` a change gave a value (one of `to`, when it names
-    some) within `span`: a change dated by its `as_of`, else by the day it was made, here."""
+    some) within `span`: a change dated by its `as_of`, else by the day it was made, here. A change taken back, and
+    the revert that took it, move nothing: a drag and its «Undo» count none."""
     where, params = store._where(collection, form, conditions or None, False)
     sql = [f"SELECT count(DISTINCT id) FROM changes WHERE collection = ? AND {_after(field)} IS NOT NULL",
-           f"AND id IN (SELECT id FROM records WHERE {where})"]
-    values: list[Any] = [collection, *params]
+           "AND reverts IS NULL AND change_id NOT IN (SELECT reverts FROM changes WHERE collection = ? AND reverts IS "
+           f"NOT NULL) AND id IN (SELECT id FROM records WHERE {where})"]
+    values: list[Any] = [collection, collection, *params]
     if to:
         sql.append(f"AND {_after(field)} IN ({', '.join('?' * len(to))})")
         values += to
@@ -177,30 +193,53 @@ def _shown(form: dict, view: dict) -> list[str] | None:
     return view.get("fields") or None
 
 
+def _said(store: Collections, collection: str | None, ids) -> dict[str, str]:
+    """The words of these records of `collection`: the first `text` field of its form, as each has it now — so a ref
+    reads «Acme», not an id. A deleted record, or one without that field, is not among them."""
+    ids = sorted({i for i in ids if isinstance(i, str)})
+    target = store._db.execute("SELECT form FROM schemas WHERE collection = ?",
+                               (collection,)).fetchone() if ids else None
+    text = next((k for k, s in json.loads(target[0])["fields"].items() if s["type"] == "text"),
+                None) if target else None
+    said: dict[str, str] = {}
+    if text is None:
+        return said
+    for at in range(0, len(ids), IDS_CHUNK):
+        chunk = ids[at:at + IDS_CHUNK]
+        said.update(store._db.execute(
+            f"SELECT id, {_path(text)} FROM records WHERE collection = ? AND id IN ({', '.join('?' * len(chunk))})"
+            f" AND deleted IS NULL AND {_path(text)} IS NOT NULL", (collection, *chunk)).fetchall())
+    return said
+
+
 def _refs(store: Collections, form: dict, records: list[dict], fields: list[str] | None) -> dict:
-    """For each record, the `ref` fields a view shows by the words of what they name: the first `text` field of the
-    form it is in, as that record has it now — so a row says «Acme», not an id. A deleted record, or one without that
-    field: none, and the row shows the id."""
+    """For each record, the `ref` fields a view shows by the words of what they name (`_said`); a deleted record, or
+    one without such words: none, and the row shows the id."""
     words: dict = {}
     for name in fields or form["fields"]:
         spec = form["fields"][name]
-        ids = sorted({r["fields"][name] for r in records if spec["type"] == "ref" and name in r["fields"]})
-        target = store._db.execute("SELECT form FROM schemas WHERE collection = ?",
-                                   (spec.get("to"),)).fetchone() if ids else None
-        text = next((k for k, s in json.loads(target[0])["fields"].items() if s["type"] == "text"),
-                    None) if target else None
-        if text is None:
+        if spec["type"] != "ref":
             continue
-        said = {}
-        for at in range(0, len(ids), IDS_CHUNK):
-            chunk = ids[at:at + IDS_CHUNK]
-            said.update(store._db.execute(
-                f"SELECT id, {_path(text)} FROM records WHERE collection = ? AND id IN ({', '.join('?' * len(chunk))})"
-                f" AND deleted IS NULL AND {_path(text)} IS NOT NULL", (spec["to"], *chunk)).fetchall())
+        said = _said(store, spec["to"], (r["fields"].get(name) for r in records))
         for record in records:
             if record["fields"].get(name) in said:
                 words.setdefault(record["id"], {})[name] = said[record["fields"][name]]
     return words
+
+
+def _title(store: Collections, form: dict, fields: dict, parts: int = 2) -> str | None:
+    """A record in a few words, for a list of changes or a ref to pick: its first `parts` text or ref fields that have
+    a value, in the form's order, a ref by its record's words — «Acme · Backend». None when it has none."""
+    words = []
+    for name, spec in form["fields"].items():
+        value = fields.get(name)
+        if spec["type"] == "text" and isinstance(value, str):
+            words.append(value)
+        elif spec["type"] == "ref" and (said := _said(store, spec["to"], [value]).get(value)):
+            words.append(said)
+        if len(words) == parts:
+            break
+    return " · ".join(words) or None
 
 
 def _records(store: Collections, collection: str, form: dict, conditions: list) -> tuple[list[dict], int]:
@@ -300,12 +339,39 @@ def _queue(store: Collections, collection: str, form: dict, view: dict, when: Wh
 KINDS = {"stat": _stat, "board": _board, "queue": _queue}
 
 
+def _done(store: Collections, form: dict, view: dict) -> dict | None:
+    """A queue's press on a row, its field found in the form and its value one the field takes."""
+    if "done" not in view:
+        return None
+    done = view["done"]
+    value = store._value(done["field"], _field(form, done["field"]), done["value"], probe=True)
+    return {"field": done["field"], "value": value, "label": done["label"]}
+
+
+def _add(store: Collections, form: dict, view: dict) -> dict | None:
+    """A view's «add»: the fields its sheet asks for — the view's, else every one of the form — and those it starts
+    with, each found in the form and of its type."""
+    if "add" not in view:
+        return None
+    add = view["add"]
+    fields = add.get("fields") or list(form["fields"])
+    for name in fields:
+        _field(form, name)
+    values = {name: store._value(name, _field(form, name), value, probe=True)
+              for name, value in add.get("values", {}).items()}
+    return {"label": add["label"], "fields": fields, "values": values}
+
+
 def _view(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     shown = {"name": view["name"], "kind": view["kind"], "title": view.get("title", view["name"])}
     try:
         shown.update(KINDS[view["kind"]](store, collection, form, view, when, budget))
+        if view["kind"] == "queue":
+            shown["done"] = _done(store, form, view)
+        if view["kind"] != "stat":
+            shown["add"] = _add(store, form, view)
     except Rejected as exc:  # a field the form lacks, a value its enum does not have: this view only
-        shown["error"] = exc.reason
+        shown = {k: shown[k] for k in ("name", "kind", "title")} | {"error": exc.reason}
     return shown
 
 
@@ -338,21 +404,97 @@ def one_view(store: Collections, collection: str, name: str, when: When) -> dict
             "view": _view(store, collection, json.loads(row[0]), view, when, [ROWS_MAX])}
 
 
-def stats(store: Collections, space: str, when: When) -> dict:
-    """The numbers of a Space — its `stat` views, every collection's — as the Router says them: `{space, tz, today,
-    at, stats: [{collection, name, title, value, goal, previous, window, first, last}]}`, or `error` for one."""
-    return {"space": space, **when.shown(), "stats": [
-        {"collection": name, **_view(store, name, form, view, when, [0])}
-        for name, form, views in _schemas(store, space) for view in views if view["kind"] == "stat"]}
+def stats(store: Collections, named: list[tuple[str, str]], when: When) -> dict:
+    """The numbers the Router names, `(collection, view)` each, as it says them: `{tz, today, at, stats: [{collection,
+    name, title, value, goal, previous, window, first, last}]}` in its order — `error` for one, and «no such stat»
+    for a name that is not one of a collection's `stat` views."""
+    forms: dict = {}
+    said = []
+    for collection, name in named:
+        if collection not in forms:
+            row = store._db.execute("SELECT form, views FROM schemas WHERE collection = ?", (collection,)).fetchone()
+            forms[collection] = (json.loads(row[0]), json.loads(row[1])) if row else (None, [])
+        form, views = forms[collection]
+        view = next((v for v in views if v["name"] == name and v["kind"] == "stat"), None)
+        said.append({"collection": collection, **(_view(store, collection, form, view, when, [0]) if view else
+                                                  {"name": name, "kind": "stat", "title": name, "error": NO_STAT})})
+    return {**when.shown(), "stats": said}
+
+
+def _fields(form: dict) -> dict:
+    """A form's fields as the screen asks for them: each one's type, and its values, `to` and `required`."""
+    return {name: {k: v for k, v in spec.items() if k in ("type", "values", "to", "required")}
+            for name, spec in form["fields"].items()}
+
+
+def _ref_words(store: Collections, form: dict, values) -> dict[str, str]:
+    """The words of every id among `values` (dicts of fields) that one of the form's ref fields names."""
+    words: dict[str, str] = {}
+    for name, spec in form["fields"].items():
+        if spec["type"] == "ref":
+            words.update(_said(store, spec["to"], (v.get(name) for v in values if isinstance(v, dict))))
+    return words
 
 
 def record_view(store: Collections, collection: str, rid: str) -> dict | None:
-    """One record, a deleted one included, with its newest HISTORY changes: `{name, rev, record, changes}`, or None."""
-    record = store._record(collection, rid)
-    if record is None:
+    """One record, a deleted one included, with its newest HISTORY changes: `{name, rev, title, fields, record,
+    changes, words}` — its form's fields to show it by and `words` for the ids its refs name, now and in the changes —
+    or None."""
+    record, form = store._record(collection, rid), store._form(collection)
+    if record is None or form is None:
         return None
-    return {"name": collection, "rev": store._rev(collection), "record": record,
-            "changes": store._history(collection, rid, HISTORY)}
+    changes = store._history(collection, rid, HISTORY)
+    values = [record["fields"], *(c["before"] for c in changes), *(c["after"] for c in changes)]
+    return {"name": collection, "rev": store._rev(collection), "title": _title(store, form, record["fields"]),
+            "fields": _fields(form), "record": record, "changes": changes, "words": _ref_words(store, form, values)}
+
+
+def form_view(store: Collections, collection: str) -> dict | None:
+    """What a sheet that adds a record asks for: `{name, rev, fields, options}` — the form's fields, and for each ref
+    field the records it may name, `[{id, title}]`, the OPTIONS_MAX newest changed of those not deleted. None for no
+    such collection."""
+    form = store._form(collection)
+    if form is None:
+        return None
+    options = {}
+    for name, spec in form["fields"].items():
+        if spec["type"] != "ref":
+            continue
+        target = store._form(spec["to"])
+        rows = store._db.execute(f"SELECT {RECORD_COLUMNS} FROM records WHERE collection = ? AND deleted IS NULL "
+                                 "ORDER BY updated DESC, id DESC LIMIT ?", (spec["to"], OPTIONS_MAX)) if target else []
+        options[name] = [{"id": r["id"], "title": _title(store, target, r["fields"]) or r["id"]}
+                         for r in map(_record, rows)]
+    return {"name": collection, "rev": store._rev(collection), "fields": _fields(form), "options": options}
+
+
+def space_changes(store: Collections, space: str, before: str | None) -> dict:
+    """The newest CHANGES_SHOWN changes to the records of a Space's collections — before the change `before`, when
+    one is named — each with its record's title, version and deleted state now, for its «Undo», and whether a revert
+    took it back already: `{space, changes, next, words}`, `next` the change to read on from."""
+    forms = {name: json.loads(form) for name, form in store._db.execute(
+        "SELECT collection, form FROM schemas WHERE space = ? ORDER BY collection", (space,)).fetchall()}
+    if not forms:
+        return {"space": space, "changes": [], "next": None, "words": {}}
+    sql = (f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection IN ({', '.join('?' * len(forms))}) "
+           "AND id IS NOT NULL")
+    params: list[Any] = list(forms)
+    if before is not None:
+        sql += " AND seq < coalesce((SELECT seq FROM changes WHERE change_id = ?), 0)"
+        params.append(before)
+    rows = [_change(r) for r in store._db.execute(sql + " ORDER BY seq DESC LIMIT ?", (*params, CHANGES_SHOWN + 1))]
+    shown, words = [], {}
+    taken = {r[0] for r in store._db.execute(
+        f"SELECT reverts FROM changes WHERE reverts IN ({', '.join('?' * len(rows))})",
+        [c["change_id"] for c in rows])} if rows else set()
+    for change in rows[:CHANGES_SHOWN]:
+        form, record = forms[change["collection"]], store._record(change["collection"], change["id"])
+        words.update(_ref_words(store, form, [change["before"], change["after"]]))
+        shown.append({**change, "title": _title(store, form, record["fields"]) if record else None,
+                      "version": record["version"] if record else None,
+                      "deleted": record["deleted"] if record else None, "reverted": change["change_id"] in taken})
+    return {"space": space, "changes": shown, "words": words,
+            "next": shown[-1]["change_id"] if len(rows) > CHANGES_SHOWN else None}
 
 
 # --- the routes --------------------------------------------------------------------------------------------------
@@ -370,8 +512,10 @@ class Views:
         return told if zone(told) is not None else self.platform.cfg.owner_tz
 
     def routes(self) -> list:
-        return [web.get("/api/c/_space", self.space),
+        return [web.get("/api/c/_space", self.space), web.get("/api/c/_changes", self.changes),
                 web.get(f"/api/c/{{collection:{COLLECTION}}}", self.view),
+                web.post(f"/api/c/{{collection:{COLLECTION}}}", self.write),
+                web.get(f"/api/c/{{collection:{COLLECTION}}}/_form", self.form),
                 web.get(f"/api/c/{{collection:{COLLECTION}}}/{{id:{RECORD_ID}}}", self.record)]
 
     def owner_routes(self) -> list:
@@ -405,6 +549,32 @@ class Views:
     async def record(self, request: web.Request) -> web.Response:
         return await self._answer(record_view, request.match_info["collection"], request.match_info["id"])
 
+    async def form(self, request: web.Request) -> web.Response:
+        return await self._answer(form_view, request.match_info["collection"])
+
+    async def changes(self, request: web.Request) -> web.Response:
+        """A Space's newest changes, the owner's and every writer's, each to be taken back."""
+        name, before = request.query.get("space", ""), request.query.get("before")
+        if not SPACE.fullmatch(name) or before is not None and not ULID.fullmatch(before):
+            return web.json_response({"error": "space: a Space's name; before: a change's id"}, status=400)
+        return await self._answer(space_changes, name, before)
+
+    async def write(self, request: web.Request) -> web.Response:
+        """The owner's write from the screen: `{ops, idem?}`, the operations of `apply` on one collection, by `owner`
+        via `screen`. Answers apply's `{name, rev, change_ids, records}`; a refusal is `{error, kind, record,
+        change}` — 409 when the record moved on since the screen showed it (`stale`) or a revert's change was
+        changed after (`after`), 400 for the rest."""
+        body = await _body(request)
+        try:
+            answer = await self.platform.collections.apply(SCREEN, request.match_info["collection"], body.get("ops"),
+                                                           self.platform.clock(), idem=body.get("idem"))
+        except Rejected as exc:
+            return web.json_response({"error": exc.reason, "kind": exc.kind, "record": exc.record,
+                                      "change": exc.change}, status=409 if exc.kind in CONFLICTS else 400)
+        except Refused as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response(answer)
+
     async def owner_zone(self, request: web.Request) -> web.Response:
         """The Router's zone, at its start and whenever the owner's changes: the screen counts its weeks in it."""
         tz = (await _body(request)).get("tz")
@@ -414,12 +584,19 @@ class Views:
         return web.json_response({"tz": tz})
 
     async def owner_stat(self, request: web.Request) -> web.Response:
-        """A Space's numbers in the zone the Router names: the same as its screen's in that zone."""
+        """The numbers the Router names (`views`: `<collection>/<view>` each) in the zone it names: the same as the
+        screen's tiles in that zone. `screen_tz` is the zone the screen counts in: another than the Router's — a kv
+        restored from an older backup — and the Router tells its own again."""
         body = await _body(request)
-        space, tz = body.get("space"), body.get("tz")
-        if not isinstance(space, str) or not SPACE.fullmatch(space) or zone(tz) is None:
-            return web.json_response({"error": "space: a Space's name; tz: an IANA time zone"}, status=400)
-        return await self._answer(stats, space, self._when(tz))
+        named, tz = body.get("views"), body.get("tz")
+        pairs = [tuple(v.split("/")) for v in named if isinstance(v, str) and STAT_NAME.fullmatch(v)] \
+            if isinstance(named, list) and 0 < len(named) <= STATS_NAMED else []
+        if not pairs or len(pairs) != len(named) or zone(tz) is None:
+            return web.json_response({"error": f"views: 1 to {STATS_NAMED} of <collection>/<view>; tz: an IANA time "
+                                               "zone"}, status=400)
+        screen = self.zone()
+        return await self._answer(lambda store, *args: {**stats(store, *args), "screen_tz": screen}, pairs,
+                                  self._when(tz))
 
 
 async def _body(request: web.Request) -> dict:

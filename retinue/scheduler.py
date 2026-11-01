@@ -172,7 +172,8 @@ class Scheduler:
         self._ensure_daily(SUMMARY, SUMMARY_AT, now)
 
     def ensure_digest(self, now: float, at: str) -> None:
-        """The evening list of the assistant's commits to the knowledge base: the same one-a-day row as the summary."""
+        """The evening list of the assistant's commits to the knowledge base and the machines' changes to the
+        collections: the same one-a-day row as the summary."""
         self._ensure_daily(DIGEST, at, now)
 
     def ensure_weekly(self, now: float) -> None:

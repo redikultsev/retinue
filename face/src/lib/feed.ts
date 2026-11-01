@@ -1,12 +1,14 @@
 // «Waiting for you»: one queue by action across the sessions and the assistant's world, built by the platform on each read
 // (`GET /api/feed`, retinue/feed.py). The app does not fold it from its own store — the store holds the cards and
-// summaries only of the sessions it has opened — it reads the feed again whenever a session, a card or a summary
-// changes on the stream (debounced), and once a minute for the assistant's digest, which comes on no stream.
+// summaries only of the sessions it has opened — it reads the feed again whenever a session, a card, a summary or a
+// proposal to write to a collection changes on the stream (debounced), and once a minute for the assistant's digest,
+// which comes on no stream.
 
 import { useSyncExternalStore } from "react";
 import { request } from "./api";
 import type { State } from "./store";
 import type { Approval, Proposal } from "./types";
+import type { CollectionProposal } from "./view-types";
 
 export type FeedAction = "answer" | "decide" | "reply" | "read" | "assistant";
 /** Where a row came from: a card's kind, a session, or the kind of the assistant's item. */
@@ -50,6 +52,8 @@ export interface FeedRow {
   repos?: string[];
   /** «Decide»: a sub-session a session proposed, started or set aside in place (retinue/subs.py). */
   proposal?: Proposal;
+  /** «Decide»: a write to a collection a session proposed, applied or dismissed in place (retinue/colltools.py). */
+  collection_proposal?: CollectionProposal;
   /** «From the assistant»: a person's row's token — what «Done», «Not a task», «Tomorrow» name it by. Absent on a draft
    * and a date. */
   t?: string;
@@ -150,6 +154,8 @@ export const PRESSED_HIDE_S = 600;
 interface LiveLike {
   subscribe: (listener: () => void) => () => void;
   getState: () => State;
+  /** Proposals of writes to the collections are not the store's: told apart. */
+  onCollectionProposal?: (listener: () => void) => () => void;
 }
 
 export interface FeedDeps {
@@ -204,7 +210,8 @@ export class FeedSource {
   /** Follow the live store: what changes a session, a card or a summary reads the feed again. */
   start(live: LiveLike): void {
     if (this.unsubscribe) return;
-    this.unsubscribe = live.subscribe(() => {
+    const proposed = live.onCollectionProposal?.(() => this.soon());
+    const followed = live.subscribe(() => {
       const { sessions, approvals, summaries, proposals } = live.getState();
       const seen = this.seen;
       this.seen = { sessions, approvals, summaries, proposals };
@@ -218,6 +225,10 @@ export class FeedSource {
         return;
       this.soon();
     });
+    this.unsubscribe = () => {
+      followed();
+      proposed?.();
+    };
     void this.refresh();
   }
 

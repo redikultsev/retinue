@@ -376,63 +376,8 @@ def test_health_lines_are_read_in_either_language():
     assert pages.plural(21, "день", "дня", "дней") == "день", "three forms: the Russian rule, for Russian words"
 
 
-TRACKER_TEXT = """---
-id: tracker
-type: profile
----
-
-# Трекер
-
-| # | Date | Item | Detail | Score | Status | PDF | Report | Notes |
-|---|------|------|--------|-------|--------|-----|--------|-------|
-| 1 | 2026-09-23 | Acme | Грант на исследование | 4.1/5 | **Meeting** | ✅ | [001](../reports/001-acme.md) | remote |
-| 2 | 2026-09-24 | ? | Конкурс | 3.5/5 | New | ❌ | 002 | |
-| 3 | 2026-09-25 | Globex | Партнёрство | 3.0/5 | Sent | ❌ | 003 | form: https://forms.globex.example/42. |
-| 4 | 2026-09-26 | Initech | Заявка | 2.0/5 | Maybe later | ❌ | | |
-"""
-
-
-def test_the_tracker_is_read_by_its_header():
-    """The tracker in the base is read by its header — the Record's own header and markdown in cells do not get in
-    the way; a note's address is taken out of its words."""
-    rows = pages.Tracker().rows(TRACKER_TEXT)
-    assert [(r["n"], r["item"], r["status"], r["report"], r["tone"]) for r in rows] == [
-        ("1", "Acme", "meeting", "001", "live"), ("2", "?", "new", "002", "next"),
-        ("3", "Globex", "sent", "003", "waiting"), ("4", "Initech", "Maybe later", "", "other")]
-    assert (rows[2]["notes"], rows[2]["links"]) == ("form", [
-        {"url": "https://forms.globex.example/42", "host": "forms.globex.example"}]), "an address is a button, not text"
-
-
-def test_what_the_tracker_tracks_is_the_owners_config(tmp_path):
-    """The Record's path, the title, the states and their names, the groups, the counted states, the meeting words
-    and the columns come from `memory.tracker`; anything it does not name keeps its neutral default, and a key it
-    does not know stops the router at start."""
-    from types import SimpleNamespace
-
-    config = {"path": "plans/profile/bids.md", "title": "Заявки", "item": "Fund", "detail": "Topic",
-              "states": {"Draft": "черновик", "Filed": "подана", "Won": "выиграна"},
-              "groups": [{"key": "live", "title": "Поданы", "states": ["filed"]},
-                         {"key": "closed", "title": "Итог", "states": ["won"]}],
-              "counted": ["Filed", "Won"], "meetings": ["Защита"]}
-    memory = SimpleNamespace(cfg=SimpleNamespace(tracker=config), tree=str(tmp_path))
-    tracker = pages.Tracker.of(memory)
-    assert (tracker.path, tracker.title, tracker.counted, tracker.meetings) == (
-        "plans/profile/bids.md", "Заявки", ("filed", "won"), ("защита",))
-    rows = tracker.rows("| # | Date | Fund | Topic | Status |\n|---|---|---|---|---|\n| 1 | 2030-01-02 | Acme | Код | Filed |\n")
-    assert [(r["item"], r["detail"], r["key"], r["status"], r["tone"]) for r in rows] == [
-        ("Acme", "Код", "filed", "подана", "live")]
-    assert pages.Tracker.of(SimpleNamespace(cfg=SimpleNamespace(tracker={"title": "Т"}))).states == pages.STATES
-    assert tracker.line(str(tmp_path)) == "", "no Record in the base: nothing told to her"
-    (tmp_path / "plans/profile").mkdir(parents=True)
-    (tmp_path / "plans/profile/bids.md").write_text("x", encoding="utf-8")
-    assert tracker.line(str(tmp_path)) == (f"The owner's tracker \"Заявки\": `{tmp_path}/plans/profile/bids.md`. "
-                                           "Status after sending — exactly one of `Filed`, `Won`; a new row — `Filed`.")
-    with pytest.raises(SystemExit):
-        pages.Tracker.of(SimpleNamespace(cfg=SimpleNamespace(tracker={"rows": 3})))
-
-
 def test_the_pages_bring_the_base_to_the_hub_first_when_no_run_is_going(tmp_path):
-    """What the Mac pushed — the tracker, the goals — shows within a refresh, not after her next run; never in the
+    """What the Mac pushed — the goals, a page — shows within a refresh, not after her next run; never in the
     middle of a run, which owns the tree."""
     from types import SimpleNamespace
 
@@ -459,7 +404,6 @@ def test_only_a_sound_address_becomes_a_link():
                 "https://user:pw@zoom.us/j/1", "https://x.com/a b", "http://x.com/", "https://[::1]/x",
                 "https://zoom.us@evil.com/", "javascript:alert(1)", ""):
         assert pages.sound(bad) == "", bad
-        assert " " in bad or pages.unlinked(f"see {bad} now")[1] == [], bad  # in text a space ends an address
     assert pages.sound("https://Example.ZOOM.us:443/j/1?pwd=A%20b") == "https://example.zoom.us/j/1?pwd=A%20b"
     assert pages.sound("https://x.example:8443/a%2Fb") == "https://x.example:8443/a%2Fb"
 

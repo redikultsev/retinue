@@ -1,7 +1,10 @@
 """Views of the collections: a stat counts the follow-ups done on outbound deals apart from the inbound deals that
 moved, in one time zone for the screen and the Router alike; a board's columns and a queue's rows carry their days
 and turn rotten past the form's threshold; a view whose field the form lacks says so and the others still show; an
-answer stays within 256 KB; every write — the platform's own or the server's terminal's — reaches the open apps."""
+answer stays within 256 KB; every write — the platform's own or the server's terminal's — reaches the open apps. The
+owner writes from the screen at the version it showed: one that moved on since is a conflict with who moved it, a
+change is taken back from its record or the Space's changes, and a queue's press and a view's «add» are held to the
+form."""
 
 from __future__ import annotations
 
@@ -16,7 +19,7 @@ from retinue import views
 from retinue.collections import Collections, Rejected, Writer, parse_views
 from retinue.views import When
 from retinue.face import COOKIE
-from test_face import POST, faced
+from test_face import faced
 from test_platformd import ROUTER, scenario, short_wait  # noqa: F401 — the fixture is autouse
 
 OWNER = Writer("owner", "screen")
@@ -313,15 +316,70 @@ def test_the_screen_and_the_router_give_one_number_in_one_zone(tmp_path):
         got = await screen()
         assert got["_"]["tz"] == "Asia/Tokyo" and got["moved"]["value"] == 1
         for tz, value in (("Asia/Tokyo", 1), ("UTC", 0)):
-            said = await world.owner("collections/stat", {"space": "work", "tz": tz})
+            said = await world.owner("collections/stat", {"views": ["deals/moved", "followups/done"], "tz": tz})
             assert said["tz"] == tz and said["today"] == "2026-09-16"
-            numbers = {s["name"]: s for s in said["stats"]}
-            assert set(numbers) == {"moved", "done"} and numbers["moved"]["value"] == value
-            assert numbers["done"]["collection"] == "followups" and numbers["done"]["goal"] == 10
+            assert [s["name"] for s in said["stats"]] == ["moved", "done"], "in the Router's order"
+            moved, done = said["stats"]
+            assert moved["value"] == value and done["collection"] == "followups" and done["goal"] == 10
             if tz == "Asia/Tokyo":
-                assert numbers["moved"] == {"collection": "deals", **got["moved"]}, "the same tile, word for word"
-        assert (await world.post("/owner/collections/stat", {"space": "work"}))[0] == 400, "the Router names it"
-        assert (await world.owner("collections/stat", {"space": "travel", "tz": "UTC"}))["stats"] == []
+                assert moved == {"collection": "deals", **got["moved"]}, "the same tile, word for word"
+        said = await world.owner("collections/stat", {"views": ["deals/funnel", "deals/gone", "trips/moved"],
+                                                      "tz": "UTC"})
+        assert [s.get("error") for s in said["stats"]] == [views.NO_STAT] * 3, "a board, no view, no collection"
+        for bad in ({"tz": "UTC"}, {"views": [], "tz": "UTC"}, {"views": ["deals"], "tz": "UTC"},
+                    {"views": ["deals/moved/x"], "tz": "UTC"}, {"views": ["deals/moved"]},
+                    {"views": ["deals/moved"] * 9, "tz": "UTC"}, {"views": "deals/moved", "tz": "UTC"}):
+            assert (await world.post("/owner/collections/stat", bad))[0] == 400, bad
+
+    faced(tmp_path, body)
+
+
+def test_the_router_says_in_telegram_the_numbers_the_screen_shows(tmp_path):
+    """Two numbers side by side — the follow-ups he sent himself on outbound deals, and the inbound deals that
+    moved — each the screen's own tile in the Router's zone, never one sum. The Router tells the
+    platform its zone; the screen and the Telegram line then say the same numbers."""
+    from retinue.core import Core
+    from retinue.proactive import Proactive
+    from retinue.protocol import Store
+    from test_collections_assistant import platform_of
+    from test_core import AGENT, FakeChannel
+
+    async def body(world):
+        world.clock.now = NOW
+        store = world.platform.collections
+        await work(store)
+        own = await add(store, "deals", {"company": "Acme", "origin": "outbound"}, NOW - 20 * DAY)
+        theirs = await add(store, "deals", {"company": "Globex", "origin": "inbound"}, NOW - 20 * DAY)
+        for n, day in enumerate(("2026-09-14", "2026-09-15", "2026-09-08")):
+            await add(store, "followups", {"deal": own["id"], "direction": "out", "state": "done", "date": day},
+                      NOW - n * DAY)
+        for _ in range(3):  # his three replies on a deal that came to him: none a follow-up of his own
+            await add(store, "followups", {"deal": theirs["id"], "direction": "out", "state": "done",
+                                           "date": "2026-09-15"}, NOW)
+        await stage(store, theirs, "qualified", dt.datetime(2026, 9, 13, 22, 30, tzinfo=dt.UTC).timestamp())
+        core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", tz="Asia/Tokyo",
+                    proactive=Proactive(week=["followups/done", "deals/moved"]))
+        core.platform = platform_of(world)
+        await core.start([FakeChannel("telegram", False)])
+        await core.proactive.tell_zone()
+        await world.login()
+        screen = await world.get("/api/c/_space?space=work")
+        tiles = {v["name"]: v for c in screen["collections"] for v in c["views"]}
+        assert screen["tz"] == "Asia/Tokyo" and (tiles["done"]["value"], tiles["moved"]["value"]) == (2, 1), \
+            "Monday 07:30 in Tokyo is this week there"
+        line = await core.proactive.weekly_line(NOW)
+        assert line == (f"This week: Follow-ups done — {tiles['done']['value']} (goal {tiles['done']['goal']}); "
+                        f"Inbound moved — {tiles['moved']['value']}.")
+        assert line == "This week: Follow-ups done — 2 (goal 10); Inbound moved — 1."
+        assert await core.proactive.week_line(last=True) == (
+            f"Last week: Follow-ups done — {tiles['done']['previous']} (goal 10); Inbound moved — "
+            f"{tiles['moved']['previous']}.") == "Last week: Follow-ups done — 1 (goal 10); Inbound moved — 0."
+        core.tz = "UTC"  # the owner moved: the next beat tells the platform, and both count in UTC
+        await core.proactive.tell_zone()
+        screen = await world.get("/api/c/_space?space=work")
+        moved = next(v for c in screen["collections"] for v in c["views"] if v["name"] == "moved")
+        assert screen["tz"] == "UTC" and moved["value"] == 0
+        assert await core.proactive.weekly_line(NOW) == "This week: Follow-ups done — 2 (goal 10); Inbound moved — 0."
 
     faced(tmp_path, body)
 
@@ -347,7 +405,6 @@ def test_a_view_and_a_record_are_read_by_the_owner_alone(tmp_path):
         cookie = {"Cookie": f"{COOKIE}={world.cookie}"}
         assert (await world.api.get("/api/c/deals/..%2F..%2Fx", headers=cookie)).status == 404
         assert (await world.call("GET", "/api/c/_files"))[0] == 200, "the uploads keep their own route"
-        assert (await world.api.post("/api/c/deals", headers={**POST, **cookie})).status == 405, "reading, for now"
 
     faced(tmp_path, body)
 
@@ -378,3 +435,200 @@ def test_every_write_reaches_the_open_apps_as_one_collection_event(tmp_path):
         await store.close()
 
     scenario(tmp_path, body)
+
+
+# --- the screen writes -----------------------------------------------------------------------------------------------
+
+WRITING = [
+    {"name": "waiting", "kind": "queue", "title": "Waiting on me", "fields": ["deal", "channel"],
+     "filter": {"field": "state", "op": "eq", "value": "draft"},
+     "done": {"field": "state", "value": "done", "label": "Done"},
+     "add": {"label": "Add a follow-up", "fields": ["deal", "date", "state", "channel"], "values": {"state": "draft"}}},
+]
+
+
+async def written(world, collection: str, *ops, idem: str | None = None, **call):
+    """The owner's write from the screen: its status and its answer."""
+    status, data, _ = await world.call("POST", f"/api/c/{collection}", {"ops": list(ops), "idem": idem}, **call)
+    return status, data
+
+
+def test_the_owner_writes_from_the_screen_at_the_version_it_showed_and_a_moved_record_is_a_conflict(tmp_path):
+    async def body(world):
+        world.clock.now = NOW
+        store = world.platform.collections
+        await work(store)
+        await store.rights(DEFINE, "followups", {"writers": {"session": {"add": True, "set": "*"}},
+                                                 "set_by": {"state": {"done": ["owner", "code:mail-sent"]}}}, NOW)
+        add_op = {"op": "add", "fields": {"company": "Acme", "stage": "lead"}}
+        assert (await written(world, "deals", add_op))[0] == 401, "behind the login"
+        await world.login()
+        assert (await written(world, "deals", add_op, headers={"Cookie": f"{COOKIE}={world.cookie}"}))[0] == 403, \
+            "a POST without the app's header is not the app's"
+        before = world.store.cursor()
+        status, made = await written(world, "deals", add_op, idem="face:1")
+        assert status == 200 and made["name"] == "deals" and made["change_ids"][0] == made["rev"]
+        deal = made["records"][0]
+        assert (await written(world, "deals", add_op, idem="face:1"))[1]["change_ids"] == made["change_ids"], \
+            "a press sent twice is written once"
+        change = (await store.history("deals", deal["id"]))[0]
+        assert (change["actor"], change["via"]) == ("owner", "screen")
+        events = [json.loads(data) for _, kind, data in world.store.events_after(before) if kind == "collection"]
+        assert events and all(e == {"name": "deals", "space": "work", "rev": made["rev"]} for e in events)
+
+        moved = await store.apply(Writer("session:s2", "session"), "deals",
+                                  [{"op": "set", "id": deal["id"], "version": 1, "fields": {"stage": "lost"}}], NOW + 120)
+        mine = {"op": "set", "id": deal["id"], "version": 1, "fields": {"stage": "proposal"}}
+        status, refused = await written(world, "deals", mine)
+        assert status == 409 and refused["kind"] == "stale" and refused["record"]["version"] == 2
+        assert refused["change"]["actor"] == "session:s2" and refused["change"]["after"] == {"stage": "lost"}
+        status, applied = await written(world, "deals", {**mine, "version": refused["record"]["version"]})
+        assert status == 200 and applied["records"][0]["fields"]["stage"] == "proposal", "«Apply mine»"
+        assert moved["change_ids"][0] != applied["change_ids"][0]
+
+        follow = (await written(world, "followups", {"op": "add", "fields": {"deal": deal["id"], "state": "draft"}}))[1]
+        draft = follow["records"][0]
+        session = Writer("session:s1", "session")
+        with pytest.raises(Rejected, match="only by the owner, code:mail-sent"):
+            await store.apply(session, "followups", [{"op": "set", "id": draft["id"], "version": 1,
+                                                      "fields": {"state": "done"}}], NOW)
+        status, done = await written(world, "followups", {"op": "set", "id": draft["id"], "version": 1,
+                                                          "fields": {"state": "done"}})
+        assert status == 200 and done["records"][0]["fields"]["state"] == "done", "what the owner alone sets"
+        status, refused = await written(world, "followups", {"op": "set", "id": draft["id"], "version": 2,
+                                                             "fields": {"state": "sent"}})
+        assert status == 400 and refused["kind"] is None and "'state' is one of" in refused["error"]
+        assert (await written(world, "nothing", add_op))[0] == 400
+        assert (await world.call("POST", "/api/c/deals", {"ops": "add"}))[0] == 400
+
+    faced(tmp_path, body)
+
+
+def test_an_add_that_may_be_a_record_there_already_is_asked_about_and_added_when_it_is_another(tmp_path):
+    async def body(world):
+        world.clock.now = NOW
+        store = world.platform.collections
+        await store.define(DEFINE, "deals", "work", {**DEALS, "key": ["company"]}, NOW)
+        await world.login()
+        first = (await written(world, "deals", {"op": "add", "fields": {"company": "Acme"}}))[1]["records"][0]
+        status, refused = await written(world, "deals", {"op": "add", "fields": {"company": " acme "}})
+        assert status == 400 and refused["kind"] == "duplicate" and refused["record"]["id"] == first["id"]
+        status, made = await written(world, "deals", {"op": "add", "fields": {"company": "acme"}, "distinct": True})
+        assert status == 200 and made["records"][0]["id"] != first["id"], "«Add anyway»"
+
+    faced(tmp_path, body)
+
+
+def test_a_move_taken_back_moves_nothing_in_the_count(tmp_path):
+    async def body():
+        store = Collections(str(tmp_path / "collections.sqlite"))
+        await work(store)
+        deal = await add(store, "deals", {"company": "Acme", "origin": "inbound", "stage": "lead"}, NOW - 20 * DAY)
+        moved = await store.apply(OWNER, "deals", [{"op": "set", "id": deal["id"], "version": 1,
+                                                    "fields": {"stage": "proposal"}}], NOW - DAY)
+        assert (await shown(store))["deals"]["moved"]["value"] == 1
+        await store.apply(OWNER, "deals", [{"op": "revert", "change_id": moved["change_ids"][0], "version": 2}], NOW)
+        assert (await shown(store))["deals"]["moved"]["value"] == 0, "a mistaken drag and its «Undo» count none"
+        await store.close()
+
+    run(body)
+
+
+def test_a_change_is_taken_back_from_its_record_or_the_spaces_changes_unless_changed_after(tmp_path):
+    async def body(world):
+        world.clock.now = NOW
+        store = world.platform.collections
+        await work(store)
+        await store.define(DEFINE, "trips", "travel", {"fields": {"place": {"type": "text"}}}, NOW)
+        await store.apply(OWNER, "trips", [{"op": "add", "fields": {"place": "Lisbon"}}], NOW)
+        deal = await add(store, "deals", {"company": "Acme", "product": "Widgets", "stage": "lead"}, NOW)
+        follow = await add(store, "followups", {"deal": deal["id"], "state": "draft", "channel": "mail"}, NOW)
+        deal = await stage(store, deal, "qualified", NOW + 60)
+        await world.login()
+
+        record = await world.get(f"/api/c/followups/{follow['id']}")
+        assert record["title"] == "Acme · mail", "a ref by its record's words, then the first text"
+        assert record["fields"]["deal"] == {"type": "ref", "to": "deals"}
+        assert record["fields"]["state"] == {"type": "enum", "values": ["draft", "done", "unknown"]}
+        assert record["words"] == {deal["id"]: "Acme"}
+
+        feed = await world.get("/api/c/_changes?space=work")
+        assert [(c["collection"], c["op"]) for c in feed["changes"]] == [("deals", "set"), ("followups", "add"),
+                                                                          ("deals", "add")], "not another Space's"
+        newest = feed["changes"][0]
+        assert newest["title"] == "Acme · Widgets" and newest["version"] == 2 and newest["deleted"] is None
+        assert feed["next"] is None and feed["words"] == {deal["id"]: "Acme"}
+        revert = {"op": "revert", "change_id": newest["change_id"], "version": newest["version"]}
+        status, undone = await written(world, "deals", revert)
+        assert status == 200 and undone["records"][0]["fields"]["stage"] == "lead"
+        status, again = await written(world, "deals", {"op": "revert", "change_id": undone["change_ids"][0],
+                                                       "version": undone["records"][0]["version"]})
+        assert status == 200 and again["records"][0]["fields"]["stage"] == "qualified", "an undo undone"
+        taken = {c["change_id"]: c["reverted"] for c in (await world.get("/api/c/_changes?space=work"))["changes"]}
+        assert taken[newest["change_id"]] and taken[undone["change_ids"][0]], "each one taken back says so: no «Undo»"
+        assert not taken[again["change_ids"][0]]
+
+        added = next(c for c in feed["changes"] if c["op"] == "add" and c["collection"] == "deals")
+        status, refused = await written(world, "deals", {"op": "revert", "change_id": added["change_id"],
+                                                         "version": again["records"][0]["version"]})
+        assert status == 409 and refused["kind"] == "after" and refused["change"]["actor"] == "owner"
+        assert "changed after it: stage" in refused["error"]
+
+        monkey = views.CHANGES_SHOWN
+        views.CHANGES_SHOWN = 2
+        try:
+            page = await world.get("/api/c/_changes?space=work")
+            assert len(page["changes"]) == 2 and page["next"] == page["changes"][-1]["change_id"]
+            rest = await world.get(f"/api/c/_changes?space=work&before={page['next']}")
+            assert rest["changes"][0]["change_id"] < page["next"]
+        finally:
+            views.CHANGES_SHOWN = monkey
+        assert (await world.call("GET", "/api/c/_changes?space=work&before=x"))[0] == 400
+        assert (await world.get("/api/c/_changes?space=nowhere")) == {"space": "nowhere", "changes": [], "next": None,
+                                                                       "words": {}}
+
+    faced(tmp_path, body)
+
+
+def test_a_queues_press_and_a_views_add_are_held_to_the_form_and_an_add_offers_the_records_a_ref_may_name(tmp_path):
+    for given, reason in [
+        ([{"name": "x", "kind": "queue", "done": {"field": "state", "value": "done"}}], '"done" is {"field"'),
+        ([{"name": "x", "kind": "queue", "done": {"field": "state", "value": [], "label": "Done"}}], '"done" is'),
+        ([{"name": "x", "kind": "queue", "done": {"field": "state", "value": "done", "label": "x" * 41}}], '"done" is'),
+        ([{"name": "x", "kind": "board", "group": "stage", "done": {}}], "not 'done'"),
+        ([{"name": "x", "kind": "stat", "add": {"label": "Add"}}], "not 'add'"),
+        ([{"name": "x", "kind": "queue", "add": {"fields": ["a"]}}], '"add" is {"label"'),
+        ([{"name": "x", "kind": "queue", "add": {"label": "Add", "colour": "red"}}], '"add" is'),
+        ([{"name": "x", "kind": "queue", "add": {"label": "Add", "values": {"a": {"b": 1}}}}], '"add" is'),
+    ]:
+        with pytest.raises(Rejected, match=re.escape(reason)):
+            parse_views(given)
+
+    async def body(world):
+        world.clock.now = NOW
+        store = world.platform.collections
+        await work(store)
+        lost = [{**WRITING[0], "name": "lost", "done": {"field": "status", "value": "done", "label": "Done"}},
+                {**WRITING[0], "name": "wrong", "add": {"label": "Add", "values": {"state": "sent"}}}]
+        await store.define(DEFINE, "followups", "work", FOLLOWUPS, NOW, views=WRITING + lost)
+        deals = [await add(store, "deals", {"company": name, "product": "Widgets"}, NOW + n)
+                 for n, name in enumerate(["Acme", "Initech"])]
+        await store.apply(OWNER, "deals", [{"op": "delete", "id": deals[0]["id"], "version": 1}], NOW + 5)
+        got = await shown(store)
+        waiting = got["followups"]["waiting"]
+        assert waiting["done"] == {"field": "state", "value": "done", "label": "Done"}
+        assert waiting["add"] == {"label": "Add a follow-up", "fields": ["deal", "date", "state", "channel"],
+                                  "values": {"state": "draft"}}
+        assert got["followups"]["lost"] == {"name": "lost", "kind": "queue", "title": "Waiting on me",
+                                            "error": "field not found: 'status'"}
+        assert "'state' is one of draft, done, unknown" in got["followups"]["wrong"]["error"]
+        assert got["deals"]["funnel"]["add"] is None and "add" not in got["deals"]["moved"]
+
+        await world.login()
+        form = await world.get("/api/c/followups/_form")
+        assert list(form["fields"]) == list(FOLLOWUPS["fields"]) and form["fields"]["date"] == {"type": "date"}
+        assert form["options"] == {"deal": [{"id": deals[1]["id"], "title": "Initech · Widgets"}]}, \
+            "the deleted one is not offered"
+        assert (await world.call("GET", "/api/c/nothing/_form"))[0] == 404
+
+    faced(tmp_path, body)

@@ -52,7 +52,9 @@ Google Calendar, read-only ([mail.md](mail.md)); `PAGES=1` — your HTML pages, 
 share ([pages.md](pages.md)); `TGBUSINESS=1` and `SEND=1` — your chosen Telegram chats and replies to people, each
 sent only by your «Send» under the exact text ([courier.md](courier.md)); `PLATFORM=1` — Claude Code sessions
 in lane containers, driven from the same chat, in auto mode: what its classifier blocks approved by you
-([platform.md](platform.md)); `FACE=1 FACE_HOST=app.in.<your domain>` — the platform's app on your phone, over WireGuard only ([face.md](face.md)).
+([platform.md](platform.md)); `FACE=1 FACE_HOST=app.in.<your domain>` — the platform's app on your phone, over WireGuard only ([face.md](face.md)), and at
+`/mcp/mac` on the same host your collections for Claude Code on your Mac, by a device's token — the Mac a WireGuard peer
+in `DEVICES` ([collections.md](collections.md#from-the-mac)).
 
 ## 4. Check
 

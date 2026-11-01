@@ -103,7 +103,7 @@ def main() -> None:
                 default_agent=cfg.default_agent,
                 tz=cfg.owner_tz, backup_status=cfg.backup_status, scribe=Scribe(cfg.stt_key, store=store),
                 travel=TravelOps(cfg.travel_url) if cfg.travel_url else None, memory=memory, mail=mail,
-                pages=pages, outbox=outbox, proactive=Proactive(),
+                pages=pages, outbox=outbox, proactive=Proactive(week=cfg.proactive.week),
                 watch=Watch(cfg.health_status, store.db))
     # The platform's sessions: its cards and summaries reach the owner through Telegram, never through the core.
     bridge = PlatformBridge(PlatformClient(cfg.platform_url, cfg.platform_token, "the platform"), store, cfg.face_url) \

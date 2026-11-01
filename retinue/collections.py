@@ -10,7 +10,8 @@ the caller to say «try again», never waited out for 30 s.
 The file uses a rollback journal, like every database the backup copies (deploy/backup/retinue-backup.py). It holds
 `files`, and the records: `schemas` (a collection's form, rights and views), `records` (each one's current state, a JSON document),
 `changes` (every change of one, append-only: the history and the provenance), `batches` (changes that go
-together) and `idems` (the calls already made, so a repeat makes none). Every write of a record is one `apply`,
+together), `idems` (the calls already made, so a repeat makes none) and `devices` (the owner's Macs that reach the
+collections at `/mcp/mac`, each by the SHA-256 of its token). Every write of a record is one `apply`,
 checked whole against the form and the collection's rights before anything is kept; every read is `get`, `query` or
 `count`, whose SQL only code assembles, from names the form declares.
 """
@@ -111,6 +112,13 @@ SCHEMA = """
         ts REAL NOT NULL,
         PRIMARY KEY (scope, collection, idem)
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS devices (
+        name TEXT PRIMARY KEY,              -- the device: its changes are by mac:<name>/<session>; never given twice
+        token_sha256 TEXT NOT NULL UNIQUE,  -- of its token, which only the device keeps
+        scope TEXT NOT NULL CHECK (scope IN ('read', 'write')),
+        created REAL NOT NULL,
+        revoked REAL                        -- when the owner took it back: the token opens nothing from then on
+    ) STRICT;
     CREATE INDEX IF NOT EXISTS changes_record ON changes (collection, id, seq);
     CREATE INDEX IF NOT EXISTS changes_collection ON changes (collection, seq);
     CREATE TRIGGER IF NOT EXISTS changes_append_only_u BEFORE UPDATE ON changes
@@ -119,6 +127,8 @@ SCHEMA = """
         BEGIN SELECT RAISE(ABORT, 'changes are append-only'); END;
 """
 FILE_COLUMNS = "sha256, name, size, mime, created"
+DEVICE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # a Mac's name, as `mac:<device>/<session>` names it
+SCOPES = ("read", "write")  # a device's token: describe and query; or those, apply and propose too
 
 NAME = re.compile(r"[a-z][a-z0-9_]{0,39}")      # a collection's name, and a field's
 ENUM_VALUE = re.compile(r"[a-z][a-z0-9_]{0,31}")
@@ -154,9 +164,12 @@ DEFAULT_RIGHTS = {  # a new collection's: sessions add and set, deleting by a pr
 FILTER_OPS = ("eq", "in", "between", "empty", "not_empty", "ref_is")
 VIEW_KEYS = {  # each kind of view (`views.py`), and the keys it takes
     "stat": {"name", "kind", "title", "count", "filter", "date", "field", "to", "window", "goal"},
-    "board": {"name", "kind", "title", "group", "filter", "fields", "folded", "rot"},
-    "queue": {"name", "kind", "title", "filter", "fields", "since", "rot"},
+    "board": {"name", "kind", "title", "group", "filter", "fields", "folded", "rot", "add"},
+    "queue": {"name", "kind", "title", "filter", "fields", "since", "rot", "done", "add"},
 }
+DONE_KEYS = {"field", "value", "label"}  # a queue's one press on a row: its field set to the value
+ADD_KEYS = {"label", "fields", "values"}  # a view's «add»: the fields its form asks for, and what they start as
+LABEL_MAX = 40              # characters of a button's label
 WINDOWS = ("week", "month")
 VIEWS_MAX = 20              # views of one collection
 FIELDS_SHOWN = 32           # names in a view's `fields`, `folded` or `to`
@@ -167,6 +180,8 @@ KEY_MAX = 8                 # fields in a key, or in one unique
 UNIQUE_MAX = 8              # uniques in one form
 FILTER_MAX = 16             # conditions in one filter
 IN_MAX = 200                # values of one `in`
+ZONE_AHEAD_S = 14 * 3600    # the store has no zone: «today» is the owner's in any, from UTC-12 to UTC+14
+ZONE_BEHIND_S = 12 * 3600
 IDEM_MAX = 200              # characters of a call's idem
 QUERY_ROWS = 200            # rows of one `query`…
 QUERY_BYTES = 60 * 2**10    # …and bytes of them as JSON: what an agent's tool call can take back (25 000 tokens)
@@ -216,11 +231,16 @@ class Rejected(Exception):
     """A write the store will not make as asked — a field the form does not have, a value of the wrong type, a version
     that is not the record's — with the reason in words a writer (a model included) can correct its call by. Nothing
     of the call was written. `record` is the record as it is now and `change` its last change, when they help: a
-    version that did not match comes with both."""
+    version that did not match comes with both. `kind` names the refusals a screen answers with its own question:
+    `stale` (a version not the record's: the record moved on), `after` (a revert of a change something changed after),
+    `duplicate` (the form's key matches another record), `taken` (a unique value another holds); and `propose` the
+    writes the rights leave to the owner's press — a delete they give "propose", a value `set_by` keeps for others —
+    which an agent's tool puts to him as a proposal (`colltools`)."""
 
-    def __init__(self, reason: str, record: dict | None = None, change: dict | None = None) -> None:
+    def __init__(self, reason: str, record: dict | None = None, change: dict | None = None,
+                 kind: str | None = None) -> None:
         super().__init__(reason)
-        self.reason, self.record, self.change = reason, record, change
+        self.reason, self.record, self.change, self.kind = reason, record, change, kind
 
 
 @dataclass(frozen=True)
@@ -263,6 +283,10 @@ def clean_text(text: str) -> str:
 def _plain(text: object, most: int) -> bool:
     return (isinstance(text, str) and 0 < len(text) <= most
             and not any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Zl", "Zp") for c in text))
+
+
+def _utc_day(moment: float) -> str:
+    return datetime.datetime.fromtimestamp(moment, datetime.timezone.utc).date().isoformat()
 
 
 def _date(value: object) -> bool:
@@ -398,6 +422,10 @@ def parse_views(views: Any) -> list[dict]:
                 raise Rejected(f"{where}: \"{key}\" is a list of up to {FIELDS_SHOWN} distinct names")
         if "filter" in view and not isinstance(view["filter"], (dict, list)):
             raise Rejected(f"{where}: \"filter\" is a condition or a list of them, as a query takes")
+        if "done" in view:
+            _press(view["done"], where)
+        if "add" in view:
+            _adding(view["add"], where)
         if kind == "board" and "group" not in view:
             raise Rejected(f"{where}: \"group\" names the enum its columns are")
         if kind == "stat":
@@ -414,6 +442,35 @@ def parse_views(views: Any) -> list[dict]:
                 raise Rejected(f"{where}: \"field\" and \"to\" are a count of changed records'")
         kept.append(dict(view))
     return kept
+
+
+def _scalar(value: Any) -> bool:
+    return (isinstance(value, bool) or type(value) is int and abs(value) <= INT_MAX
+            or isinstance(value, str) and _plain(value, TEXT_MAX))
+
+
+def _press(done: Any, where: str) -> None:
+    """A queue's `done`: `{"field": "state", "value": "sent", "label": "Sent"}` — the button on each of its rows."""
+    if (not isinstance(done, dict) or set(done) != DONE_KEYS or not isinstance(done["field"], str)
+            or not NAME.fullmatch(done["field"]) or not _scalar(done["value"]) or not _plain(done["label"], LABEL_MAX)):
+        raise Rejected(f"{where}: \"done\" is {{\"field\": <a field>, \"value\": <what it becomes>, \"label\": <the "
+                       f"button's words, at most {LABEL_MAX} characters>}}")
+
+
+def _adding(add: Any, where: str) -> None:
+    """A view's `add`: `{"label": "Add a touch", "fields": [...], "values": {...}}` — the button that adds a record,
+    the fields its sheet asks for (the form's, without them) and the values they start as."""
+    shape = (f"{where}: \"add\" is {{\"label\": <the button's words, at most {LABEL_MAX} characters>, \"fields\": "
+             "[<fields it asks for>], \"values\": {<field>: <what it starts as>}}, the last two optional")
+    if not isinstance(add, dict) or "label" not in add or set(add) - ADD_KEYS or not _plain(add["label"], LABEL_MAX):
+        raise Rejected(shape)
+    fields, values = add.get("fields", []), add.get("values", {})
+    if (not isinstance(fields, list) or len(fields) > FIELDS_SHOWN or len(set(map(str, fields))) != len(fields)
+            or not all(isinstance(v, str) and NAME.fullmatch(v) for v in fields)):
+        raise Rejected(shape)
+    if (not isinstance(values, dict) or len(values) > FIELDS_SHOWN
+            or not all(NAME.fullmatch(k) and _scalar(v) for k, v in values.items())):
+        raise Rejected(shape)
 
 
 def _names(names: Any, fields: dict, what: str) -> list[str]:
@@ -523,12 +580,16 @@ def writer_class(actor: str) -> str:
 
 
 def idem_scope(actor: str, derived: bool = False) -> str:
-    """Whose idems a writer's are. A call's (`idem`) are a session's or the Mac's own actor's — another session's
-    `add-1` is another call — and its class's for the rest. One the store derives from a mail is its class's, so the
-    assistant reading a mail again finds what it made the first time, whichever run it is. An import's, of both kinds,
-    are its own batch's: a failed import, taken back, leaves none behind that a corrected one would skip."""
+    """Whose idems a writer's are. A call's (`idem`) are a session's own actor's — another session's `add-1` is
+    another call —, a Mac's its device's (`mac:<device>`: Claude Code makes a call again on a new connection, which is
+    another MCP session of the same device), and its class's for the rest. One the store derives from a mail is its
+    class's, so the assistant reading a mail again finds what it made the first time, whichever run it is. An
+    import's, of both kinds, are its own batch's: a failed import, taken back, leaves none behind that a corrected one
+    would skip."""
     cls = writer_class(actor)
-    return actor if cls == "import" or (not derived and cls in ("session", "mac")) else cls
+    if cls == "mac" and not derived:
+        return actor.split("/")[0]
+    return actor if cls == "import" or (not derived and cls == "session") else cls
 
 
 def _digest(value: Any) -> str:
@@ -910,7 +971,7 @@ class Collections:
                 raise Rejected(f"no batch {batch!r} is applying")
 
     async def apply(self, writer: Writer, collection: str, ops: Any, now: float, batch: str | None = None,
-                    idem: str | None = None) -> dict:
+                    idem: str | None = None, dry: bool = False) -> dict:
         """The one way a record is written: up to OPS_MAX operations on one collection, checked against its form and
         its rights and kept whole in one transaction, or none of them (docs/collections.md#records). Each is `add`,
         `set`, `delete`, `restore` or `revert`. Returns `{name, rev, change_ids, records}`: the collection, its newest
@@ -918,15 +979,16 @@ class Collections:
         it changed nothing: the record was already so) and the record after it. `idem` names the call: made again by
         the same writer (`idem_scope`) with the same operations, it changes nothing and answers the first time's
         change_ids, with the records as they are now; with other operations it is Rejected. The writers of the
-        server's terminal (`import:`, `define:`) write through `import_ops` and `define` only. Raises Rejected,
-        Refused."""
-        answer = await self._run(self._apply, writer, collection, ops, now, batch, idem)
-        if any(answer["change_ids"]):
+        server's terminal (`import:`, `define:`) write through `import_ops` and `define` only. `dry` tries the call
+        and keeps nothing: the answer then has `changes` too, each operation's change as it would be (None where it
+        would change nothing) — what a proposal shows the owner before his press. Raises Rejected, Refused."""
+        answer = await self._run(self._apply, writer, collection, ops, now, batch, idem, dry)
+        if not dry and any(answer["change_ids"]):
             self._tell(collection, answer["rev"])
         return answer
 
     def _apply(self, writer: Writer, collection: str, ops: Any, now: float, batch: str | None,
-               idem: str | None) -> dict:
+               idem: str | None, dry: bool = False) -> dict:
         _check_writer(writer)
         if idem is not None and not _plain(idem, IDEM_MAX):
             raise Rejected(f"idem is the call's own name, 1 to {IDEM_MAX} plain characters")
@@ -934,7 +996,16 @@ class Collections:
             raise Rejected(f"ops is a list of 1 to {OPS_MAX} operations")
         if writer_class(writer.actor) in ("import", "define"):
             raise Rejected("an import: or define: writer writes through import_ops or define, not apply")
+        if dry and (idem is not None or batch is not None):
+            raise Rejected("a trial is of a call alone: no idem, no batch")
         scope, digest = idem_scope(writer.actor), _digest(ops)
+        try:
+            return self._applying(writer, collection, ops, now, batch, idem, dry, scope, digest)
+        except _Undo as undo:
+            return undo.answer
+
+    def _applying(self, writer: Writer, collection: str, ops: list, now: float, batch: str | None,
+                  idem: str | None, dry: bool, scope: str, digest: str) -> dict:
         with self._write() as db:
             schema = self._schema(collection)
             if schema is None:
@@ -952,9 +1023,12 @@ class Collections:
                 try:
                     record, change = self._op(writer, collection, schema, op, now, batch, idem)
                 except Rejected as exc:
-                    raise Rejected(f"ops[{n}]: {exc.reason}", exc.record, exc.change) from None
+                    raise Rejected(f"ops[{n}]: {exc.reason}", exc.record, exc.change, exc.kind) from None
                 change_ids.append(change)
                 records.append(record)
+            if dry:  # rolled back by `_write`: nothing of it is kept, the ids it took aside
+                raise _Undo({"name": collection, "rev": None, "change_ids": [None] * len(ops), "records": records,
+                             "changes": [self._change_of(cid) if cid else None for cid in change_ids]})
             if idem is not None:
                 self._remember(scope, collection, f"call:{idem}",
                                {"ops": digest, "change_ids": change_ids, "ids": [r["id"] for r in records]}, now)
@@ -978,6 +1052,8 @@ class Collections:
         if not isinstance(distinct, bool):
             raise Rejected("distinct is true or false: true when the record is another than the one it matches")
         cls, scope = writer_class(writer.actor), idem_scope(writer.actor, derived=True)
+        if as_of is not None and cls not in OWNERS and as_of > _utc_day(now + ZONE_AHEAD_S):
+            raise Rejected(f"as_of {as_of} has not come yet: the date the world became so is today or before")
         mail = src if src is not None and src.startswith("mail:") else None  # its idems the store derives
         stamp = {"writer": writer, "now": now, "collection": collection, "as_of": as_of, "src": src, "batch": batch,
                  "idem": idem}
@@ -1000,6 +1076,11 @@ class Collections:
             return self._revert(stamp, schema, op)
         self._may(collection, rights, cls, kind, op.get("fields"))
         record = self._at(collection, op)
+        if as_of is not None and cls not in OWNERS and as_of < _utc_day(record["created"] - ZONE_BEHIND_S):
+            # A change dated before its record was: a week's numbers count changes by `as_of`, and one a writer
+            # moves back would rewrite a week gone by. An add may be dated back — the honest way to record late.
+            raise Rejected(f"as_of {as_of} is before {record['id']} was made: a change is of its record's lifetime",
+                           record)
         if kind == "set":
             if record["deleted"] is not None:
                 raise Rejected(f"{record['id']} is deleted: restore it first", record)
@@ -1033,7 +1114,8 @@ class Collections:
             raise Rejected(f"{cls} does not add records to {collection}: propose it to the owner instead")
         if kind in ("delete", "restore"):
             if grant.get("delete") == "propose":
-                raise Rejected(f"a {kind} by {cls} in {collection} is the owner's to make: propose it to him")
+                raise Rejected(f"a {kind} by {cls} in {collection} is the owner's to make: propose it to him",
+                               kind="propose")
             if grant.get("delete") is not True:
                 raise Rejected(f"{cls} does not {kind} records in {collection}")
             return
@@ -1047,7 +1129,7 @@ class Collections:
             who = rights["set_by"].get(name, {}).get(value) if isinstance(value, str) else None
             if who is not None and cls not in who:
                 by = ", ".join(dict.fromkeys(["the owner", *(c for c in who if c != "owner")]))
-                raise Rejected(f"{name!r} becomes {value!r} only by {by}: not by {cls}")
+                raise Rejected(f"{name!r} becomes {value!r} only by {by}: not by {cls}", kind="propose")
 
     def _keys(self, collection: str, form: dict, data: dict, rid: str, changed: set | None, check_key: bool) -> None:
         """Rejected when the record, as it will be, holds what one of the form's `unique` gives one record only and
@@ -1062,7 +1144,7 @@ class Collections:
                     (*(data[name] for name in names), rid)).fetchone()
                 if row is not None:
                     what = ", ".join(f"{name} {data[name]!r}" for name in names)
-                    raise Rejected(f"taken: {row[0]} has {what}", self._record(collection, row[0]))
+                    raise Rejected(f"taken: {row[0]} has {what}", self._record(collection, row[0]), kind="taken")
         key = form.get("key")
         if not check_key or not key or not (changed is None or changed & set(key)) or not all(k in data for k in key):
             return
@@ -1072,7 +1154,8 @@ class Collections:
                                "AND id != ? LIMIT 1", (*(data[k] for k in key), rid)).fetchone()
         if row is not None:
             raise Rejected(f"possible duplicate of {row[0]}: the same {', '.join(key)}. Change that record instead, "
-                           "or give \"distinct\": true if this one is another", self._record(collection, row[0]))
+                           "or give \"distinct\": true if this one is another", self._record(collection, row[0]),
+                           kind="duplicate")
 
     def _revert(self, stamp: dict, schema: tuple[dict, dict], op: dict,
                 aside: Callable[[dict], bool] | None = None) -> tuple[dict, str | None]:
@@ -1107,7 +1190,7 @@ class Collections:
                 what = ", ".join(sorted("deleted" if k == DELETED else k
                                         for k in change["after"] if touched is None or k in touched))
                 raise Rejected(f"changed after it: {what} by {change['actor']} ({change['op']}, "
-                               f"{change['change_id']}) — revert that first, or set the value", record, change)
+                               f"{change['change_id']}) — revert that first, or set the value", record, change, "after")
         if fields and record["deleted"] is not None and goal.get(DELETED, record["deleted"]) is not None:
             raise Rejected(f"{record['id']} is deleted: restore it first", record)
         data = {k: v for k, v in {**record["fields"], **fields}.items() if v is not None}
@@ -1201,7 +1284,7 @@ class Collections:
         if op.get("version") != record["version"] or type(op.get("version")) is not int:
             last = self._history(collection, record["id"], 1)
             raise Rejected(f"{record['id']} is at version {record['version']}, not {op.get('version')!r}: read it "
-                           "again, it may have changed since", record, last[0] if last else None)
+                           "again, it may have changed since", record, last[0] if last else None, "stale")
         return record
 
     def _change(self, writer: Writer, now: float, collection: str, rid: str | None, op: str, before: Any, after: Any,
@@ -1241,6 +1324,10 @@ class Collections:
         row = self._db.execute(f"SELECT {RECORD_COLUMNS} FROM records WHERE collection = ? AND id = ?",
                                (collection, rid)).fetchone()
         return _record(row) if row else None
+
+    def _change_of(self, change_id: str) -> dict | None:
+        row = self._db.execute(f"SELECT {CHANGE_COLUMNS} FROM changes WHERE change_id = ?", (change_id,)).fetchone()
+        return _change(row) if row else None
 
     def _history(self, collection: str, rid: str, limit: int) -> list[dict]:
         rows = self._db.execute(f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection = ? AND id = ? "
@@ -1318,7 +1405,7 @@ class Collections:
             try:
                 _, change = self._op(writer, collection, schema, op, now, batch, None)
             except Rejected as exc:
-                raise Rejected(f"line {n + 1}: {exc.reason}", exc.record, exc.change) from None
+                raise Rejected(f"line {n + 1}: {exc.reason}", exc.record, exc.change, exc.kind) from None
             kind = "same" if change is None else "added" if op["op"] == "add" else "changed"
             counts[kind] += 1
 
@@ -1450,6 +1537,66 @@ class Collections:
                 shutil.copyfile(self.blobs / file["sha256"], folder / BLOBS / file["sha256"])
                 counts["files"] += 1
         return counts
+
+    # --- the Macs -----------------------------------------------------------------------------------------------------
+
+    async def add_device(self, name: str, scope: str, now: float) -> str:
+        """A Mac that reaches the collections at `/mcp/mac`: its token, shown once — the file keeps only its SHA-256.
+        A name is given once, revoked or not: the changes it made keep naming that device. Raises Rejected, Refused."""
+        if not isinstance(name, str) or not DEVICE.fullmatch(name):
+            raise Rejected(f"a device's name is 1 to 40 of a-z, 0-9, - and _, starting with a letter or digit: not "
+                           f"{name!r}")
+        if scope not in SCOPES:
+            raise Rejected(f"scope is read or write: not {scope!r}")
+        token = secrets.token_urlsafe(32)
+        return await self._run(self._add_device, name, scope, hashlib.sha256(token.encode()).hexdigest(), token, now)
+
+    def _add_device(self, name: str, scope: str, sha: str, token: str, now: float) -> str:
+        with self._write() as db:
+            if db.execute("SELECT 1 FROM devices WHERE name = ?", (name,)).fetchone():
+                raise Rejected(f"there is a device {name!r} already, revoked or not: a name is given once, so its "
+                               "changes keep naming one device — choose another")
+            db.execute("INSERT INTO devices (name, token_sha256, scope, created) VALUES (?, ?, ?, ?)",
+                       (name, sha, scope, now))
+        return token
+
+    async def revoke_device(self, name: str, now: float) -> bool:
+        """The device's token opens nothing from now on: True, or False when it was revoked already. Raises Rejected
+        for no such device, Refused."""
+        return await self._run(self._revoke_device, name, now)
+
+    def _revoke_device(self, name: str, now: float) -> bool:
+        with self._write() as db:
+            row = db.execute("SELECT revoked FROM devices WHERE name = ?", (name,)).fetchone()
+            if row is None:
+                raise Rejected(f"there is no device {name!r}")
+            if row[0] is not None:
+                return False
+            db.execute("UPDATE devices SET revoked = ? WHERE name = ?", (now, name))
+            return True
+
+    async def devices(self) -> list[dict]:
+        """Every device: `{name, scope, created, revoked, written}`, `written` the moment of its last change, if any.
+        Raises Refused."""
+        return await self._run(self._read, lambda: [
+            {"name": name, "scope": scope, "created": created, "revoked": revoked,
+             "written": self._db.execute("SELECT max(ts) FROM changes WHERE substr(actor, 1, ?) = ?",
+                                         (len(name) + 5, f"mac:{name}/")).fetchone()[0]}
+            for name, scope, created, revoked in self._db.execute(
+                "SELECT name, scope, created, revoked FROM devices ORDER BY created, name").fetchall()])
+
+    async def device(self, token: str) -> dict | None:
+        """The device a token is, unless revoked: `{name, scope, sha256}`, or None. Raises Refused."""
+        sha = hashlib.sha256(token.encode()).hexdigest()
+        row = await self._run(self._read, lambda: self._db.execute(
+            "SELECT name, scope FROM devices WHERE token_sha256 = ? AND revoked IS NULL", (sha,)).fetchone())
+        return {"name": row[0], "scope": row[1], "sha256": sha} if row else None
+
+    async def revoked(self, name: str) -> bool:
+        """Whether a device was taken back, or never was one. Raises Refused."""
+        row = await self._run(self._read, lambda: self._db.execute(
+            "SELECT revoked FROM devices WHERE name = ?", (name,)).fetchone())
+        return row is None or row[0] is not None
 
     async def catalog(self) -> list[dict]:
         """Every collection: `{name, space, form_rev, records, deleted, rev}`. Raises Refused."""

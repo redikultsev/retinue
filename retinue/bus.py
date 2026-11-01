@@ -121,7 +121,8 @@ def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
 class BusServer:
     """HTTP endpoint on the agents network: GET /agents, POST /call, POST /archive/search,
     POST /reminders/{add,list,cancel,move}, POST /zone, POST /attachments/get, POST /travel/log, POST /kb/log,
-    POST /trips/publish, POST /courier/draft. Authenticated by per-agent token."""
+    POST /trips/publish, POST /courier/draft, POST /collections/{describe,query,apply,propose}. Authenticated by
+    per-agent token."""
 
     def __init__(self, core, secret: str, port: int) -> None:
         self.core = core
@@ -136,7 +137,8 @@ class BusServer:
                              web.post("/travel/log", self.travel_log),
                              web.post("/kb/log", self.kb_log),
                              web.post("/trips/publish", self.publish_trip),
-                             web.post("/courier/draft", self.draft_reply)])
+                             web.post("/courier/draft", self.draft_reply),
+                             web.post("/collections/{name:describe|query|apply|propose}", self.collections)])
 
     async def start(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
@@ -223,4 +225,12 @@ class BusServer:
         caller = self.caller(request)
         body = await request.json()
         ok, text = await self.core.publish_trip(caller, str(body.get("turn", "")), body.get("trip"))
+        return web.json_response({"ok": ok, "text": text})
+
+    async def collections(self, request: web.Request) -> web.Response:
+        caller = self.caller(request)
+        body = await request.json()
+        body = body if isinstance(body, dict) else {}
+        ok, text = await self.core.collection_tool(caller, str(body.get("turn", "")), request.match_info["name"],
+                                                   body.get("arguments"))
         return web.json_response({"ok": ok, "text": text})

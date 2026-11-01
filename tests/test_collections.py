@@ -4,6 +4,7 @@ its SHA-256 however often it comes, written before its row."""
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import hashlib
 import json
 import re
@@ -215,6 +216,30 @@ async def sql(store: Collections, query: str) -> list:
 
 def add(fields: dict, **extra) -> dict:
     return {"op": "add", "fields": fields, **extra}
+
+
+def test_a_writer_but_the_owner_dates_a_change_within_its_records_life_and_never_ahead(tmp_path):
+    """`as_of` moves the week a change is counted in: a session, the assistant or a Mac (a prompt it read may ask)
+    dates neither ahead of today nor a change before its record was made — an add back, the honest way to record
+    late. The owner and an import date as they know."""
+    made = dt.datetime(2026, 9, 10, 12, tzinfo=dt.UTC).timestamp()
+
+    async def body():
+        store = await with_deals(tmp_path)
+        [record] = (await store.apply(SESSION, "deals", [add({"company": "Acme"}, as_of="2026-09-01")], made))["records"]
+        with pytest.raises(Rejected, match="as_of 2026-09-12 has not come yet"):
+            await store.apply(SESSION, "deals", [add({"company": "Globex"}, as_of="2026-09-12")], made)
+        with pytest.raises(Rejected, match=f"as_of 2026-09-09 is before {record['id']} was made"):
+            await store.apply(SESSION, "deals", [{"op": "set", "id": record["id"], "version": 1,
+                                                  "as_of": "2026-09-09", "fields": {"stage": "won"}}], made + 3600)
+        for version, day in ((1, "2026-09-10"), (2, "2026-09-11")):  # 13:00 UTC is the 11th from UTC+11
+            await store.apply(SESSION, "deals", [{"op": "set", "id": record["id"], "version": version, "as_of": day,
+                                                  "fields": {"n": version}}], made + 3600)
+        await store.apply(OWNER, "deals", [{"op": "set", "id": record["id"], "version": 3, "as_of": "2026-08-01",
+                                            "fields": {"stage": "lead"}}], made)
+        await store.close()
+
+    run(body)
 
 
 def test_a_record_is_added_set_and_kept_with_its_change(tmp_path):
@@ -679,6 +704,36 @@ def test_only_the_classes_set_by_names_give_a_value(tmp_path):
                                                       "version": 3}], 5)
         await store.apply(OWNER, "followups", [{"op": "set", "id": followup["id"], "version": 3,
                                               "fields": {"state": "done"}}], 5)
+        await store.close()
+
+    run(body)
+
+
+def test_a_trial_keeps_nothing_and_says_what_each_operation_would_change(tmp_path):
+    async def body():
+        store = await with_followups(tmp_path)
+        deal = (await store.apply(OWNER, "deals", [add({"company": "Acme", "stage": "lead"})], 1))["records"][0]
+        rev = (await store.catalog())[0]["rev"]
+        ops = [{"op": "set", "id": deal["id"], "version": 1, "fields": {"stage": "won"}},
+               {"op": "set", "id": deal["id"], "version": 2, "fields": {"stage": "won"}}, add({"company": "Beta"})]
+        tried = await store.apply(OWNER, "deals", ops, 2, dry=True)
+        assert tried["change_ids"] == [None, None, None] and tried["rev"] is None
+        moved, same, added = tried["changes"]
+        assert (moved["op"], moved["before"], moved["after"]) == ("set", {"stage": "lead"}, {"stage": "won"})
+        assert same is None, "the second set finds it already so"
+        assert added["op"] == "add" and added["after"] == {"company": "Beta"}
+        assert await store.get("deals", deal["id"]) == deal and (await store.catalog())[0] == {
+            "name": "deals", "space": "work", "form_rev": 1, "records": 1, "deleted": 0, "rev": rev}, "nothing kept"
+        with pytest.raises(Rejected, match="no idem"):
+            await store.apply(OWNER, "deals", ops, 2, dry=True, idem="x")
+        later = await store.apply(OWNER, "deals", [ops[0]], 3)
+        assert later["change_ids"][0] > rev, "ids still grow past the ones a trial took aside"
+        with pytest.raises(Rejected) as refused:
+            await store.apply(SESSION, "deals", [{"op": "delete", "id": deal["id"], "version": 2}], 4)
+        assert refused.value.kind == "propose", "a delete the rights give by a proposal says so"
+        with pytest.raises(Rejected) as refused:
+            await store.apply(SESSION, "followups", [add({"deal": deal["id"], "state": "done"})], 4)
+        assert refused.value.kind == "propose", "and so does a value set_by keeps for others"
         await store.close()
 
     run(body)

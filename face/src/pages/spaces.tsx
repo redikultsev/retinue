@@ -7,6 +7,9 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { BaseMarkdown } from "@/components/base-markdown";
 import { Board } from "@/components/views/board";
+import { SpaceChanges } from "@/components/views/changes";
+import { AddButton, Editor } from "@/components/views/edit";
+import { SpaceProposals } from "@/components/views/proposals";
 import { Queue } from "@/components/views/queue";
 import { StatStrip } from "@/components/views/stat";
 import { ArrowLeft, ChevronRight, MessageCircle, Plus } from "@/components/icons";
@@ -17,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { collectionsApi, layout, type Placed, useSpaceViews } from "@/lib/collections";
+import { type EditApi, editApi, type ProposalsApi, proposalsApi } from "@/lib/edit";
 import { plural, sessionStateWord, when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { listed } from "@/lib/store";
@@ -387,8 +391,13 @@ function Records({ space, view }: { space: string; view: SpaceView }) {
 /** A board or a queue in its own section; one the platform could not make says why in its place. */
 function Shown({ placed }: { placed: Placed }) {
   const { collection, view } = placed;
+  const add = view.error === undefined && view.kind !== "stat" ? view.add : null;
   return (
-    <Section title={view.title} count={view.error === undefined && view.kind === "queue" ? view.count : undefined}>
+    <Section
+      title={view.title}
+      count={view.error === undefined && view.kind === "queue" ? view.count : undefined}
+      action={add ? <AddButton collection={collection.name} spec={add} /> : undefined}
+    >
       {view.error !== undefined ? (
         <Empty>{`Not shown: ${view.error}`}</Empty>
       ) : view.kind === "queue" ? (
@@ -400,7 +409,19 @@ function Shown({ placed }: { placed: Placed }) {
   );
 }
 
-export function SpacePage({ space, read = spacesApi.space, views = collectionsApi }: { space: string; read?: typeof spacesApi.space; views?: typeof collectionsApi }) {
+export function SpacePage({
+  space,
+  read = spacesApi.space,
+  views = collectionsApi,
+  edit = editApi,
+  proposals = proposalsApi,
+}: {
+  space: string;
+  read?: typeof spacesApi.space;
+  views?: typeof collectionsApi;
+  edit?: EditApi;
+  proposals?: ProposalsApi;
+}) {
   const { sessions } = useLiveState();
   const shown = useSpaceViews(space, views);
   const placed = useMemo(() => layout(shown.data), [shown.data]);
@@ -421,12 +442,15 @@ export function SpacePage({ space, read = spacesApi.space, views = collectionsAp
     working && `${working} working`,
     count(questions) && `${count(questions)} ${plural(count(questions), "Open question", "Open questions")}`,
   ].filter(Boolean);
+  const revs = shown.data?.collections.map((c) => c.rev).join() ?? "";
   return (
+    <Editor api={edit} today={shown.data?.today ?? ""} refresh={shown.refresh} reload={() => void shown.reload()}>
     <div className="flex flex-col">
       <Header up={{ label: "To the Spaces" }} title={`${sphere?.icon ? `${sphere.icon} ` : ""}${spaceTitle(space, sphere, view?.title)}`} />
       <main className={cn("mx-auto flex w-full max-w-3xl flex-col gap-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]", PAGE_X)}>
         {summary.length > 0 && <p className="px-1 text-sm text-muted-foreground">{summary.join(" · ")}</p>}
         {shown.error && !shown.data && <Empty>{`The views did not load: ${shown.error}`}</Empty>}
+        <SpaceProposals space={space} api={proposals} />
         {placed.queues.map((p) => (
           <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
         ))}
@@ -461,6 +485,7 @@ export function SpacePage({ space, read = spacesApi.space, views = collectionsAp
         {placed.boards.map((p) => (
           <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
         ))}
+        {(shown.data?.collections.length ?? 0) > 0 && <SpaceChanges space={space} api={edit} revs={revs} />}
         {error && !view && <Empty>{error}</Empty>}
         {!error && !view && <Empty>Loading the Showcase…</Empty>}
         {view && (
@@ -495,6 +520,7 @@ export function SpacePage({ space, read = spacesApi.space, views = collectionsAp
       </main>
       <Discuss key={JSON.stringify(topic)} space={space} topic={topic} onClose={() => setTopic(null)} />
     </div>
+    </Editor>
   );
 }
 

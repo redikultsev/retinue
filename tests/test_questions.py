@@ -106,6 +106,20 @@ def test_a_question_with_no_brief_before_it_is_sent_back_once_and_one_with_it_is
     scenario(tmp_path, body)
 
 
+def test_a_session_that_asks_again_leaves_one_card_the_newer(tmp_path):
+    async def body(world: World):
+        session, run, _ = await asked(world)
+        [first] = world.store.approvals(session=session, kind="question")
+        world.store.add_run(session, world.platform.gate.token_hash("again"), [], world.clock.now)
+        again = {**CALL, "id": "toolu_question_2"}
+        assert decision(await world.hook("PreToolUse", {"hook_token": "again"}, pre_tool_use(again))) == "defer"
+        world.lanes["private"].add(session, run["run"], *[line.replace(CALL["id"], again["id"]) for line in LINES[1:]])
+        await world.poll()
+        states = {a["tool_use_id"]: a["state"] for a in world.store.approvals(session=session, kind="question")}
+        assert states.get(first["tool_use_id"]) == "stale" and list(states.values()).count("shown") <= 1
+    scenario(tmp_path, body)
+
+
 def test_the_brief_is_read_by_its_labels():
     assert questions.has_brief("Долго.\n\n**Recommend:** центр\n- **Risk:** шумно")
     assert not questions.has_brief("**Why:** дёшево\n**Cost:** €20"), "no recommendation: no brief"

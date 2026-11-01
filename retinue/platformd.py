@@ -629,10 +629,15 @@ class Platform:
     # --- questions: AskUserQuestion, answered by a button or in the owner's words -----------------------------------
 
     def _show_question(self, session: dict, approval: dict, now: float) -> bool:
-        """Each question of the call as a Telegram message of its own, with its options as buttons."""
+        """Each question of the call as a Telegram message of its own, with its options as buttons. The session's
+        question shown before it goes stale: the model asked again, and only the newer call is resumed."""
         view = questions.open_view()
         if not self.store.move(approval["id"], ("pending",), "shown", now, view=view):
             return False
+        # a session asks one thing at a time: its question shown before this one is asked again by it — retired
+        for older in self.store.approvals(session=session["id"], kind="question", states=("shown",)):
+            if older["id"] != approval["id"] and self.store.move(older["id"], ("shown",), "stale", now):
+                retire(self.store, {**older, "state": "stale"}, "Asked again — answer the newer card", now)
         shown = {**approval, "state": "shown", "view": view}
         for n in range(len(questions.of(approval["input"]))):
             card = questions.card(shown, n, session["id"], session["track"])

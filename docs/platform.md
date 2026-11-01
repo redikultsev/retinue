@@ -1065,7 +1065,8 @@ allow. Then it asks with AskUserQuestion ([Questions](#questions)), never in the
 words, then labelled lines «**Recommend:**», «**Why:**», «**Cost:**», «**Risk:**», «**Not checked:**», a line left out
 when it has nothing — which “Today” shows beside the options and Telegram's card under the question. A question
 without a brief (in its text, or in the session's words right before it; no «Recommend» and one more line) is sent
-back once with what to write (`gate.NO_BRIEF`), never twice in a run; two or three options different in kind, each an action and
+back once with what to write (`gate.NO_BRIEF`), never twice in a run. A session asks one thing at a time: when it
+asks again, its question shown before goes stale («Asked again — answer the newer card»); two or three options different in kind, each an action and
 what follows from it and what it costs or risks in a line; the one it recommends first, marked «(Recommended)», only when it truly recommends
 one. You can always answer in your own words. So a decision is a question card — its options described, an answer of
 your own always open, alive 7 days and through restarts — and the run stops on it, holding no room on its lane.

@@ -124,11 +124,20 @@ has not moved. Otherwise it fetches, and for every file the hub changed since th
   empty);
 - **already as the hub has it** → nothing;
 - **dirty here** → `git merge-file` (ours = the tree, base = `HEAD`, theirs = the hub); a clean merge is written;
+- **dirty here, and the lines do not merge** (a text file both sides edited in the same place — the session and the
+  owner's Mac at once) → both versions go into the file between conflict markers (`<<<<<<< this session`, `=======`,
+  `>>>>>>> the hub`), as `git pull` leaves it, on top of the hub's version: from now on the file is the hub's plus the
+  session's edit, so no later commit undoes the hub's change. The path is noted in `base.sqlite` (`marked`), and
+  `tobase` tells the session that changed it — a message from the platform (`by: "platform"`), not from the owner: merge
+  both sides into one text and remove the markers. No commit takes a file with a marker left («holds both versions
+  between conflict markers — its session merges them first»). Merging is the session's work, never the owner's;
 - **otherwise held**: the tree's file stays as it is, and its base (the blob the session's edit started from) is
   kept in `base.sqlite`, so a later commit merges against that base and cannot silently undo the hub's change (a lost
-  update). A held file put back to the hub's version (or deleted where the hub has none) is no longer held.
+  update). A held file put back to the hub's version (or deleted where the hub has none) is no longer held. What is
+  held: a file that is not UTF-8 text (no markers in a binary), a deletion against an edit, and anything a refresh
+  beside a run would have to write (the next idle refresh merges or marks it).
 
-One path that cannot be done — a conflict, a link on the way, a folder in a file's place — is held and never stops
+One path that cannot be done — a link on the way, a folder in a file's place — is held and never stops
 the rest. Then `HEAD` moves to the hub's commit. Each refresh that moved is journaled in `base.sqlite` (`journal`)
 and in the log.
 
@@ -243,7 +252,10 @@ press, and the press is yours only: through the bridge (the router's token) or t
   and refuses a file that moved). No run on the Base's lane starts while a commit is in flight: it stays queued
   («waiting for room on the lane») and goes when the commit ends — so the commit never stages a file a run is writing, and
   neither the drain nor `busy` waits on the other. The card is rewritten with «Committed: <sha7> · N files» or «Nothing committed», and what
-  was refused or conflicted, and why; those files stay on the session's list and on the next ping's button. A card a
+  was refused or conflicted, and why; those files stay on the session's list and on the next ping's button. When the
+  Base's own check (`just check`) refused the commit — a Record without its Showcase row, say — the session is told
+  what the check said, as a message from the platform, and the card adds «The session was asked to fix what the check
+  refused.»: fixing a Record is the session's work, and its own commit after the turn takes the fix. A card a
   restart left «Committing…» is settled from the clone when the platform is back: the files no longer uncommitted went
   in, the rest are shown again for one more press («A platform restart cut the commit off — press «Commit»
   again.»); while the Base cannot be read, the clock tries again each minute.
@@ -354,6 +366,8 @@ at start. Check from the lane: `docker compose -p retinue exec lane-private ls /
 - **The push is refused for a reason that is not a moved hub** (a permission on `objects/`, say) — `refused` says the
   hub's last line; the log has it in full. Check the platform's `group_add` and the hub's `objects/`, `refs/` modes
   (`setup.sh` with `MEMORY=1`).
+- **A file with conflict markers** — its session was told to merge it; until it does, the card refuses the file and
+  says why. A file no session claims keeps its markers (the log says so): merge it in any session, or «Discard» it.
 - **A held file** — it stays as the session left it; the owner's card shows it as a conflict when pressed. Either put
   it back to the hub's version (it stops being held at the next refresh) or edit it on the Mac and pull.
 - **The platform's repository is lost** (`platform-data` gone) — the next start makes a new one; files the tree has

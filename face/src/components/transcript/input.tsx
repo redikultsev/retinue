@@ -50,8 +50,21 @@ function Reports({ text }: { text: string }) {
   );
 }
 
+const FROM_PLATFORM = "Message from the platform, not from the owner. ";
+
+/** The platform's word to the session: a note under its own name, never a bubble of the owner's. */
+function PlatformNote({ text }: { text: string }) {
+  return (
+    <div data-testid="platform-note" className="flex min-w-0 flex-col gap-1 rounded-lg border border-dashed px-3 py-2.5 text-[13px]">
+      <span className="font-medium text-muted-foreground">From the platform</span>
+      <p className="whitespace-pre-wrap wrap-anywhere">{text.startsWith(FROM_PLATFORM) ? text.slice(FROM_PLATFORM.length) : text}</p>
+    </div>
+  );
+}
+
 export function InputBubble({ input }: { input: Input }) {
   if (input.by === "report") return <Reports text={input.text} />;
+  if (input.by === "platform") return <PlatformNote text={input.text} />;
   const files = input.attachments ?? [];
   return (
     <div data-testid="input" className="ml-auto flex max-w-[85%] flex-col items-end gap-1.5">

@@ -52,6 +52,12 @@ class FakeBase:
         self.expected: list[dict] = []
         self.assistant: set[str] = set()   # what the assistant's rules let the platform commit by itself
         self.reverted: list[tuple[str, list[str]]] = []
+        self.marked: list[str] = []        # written with conflict markers, not yet taken
+        self.check: str | None = None      # the Base's own check refuses the commit with this line
+
+    def take_marked(self) -> list[str]:
+        taken, self.marked = self.marked, []
+        return taken
 
     def changed(self) -> list[Change]:
         if self.unreadable:
@@ -91,6 +97,8 @@ class FakeBase:
             if not paths:
                 return Committed(None, [], [], refused, [])
         self.expected.append(dict(expect or {}))
+        if self.check:
+            return Committed(None, [], [], [f"just check: {self.check}"], [])
         now = {p: hashlib.sha256(t.encode()).hexdigest() for p, t in self.tree.items()}
         moved = [p for p in paths if expect is not None and now.get(p, "") != (expect.get(p) or "")]
         going = [p for p in paths if p not in self.conflicts and p not in moved]
@@ -962,3 +970,33 @@ def test_a_commits_why_is_the_summary_clean_and_cut_at_a_line():
     cut = tobase.why({"text": text}, limit=500)
     assert len(cut) <= 502 and cut.endswith("\n…") and cut.split("\n")[-2].startswith("line ")
     assert tobase.why({"text": "y" * 900}, limit=500) == "y" * 500 + "\n…"
+
+
+def platform_inputs(world: BaseWorld, session: str) -> list[str]:
+    return [t for (t,) in world.store.db.execute("SELECT text FROM inputs WHERE session = ? AND by = 'platform' "
+                                                 "ORDER BY at", (session,))]
+
+
+def test_a_file_marked_with_both_versions_and_a_refusal_of_the_check_go_to_the_session_not_the_owner(tmp_path):
+    async def body(world: BaseWorld):
+        a, note, card = await opened(world, "travel/hotel.md")
+        world.fake.check = "ОШИБКА: travel/hotel.md: нет строки в витрине travel/AGENTS.md"
+        await world.owner("press", {"button": dict((label, b) for label, b in note["data"]["buttons"])["Commit"]})
+        await world.platform.tobase.idle()
+        done = world.platform.tobase.card(card["id"])
+        assert done["result"]["said"].endswith(tobase.CHECK_ASKED)
+        asked = platform_inputs(world, a)
+        assert len(asked) == 1 and asked[0].startswith("Message from the platform")
+        assert f"just check: {world.fake.check}" in asked[0]
+        await world.end(a, "Строку добавил.")
+
+        b = await world.new("другое", "tg:300")
+        world.fake.tree["travel/other.md"] = "x\n"
+        await world.end(b)
+        world.fake.marked = ["travel/hotel.md", "travel/other.md", "travel/nobody.md"]
+        await world.poll()
+        assert platform_inputs(world, a)[1:] == [tobase.MERGE_ASK.format(files="travel/hotel.md")]
+        assert platform_inputs(world, b) == [tobase.MERGE_ASK.format(files="travel/other.md")]
+        await world.poll()
+        assert len(platform_inputs(world, a)) == 2, "told once per marking"
+    based(tmp_path, body)

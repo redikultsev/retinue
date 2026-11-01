@@ -222,8 +222,9 @@ export interface Input {
   turn: number | null;
   n: number | null;
   attachments: Attachment[];
-  /** Not the owner's: `parent`, a parent session's message into its sub-session; `report`, its sub-sessions' reports. */
-  by?: "parent" | "report";
+  /** Not the owner's: `parent`, a parent session's message into its sub-session; `report`, its sub-sessions' reports;
+   * `platform`, the platform's own word to the session (merge a file both sides edited, fix what the Base's check refused). */
+  by?: "parent" | "report" | "platform";
 }
 
 /** A file a session handed over from `out/` (retinue/outfiles.py): kept by value, served by `/api/files/{id}`. */

@@ -32,6 +32,7 @@ import itertools
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import stat
@@ -58,6 +59,11 @@ GIT_TIMEOUT_S = 300           # a push waits for the hub's lint (its own timeout
 IGNORED_DIRS = ("out", "inbox")   # step 1: files for the owner and his attachments land in the session's cwd
 REJECTED = kbcheck.REJECTED   # the hub's pre-receive line after its refusals, in either language
 OTHER_SIDE = "changed both here and in the Base — the edits do not merge by themselves"
+# A file both sides changed where the lines do not merge holds both versions between these markers, as `git pull`
+# leaves it; its session is told to merge them (`tobase`), and no commit takes it while a marker is left.
+LABELS = ("this session", "before", "the hub")
+MARKED = "holds both versions between conflict markers — its session merges them first"
+_MARKER = re.compile(rb"^(?:<{7} |>{7} )", re.M)
 
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC | getattr(os, "O_NOCTTY", 0)
@@ -94,7 +100,7 @@ class Discarded:
 @dataclass
 class Refresh:
     head: str                 # the hub's commit the clone is now based on
-    updated: list[str] = field(default_factory=list)   # files this refresh wrote, merged or deleted in the tree
+    updated: list[str] = field(default_factory=list)   # files this refresh wrote, merged or deleted in the tree, marked
     held: list[str] = field(default_factory=list)      # dirty here and changed in the hub: left as they are
 
 
@@ -304,6 +310,16 @@ class BaseRepo:
 
     # --- the repository -----------------------------------------------------------------------------------------
 
+    def take_marked(self) -> list[str]:
+        """The files written with conflict markers since the last call, and forgotten: whoever takes them tells their
+        sessions. A file marked again (the hub moved once more) comes again."""
+        self._ensure()
+        with self._db:
+            paths = [p for (p,) in self.db.execute("SELECT path FROM marked ORDER BY path")]
+            self.db.execute("DELETE FROM marked")
+            self.db.commit()
+        return paths
+
     def _locked(self, work, *args, wait: bool = True):
         if not self._lock.acquire(blocking=wait):
             return None
@@ -357,6 +373,10 @@ class BaseRepo:
             CREATE TABLE IF NOT EXISTS held (
                 path TEXT PRIMARY KEY,
                 base TEXT NOT NULL,      -- the blob the tree's edit started from ('' : the file was new here)
+                since REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS marked (
+                path TEXT PRIMARY KEY,   -- written with both versions between conflict markers; its session not told yet
                 since REAL NOT NULL
             );
             CREATE TABLE IF NOT EXISTS journal (
@@ -513,7 +533,7 @@ class BaseRepo:
             except Exception as exc:  # one path, whatever happened to it
                 log.warning("base: %s not refreshed: %s", path, type(exc).__name__)
                 outcome = "held"
-            if outcome == "updated":
+            if outcome in ("updated", "marked"):
                 updated.append(path)
             if outcome == "held":
                 if path not in held:
@@ -542,7 +562,7 @@ class BaseRepo:
                 continue
             if outcome != "held":
                 self._hold(path, None)
-            if outcome == "updated":
+            if outcome in ("updated", "marked"):
                 written.append(path)
         return written
 
@@ -589,18 +609,32 @@ class BaseRepo:
             if merged is not None:
                 self._put(path, merged, mode, state)
                 return "updated"
+            # The lines do not merge: both versions go into the file between markers, on top of the hub's — the
+            # file is the hub's plus this side's edit from now on, so nothing of the hub's is undone by a later commit.
+            marked = self._merge(state.data, self._blob(base), self._blob(new), marks=True)
+            if marked is not None:
+                self._put(path, marked, mode, state)
+                with self._db:
+                    self.db.execute("INSERT OR REPLACE INTO marked VALUES (?, ?)", (path, time.time()))
+                    self.db.commit()
+                return "marked"
         return "held"
 
-    def _merge(self, ours: bytes, base: bytes, theirs: bytes) -> bytes | None:
-        """`git merge-file` of three texts; None on a conflict or a binary file."""
+    def _merge(self, ours: bytes, base: bytes, theirs: bytes, marks: bool = False) -> bytes | None:
+        """`git merge-file` of three texts; None on a conflict or a binary file. `marks`: a conflict too comes back,
+        both versions between markers (`LABELS`); None only for a file that is not UTF-8 text."""
+        if marks and not all(_text(x) for x in (ours, base, theirs)):
+            return None
         folder = self.git_dir / "tmp" / f"merge-{secrets.token_hex(6)}"
         folder.mkdir()
         try:
             for name, data in (("ours", ours), ("base", base), ("theirs", theirs)):
                 (folder / name).write_bytes(data)
-            run = self._run("merge-file", "-p", "-q", str(folder / "ours"), str(folder / "base"), str(folder / "theirs"),
-                            check=False)
-            return run.stdout if run.returncode == 0 else None
+            labels = [a for label in LABELS for a in ("-L", label)] if marks else []
+            run = self._run("merge-file", "-p", "-q", *labels, str(folder / "ours"), str(folder / "base"),
+                            str(folder / "theirs"), check=False)
+            ok = run.returncode == 0 or (marks and 0 < run.returncode < 128)  # > 0: the number of conflicts
+            return run.stdout if ok else None
         finally:
             for child in folder.iterdir():
                 child.unlink()
@@ -623,6 +657,9 @@ class BaseRepo:
         for path, state in list(states.items()):
             if why := UNFIT.get(state.kind):
                 done.refused.append(f"{path}: {why.format(mb=self.cfg.max_file_mb)}")
+                del states[path]
+            elif state.kind == "file" and state.data is not None and _MARKER.search(state.data):
+                done.refused.append(f"{path}: {MARKED}")
                 del states[path]
         held, admitted, refused = self._held(), list(done.left_out), list(done.refused)
         by = "the platform's own commit after a turn" if role == kbcheck.ASSISTANT else "the owner's button"
@@ -1124,6 +1161,15 @@ def _utf8(path: str) -> bool:
     except UnicodeEncodeError:
         return False
     return True
+
+
+def _text(data: bytes) -> bool:
+    """UTF-8 without a NUL: a file whose versions can sit side by side between conflict markers."""
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return b"\0" not in data
 
 
 def _lines(data: bytes | None) -> list[str]:

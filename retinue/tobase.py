@@ -57,6 +57,12 @@ something went, «Committed» in the app with the commit's own diff, and «Undo�
 commit on top that puts those files back, each only if neither the hub nor the clone changed it since
 (`base.revert`). What it leaves — refused by those rules, ⇄, nobody's, deleted — waits for «To the Base» as before.
 
+**Merging is the session's.** A file the clone wrote with both versions between conflict markers (the hub changed the
+same lines meanwhile, `base.take_marked`) goes to the session that changed it as a message from the platform
+(`MERGE_ASK`, `by="platform"`): it merges and removes the markers, and no commit takes the file before. A press the
+Base's own check refused sends the session what the check said (`CHECK_ASK`): a Record's missing Showcase row is the
+session's to add, never the owner's.
+
 Nothing else commits or is discarded without the owner's press: the buttons are reachable only through the router's
 token (the bridge) and the face's login, never from a lane.
 """
@@ -137,6 +143,18 @@ UNAVAILABLE = "The Base's clone is unavailable now — try later."
 RESTARTED = "A platform restart cut the commit off — press «Commit» again."
 REOPEN = "This card is no longer active — open «To the Base» again."
 NOBODY = "nobody's"
+# What the platform tells a session about the Base, as a message of its own (`by="platform"`): the work is the
+# session's — merging a file both sides edited, fixing what the Base's check refused — never the owner's.
+MERGE_ASK = ("Message from the platform, not from the owner. While you were editing the Base, its hub changed the same "
+             "lines of {files}, and the two edits do not merge by themselves. Each of these files now holds both "
+             "versions between conflict markers («<<<<<<< this session», «=======», «>>>>>>> the hub»); the hub's side "
+             "is the newer word, often the owner's own edit from another device. Merge each into one text that keeps "
+             "the facts of both sides, remove every marker, keep the Base's rules (a Record's row in its Space's "
+             "Showcase, below the marker), and say in one line what you merged. The commit follows as usual.")
+CHECK_ASK = ("Message from the platform, not from the owner. The owner pressed «To the Base», and the Base's own check "
+             "refused the commit:\n{lines}\nFix it in the files — a new Record needs its row in its Space's Showcase, "
+             "below the marker — and say in one line what you fixed. The commit follows as usual.")
+CHECK_ASKED = "The session was asked to fix what the check refused."
 
 
 def plural(n: int, one: str, many: str) -> str:
@@ -296,6 +314,7 @@ class ToBase:
             return
         async with self._lock:
             self._pending |= await self._settle()
+        await self._merges()
         self._auto()
 
     def _unping(self) -> None:
@@ -848,6 +867,9 @@ class ToBase:
                 result = {"sha": None, "said": f"The commit failed. {why} The files stay uncommitted."}
             else:
                 result = self._result(done)
+                if checks := [r for r in done.refused if r.startswith("just check:")]:
+                    if await self._tell(card["session"], CHECK_ASK.format(lines="\n".join(checks))):
+                        result["said"] += f"\n{CHECK_ASKED}"
             self._finish(card, "committed" if result.get("sha") else "failed", result, self.platform.clock(),
                          ("committing",))
             await self.settle_lists()
@@ -1044,6 +1066,42 @@ class ToBase:
                 return
             for session in self._prune(dirty) | {s for (s,) in self.store.db.execute("SELECT session FROM base_pings")}:
                 self.ping(session)
+        await self._merges()
+
+    async def _merges(self) -> None:
+        """The files the clone wrote with conflict markers (`base.take_marked`) go to the sessions that changed them,
+        one message each with its files: a session that wrote the file is told, else one that saw it change. A file
+        no session claims keeps its markers, and the card refuses it until someone merges it."""
+        take = getattr(self.base, "take_marked", None)
+        if take is None:
+            return
+        try:
+            paths = await asyncio.to_thread(take)
+        except Exception as exc:
+            log.error("the Base's marked files were not read (%s)", type(exc).__name__)
+            return
+        told: dict[str, list[str]] = {}
+        for path in paths:
+            claims = self.store.db.execute("SELECT session, via FROM base_files WHERE path = ?", (path,)).fetchall()
+            wrote = [s for s, via in claims if via != "snapshot"] or [s for s, _ in claims]
+            if not wrote:
+                log.warning("base: a file holds conflict markers and no session claims it")
+            for session in wrote:
+                told.setdefault(session, []).append(path)
+        for session, files in told.items():
+            await self._tell(session, MERGE_ASK.format(files=", ".join(files)))
+
+    async def _tell(self, session_id: str, text: str) -> bool:
+        """A message from the platform into the session, as a parent's goes: the session takes it up in its next run."""
+        session = self.store.session(session_id)
+        if session is None:
+            return False
+        try:
+            await self.platform.write_into(f"base:{secrets.token_hex(8)}", session, text, by="platform")
+        except Exception as exc:
+            log.error("session %s: the platform's message was not written (%s)", session_id, type(exc).__name__)
+            return False
+        return True
 
     async def idle(self) -> None:
         """The commits running now, finished (tests, shutdown)."""

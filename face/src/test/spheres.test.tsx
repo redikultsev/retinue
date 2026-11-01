@@ -68,8 +68,8 @@ describe("SessionList by sphere", () => {
     expect(within(links[0]!).queryByRole("img", { name: "unread" })).toBeNull();
     expect(screen.getByRole("heading", { name: /No sphere/ })).toBeTruthy();
     fireEvent.click(within(travel as HTMLElement).getByRole("button", { name: "New session: ✈️ Travel" }));
-    const dialog = await screen.findByRole("dialog", { name: "New session" });
-    expect(within(dialog).getByRole("radio", { name: "✈️ Travel" })).toHaveProperty("checked", true);
+    const dialog = await screen.findByRole("dialog", { name: "New session · ✈️ Travel" });
+    expect(within(dialog).queryByRole("radio")).toBeNull(); // the sphere is the one pressed: nothing to choose
   });
 });
 

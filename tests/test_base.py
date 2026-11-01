@@ -85,22 +85,45 @@ def test_a_dirty_file_is_merged_with_the_hubs_change(kb):
     assert repo.changed() == [Change("notes/AGENTS.md", "M")], "the session's line is still its own, uncommitted"
 
 
-def test_a_conflicting_file_is_held_and_never_stalls_the_rest(kb):
-    repo, _, mac = kb
+def test_a_conflicting_file_holds_both_versions_and_no_commit_takes_it_until_merged(kb):
+    repo, hub, mac = kb
     (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт сессии."))
     mac_push(mac, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Факт с Mac."),
                    "MAP.md": (mac / "MAP.md").read_text() + "- строка с Mac\n"})
     done = run(repo.refresh())
-    assert done.updated == ["MAP.md"] and done.held == ["notes/knowledge/a.md"]
-    assert "Факт сессии." in (repo.tree / "notes/knowledge/a.md").read_text(), "never overwritten"
+    assert sorted(done.updated) == ["MAP.md", "notes/knowledge/a.md"] and done.held == []
+    text = (repo.tree / "notes/knowledge/a.md").read_text()
+    assert "<<<<<<< this session\nФакт сессии.\n=======\nФакт с Mac.\n>>>>>>> the hub\n" in text, "both, as git pull"
     assert "строка с Mac" in (repo.tree / "MAP.md").read_text()
-    # The commit merges against the base the session's edit started from: the hub's change is never undone silently.
+    assert repo.take_marked() == ["notes/knowledge/a.md"] and repo.take_marked() == [], "told once"
     done = run(repo.commit(["notes/knowledge/a.md"], "notes: факт", ""))
-    assert done.sha is None and done.conflicts == ["notes/knowledge/a.md"]
-    assert "Факт с Mac." in git(mac, "show", "origin/main:notes/knowledge/a.md")
-    (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт с Mac."))
+    assert done.sha is None and done.refused == [f"notes/knowledge/a.md: {base_module.MARKED}"]
+    # The session merges: the file is on top of the hub's now, so its merge goes and nothing of the hub's is undone.
+    (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт с Mac. Факт сессии."))
+    done = run(repo.commit(["notes/knowledge/a.md"], "notes: факт", ""))
+    assert done.sha and done.conflicts == [] and done.refused == []
+    assert "Факт с Mac. Факт сессии." in git(hub, "show", f"{done.sha}:notes/knowledge/a.md")
+
+
+def test_a_file_put_back_to_the_hubs_is_clean_again(kb):
+    repo, _, mac = kb
+    (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт сессии."))
+    mac_push(mac, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Факт с Mac.")})
     run(repo.refresh())
-    assert repo.changed() == [] and run(repo.refresh()).held == [], "put back to the hub's: no longer held"
+    (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт с Mac."))
+    assert repo.changed() == [] and run(repo.refresh()).held == []
+
+
+def test_a_binary_file_both_sides_changed_is_held_never_marked(kb):
+    repo, _, mac = kb
+    (mac / "notes/x.bin").write_bytes(b"\0base")
+    mac_push(mac, {})
+    run(repo.refresh())
+    (repo.tree / "notes/x.bin").write_bytes(b"\0session")
+    (mac / "notes/x.bin").write_bytes(b"\0mac")
+    mac_push(mac, {})
+    assert run(repo.refresh()).held == ["notes/x.bin"] and (repo.tree / "notes/x.bin").read_bytes() == b"\0session"
+    assert repo.take_marked() == []
 
 
 def test_the_hub_ahead_by_the_routers_push_comes_in_like_the_macs(kb, tmp_path):
@@ -333,14 +356,19 @@ def test_a_clone_folder_the_lane_moved_away_is_refused(kb, tmp_path):
 
 def test_a_platform_restart_keeps_the_held_bases(kb):
     repo, _, mac = kb
+    busy = [True]
+    repo.busy = lambda: busy[0]
     (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Сессия."))
+    (repo.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="x", body="Б."))
     mac_push(mac, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Mac.")})
-    assert run(repo.refresh()).held == ["notes/knowledge/a.md"]
+    assert run(repo.commit(["notes/knowledge/b.md"], "notes: б", "")).sha, "beside a run: a.md is held, not written"
+    assert list(repo._held()) == ["notes/knowledge/a.md"]
     again = BaseRepo(repo.cfg, repo.lane_view)
-    assert run(again.refresh()).held == ["notes/knowledge/a.md"]
-    assert run(again.commit(["notes/knowledge/a.md"], "x", "")).conflicts == ["notes/knowledge/a.md"]
+    assert run(again.refresh()).updated == ["notes/knowledge/a.md"], "merged against the base it was held with"
+    text = (again.tree / "notes/knowledge/a.md").read_text()
+    assert "Сессия.\n=======\nMac.\n" in text and again.take_marked() == ["notes/knowledge/a.md"]
     journal = again.db.execute("SELECT kind FROM journal ORDER BY id").fetchall()
-    assert [row[0] for row in journal][-2:] == ["refresh", "commit"]
+    assert [row[0] for row in journal][-2:] == ["commit", "refresh"]
 
 
 def test_the_git_environment_carries_none_of_the_platforms_secrets(kb, monkeypatch):

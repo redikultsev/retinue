@@ -156,6 +156,18 @@ def test_the_bases_health_counts_what_its_rules_say_needs_tending(tmp_path, monk
     assert base_health(tmp_path / "none", TODAY) == []
 
 
+def test_records_past_their_stale_after_come_first_most_overdue_first_and_a_closed_one_never(tmp_path):
+    record(tmp_path, "home/knowledge/tariff.md", title="Тариф", stale_after="2030-01-15")
+    record(tmp_path, "home/knowledge/recent.md", title="Недавнее", stale_after="2030-03-01")  # «Deadlines» names it
+    record(tmp_path, "home/knowledge/visa.md", title="Виза", stale_after="2029-12-01")
+    record(tmp_path, "home/knowledge/fresh.md", title="Свежее", stale_after="2031-01-01")
+    record(tmp_path, "home/knowledge/gone.md", title="Старое", stale_after="2029-01-01", status="superseded")
+    [stale] = base_health(tmp_path, TODAY)
+    assert stale.startswith("- Rechecks overdue by more than 30 days — check against the source: 2 — "
+                            "home/knowledge/visa.md (by 100 days)")
+    assert stale.index("visa.md") < stale.index("tariff.md")
+
+
 def test_a_tidy_base_has_no_health_lines(tmp_path):
     record(tmp_path, "home/knowledge/meter.md", title="Счётчик", practice="matches")
     (tmp_path / "home/AGENTS.md").write_text("# Дом\n\n- [Счётчик](knowledge/meter.md)\n", encoding="utf-8")
@@ -200,3 +212,38 @@ def test_the_weekly_review_ends_with_the_week_of_work_and_she_sees_it_among_the_
     (card,) = [c[0] for c in telegram.cards]
     assert card.startswith("A steady week.") and card.endswith(work), "code's block after her words"
     assert "  - Sessions started: 2; runs: 3; your messages in them: 5." in asked[0], "she reads the same numbers"
+
+
+def test_a_day_worse_than_the_weeks_usual_day_is_named_with_the_platforms_start(tmp_path):
+    store = PlatformStore(str(tmp_path / "p.sqlite"))
+    signals.prepare(store, 0.0)
+    now = 30 * 86400.0
+    for day in range(1, 8):  # the week before: one error a day
+        signals.add(store, signals.RUN_ERROR, "s", now - day * 86400 - 100)
+    for n in range(4):  # the last day: four
+        signals.add(store, signals.RUN_ERROR, "s", now - 100 - n)
+    signals.add(store, signals.TOOL_ERROR, "s", now - 50)  # one tool error: under WORSE_MIN
+    store.set(signals.STARTED_KEY, str(now - 3600))
+    assert signals.worse(store, now) == {"lines": [{"what": "turns ended with an error", "day": 4, "usual": 1}],
+                                         "started": now - 3600}
+    store.set(signals.STARTED_KEY, str(now - 2 * 86400))
+    assert signals.worse(store, now)["started"] is None, "a start before the day is not a suspect"
+    assert signals.worse(store, now + 7 * 86400) == {"lines": [], "started": None}
+
+
+def test_the_morning_says_worse_than_the_week_only_when_it_is(tmp_path):
+    async def run():
+        core = make_core(tmp_path)
+        answers = [{"worse": {"lines": [{"what": "tool errors", "day": 9, "usual": 2}], "started": 1_000_000.0}},
+                   {"worse": {"lines": [], "started": None}}]
+
+        async def platform(call, body, timeout):
+            assert call == "stats" and body["until"] - body["since"] == 86400
+            return answers.pop(0)
+        core.platform = platform
+        return await core.proactive.worse_lines(1_000_100.0), await core.proactive.worse_lines(1_000_100.0)
+
+    said, nothing = asyncio.run(run())
+    assert said.startswith("Worse than the week:\n- tool errors: 9 in the last day (a usual day: 2)\n"
+                           "- the platform started at ") and said.endswith("an update is the first suspect")
+    assert nothing == ""

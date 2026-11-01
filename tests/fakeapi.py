@@ -77,6 +77,9 @@ class FakeApi:
         self.stop: Callable[[dict], dict] | None = None   # Stop's answer by the hook's body; none: let it stop
         self.after: Callable[[dict], dict] | None = None  # PostToolUse's and PostToolUseFailure's answer by the body
         self.cut: Callable[[dict], bool] | None = None    # a PreToolUse answered `continue: false` instead
+        # The next streamed Messages requests fail, one fault each, in order: "429" (a rate limit, `retry-after: 1`),
+        # "529" (overloaded), "cut" (the stream starts and the connection closes mid-message).
+        self.faults: list[str] = []
         self.mcp: list[tuple[dict, str | None]] = []  # every MCP message, with its Authorization
         self.mcp_instructions = "PROBE-MCP-INSTRUCTIONS"
         self._lock = threading.Lock()
@@ -214,6 +217,28 @@ class FakeApi:
                     api.credentials.append(self.headers.get("x-api-key") or self.headers.get("authorization") or "")
                 if self.path.startswith("/v1/messages/count_tokens"):
                     self._send(200, b'{"input_tokens": 10}')
+                elif self.path.startswith("/v1/messages") and body.get("stream") and api.faults:
+                    fault = api.faults.pop(0)
+                    with api._lock:
+                        api.requests.append({**body, "fault": fault})
+                    if fault == "cut":
+                        data = api.reply(body)
+                        self.send_response(200)
+                        self.send_header("content-type", "text/event-stream")
+                        self.send_header("content-length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data[: len(data) // 3])
+                        self.wfile.flush()
+                        self.close_connection = True
+                        return
+                    error = {"429": ("rate_limit_error", 429), "529": ("overloaded_error", 529)}[fault]
+                    raw = json.dumps({"type": "error", "error": {"type": error[0], "message": "probe"}}).encode()
+                    self.send_response(error[1])
+                    self.send_header("content-type", "application/json")
+                    self.send_header("retry-after", "1")
+                    self.send_header("content-length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
                 elif self.path.startswith("/v1/messages") and body.get("stream"):
                     self._send(200, api.reply(body), "text/event-stream")
                 elif self.path.startswith("/v1/messages"):

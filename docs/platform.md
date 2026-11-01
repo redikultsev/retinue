@@ -1091,7 +1091,10 @@ and cards with how you decided them. Rows older than 400 days go when the platfo
 `POST /owner/stats` (the router's token, as every `/owner/*` call) with `{since, until}` answers the tally: sessions
 and sub-sessions started, runs, your messages and stops, tool errors by tool, compactions, failed turns, the gate's
 calls by how they went and its five most frequent reasons, turns sent on to their check, loops, fetches that failed
-by how, turns that went badly by mark, and cards by how they ended. The weekly review puts it
+by how, turns that went badly by mark, and cards by how they ended — and `worse`: what went wrong more in the day
+before `until` than on the median day of the week before it (turns ended with an error, tool errors, loops denied or
+cut, fetches that failed; at least 3, and twice the usual day), with the platform's start when it was within that
+day. The morning summary says it, «Worse than the week», only when something is (`signals.worse`). The weekly review puts it
 in words at its end, «How the week went» ([proactive.md](proactive.md#how-the-week-went)).
 
 ### Turns that went badly
@@ -1174,6 +1177,10 @@ docker run --rm -v "$PWD":/src:ro ghcr.io/astral-sh/uv:python3.12-bookworm-slim 
   && bash deploy/lanes/fetch-cli.sh /cli && RETINUE_LANE_CLI=/cli/claude uv run --with pytest --with pytest-asyncio \
   pytest -q -m probe tests/test_probes.py'
 ```
+
+Three pin the API failing: overloaded twice (529), rate limited (429, `retry-after`), a stream cut mid-message —
+the CLI's retry watchdog (`cliengine.WATCHDOG`) tries again and the turn ends with its answer, no error result
+(`FakeApi.faults`).
 
 Two of them answer what the room's sessions rely on. [Subagents](#subagents): they run, in the foreground, their
 calls reach the gate marked by `agent_id`, and a deferral inside one is lost. And nested rules: under

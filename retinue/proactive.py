@@ -145,13 +145,14 @@ def deadline_line(item: Deadline, today: date) -> str:
 
 
 def base_health(tree: str | Path, today: date) -> list[str]:
-    """What in the base wants tending, by its own rules and counted by code: facts whose practice nobody knows, Tasks
-    left open, showcases and folders grown past their limits, links that lead nowhere. One line each, empty when
+    """What in the base wants tending, by its own rules and counted by code: facts whose `stale_after` passed longer ago
+    than the morning's «Deadlines» names (`PAST_DAYS`: there they are only counted), the most overdue first, facts whose practice nobody knows, Tasks left open, showcases and folders grown past their limits,
+    links that lead nowhere. One line each, empty when
     nothing does. Read from the files, never from git: the tree as the hub has it now."""
     root = Path(tree)
     if not root.is_dir():
         return []
-    unknown, old_tasks, broken, folders = [], [], [], {}
+    unknown, old_tasks, broken, folders, stale = [], [], [], {}, []
     for path in sorted(root.glob("*/**/*.md")):
         relative = path.relative_to(root)
         if any(p.startswith(".") for p in relative.parts):
@@ -168,6 +169,8 @@ def base_health(tree: str | Path, today: date) -> list[str]:
         head = front_matter(path) or {}
         if str(head.get("status", "")).strip() in CLOSED:
             continue
+        if (until := _day(head.get("stale_after"))) is not None and (today - until).days > PAST_DAYS:
+            stale.append(((today - until).days, relative.as_posix()))
         if str(head.get("practice", "")).strip() == "unknown":
             unknown.append(relative.as_posix())
         if str(head.get("type", "")).strip() == "task" and str(head.get("status", "")).strip() == "open" and \
@@ -188,6 +191,9 @@ def base_health(tree: str | Path, today: date) -> list[str]:
         return f"- {what}: {len(found)} — {named}"
 
     lines = []
+    if stale:
+        lines.append(line(f"Rechecks overdue by more than {PAST_DAYS} days — check against the source",
+                          [f"{path} (by {days} {_days(days)})" for days, path in sorted(stale, key=lambda s: (-s[0], s[1]))]))
     if unknown:
         lines.append(line("Practice unknown (practice: unknown)", unknown))
     if old_tasks:
@@ -574,7 +580,31 @@ class Proactive:
                 log.exception("the base's health not read")
         if mac := await self.mac_line(now):
             lines.append(mac)
+        if worse := await self.worse_lines(now):
+            lines.append(worse)
         return [line for line in lines if line]
+
+    async def worse_lines(self, now: float) -> str:
+        """«Worse than the week»: what went wrong more in the platform's last day than on its usual day, and the
+        platform's start within that day — an update is the first suspect. Nothing when nothing is worse or the
+        platform does not answer."""
+        core = self.core
+        if core.platform is None:
+            return ""
+        try:
+            stats = await core.platform("stats", {"since": now - 86400, "until": now}, STATS_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 — the summary goes out without it
+            log.warning("the platform's day not read: %s", exc)
+            return ""
+        worse = stats.get("worse") if isinstance(stats, dict) else None
+        if not isinstance(worse, dict) or not worse.get("lines"):
+            return ""
+        block = ["Worse than the week:", *(f"- {w['what']}: {w['day']} in the last day (a usual day: {w['usual']})"
+                                           for w in worse["lines"])]
+        if isinstance(worse.get("started"), (int, float)):
+            block.append(f"- the platform started at {clock.stamp(worse['started'], core.tz)} — an update is the "
+                         "first suspect")
+        return "\n".join(block)
 
     async def mac_line(self, now: float) -> str:
         try:

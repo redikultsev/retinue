@@ -112,6 +112,7 @@ class Platform:
         self._looking = asyncio.Lock()
         pings.prepare(store)
         episodes.prepare(store, clock())  # the turns that went badly (`episodes`)
+        store.set(signals.STARTED_KEY, str(clock()))  # a day worse than the week names it (`signals.worse`)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
         self.followups = followups.FollowUps(self)  # a session brought back to a task that waits (`followups.py`)

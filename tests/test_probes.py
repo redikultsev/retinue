@@ -877,3 +877,15 @@ def test_continue_false_on_pre_tool_use_ends_the_turn_without_running_the_call(l
     assert not marker.exists()
     assert run.result["subtype"] == "success" and run.result["stop_reason"] == "tool_use"
     assert len([r for r in api.requests if r.get("stream")]) == 1, "no request after the cut"
+
+
+@pytest.mark.parametrize("faults", [["529", "529"], ["429"], ["cut"]])
+def test_the_api_failing_a_few_times_is_waited_out_and_the_turn_ends_as_usual(lane, api, faults):
+    """A model API that is overloaded, rate limited or cuts a stream: the CLI's retry watchdog (`cliengine.WATCHDOG`)
+    tries again, and the turn ends with its answer — no error result the platform would tell the owner of."""
+    api.faults = list(faults)
+    run = lane.run("go")
+    assert run.rc == 0, run.stderr
+    assert run.result["subtype"] == "success" and run.result["result"] == "done", run.result
+    assert [r.get("fault") for r in api.requests if r.get("stream")][:len(faults)] == faults
+    assert api.faults == []

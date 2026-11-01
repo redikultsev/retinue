@@ -109,6 +109,36 @@ def from_line(line: dict) -> list[tuple[str, str]]:
     return []
 
 
+# What going wrong is counted as, for the day against the week before (`worse`): the SQL of one count over [?, ?).
+WORSE = {
+    "turns ended with an error": "SELECT COUNT(*) FROM signals WHERE kind = 'run_error' AND at >= ? AND at < ?",
+    "tool errors": "SELECT COUNT(*) FROM signals WHERE kind = 'tool_error' AND at >= ? AND at < ?",
+    "loops denied or cut": "SELECT COUNT(*) FROM signals WHERE kind = 'loop' AND what IN ('deny', 'cut') AND at >= ? "
+                           "AND at < ?",
+    "fetches that failed": "SELECT COUNT(*) FROM signals WHERE kind = 'web' AND at >= ? AND at < ?",
+}
+WORSE_MIN = 3      # a day's count under this is never news
+WORSE_TIMES = 2    # …nor one under this many times the week's usual day
+STARTED_KEY = "platform.started"
+
+
+def worse(store: PlatformStore, now: float) -> dict:
+    """What went wrong more in the last day than on the week's usual day before it — the day's count at least
+    `WORSE_MIN` and `WORSE_TIMES` the median of the seven days before — and when the platform last started, if that
+    was within the day: an update is the first suspect. Counted by code, for the morning summary."""
+    day, lines = 86400.0, []
+    for what, sql in WORSE.items():
+        today = int(store.db.execute(sql, (now - day, now)).fetchone()[0] or 0)
+        week = sorted(int(store.db.execute(sql, (now - (n + 1) * day, now - n * day)).fetchone()[0] or 0)
+                      for n in range(1, 8))
+        usual = week[3]
+        if today >= WORSE_MIN and today >= WORSE_TIMES * max(usual, 1):
+            lines.append({"what": what, "day": today, "usual": usual})
+    started = store.get(STARTED_KEY)
+    started = float(started) if started is not None and now - float(started) < day else None
+    return {"lines": lines, "started": started if lines else None}
+
+
 def tally(store: PlatformStore, since: float, until: float) -> dict:
     """The week as numbers: what `/owner/stats` answers. Counted by code; the model that words the review never
     counts."""
@@ -145,6 +175,7 @@ def tally(store: PlatformStore, since: float, until: float) -> dict:
                   "web_failures": dict(db.execute("SELECT what, COUNT(*) FROM signals WHERE kind = 'web' AND at >= ? "
                                                   "AND at < ? GROUP BY what", span).fetchall())},
         "episodes": episodes.tally(store, since, until),
+        "worse": worse(store, until),
         "gate": {"calls": sum(how.values()), "by_decision": dict(how),
                  "reasons": dict([(w, n) for w, n in gate.most_common() if ":" in w][:TOP])},
         "cards": {"approval": _states(cards, "approval"), "question": _states(cards, "question"),

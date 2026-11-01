@@ -107,6 +107,8 @@ comes with a review that has no goals to read too.
 Monday's summary also says what in the base wants tending, by the base's own rules, counted by code from the
 files — one line each, the first three Records named and the rest counted, nothing when all is well:
 
+- Records whose `stale_after` passed more than 30 days ago, the most overdue first and by how many days — the
+  morning's «Deadlines» only counts them (closed ones left out);
 - Records with `practice: unknown` — a rule whose practice nobody has checked (closed ones left out);
 - open Tasks (`type: task`, `status: open`) whose `date` is more than 28 days ago;
 - showcases (`<Space>/AGENTS.md`) longer than 200 lines — loaded whole into every talk about the Space;

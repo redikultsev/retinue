@@ -75,6 +75,7 @@ A queue the owner works through to its end is a list and a pane (`components/inb
 - **A decision** is the brief as a two-column table (label · words; the first line in the foreground), the reasoning
   folded under it, the options as radio buttons with the recommended one picked, and one button that names what it
   sends. No line explaining the mechanics («Undo for 10 s») under it.
+- What a row is about opens in the pane itself — a date's Record too — never in a second pane beside it.
 - On a narrow screen the list is the screen and a row opens over it with «All» to come back.
 
 ## Copy

@@ -1,9 +1,9 @@
 // A question card decided in «Today»'s pane: the question, the session's brief for it, its options to pick, one button
 // that answers. The brief is what the session wrote just before asking (the feed's `said`) when it is in the brief's
 // shape — labelled lines, «**Recommend:** …» (deploy/lanes/instructions/common.md) — with its whole text a tap away;
-// a text not in that shape shows a few lines and «Show all». The recommended option is picked at the start; 1–9 pick,
+// a text not in that shape shows its first paragraph, the rest a tap away. The recommended option is picked at the start; 1–9 pick,
 // Enter answers. Same rules as the card in a session (`QuestionCard`): each answer is bound to the card's digest.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, ChevronRight } from "@/components/icons";
 import { questionsOf, RECOMMENDED, viewOf } from "@/components/question-card";
 import { Markdown } from "@/components/transcript/item";
@@ -26,34 +26,24 @@ export function briefOf(said: string): [string, string][] {
   return lines.length >= 2 ? lines : [];
 }
 
-/** A text not in the brief's shape: a few lines at rest, the rest a tap away. */
-function Said({ text }: { text: string }) {
-  const box = useRef<HTMLDivElement>(null);
-  const [whole, setWhole] = useState(false);
-  const [long, setLong] = useState(false);
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (el && !whole) setLong(el.scrollHeight > el.clientHeight + 4);
-  }, [whole]);
+/** The session's whole text, folded under the brief or the lead. */
+function Reasoning({ text }: { text: string }) {
   return (
-    <div data-testid="question-said" className="flex flex-col gap-1">
-      <div
-        ref={box}
-        className={cn(
-          "min-w-0 break-words text-muted-foreground",
-          !whole && "max-h-32 overflow-hidden",
-          !whole && long && "[mask-image:linear-gradient(to_bottom,black_55%,transparent)]", // ui-craft: allow — the cut text fades, no colour
-        )}
-      >
+    <details className="group">
+      <summary className="hit inline-flex h-8 cursor-pointer list-none items-center gap-1 text-sm text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
+        The session's full reasoning
+      </summary>
+      <div className="max-w-[68ch] pt-2 text-muted-foreground">
         <Markdown text={text} />
       </div>
-      {(long || whole) && (
-        <button type="button" aria-expanded={whole} className="hit w-fit text-sm text-primary underline-offset-4 hover:underline" onClick={() => setWhole((w) => !w)}>
-          {whole ? "Show less" : "Show all"}
-        </button>
-      )}
-    </div>
+    </details>
   );
+}
+
+/** A text not in the brief's shape: its first paragraph — where a session puts its answer — and the rest folded. */
+export function leadOf(said: string): string {
+  return said.trim().split(/\n\s*\n/)[0]?.trim() ?? "";
 }
 
 /** Typing into a field, a button or a link holding the focus: the pane's keys stand aside. */
@@ -155,18 +145,15 @@ export function QuestionDecide({
               </div>
             ))}
           </dl>
-          <details className="group">
-            <summary className="hit inline-flex h-8 cursor-pointer list-none items-center gap-1 text-sm text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
-              The session's full reasoning
-            </summary>
-            <div className="max-w-[68ch] pt-2 text-muted-foreground">
-              <Markdown text={said} />
-            </div>
-          </details>
+          <Reasoning text={said} />
         </div>
       ) : said ? (
-        <Said key={said} text={said} />
+        <div data-testid="question-lead" className="flex flex-col gap-1">
+          <div className="max-w-[68ch] rounded-lg border bg-card px-4 py-3">
+            <Markdown text={leadOf(said)} />
+          </div>
+          {leadOf(said) !== said.trim() && <Reasoning text={said} />}
+        </div>
       ) : null}
       <fieldset className="flex min-w-0 flex-col gap-2">
         <legend className="mb-2 text-xs text-muted-foreground">{q.multiSelect ? "Pick any" : "Your answer"}</legend>

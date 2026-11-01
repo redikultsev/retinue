@@ -16,12 +16,13 @@ import { Markdown } from "@/components/transcript/item";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { pressRow, WaitingPane } from "@/components/waiting-sheet";
+import { RecordPage } from "@/pages/spaces";
 import { ApiError, api } from "@/lib/api";
 import { type Deadline, type Feed, type FeedRow, feedSource, herLine, STALE_DIGEST_S, waited } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { useWide } from "@/lib/media";
-import { splitRecord, useOpenRecord } from "@/lib/pane";
+import { splitRecord } from "@/lib/pane";
 import { day } from "@/lib/spaces";
 import { orderedItems, orderedSummaries } from "@/lib/store";
 import { dayWords, elapsed, lastLine, turnStart } from "@/lib/today";
@@ -301,29 +302,24 @@ function RunningPane({ session, spheres, now }: { session: Session; spheres: Sph
   );
 }
 
+/** A base's date: its day, and the Record itself under it — the same view as in Spaces, «Discuss» with it. */
 function DatePane({ deadline, today }: { deadline: Deadline; today: Date }) {
-  const openRecord = useOpenRecord();
   const record = deadline.path ? splitRecord(deadline.path) : null;
   const { rel, overdue } = dayWords(deadline.when, today);
   return (
-    <section aria-label={deadline.title} className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <Crumb>
-          {deadline.sphere_title || deadline.sphere || "The Base"} · Record ·{" "}
-          <span className={overdue ? "text-destructive" : "text-warning-foreground dark:text-warning"}>
-            {day(deadline.when, today)}, {rel}
-          </span>
-        </Crumb>
-        <h2 className="text-xl font-medium text-balance">{deadline.title.replace(/^[^:]{1,24}:\s*/, "")}</h2>
-      </div>
-      {deadline.path && <p className="font-mono text-xs break-all text-muted-foreground">{deadline.path}</p>}
-      {record && (
-        <div>
-          <Button onClick={() => openRecord(record.space, record.path)}>
-            Open the Record
-            <ArrowUpRight />
-          </Button>
+    <section aria-label={deadline.title} className="flex flex-col gap-2">
+      <Crumb>
+        {deadline.sphere_title || deadline.sphere || "The Base"} · {deadline.title.replace(/^[^:]{1,24}:\s*/, "").replace(/^.* — /, "")} ·{" "}
+        <span className={overdue ? "text-destructive" : "text-warning-foreground dark:text-warning"}>
+          {day(deadline.when, today)}, {rel}
+        </span>
+      </Crumb>
+      {record ? (
+        <div className="-mx-4 md:-mx-6">
+          <RecordPage space={record.space} path={record.path} pane />
         </div>
+      ) : (
+        <h2 className="text-xl font-medium text-balance">{deadline.title.replace(/^[^:]{1,24}:\s*/, "")}</h2>
       )}
     </section>
   );

@@ -148,6 +148,12 @@ describe("QuestionDecide", () => {
     await waitFor(() => expect(answer).toHaveBeenCalledWith(expect.anything(), 0, { labels: ["Centre"] }));
   });
 
+  it("shows a text not in the brief's shape by its first paragraph, the rest folded", () => {
+    render(<QuestionDecide approval={question({ input: ONE })} said={"Take the outskirts.\n\n**Prices.** half"} live={fakeLive()} />);
+    expect(screen.getByTestId("question-lead").textContent).toContain("Take the outskirts.");
+    expect(screen.getByTestId("question-lead").textContent).toContain("The session's full reasoning");
+  });
+
   it("picks by number and answers by Enter; his own words win over a pick", async () => {
     const answer = vi.fn().mockResolvedValue({ toast: "", approval: null });
     render(<QuestionDecide approval={question({ input: ONE })} said="" live={fakeLive()} answer={answer} />);

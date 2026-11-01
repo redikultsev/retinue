@@ -413,7 +413,7 @@ place. Its top line says where it is from and how long it waits, with «Open the
 - **a question**: the question large; the session's brief — what it wrote just before asking, when in the brief's
   shape (labelled lines «**Recommend:** …», `**Why:**`, `**Cost:**`, `**Skip:**`, `**Not checked:**`: the lanes'
   instructions ask for it) — as a table, its whole text under «The session's full reasoning»; a text not in that shape
-  a few lines and «Show all». Then the options to pick (radio buttons; checkboxes for a multi-select), the
+  its first paragraph — where a session puts its answer — and the rest folded the same way. Then the options to pick (radio buttons; checkboxes for a multi-select), the
   recommended one picked at the start, «(Recommended)» shown as a mark; «Or answer in your own words»; one button —
   «Answer · <the pick>», «Send your answer» once words are written. 1–9 pick, Enter answers, ⌘Enter in the words;
 - **an approval or a courier card, a proposed sub-session, a proposed write, a push**: the card itself, with its
@@ -423,7 +423,7 @@ place. Its top line says where it is from and how long it waits, with «Open the
 - **her row**: [what it asks](#her-rows-pane), «Done» first;
 - **“Working”**: «Now» — its last line — and the lines before it, «Open the session», «Stop»;
 - **“Done since you looked”**: its last summary and a reply box;
-- **a date**: the Record's place and «Open the Record».
+- **a date**: its day, and the Record itself under it — the same view as in Spaces, with «Discuss».
 
 J / K or the arrows go down and up the list, E marks her row done — never while you type. On a screen narrower than
 1024 the list takes the screen, a row opens over it, and «All» comes back.

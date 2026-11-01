@@ -6,6 +6,7 @@ import { Toaster } from "@/components/toaster";
 import { ApiError, api } from "@/lib/api";
 import { DEBOUNCE_MS, type Feed, type FeedRow, FeedSource, feedSource, herLine, POLL_MS, PRESSED_HIDE_S, type WaitingDetail, waited } from "@/lib/feed";
 import { live } from "@/lib/live";
+import { spacesApi } from "@/lib/spaces";
 import { initialState, type State } from "@/lib/store";
 import type { Approval } from "@/lib/types";
 
@@ -294,13 +295,18 @@ describe("Her row", () => {
     expect(within(pane).queryByRole("button", { name: "Done" })).toBeNull();
   });
 
-  it("opens a base's date with its Record a press away, asking the router nothing", async () => {
+  it("opens a base's date with its Record in the pane, asking the router nothing", async () => {
     const date = row({ key: "dl", action: "assistant", source: "deadline", session: null, track: null, title: "The Base", essence: "tomorrow: Pay for the internet — due", ref: "deadline:1" });
     const load = vi.spyOn(api, "waitingDetail");
-    mount(inbox(hers([date], { deadlines: [{ id: "deadline:1", when: "1970-01-13", title: "x", sphere: "home", sphere_title: "Home", sphere_icon: null, path: "home/journal/2026-05-01-internet.md" }] })));
-    fireEvent.click(await rowNamed(/x/));
-    fireEvent.click(await screen.findByRole("button", { name: "Open the Record" }));
-    expect(await screen.findByText("record opened")).toBeTruthy();
+    const read = vi.spyOn(spacesApi, "record").mockResolvedValue({
+      head: "h",
+      record: { space: "home", path: "journal/2026-05-01-internet.md", nature: "journal", title: "Pay for the internet", head: {}, bad_head: false, body: "The bill comes on the 1st." },
+    });
+    mount(inbox(hers([date], { deadlines: [{ id: "deadline:1", when: "1970-01-13", title: "tomorrow: Pay for the internet — due", sphere: "home", sphere_title: "Home", sphere_icon: null, path: "home/journal/2026-05-01-internet.md" }] })));
+    fireEvent.click(await rowNamed(/Pay for the internet/));
+    expect(await screen.findByText("The bill comes on the 1st.")).toBeTruthy();
+    expect(read).toHaveBeenCalledWith("home", "journal/2026-05-01-internet.md");
+    expect(screen.getByText(/Home · due ·/)).toBeTruthy();
     expect(load).not.toHaveBeenCalled();
   });
 });

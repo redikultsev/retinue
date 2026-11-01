@@ -51,7 +51,7 @@ describe("a commit to the Base", () => {
         summaries={[summary({ auto: "c0ffee00", base_line: "Written to the Base: travel/hotel.md · 4f2a9c1." })]}
       />,
     );
-    expect(screen.getByRole("button", { name: "🗂 Written to the Base: travel/hotel.md · 4f2a9c1." })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Written to the Base: travel/hotel.md · 4f2a9c1." })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /To the Base/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Commit/ })).toBeNull();
   });
@@ -65,7 +65,7 @@ describe("a commit to the Base", () => {
     const live = fakeLive();
     const baseCard = vi.fn().mockResolvedValue({ card: card() });
     render(<BaseLine id="c0ffee00" line={card().said} calls={{ baseCard }} live={live} />);
-    fireEvent.click(screen.getByRole("button", { name: `🗂 ${card().said}` }));
+    fireEvent.click(screen.getByRole("button", { name: card().said }));
     await waitFor(() => expect(baseCard).toHaveBeenCalledWith("c0ffee00"));
     expect(await screen.findByRole("dialog", { name: "In the Base" })).toBeTruthy();
   });

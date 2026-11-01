@@ -135,7 +135,7 @@ function Status({ ok, error }: { ok: boolean | null; error?: boolean }) {
 
 export function DiffRows({ rows }: { rows: DiffRow[] }) {
   return (
-    <div className="overflow-x-auto rounded-md border font-mono text-[12.5px] leading-snug">
+    <div className="overflow-x-auto rounded-md border font-mono text-xs leading-snug">
       {rows.map((row, i) => (
         <div
           key={i}

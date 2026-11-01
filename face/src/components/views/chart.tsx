@@ -47,7 +47,7 @@ export function Chart({ collection, view }: { collection: CollectionViews; view:
         {[0, step, top].map((n) => (
           <g key={n}>
             <line x1={LEFT} x2={width} y1={y(n) + 0.5} y2={y(n) + 0.5} className={n ? "stroke-border [stroke-dasharray:2_3]" : "stroke-border"} />
-            <text x={0} y={y(n) + 4} className="fill-muted-foreground font-mono text-[10px]">
+            <text x={0} y={y(n) + 4} className="fill-muted-foreground font-mono text-[11px]">
               {n}
             </text>
           </g>
@@ -70,7 +70,7 @@ export function Chart({ collection, view }: { collection: CollectionViews; view:
                   {totals[i]}
                 </text>
               )}
-              <text x={x + W / 2} y={TOP + H + 15} textAnchor="middle" className={last ? "fill-foreground font-mono text-[10px]" : "fill-muted-foreground font-mono text-[10px]"}>
+              <text x={x + W / 2} y={TOP + H + 15} textAnchor="middle" className={last ? "fill-foreground font-mono text-[11px]" : "fill-muted-foreground font-mono text-[11px]"}>
                 {day(w.first)}
               </text>
             </g>

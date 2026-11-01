@@ -19,5 +19,8 @@ This repository is public. It is one person's platform, and it must say nothing 
   skill directories) — read them and work by them; say which you used. For anything the owner sees in the app, that
   is every design skill and guideline you can find (`frontend-design`, design critique, accessibility, UX copy,
   interaction design, the Web Interface Guidelines), applied to every screen the change touches, not to one.
+- **The look has its rules.** Before changing a screen, read [docs/design.md](docs/design.md) — what each colour
+  means, the type scale, a queue's row, how a change is checked — and write there what your change decides. Its hard
+  rules (no emoji, no tracked capitals, no `transition-all`, no text under 11 px) are a test that fails the build.
 - **See it before you call it done.** A change to the app is looked at in a browser at the sizes it is used at — a
   laptop window, a large screen, a phone — with short and long content, and on the deployed app after deploying.

@@ -2,6 +2,7 @@
 // pushes, the owner reads one line under the turn's summary. A tap opens its card — the files, the commit's diff,
 // «Undo». There is nothing to press to commit.
 import { lazy, Suspense, useState } from "react";
+import { Database } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -120,7 +121,10 @@ export function BaseLine({ id, line, calls = api, live = defaultLive }: { id?: s
   const card = id ? bases[id] : undefined;
   const [open, setOpen] = useState(false);
   const text = card?.state === "undone" ? `${line} Undone.` : line;
-  if (!id) return <p className="text-xs text-muted-foreground wrap-anywhere">🗂 {text}</p>;
+  if (!id) return <p className="text-xs text-muted-foreground wrap-anywhere">
+        <Database className="mr-1 inline size-3.5 align-[-2px]" />
+        {text}
+      </p>;
   return (
     <>
       <button
@@ -138,7 +142,8 @@ export function BaseLine({ id, line, calls = api, live = defaultLive }: { id?: s
           setOpen(true);
         }}
       >
-        🗂 {text}
+        <Database className="mr-1 inline size-3.5 align-[-2px]" />
+        {text}
       </button>
       <BaseDialog id={open ? id : null} onClose={() => setOpen(false)} />
     </>

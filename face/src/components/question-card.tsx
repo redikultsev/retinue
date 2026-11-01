@@ -3,6 +3,7 @@
 // «Own answer…» opens a field for the owner's own words. Every answer is bound to the card's digest, by the same rules
 // as a Telegram press — an answer here retires that question's Telegram buttons, and one there shows here.
 import { useState } from "react";
+import { Check } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -123,7 +124,12 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
                           onClick={() => (q.multiSelect ? tick(n, o.label) : send(n, { labels: [o.label] }))}
                         >
                           <span className="font-medium">
-                            {q.multiSelect ? (on ? "☑ " : "☐ ") : ""}
+                            {q.multiSelect &&
+                              (on ? (
+                                <Check className="mr-1.5 inline size-3.5 align-[-2px]" />
+                              ) : (
+                                <span aria-hidden className="mr-1.5 inline-block size-3 rounded-[3px] border border-current align-[-1px] opacity-70" />
+                              ))}
                             {o.label}
                           </span>
                           {o.description && <span className="text-xs font-normal opacity-80">{o.description}</span>}

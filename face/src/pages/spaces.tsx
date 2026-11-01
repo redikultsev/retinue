@@ -15,7 +15,7 @@ import { SpaceProposals } from "@/components/views/proposals";
 import { Queue } from "@/components/views/queue";
 import { StatList, StatStrip, statsWindow } from "@/components/views/stat";
 import { Strip } from "@/components/views/strip";
-import { ArrowLeft, ChevronRight, MessageCircle, Plus, SphereMark } from "@/components/icons";
+import { ArrowLeft, ChevronRight, Layers, MessageCircle, Plus, SphereMark } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -262,7 +262,7 @@ export function SpacesPage({ read = spacesApi.list }: { read?: typeof spacesApi.
                   className="flex h-full min-h-24 flex-col gap-2 rounded-xl border bg-card p-3 hover:bg-accent"
                 >
                   <span className="flex items-center gap-2">
-                    <SphereMark icon={sphere?.icon || "📁"} className="size-4 shrink-0 text-muted-foreground" />
+                    {sphere?.icon ? <SphereMark icon={sphere.icon} className="size-4 shrink-0 text-muted-foreground" /> : <Layers className="size-4 shrink-0 text-muted-foreground" />}
                     <span className="min-w-0 flex-1 truncate font-medium">{spaceTitle(row.name, sphere, row.title)}</span>
                   </span>
                   <Badges waiting={waiting} working={working} questions={row.questions} />

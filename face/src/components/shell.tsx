@@ -74,8 +74,8 @@ export function TabBar({ pathname }: { pathname: string }) {
             )}
           >
             <tab.Icon className="size-5" />
-            <span className="max-w-full truncate tracking-tight">{tab.label}</span>
-            {tab.to === "/today" && <TodayCount className="absolute top-1 left-1/2 ml-2 h-4 min-w-4 rounded-full px-1 text-[10px]" />}
+            <span className="max-w-full truncate">{tab.label}</span>
+            {tab.to === "/today" && <TodayCount className="absolute top-1 left-1/2 ml-2 h-4 min-w-4 rounded-full px-1 text-[11px]" />}
           </Link>
         ),
       )}

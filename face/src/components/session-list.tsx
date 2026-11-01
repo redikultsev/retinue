@@ -265,7 +265,7 @@ function Row({
             {kids}
             <ChevronDown className={cn("size-3 transition-transform", folded && "-rotate-90")} />
             {hiddenWaiting > 0 && (
-              <span aria-hidden="true" className="ml-0.5 rounded-full bg-warning px-1 text-[10px] leading-4 font-semibold text-warning-foreground">
+              <span aria-hidden="true" className="ml-0.5 rounded-full bg-warning px-1 text-[11px] leading-4 font-medium text-warning-foreground">
                 {hiddenWaiting}
               </span>
             )}

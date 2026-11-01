@@ -101,7 +101,7 @@ export function QuestionCard({ approval, live = defaultLive, answer = api.answer
           const text = writing[n];
           return (
             <section key={n} data-testid="question" className="flex flex-col gap-2">
-              {q.header && <div className="text-xs text-muted-foreground uppercase">{q.header}</div>}
+              {q.header && <div className="text-xs text-muted-foreground">{q.header}</div>}
               <div className="font-medium break-words whitespace-pre-wrap">{q.question}</div>
               {answered ? (
                 <div data-testid="question-answer" className="text-sm">

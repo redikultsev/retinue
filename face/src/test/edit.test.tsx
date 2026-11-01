@@ -153,7 +153,7 @@ describe("writing from the screen", () => {
     await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
     expect(api.write.mock.calls[0]![1]).toEqual([{ op: "revert", change_id: "01J8ZQ4Y7Z5G0000000000CHG2", version: 2 }]);
     await waitFor(() => expect(api.record).toHaveBeenCalledTimes(2)); // read again after the write
-    fireEvent.click(within(sheet).getByRole("button", { name: "Lost" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Move to Lost" }));
     await waitFor(() => expect(api.write).toHaveBeenCalledTimes(2));
     expect(api.write.mock.calls[1]![1]).toEqual([{ op: "set", id: ids.acme, version: 2, fields: { stage: "lost" } }]);
     await waitFor(() => expect(screen.queryByTestId("record-sheet")).toBeNull());

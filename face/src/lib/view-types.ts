@@ -14,6 +14,16 @@ export interface ViewRow {
   days: number | null;
   /** Past the form's threshold. */
   rotten: boolean;
+  /** A queue's `latest`: the newest record of another collection that names this one — its day, its enum's value,
+   * the form's words for it, and the arrow the view draws it as. */
+  latest?: Latest;
+}
+
+export interface Latest {
+  date: string;
+  value: string | null;
+  label: string | null;
+  arrow: "in" | "out" | null;
 }
 
 interface Named {

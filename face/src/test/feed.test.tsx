@@ -99,7 +99,7 @@ describe("FeedView", () => {
     const answer = screen.getByRole("region", { name: "Answer a question" });
     expect(within(answer).getByRole("button", { name: /Centre/ })).toBeTruthy();
     const decide = screen.getByRole("region", { name: "Decide" });
-    expect(within(decide).getByText("✈️ Travel")).toBeTruthy();
+    expect(within(decide).getByText("Travel")).toBeTruthy();
     expect(within(decide).getByText("20 min")).toBeTruthy();
     expect(within(decide).getByRole("button", { name: "Allow" })).toBeTruthy();
     const reply = screen.getByRole("region", { name: "Reply" });

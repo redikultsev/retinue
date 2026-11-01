@@ -571,48 +571,58 @@ is as of opening the session.
   browser's localStorage (`retinue.remarks.<session>`; without it, in memory for the load), so a closed diff or a reload
   keeps them; a send clears only those it sent.
 - **“Spaces”** (`/spaces`, `pages/spaces.tsx`): the Base, read only ([base.md](base.md#reading-the-base-in-the-app)).
-  The grid has a tile per Space — the sphere's icon and title when a sphere has its name, else the Showcase's title —
+  The grid has a tile per Space — the sphere's mark and title when a sphere has its name, else the Showcase's title —
   with “N waiting”, “N working” (from the live sessions, as the list counts them) and “N questions” (its Open questions).
-  A Space (`/spaces/<space>`) is a screen of tabs under one line — “← 💼 Work  Now 5 · Numbers · Partners · Base 1”,
-  with “1 waiting” at its right — the tab it was left on kept while the app is open. **Now**, the first, holds its
-  collections' views ([collections.md](collections.md#views), `components/views/`) that name no `tab`: first what
-  waits for you, “Proposed (2)”, the writes to its collections the sessions proposed, each a card
-  (`components/collection-proposal-card.tsx`) with what each operation would change (“Hooli · deleted”, “Initech ·
-  Stage: Qualified → Proposal”; five, then “Show all 7”), the session's words, “Yours to apply: …” when its rights left
-  it to you, “Apply” and “Dismiss” — a record that moved on since says “Changed by the assistant 2 min ago: … Dismiss
-  it, or ask the session again.” and leaves only “Dismiss”; then each `board` as a strip of its columns in the enum's
-  order, each with its count, the empty ones dim, a red dot by one with a stuck card, the folded ones at the end — a
-  column pressed lists its cards below it; then each `queue` (“Waiting on me 5”), a line per record: a dot for the
-  owner's move (a ring for a `wait` queue), red — amber for a wait — past the form's threshold, its head and the field
-  beside it, the line under it, its enums in the form's words at the right, its days of silence (“5 days”, “overdue”
-  said to a screen reader); a phone shows three and “Show all 5”. Beside them on a wide screen, in a column that stays
-  in view (after them on a phone): “Days ahead”, every `agenda` of the tab on one list of the coming days, today first,
-  a day with nothing a dash; and “Numbers”, a line per `stat`, “3/10 Follow-ups done” amber while short of its goal, with
-  the day and the zone above. A tab a view names (**Numbers**, **Partners**) shows its `stat`s as tiles (“3 of 10”
-  with a bar to the goal and “met” once it is, “this week, 26.10–01.11”, “last week: 7”; two to a row on a phone, four
-  on a wide screen), its `chart`s — a column a week, stacked by the enum's values in the chart colours in their order,
-  each total above it, a legend for two series or more and every number in a table for a screen reader — and its
-  boards whole: the columns side by side, narrowing so that five fit, with each card's days in it (“stuck · 9 days”
-  past the threshold), the folded values below as closed lists; on a phone a switch of columns, opened at the first
-  with a stuck card; fewer than three records are a list, each with its column's name. **Base**, the last, is the
-  Showcase: the Open questions, each with “Discuss”; the Tasks; the Records by nature (Knowledge, Profile, Journal,
-  Artifacts; a subfolder as a small label), each with the two or three words that matter for it (“verified 21.09 ·
-  practice diverges”; a Profile's “until 01.03.2030”; “stale since” when it is), and a search over their titles; the
-  Showcase's other sections and its rules, folded; the sphere's sessions (waiting first, then working, then the rest of
-  the week) with “＋ New”; and, folded, “Changes”, the Space's newest changes with who, when and “Undo”. A view the
-  platform could not make says why in its place (“Revenue: not counted”, the reason on hover); an empty one says since
-  when its collection is quiet (“Nothing here — no change since 28.10.”, “No data yet: nothing was written here.”),
-  never nothing. The views are read with the Showcase, again when the app comes back to the front and after a resync;
-  the stream's `collection` event reads that collection's views again once its `rev` is past the one shown, and a
-  collection of this Space the screen did not have (a define brought it in), or one that left it, reads the Space
-  anew. A Space without views — or a platform without the route — opens on its Base alone.
+  A sphere's mark is the config's emoji, which Telegram shows as it is; the app draws it as a line icon of its own set
+  (`SphereMark`, `components/icons.tsx`: 💼 a briefcase, ✈️ a plane, 📚 a book… — an emoji it has no icon for is a
+  neutral one), so no screen shows emoji as icons. A Space (`/spaces/<space>`) is a screen of tabs under one line —
+  “← [briefcase] Work  Now 5 · Numbers · Partners · Base 1”, with “1 waiting” at its right — the tab it was left on kept
+  while the app is open; a tab whose views are all queues, empty now (drafts with none waiting), is left out until one
+  has a row. **Now**, the first, holds its collections' views ([collections.md](collections.md#views),
+  `components/views/`) that name no `tab`: first what waits for you, “Proposed 2”, the writes to its collections the
+  sessions proposed, a row each (`components/collection-proposal-card.tsx`; a card in the feed) with what each
+  operation would change (“Hooli · deleted”, “Initech · Stage: Qualified → Proposal”; five, then “Show all 7”), the
+  session's words, “Yours to apply: …” when its rights left it to you, “Apply” and “Dismiss” — a record that moved on
+  since says “Changed by the assistant 2 min ago: … Dismiss it, or ask the session again.” and leaves only “Dismiss”;
+  then each `board` as a strip: a bar split by its columns, each part as wide as its count, and under it the columns
+  in the enum's order, each “17 Evaluating”, the empty ones said once together (“Screening, Interviews, Offer 0”), the
+  folded ones at the end — a column pressed lists its cards below it; then each `queue` (“Waiting on me 5”) as a board
+  of lines, one per record, its cells in columns every line shares: a small square for the owner's move (an empty one
+  for a `wait` queue), its days of silence when the queue has a `rot` (“15d”, red — amber for a wait — past the
+  threshold, “overdue” said to a screen reader), which way its `latest` went and when (“↙ 31 Oct”), its head, the field
+  beside it once the list is wide, the line under it, its enums in the form's words at the right; a phone shows two
+  lines a record, three records and “Show all 5”. Beside them on a wide screen, in a column that stays in view (after
+  them on a phone): “Next 7 days”, every `agenda` of the tab on a strip of the days, today shaded, a day with records
+  marked, and under it those records, each its day and its words; and “This week” (the stats' window, “26 Oct – 1 Nov”
+  at the right; “Numbers” when they count different ones), the `stat`s as figures two to a row, “0 / 7” under a goal.
+  A tab a view names (**Numbers**, **Partners**) shows its `stat`s as tiles (“3 of 10” with a bar to the goal and
+  “met” once it is, “this week, 26 Oct–1 Nov”, “last week: 7”; two to a row on a phone, four on a wide screen), its
+  `chart`s — a column a week drawn at the chart's own width, stacked by the enum's values, the first in the accent and
+  the rest in quiet steps, on a dashed grid, the total over the peak and over this week, each week's numbers in its
+  tooltip, a legend with each series' sum, and every number in a table for a screen reader — and its boards whole:
+  the columns side by side, narrowing so that five fit, with each card's days in it (“stuck · 9 days” past the
+  threshold), the folded values below as closed lists; on a phone a switch of columns, opened at the first with a
+  stuck card; fewer than three records are a list, each with its column's name. A day is “21 Sep” everywhere (“21 Sep
+  2025” in another year). **Base**, the last, is the Showcase: the Open questions, each with “Discuss”; the Tasks; the
+  Records by nature (Knowledge, Profile, Journal, Artifacts; a subfolder as a small label), each with the two or three
+  words that matter for it (“verified 21 Sep · practice diverges”; a Profile's “until 1 Mar 2030”; “stale since” when
+  it is), and a search over their titles; the Showcase's other sections and its rules, folded; the sphere's sessions
+  (waiting first, then working, then the rest of the week) with “＋ New”; and, folded, “Changes”, the Space's newest
+  changes with who, when and “Undo”. A view the platform could not make says why in its place (“Revenue: not
+  counted”, the reason on hover); an empty one says since when its collection is quiet (“Nothing here — no change
+  since 28 Oct.”, “No data yet: nothing was written here.”), never nothing. The views are read with the Showcase, again
+  when the app comes back to the front and after a resync; the stream's `collection` event reads that collection's
+  views again once its `rev` is past the one shown, and a collection of this Space the screen did not have (a define
+  brought it in), or one that left it, reads the Space anew. A Space without views — or a platform without the route —
+  opens on its Base alone.
   **The owner writes from the views** ([collections.md](collections.md#from-the-screen), `components/views/edit.tsx`):
   a row, a card or a day's record opens its record's sheet — a drawer at the right edge over the page, which a press
-  beside it closes (a bottom sheet on a phone): “Stage — move to” the columns of its collection's first board (the
-  phone's way, and the keyboard's), its fields in the form's words — the empty ones left out, a long text as a
+  beside it closes (a bottom sheet on a phone): “Stage”, the columns of its collection's first board as one control
+  of four to a row, the current one filled and those before it shaded — a press moves it (the phone's way, and the
+  keyboard's) — its fields in the form's words — the empty ones left out, a long text as a
   paragraph of four lines and “More” — then the records of the Space's other collections that name it, the newest
-  first (its touches, its rounds: “28.10 Mail · Not sent — Asked for the pilot's scope”), then, folded, “Changes · 4”,
-  each “Undo”, and “Delete”; on a wide screen a card is
+  first (its touches, its rounds: “28 Oct  Asked for the pilot's scope / Mail · Not sent”), then, folded, “Changes ·
+  4”, each “Undo”, and a quiet “Delete”; on a wide screen a card is
   dragged to another column, a folded one included, and shows there at once; a queue's `done` is a button on each row
   (“Done”, “Sent”) — the row leaves at once — and “Mark all 4: Sent” below, asked once with the rows named; a view's
   `add` is “＋ Add a touch” in its header, a sheet of the view's fields with the required ones waited for, a date
@@ -620,8 +630,8 @@ is as of opening the session.
   “Moved to Interview. Undo” for 8 s — a newer write's toast takes the place of the one before; one the record moved on since asks “Changed by the assistant 2 min ago: Stage:
   Applied → Closed.” with “Apply mine” (the write again, at the new version) or “Keep”; an add that may be a record
   there already asks “Add anyway”; an “Undo” of a change something changed after says so, and changes nothing. A Record
-  (`/spaces/<space>/r/<path>`) opens to read: its title, its head in words — “Knowledge · verified 21.09 · practice
-  diverges · stale after 21.12 · written by Claude Code”, then “created · updated · id” smaller, “Source” folded, the
+  (`/spaces/<space>/r/<path>`) opens to read: its title, its head in words — “Knowledge · verified 21 Sep · practice
+  diverges · stale after 21 Dec · written by Claude Code”, then “created · updated · id” smaller, “Source” folded, the
   fields the app does not know raw at the bottom — and its body as markdown under the transcript's rules (no raw
   HTML, nothing that loads by itself, images as text). A link to another Record or Space — exactly `/spaces/…`, no
   empty, `.` or `..` segment, no query or fragment — opens in the app; any other link asks before it leaves. The

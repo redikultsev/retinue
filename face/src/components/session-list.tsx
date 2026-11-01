@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { ArchivedList } from "@/components/archived-list";
 import { Composer } from "@/components/composer";
-import { Archive, ArrowUp, ChevronDown, Clock, Columns, Database, Fork, GitPullRequest, Pin, Plus, Star } from "@/components/icons";
+import { Archive, ArrowUp, ChevronDown, Clock, Columns, Database, Fork, GitPullRequest, Pin, Plus, SphereMark, Star } from "@/components/icons";
 import { NewSession } from "@/components/new-session";
 import { SessionMenu } from "@/components/session-menu";
 import { Markdown } from "@/components/transcript/item";
@@ -309,6 +309,7 @@ function Row({
 
 function Group({
   title,
+  icon,
   count,
   folded,
   waiting,
@@ -317,6 +318,8 @@ function Group({
   children,
 }: {
   title: string;
+  /** Its sphere's mark. */
+  icon?: string;
   count: number;
   folded: boolean;
   /** What in it waits on the owner: said on the folded heading. */
@@ -335,6 +338,7 @@ function Group({
             onClick={onFold}
             className="flex h-7 w-full items-center gap-1 rounded-md px-2 text-left text-xs text-muted-foreground hover:text-foreground pointer-coarse:min-h-11"
           >
+            <SphereMark icon={icon} className="size-3.5 shrink-0" />
             <span className="truncate">{title}</span>
             <ChevronDown className={cn("size-3 shrink-0 transition-transform", folded && "-rotate-90")} />
             <span className="text-[11px] text-muted-foreground/70 tabular-nums">{count}</span>
@@ -458,6 +462,7 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
         <Group
           key={g.key}
           title={g.title}
+          icon={g.sphere?.icon}
           count={g.rows.length}
           // the session on screen keeps its sphere open
           folded={folds.has(`sphere:${g.key}`) && !g.rows.some((r) => r.session.id === current)}

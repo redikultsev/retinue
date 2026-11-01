@@ -262,3 +262,88 @@ export const Archive = icon(
 );
 export const ArrowUpRight = icon("ArrowUpRight", <path d="M7 17 17 7M7 7h10v10" />);
 export const UploadIcon = icon("Upload", <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />);
+export const Briefcase = icon(
+  "Briefcase",
+  <>
+    <path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+    <rect width="20" height="14" x="2" y="6" rx="2" />
+  </>,
+);
+export const Plane = icon(
+  "Plane",
+  <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />,
+);
+export const Luggage = icon(
+  "Luggage",
+  <>
+    <path d="M6 20a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2" />
+    <path d="M8 18V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v14M10 20h4" />
+    <circle cx="16" cy="20" r="2" />
+    <circle cx="8" cy="20" r="2" />
+  </>,
+);
+export const CreditCard = icon(
+  "CreditCard",
+  <>
+    <rect width="20" height="14" x="2" y="5" rx="2" />
+    <path d="M2 10h20" />
+  </>,
+);
+export const Stethoscope = icon(
+  "Stethoscope",
+  <>
+    <path d="M11 2v2M5 2v2M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1M8 15a6 6 0 0 0 12 0v-3" />
+    <circle cx="20" cy="10" r="2" />
+  </>,
+);
+export const Megaphone = icon(
+  "Megaphone",
+  <path d="m3 11 18-5v12L3 14v-3zM11.6 16.8a3 3 0 1 1-5.8-1.6" />,
+);
+export const Target = icon(
+  "Target",
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="6" />
+    <circle cx="12" cy="12" r="2" />
+  </>,
+);
+export const GraduationCap = icon("GraduationCap", <path d="M22 10v6M2 10l10-5 10 5-10 5zM6 12v5c3 3 9 3 12 0v-5" />);
+export const Handshake = icon(
+  "Handshake",
+  <path d="m11 17 2 2a1 1 0 1 0 3-3m-2-2 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4m0-1 1 11h-2M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3M3 4h8" />,
+);
+export const Bell = icon(
+  "Bell",
+  <path d="M3 20a1 1 0 0 1-1-1v-1a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v1a1 1 0 0 1-1 1zM20 16a8 8 0 1 0-16 0M12 4v4M10 4h4" />,
+);
+export const Wallet = icon(
+  "Wallet",
+  <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" />,
+);
+export const ArrowDownLeft = icon("ArrowDownLeft", <path d="M17 7 7 17M17 17H7V7" />);
+
+/** A sphere's mark — the config's emoji, which Telegram shows as it is — drawn here as a line icon of this set; an
+ * emoji it has no icon for is a neutral one, so a screen never shows emoji as its icons. */
+const MARKS: Record<string, (props: IconProps) => React.JSX.Element> = {
+  "💼": Briefcase,
+  "✈": Plane,
+  "🧳": Luggage,
+  "💳": CreditCard,
+  "💰": Wallet,
+  "🩺": Stethoscope,
+  "📣": Megaphone,
+  "🎯": Target,
+  "📚": Book,
+  "📖": Book,
+  "🎓": GraduationCap,
+  "🤝": Handshake,
+  "🛎": Bell,
+  "🏠": Home,
+};
+
+export function SphereMark({ icon: mark, ...props }: IconProps & { icon: string | null | undefined }) {
+  if (!mark) return null;
+  const Mark = MARKS[mark.replace(/️/g, "").trim()] ?? Layers;
+  return <Mark {...props} />;
+}

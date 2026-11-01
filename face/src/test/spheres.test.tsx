@@ -56,7 +56,7 @@ describe("SessionList by sphere", () => {
       },
     });
     mount(<SessionList />);
-    const travel = (await screen.findByRole("heading", { name: /✈️ Travel/ })).closest("section")!;
+    const travel = (await screen.findByRole("heading", { name: /Travel/ })).closest("section")!;
     const links = within(travel as HTMLElement).getAllByRole("link");
     expect(links.map((a) => a.textContent)).toEqual([
       expect.stringContaining("main: Session m1"),
@@ -67,8 +67,8 @@ describe("SessionList by sphere", () => {
     expect(within(links[2]!).getByRole("img", { name: "unread" })).toBeTruthy();
     expect(within(links[0]!).queryByRole("img", { name: "unread" })).toBeNull();
     expect(screen.getByRole("heading", { name: /No sphere/ })).toBeTruthy();
-    fireEvent.click(within(travel as HTMLElement).getByRole("button", { name: "New session: ✈️ Travel" }));
-    const dialog = await screen.findByRole("dialog", { name: "New session · ✈️ Travel" });
+    fireEvent.click(within(travel as HTMLElement).getByRole("button", { name: "New session: Travel" }));
+    const dialog = await screen.findByRole("dialog", { name: "New session · Travel" });
     expect(within(dialog).queryByRole("radio")).toBeNull(); // the sphere is the one pressed: nothing to choose
   });
 });
@@ -92,7 +92,7 @@ describe("sub-sessions, as Claude Code's sidebar has them", () => {
       },
     });
   }
-  const section = async () => (await screen.findByRole("heading", { name: /✈️ Travel/ })).closest("section") as HTMLElement;
+  const section = async () => (await screen.findByRole("heading", { name: /Travel/ })).closest("section") as HTMLElement;
   const titlesIn = (el: HTMLElement) => within(el).queryAllByRole("link").map((a) => a.textContent ?? "");
 
   it("nest under the session that started them (`sub_of`), side questions under theirs; folds are remembered", async () => {
@@ -115,7 +115,7 @@ describe("sub-sessions, as Claude Code's sidebar has them", () => {
     );
 
     // 44 px to tap on a touch screen, the heading and the fold alike; small to look at with a mouse
-    expect(within(travel).getByRole("button", { name: /^✈️ Travel/ }).className).toContain("pointer-coarse:min-h-11");
+    expect(within(travel).getByRole("button", { name: /^Travel/ }).className).toContain("pointer-coarse:min-h-11");
     expect(within(travel).getByRole("button", { name: "Collapse nested: Travel" }).className).toMatch(
       /pointer-coarse:h-11 pointer-coarse:min-w-11/,
     );
@@ -128,7 +128,7 @@ describe("sub-sessions, as Claude Code's sidebar has them", () => {
     expect(within(travel).getByRole("button", { name: "Expand: Travel (2, 1 waiting)" }).getAttribute("aria-expanded"))
       .toBe("false");
 
-    const header = within(travel).getByRole("button", { name: /^✈️ Travel/ });
+    const header = within(travel).getByRole("button", { name: /^Travel/ });
     fireEvent.click(header);
     expect(header.getAttribute("aria-expanded")).toBe("false");
     expect(titles()).toEqual([]);
@@ -139,7 +139,7 @@ describe("sub-sessions, as Claude Code's sidebar has them", () => {
     mount(<SessionList />);
     const again = await section();
     expect(within(again).queryAllByRole("link")).toHaveLength(0);
-    fireEvent.click(within(again).getByRole("button", { name: /^✈️ Travel/ }));
+    fireEvent.click(within(again).getByRole("button", { name: /^Travel/ }));
     expect(within(again).getAllByRole("link")).toHaveLength(4); // the main one is still folded
   });
 
@@ -201,7 +201,7 @@ describe("SessionMenu", () => {
     mount(<SessionMenu s={s} calls={calls} />);
     fireEvent.click(await screen.findByRole("button", { name: "Menu: Session a1b2c3d4" }));
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByRole("button", { name: "✈️ Travel" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(dialog).getByRole("button", { name: "Travel" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(within(dialog).getByRole("button", { name: "Health" }));
     await waitFor(() => expect(calls.setSphere).toHaveBeenCalledWith("a1b2c3d4", "health"));
     expect(live.getState().sessions.a1b2c3d4?.sphere).toBe("health");

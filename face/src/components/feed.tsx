@@ -12,23 +12,7 @@ import { ApprovalCard } from "@/components/approval-card";
 import { CollectionProposalCard } from "@/components/collection-proposal-card";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
-import {
-  ArrowUpRight,
-  Ban,
-  Check,
-  ChevronRight,
-  Clock,
-  Database,
-  Fork,
-  GitBranch,
-  ListTodo,
-  Mail,
-  MessageCircle,
-  MessageQuestion,
-  Package,
-  Pencil,
-  Terminal,
-} from "@/components/icons";
+import { ArrowUpRight, Ban, Check, ChevronRight, Clock, Database, Fork, GitBranch, ListTodo, Mail, MessageCircle, MessageQuestion, Package, Pencil, SphereMark, Terminal } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { PRESSES, pressRow, WaitingSheet } from "@/components/waiting-sheet";
 import { api } from "@/lib/api";
@@ -182,7 +166,7 @@ function Row({ row, now, feed, onOpen }: { row: FeedRow; now: number; feed: Feed
         {title}
         {where && (
           <span className="hidden min-w-0 shrink truncate text-xs text-muted-foreground sm:inline">
-            {row.sphere_icon ? `${row.sphere_icon} ` : ""}
+            <SphereMark icon={row.sphere_icon} className="mr-1 inline size-3.5 align-[-2px]" />
             {where}
           </span>
         )}
@@ -272,7 +256,7 @@ export function FeedView({
       ) : (
         groups.map((group) => (
           <section key={group.action} aria-label={group.title} className="flex flex-col gap-2">
-            <Sub className="px-1 pt-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+            <Sub className="px-1 pt-1 text-[13px] font-medium">
               {group.title} <span className="tabular-nums">({group.rows.length})</span>
             </Sub>
             {group.action === "assistant" && feed.assistant_at !== null && now - feed.assistant_at > STALE_DIGEST_S && (

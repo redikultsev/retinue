@@ -137,7 +137,7 @@ describe("a Space's proposed writes", () => {
     expect(api.waiting).toHaveBeenCalledTimes(1);
     tell(proposal());
     expect(await screen.findByTestId("collection-proposal")).toBeTruthy();
-    expect(screen.getByLabelText("Proposed").textContent).toContain("Proposed (1)");
+    expect(screen.getByLabelText("Proposed").textContent).toMatch(/^Proposed1/);
   });
 });
 

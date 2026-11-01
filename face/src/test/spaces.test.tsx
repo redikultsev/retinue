@@ -112,9 +112,9 @@ describe("SpacesPage", () => {
     const router = mount(<SpacesPage read={read} />);
     const links = await screen.findAllByRole("link");
     expect(links.map((a) => a.textContent)).toEqual([
-      "✈️Travel1 waiting2 working1 question",
-      "💼Work3 questions",
-      "📁Home",
+      "Travel1 waiting2 working1 question",
+      "Work3 questions",
+      "Home",
     ]);
     fireEvent.click(links[0]!);
     await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/travel"));
@@ -146,7 +146,7 @@ describe("SpacePage", () => {
     expect(screen.getByRole("link", { name: "transit" }).getAttribute("href")).toBe("/spaces/travel/r/knowledge/transit.md");
     expect(screen.getByText("Knowledge 2 · Profile 1")).toBeTruthy();
     const transit = screen.getByRole("link", { name: /Airport transfer/ });
-    expect(transit.textContent).toContain("verified 21.09");
+    expect(transit.textContent).toContain("verified 21 Sep");
     expect(transit.textContent).toContain("practice diverges");
     expect(screen.getByText("docs/")).toBeTruthy();
     expect(screen.queryByText("**knowledge/**")).toBeNull();
@@ -175,7 +175,7 @@ describe("RecordPage", () => {
     const router = mount(<RecordPage space="travel" path="knowledge/transit.md" read={read} />);
     const words = await screen.findByTestId("head-words");
     expect(read).toHaveBeenCalledWith("travel", "knowledge/transit.md");
-    expect(words.textContent).toBe("Knowledgeverified 21.09· practice diverges· stale after 21.12.2099· written by Claude Code");
+    expect(words.textContent).toBe("Knowledgeverified 21 Sep· practice diverges· stale after 21 Dec 2099· written by Claude Code");
     expect(screen.getByText("Source")).toBeTruthy();
     const source = screen.getByTestId("source");
     expect(source.textContent).toBe(RECORD.head.source);

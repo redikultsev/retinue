@@ -11,7 +11,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-header";
 import { ComposerBox } from "@/components/composer";
-import { ChevronRight, Flag } from "@/components/icons";
+import { ChevronRight, Flag, SphereMark } from "@/components/icons";
 import { api } from "@/lib/api";
 import { type Deadline, useFeed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
@@ -110,6 +110,7 @@ export function SpherePicker({
       </button>
       {spheres.map((s) => (
         <button key={s.name} type="button" aria-pressed={value === s.name} onClick={() => onChange(s.name)} className={chip(value === s.name)}>
+          <SphereMark icon={s.icon} className="mr-1.5 inline size-3.5 align-[-2px] text-muted-foreground" />
           {sphereLabel(s)}
         </button>
       ))}
@@ -264,7 +265,7 @@ export function NewPage({ newSession = api.newSession, toMain = api.toMain, tran
             >
               <Flag className="size-4 shrink-0" />
               <span className="truncate">
-                {deadline.sphere_icon ? `${deadline.sphere_icon} ` : ""}
+                <SphereMark icon={deadline.sphere_icon} className="mr-1 inline size-3.5 align-[-2px]" />
                 {deadline.title}
               </span>
             </Link>

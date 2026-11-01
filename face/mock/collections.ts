@@ -232,6 +232,17 @@ function dealViews(): View[] {
       }),
     },
     {
+      name: "talking",
+      kind: "queue",
+      title: "In talks",
+      mark: "wait",
+      rot: STUCK,
+      fields: ["company", "contact", "value"],
+      count: talking().length,
+      rows: talking(),
+      dropped: 0,
+    },
+    {
       name: "pipeline",
       kind: "board",
       title: "Pipeline",
@@ -249,6 +260,20 @@ function dealViews(): View[] {
       add: { label: "Add a deal", fields: ["company", "contact", "value", "stage"], values: { stage: "lead" } },
     },
   ];
+}
+
+/** The deals in talks, each with its newest follow-up — which way it went — as a queue's `latest` gives it. */
+function talking(): ViewRow[] {
+  return live("deals")
+    .filter((r) => r.fields.stage === "qualified" || r.fields.stage === "proposal")
+    .map((r) => {
+      const newest = live("followups")
+        .filter((f) => f.fields.deal === r.id)
+        .sort((a, b) => String(b.fields.date).localeCompare(String(a.fields.date)))[0];
+      const state = newest ? String(newest.fields.state) : null;
+      const latest = newest && { date: String(newest.fields.date), value: state, label: state === "draft" ? "Not sent" : null, arrow: state === "done" ? ("out" as const) : null };
+      return { ...row(r, ["company", "contact", "value"], daysSince(since(r, "stage")), STUCK), ...(latest ? { latest } : {}) };
+    });
 }
 
 function followupViews(): View[] {

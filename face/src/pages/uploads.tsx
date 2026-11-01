@@ -195,7 +195,7 @@ export function UploadsView({
           <p className="text-sm text-muted-foreground">Nothing uploaded yet.</p>
         ) : (
           <section aria-label="Uploaded" className="flex flex-col gap-2">
-            <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+            <h2 className="text-[13px] font-medium">
               Uploaded <span className="tabular-nums">({files.length})</span>
             </h2>
             <ul className={LIST}>

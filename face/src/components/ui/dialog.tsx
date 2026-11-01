@@ -46,7 +46,7 @@ function Dialog({ open, onClose, title, sheet = false, side = false, className, 
       {open && sheet && (
         <div className="flex max-h-[inherit] flex-col">
           <div className="flex min-h-12 shrink-0 items-center gap-2 border-b pr-1 pl-4">
-            <h2 className="flex-1 text-sm font-semibold">{title}</h2>
+            <h2 className="min-w-0 flex-1 truncate text-[15px] font-medium">{title}</h2>
             <button
               type="button"
               aria-label="Close"

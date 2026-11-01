@@ -82,12 +82,15 @@ export function orderSpaces<T extends { name: string }>(rows: T[], spheres: Sphe
 
 const ISO = /^(\d{4})-(\d{2})-(\d{2})/;
 
-/** `2026-09-21` as «21.09», with the year when it is not this one; anything else as it is. */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** `2026-09-21` as «21 Sep», with the year when it is not this one; anything else as it is. */
 export function day(value: unknown, now: Date = new Date()): string {
   const text = String(value ?? "");
   const m = ISO.exec(text);
   if (!m) return text;
-  return Number(m[1]) === now.getFullYear() ? `${m[3]}.${m[2]}` : `${m[3]}.${m[2]}.${m[1]}`;
+  const d = `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]}`;
+  return Number(m[1]) === now.getFullYear() ? d : `${d} ${m[1]}`;
 }
 
 /** Whether an ISO day is before today. */

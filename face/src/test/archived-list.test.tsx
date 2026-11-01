@@ -41,7 +41,7 @@ describe("«Archived»", () => {
     const router = await mount(<ArchivedList load={load} restore={restore} now={NOW} />);
     const rows = await screen.findAllByTestId("archived-row");
     expect(rows.map((r) => r.textContent)).toEqual([
-      expect.stringContaining("Trip plans✈️ Travel · archived"),
+      expect.stringContaining("Trip plansTravel · archived"),
       expect.stringContaining("Session b2archived"),
     ]);
     fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0]!);

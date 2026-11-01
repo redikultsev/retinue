@@ -135,4 +135,4 @@ export function foldRows(rows: ListedRow[], folded: ReadonlySet<string>, current
   return out;
 }
 
-export const sphereLabel = (s: Pick<Sphere, "icon" | "title">) => (s.icon ? `${s.icon} ${s.title}` : s.title);
+export const sphereLabel = (s: Pick<Sphere, "title">) => s.title;

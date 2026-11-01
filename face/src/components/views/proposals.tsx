@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CollectionProposalCard } from "@/components/collection-proposal-card";
 import { type ProposalsApi, proposalsApi } from "@/lib/edit";
 import { type Live, live as theLive } from "@/lib/live";
+import { LIST } from "@/lib/utils";
 import type { CollectionProposal } from "@/lib/view-types";
 
 export function SpaceProposals({ space, api = proposalsApi, source = theLive }: { space: string; api?: ProposalsApi; source?: Live }) {
@@ -29,15 +30,16 @@ export function SpaceProposals({ space, api = proposalsApi, source = theLive }: 
   }, [read, source, space]);
   if (waiting.length === 0) return null;
   return (
-    <section className="flex flex-col gap-2" aria-label="Proposed">
-      <div className="flex min-h-9 items-center px-1">
-        <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          Proposed<span className="tabular-nums">{` (${waiting.length})`}</span>
-        </h2>
+    <section className="flex flex-col gap-1.5" aria-label="Proposed">
+      <div className="flex min-h-8 items-center gap-2 px-1">
+        <h2 className="text-[13px] font-medium">Proposed</h2>
+        <span className="font-mono text-xs text-muted-foreground tabular-nums">{waiting.length}</span>
       </div>
-      {waiting.map((p) => (
-        <CollectionProposalCard key={p.id} proposal={p} api={api} onDecided={() => void read()} />
-      ))}
+      <ul className={LIST}>
+        {waiting.map((p) => (
+          <CollectionProposalCard key={p.id} row proposal={p} api={api} onDecided={() => void read()} />
+        ))}
+      </ul>
     </section>
   );
 }

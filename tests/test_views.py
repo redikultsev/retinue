@@ -709,6 +709,33 @@ def test_a_records_sheet_lists_the_records_of_other_collections_that_name_it_the
     run(body)
 
 
+def test_a_queues_rows_carry_the_newest_record_that_names_them_its_day_value_and_arrow(tmp_path):
+    async def body():
+        store = Collections(str(tmp_path / "collections.sqlite"))
+        followups = {**FOLLOWUPS, "fields": {**FOLLOWUPS["fields"],
+                                             "direction": {"type": "enum", "values": ["in", "out"],
+                                                           "labels": {"in": "They wrote"}}}}
+        await store.define(DEFINE, "deals", "work", DEALS, NOW, views=[
+            {"name": "open", "kind": "queue", "fields": ["company"],
+             "latest": {"collection": "followups", "field": "direction", "arrows": {"in": "in", "out": "out"}}},
+            {"name": "lost", "kind": "queue", "fields": ["company"],
+             "latest": {"collection": "followups", "field": "channel"}}])
+        await store.define(DEFINE, "followups", "work", followups, NOW)
+        acme = await add(store, "deals", {"company": "Acme"}, NOW)
+        await add(store, "deals", {"company": "Globex"}, NOW)
+        for date, direction in (("2026-09-10", "out"), ("2026-09-14", "in"), ("2026-09-12", "out")):
+            await add(store, "followups", {"deal": acme["id"], "date": date, "direction": direction}, NOW)
+        await add(store, "followups", {"deal": acme["id"], "direction": "out"}, NOW)  # no day: not the newest
+        got = (await shown(store))["deals"]
+        rows = {r["fields"]["company"]: r for r in got["open"]["rows"]}
+        assert rows["Acme"]["latest"] == {"date": "2026-09-14", "value": "in", "label": "They wrote", "arrow": "in"}
+        assert "latest" not in rows["Globex"], "nothing names it"
+        assert got["lost"]["error"] == "'channel' is a text, not a enum"
+        await store.close()
+
+    run(body)
+
+
 def test_the_new_view_keys_and_an_enums_labels_are_checked_in_their_shape(tmp_path):
     for given, reason in [
         ([{"name": "x", "kind": "queue", "tab": ""}], '"tab" is plain text'),
@@ -720,6 +747,10 @@ def test_the_new_view_keys_and_an_enums_labels_are_checked_in_their_shape(tmp_pa
         ([{"name": "x", "kind": "chart", "date": "d", "weeks": 27}], '"weeks" is a whole number from 2 to 26'),
         ([{"name": "x", "kind": "chart", "date": "d", "fields": ["a"]}], "not 'fields'"),
         ([{"name": "x", "kind": "stat", "mark": "act"}], "not 'mark'"),
+        ([{"name": "x", "kind": "queue", "latest": {"collection": "t"}}], '"latest" is {"collection"'),
+        ([{"name": "x", "kind": "queue", "latest": {"collection": "t", "field": "d", "arrows": {"in": "left"}}}],
+         '"latest" is {"collection"'),
+        ([{"name": "x", "kind": "board", "group": "g", "latest": {"collection": "t", "field": "d"}}], "not 'latest'"),
     ]:
         with pytest.raises(Rejected, match=re.escape(reason)):
             parse_views(given)

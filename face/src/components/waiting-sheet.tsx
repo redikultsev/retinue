@@ -7,7 +7,7 @@
 // question to. «Done», «Not a task», «Tomorrow» close the row as on the row itself.
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AlertCircle, ArrowUpRight, Ban, Check, Clock } from "@/components/icons";
+import { AlertCircle, ArrowUpRight, Ban, Check, Clock, SphereMark } from "@/components/icons";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { ApiError, api } from "@/lib/api";
@@ -225,7 +225,7 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
     <div className="flex flex-col gap-4">
       {detail.draft && (
         <section aria-label="The draft" className="flex flex-col gap-2">
-          <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">The draft</h3>
+          <h3 className="text-[13px] font-medium">The draft</h3>
           {detail.draft.subject && <p className="text-sm font-medium break-words">{detail.draft.subject}</p>}
           <p className="max-h-64 overflow-y-auto rounded-md border bg-muted/40 p-3 text-sm break-words whitespace-pre-wrap">
             {detail.draft.text}
@@ -239,7 +239,7 @@ function Body({ row, loaded, retry, now }: { row: FeedRow; loaded: Loaded | null
       )}
       {detail.asks.length > 0 && (
         <section aria-label={detail.draft ? "What it answers" : "What it asks"} className="flex flex-col gap-2">
-          <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          <h3 className="text-[13px] font-medium">
             {detail.draft ? "What it answers" : many ? `What they ask (${asks.length + detail.more})` : "What they ask"}
           </h3>
           <ul className="flex flex-col gap-3">
@@ -301,7 +301,7 @@ export function WaitingSheet({
                 <>
                   <span aria-hidden="true">·</span>
                   <span>
-                    {row.sphere_icon ? `${row.sphere_icon} ` : ""}
+                    <SphereMark icon={row.sphere_icon} className="mr-1 inline size-3.5 align-[-2px]" />
                     {where}
                   </span>
                 </>

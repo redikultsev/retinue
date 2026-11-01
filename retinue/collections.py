@@ -165,7 +165,7 @@ FILTER_OPS = ("eq", "in", "between", "empty", "not_empty", "ref_is")
 VIEW_KEYS = {  # each kind of view (`views.py`), and the keys it takes
     "stat": {"name", "kind", "title", "tab", "count", "filter", "date", "field", "to", "window", "goal"},
     "board": {"name", "kind", "title", "tab", "group", "filter", "fields", "folded", "rot", "add"},
-    "queue": {"name", "kind", "title", "tab", "filter", "fields", "since", "sort", "mark", "rot", "done", "add"},
+    "queue": {"name", "kind", "title", "tab", "filter", "fields", "since", "sort", "mark", "rot", "done", "add", "latest"},
     "agenda": {"name", "kind", "title", "tab", "filter", "date", "fields", "days"},
     "chart": {"name", "kind", "title", "tab", "filter", "date", "group", "weeks"},
 }
@@ -176,6 +176,8 @@ AGENDA_DAYS = (1, 31)       # the days an agenda looks ahead, today among them
 CHART_WEEKS = (2, 26)       # the weeks a chart counts, this one among them
 DONE_KEYS = {"field", "value", "label"}  # a queue's one press on a row: its field set to the value
 ADD_KEYS = {"label", "fields", "values"}  # a view's «add»: the fields its form asks for, and what they start as
+LATEST_KEYS = {"collection", "field", "arrows"}  # a queue's newest record of another collection that names a row
+ARROWS = ("in", "out")      # which way that record went: towards the owner, or from him
 LABEL_MAX = 40              # characters of a button's label
 WINDOWS = ("week", "month")
 VIEWS_MAX = 20              # views of one collection
@@ -445,6 +447,8 @@ def parse_views(views: Any) -> list[dict]:
             _press(view["done"], where)
         if "add" in view:
             _adding(view["add"], where)
+        if "latest" in view:
+            _latest_shape(view["latest"], where)
         if kind == "board" and "group" not in view:
             raise Rejected(f"{where}: \"group\" names the enum its columns are")
         if kind in ("agenda", "chart") and "date" not in view:
@@ -476,6 +480,19 @@ def _press(done: Any, where: str) -> None:
             or not NAME.fullmatch(done["field"]) or not _scalar(done["value"]) or not _plain(done["label"], LABEL_MAX)):
         raise Rejected(f"{where}: \"done\" is {{\"field\": <a field>, \"value\": <what it becomes>, \"label\": <the "
                        f"button's words, at most {LABEL_MAX} characters>}}")
+
+
+def _latest_shape(latest: Any, where: str) -> None:
+    """A queue's `latest`: `{"collection": "touches", "field": "direction", "arrows": {"in": "in", "out": "out"}}` —
+    on each row, the newest record of that collection whose ref names it: its day, its enum `field`, and the arrow
+    each of the field's values is drawn as."""
+    arrows = latest.get("arrows", {}) if isinstance(latest, dict) else None
+    if (not isinstance(latest, dict) or {"collection", "field"} - set(latest) or set(latest) - LATEST_KEYS
+            or not all(isinstance(latest[k], str) and NAME.fullmatch(latest[k]) for k in ("collection", "field"))
+            or not isinstance(arrows, dict) or len(arrows) > MARKS_MAX
+            or not all(isinstance(k, str) and NAME.fullmatch(k) and v in ARROWS for k, v in arrows.items())):
+        raise Rejected(f"{where}: \"latest\" is {{\"collection\": <one whose ref names these records>, \"field\": "
+                       f"<its enum>, \"arrows\": {{<value>: {' or '.join(ARROWS)}}}}}, the arrows optional")
 
 
 def _adding(add: Any, where: str) -> None:

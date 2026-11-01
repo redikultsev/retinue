@@ -104,7 +104,7 @@ function Bars({ rows }: { rows: [string, number][] }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section aria-label={title} className="flex flex-col gap-2">
-      <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{title}</h2>
+      <h2 className="text-[13px] font-medium">{title}</h2>
       {children}
     </section>
   );

@@ -108,7 +108,7 @@ export function Step({
 function Labelled({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <div className="text-[11px] tracking-wide text-muted-foreground uppercase">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       {children}
     </div>
   );
@@ -452,7 +452,7 @@ export const TranscriptItem = memo(function TranscriptItem({ item }: { item: Ite
           </div>
           {item.data.questions.map((q, i) => (
             <div key={i} className="mb-2">
-              {q.header && <div className="text-[11px] text-muted-foreground uppercase">{q.header}</div>}
+              {q.header && <div className="text-xs text-muted-foreground">{q.header}</div>}
               <div className="font-medium">{q.question}</div>
               {q.options && (
                 <ul className="mt-1 flex flex-wrap gap-1">

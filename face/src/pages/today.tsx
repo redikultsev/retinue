@@ -7,7 +7,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-header";
 import { FeedView } from "@/components/feed";
-import { Chart, UploadIcon } from "@/components/icons";
+import { Chart, SphereMark, UploadIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { type Chip, type Deadline, type Feed, useFeed } from "@/lib/feed";
 import { when } from "@/lib/format";
@@ -129,7 +129,7 @@ function Deadlines({ items, today }: { items: Deadline[]; today: Date }) {
               <span className="block text-sm break-words">{d.title}</span>
               {(d.sphere_title || d.sphere) && (
                 <span className="block truncate text-xs text-muted-foreground">
-                  {d.sphere_icon ? `${d.sphere_icon} ` : ""}
+                  <SphereMark icon={d.sphere_icon} className="mr-1 inline size-3.5 align-[-2px]" />
                   {d.sphere_title || d.sphere}
                 </span>
               )}

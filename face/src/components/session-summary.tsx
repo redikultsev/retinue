@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 import type * as React from "react";
 import { size } from "@/components/files";
-import { FileIcon, GitBranch } from "@/components/icons";
+import { FileIcon, GitBranch, SphereMark } from "@/components/icons";
 import { PushButton, prLink } from "@/components/push-card";
 import { TodoList } from "@/components/transcript/item";
 import { sessionStateWord, when } from "@/lib/format";
@@ -124,6 +124,7 @@ export function SessionSummary({ id, onDiff, onFile, onLeave }: Props) {
             </Field>
           )}
           <Field name="Sphere">
+            {sphere && <SphereMark icon={sphere.icon} className="mr-1 inline size-3.5 align-[-2px] text-muted-foreground" />}
             {sphere ? sphereLabel(sphere) : s.sphere || "—"}
             {s.main && " · main"}
           </Field>

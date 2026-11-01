@@ -1,8 +1,8 @@
 // The owner's writes from a Space's screen (docs/collections.md#from-the-screen). `Editor` holds them for the views
 // inside it: a write at the version shown, «Undo» in its toast; a record moved on since asks «Apply mine» or «Keep»; a
-// record that may be one already there asks «Add anyway»; a record's sheet — its fields, «Move to» a board's other
-// column, its changes each with «Undo», «Delete» — and the sheet that adds one by the view's `add`. Without an Editor
-// the views are read only.
+// record that may be one already there asks «Add anyway»; a record's sheet — a board's columns as one control that
+// moves it, its fields, the records that name it, its changes each with «Undo», «Delete» — and the sheet that adds
+// one by the view's `add`. Without an Editor the views are read only.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -256,39 +256,52 @@ function RecordSheet({
           <>
             {record.deleted !== null && <p className="text-sm font-medium text-destructive">Deleted.</p>}
             {move && live && (
-              <fieldset className="flex flex-col gap-1.5">
-                <legend className="mb-1 text-xs font-medium text-muted-foreground">{`${valueWords(move.field)} — move to`}</legend>
-                <div className="flex flex-wrap gap-1.5">
-                  {move.values
-                    .filter((v): v is string => v !== null)
-                    .map((value) => {
-                      const here = record.fields[move.field] === value;
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-pressed={here}
-                          disabled={busy || here}
-                          onClick={() =>
-                            void run(
-                              [{ op: { op: "set", id: record.id, version: record.version, fields: { [move.field]: value } }, target }],
-                              said(`moved to ${valueWords(value, moveSpec?.labels)}.`),
-                              true,
-                            )
-                          }
-                          className={cn(
-                            "min-h-11 rounded-full border px-3 text-sm md:min-h-8 md:text-[13px]",
-                            here ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:bg-accent",
-                          )}
-                        >
-                          {valueWords(value, moveSpec?.labels)}
-                        </button>
-                      );
-                    })}
-                </div>
+              <fieldset className="flex flex-col">
+                <legend className="mb-2 text-xs text-muted-foreground">{valueWords(move.field)}</legend>
+                {(() => {
+                  const values = move.values.filter((v): v is string => v !== null);
+                  const at = values.indexOf(String(record.fields[move.field] ?? ""));
+                  return (
+                    <div className="grid grid-cols-4 overflow-hidden rounded-lg border">
+                      {values.map((value, i) => {
+                        const here = i === at;
+                        const words = valueWords(value, moveSpec?.labels);
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            aria-pressed={here}
+                            aria-label={here ? words : `Move to ${words}`}
+                            title={words}
+                            disabled={busy || here}
+                            onClick={() =>
+                              void run(
+                                [{ op: { op: "set", id: record.id, version: record.version, fields: { [move.field]: value } }, target }],
+                                said(`moved to ${words}.`),
+                                true,
+                              )
+                            }
+                            className={cn(
+                              "min-h-11 truncate border-border px-1.5 text-xs transition-colors md:min-h-9",
+                              i % 4 > 0 && "border-l",
+                              i >= 4 && "border-t",
+                              here
+                                ? "bg-foreground font-medium text-background"
+                                : i < at
+                                  ? "bg-accent text-foreground hover:bg-accent/70"
+                                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                            )}
+                          >
+                            {words}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </fieldset>
             )}
-            <dl className="grid grid-cols-[minmax(5.5rem,auto)_1fr] gap-x-3 gap-y-1.5 text-sm">
+            <dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13px]">
               {facts
                 .filter(([name]) => !long(record.fields[name]))
                 .map(([name, spec]) => (
@@ -303,11 +316,11 @@ function RecordSheet({
             {(data.related ?? []).map((related) => (
               <Timeline key={related.name} related={related} onOpen={(r) => editing.open(related.name, r.id)} />
             ))}
-            <details className="group/changes rounded-lg border" aria-label="Changes">
-              <summary className="flex min-h-10 cursor-pointer items-center px-3 text-[13px] text-muted-foreground">
+            <details className="group/changes border-t pt-1" aria-label="Changes">
+              <summary className="flex min-h-10 cursor-pointer items-center text-[13px] text-muted-foreground hover:text-foreground">
                 {`Changes · ${data.changes.length}`}
               </summary>
-              <ul className="flex flex-col divide-y border-t">
+              <ul className="flex flex-col divide-y rounded-lg border">
                 {data.changes.map((change) => (
                   <li key={change.change_id} className="flex items-start gap-2 px-3 py-2">
                     <span className="min-w-0 flex-1">
@@ -342,7 +355,7 @@ function RecordSheet({
               {live ? (
                 <Button
                   variant="ghost"
-                  className="text-destructive"
+                  className="text-muted-foreground hover:text-destructive"
                   disabled={busy}
                   onClick={() => void run([{ op: { op: "delete", id: record.id, version: record.version }, target }], said("deleted."), true)}
                 >
@@ -370,8 +383,8 @@ function Long({ name, text }: { name: string; text: string }) {
   const [all, setAll] = useState(false);
   return (
     <section className="flex flex-col gap-1">
-      <h3 className="text-xs font-medium text-muted-foreground">{valueWords(name)}</h3>
-      <p dir="auto" className={cn("text-sm break-words whitespace-pre-wrap", !all && "line-clamp-4")}>
+      <h3 className="text-xs text-muted-foreground">{valueWords(name)}</h3>
+      <p dir="auto" className={cn("text-[13px] break-words whitespace-pre-wrap text-muted-foreground", !all && "line-clamp-4")}>
         {text}
       </p>
       {!all && text.length > LONG * 2 && (
@@ -389,8 +402,8 @@ function Timeline({ related, onOpen }: { related: Related; onOpen: (record: Coll
   const fields = Object.entries(related.fields).filter(([name]) => name !== related.ref && name !== related.date);
   return (
     <section className="flex flex-col gap-1" aria-label={valueWords(related.name)}>
-      <h3 className="text-xs font-medium text-muted-foreground">{`${valueWords(related.name)} · ${related.records.length}`}</h3>
-      <ol className="flex flex-col">
+      <h3 className="mb-1 text-xs text-muted-foreground">{`${valueWords(related.name)} · ${related.records.length}`}</h3>
+      <ol className="flex flex-col divide-y">
         {related.records.map((r) => {
           const tags = fields.filter(([n, spec]) => spec.type === "enum" && !EMPTY.has(r.fields[n] as never)).map(([n, spec]) => valueText(r.fields[n], spec));
           const text = fields.filter(([n, spec]) => spec.type === "text" && !EMPTY.has(r.fields[n] as never)).map(([n]) => String(r.fields[n]));
@@ -399,16 +412,16 @@ function Timeline({ related, onOpen }: { related: Related; onOpen: (record: Coll
               <button
                 type="button"
                 onClick={() => onOpen(r)}
-                className="grid w-full grid-cols-[3rem_minmax(0,1fr)] gap-2 rounded-md px-1 py-1 text-left text-[13px] hover:bg-accent/50"
+                className="grid w-full grid-cols-[3.5rem_minmax(0,1fr)] gap-2 py-2 text-left text-[13px] hover:bg-accent/50"
               >
-                <span className="text-muted-foreground tabular-nums">
+                <span className="font-mono text-xs leading-5 text-muted-foreground tabular-nums">
                   {related.date && r.fields[related.date] ? valueText(r.fields[related.date], { type: "date" }) : "—"}
                 </span>
-                <span className="min-w-0">
-                  {tags.length > 0 && <span className="text-muted-foreground">{`${tags.join(" · ")} — `}</span>}
+                <span className="flex min-w-0 flex-col">
                   <span dir="auto" className="break-words">
                     {text.join(" · ")}
                   </span>
+                  {tags.length > 0 && <span className="text-xs text-muted-foreground">{tags.join(" · ")}</span>}
                 </span>
               </button>
             </li>
@@ -422,7 +435,7 @@ function Timeline({ related, onOpen }: { related: Related; onOpen: (record: Coll
 function Field({ name, spec, value, words }: { name: string; spec: FieldSpec; value: unknown; words: Record<string, string> }) {
   return (
     <>
-      <dt className="text-muted-foreground">{valueWords(name)}</dt>
+      <dt className="truncate text-muted-foreground">{valueWords(name)}</dt>
       <dd dir="auto" className="min-w-0 break-words whitespace-pre-wrap">
         {valueText(value, spec, words)}
       </dd>

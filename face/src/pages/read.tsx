@@ -3,7 +3,7 @@
 // «Finished» are kept by the platform, so the phone and the desktop agree.
 import { PageHeader, PAGE_X } from "@/components/page-header";
 import { useMemo, useState } from "react";
-import { Check, Circle } from "@/components/icons";
+import { Check, Circle, SphereMark } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { when } from "@/lib/format";
@@ -149,7 +149,7 @@ export function ReadView({
           <>
             {going.length > 0 && (
               <section aria-label="Continue" className="flex flex-col gap-2">
-                <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                <h2 className="text-[13px] font-medium">
                   Continue <span className="tabular-nums">({going.length})</span>
                 </h2>
                 <ul className={LIST}>{going.map(row)}</ul>
@@ -160,8 +160,8 @@ export function ReadView({
             ) : (
               grouped.map((section) => (
                 <section key={section.key || "-"} aria-label={section.title} className="flex flex-col gap-2">
-                  <h2 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                    {section.icon && <span aria-hidden="true">{section.icon}</span>}
+                  <h2 className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <SphereMark icon={section.icon} className="size-3.5" />
                     <span>{section.title}</span>
                     <span className="tabular-nums">({section.pages.length})</span>
                   </h2>

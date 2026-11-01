@@ -22,36 +22,36 @@ describe("a Record's head in words", () => {
       NOW,
     );
     expect(main.map((p) => p.text).join(" · ")).toBe(
-      "verified 21.09 · practice diverges · stale after 21.12 · current · written by Claude Code",
+      "verified 21 Sep · practice diverges · stale after 21 Dec · current · written by Claude Code",
     );
     expect(main.find((p) => p.key === "practice")?.warn).toBe(true);
-    expect(more.map((p) => p.text)).toEqual(["created 21.09", "updated 02.10", "id transit"]);
+    expect(more.map((p) => p.text)).toEqual(["created 21 Sep", "updated 2 Oct", "id transit"]);
     expect(extra).toEqual([["colour", "green"], ["tags", '["a","b"]']]);
   });
 
   it("marks what ran out, and words the Profile's and the Journal's dates", () => {
     const stale = headWords({ stale_after: "2026-10-01", status: "superseded" }, NOW).main;
-    expect(stale.map((p) => [p.text, !!p.warn])).toEqual([["stale since 01.10", true], ["superseded", true]]);
+    expect(stale.map((p) => [p.text, !!p.warn])).toEqual([["stale since 1 Oct", true], ["superseded", true]]);
     const profile = headWords({ from: "2025-03-01", until: "2026-01-01", learned: "2026-09-21", written_by: "Владелец" }, NOW);
-    expect(profile.main.map((p) => p.text)).toEqual(["from 01.03.2025", "expired 01.01", "written by the owner"]);
-    expect(profile.more.map((p) => p.text)).toEqual(["learned 21.09"]);
-    expect(headWords({ type: "decision", date: "2026-10-01" }, NOW).main.map((p) => p.text)).toEqual(["decided 01.10"]);
+    expect(profile.main.map((p) => p.text)).toEqual(["from 1 Mar 2025", "expired 1 Jan", "written by the owner"]);
+    expect(profile.more.map((p) => p.text)).toEqual(["learned 21 Sep"]);
+    expect(headWords({ type: "decision", date: "2026-10-01" }, NOW).main.map((p) => p.text)).toEqual(["decided 1 Oct"]);
     expect(headWords({ practice: "weird", status: "odd" }, NOW).main.map((p) => p.text)).toEqual(["practice: weird", "status: odd"]);
   });
 
   it("dates this year without the year, others with it, and anything else as it is", () => {
-    expect(day("2026-12-21", NOW)).toBe("21.12");
-    expect(day("2025-12-21", NOW)).toBe("21.12.2025");
+    expect(day("2026-12-21", NOW)).toBe("21 Dec");
+    expect(day("2025-12-21", NOW)).toBe("21 Dec 2025");
     expect(day("someday", NOW)).toBe("someday");
   });
 
   it("keeps a listing's line short: only what is worth seeing for its nature", () => {
     const row = { path: "knowledge/x.md", folder: "", title: "x", verified: "2026-09-21", practice: "matches",
                   stale_after: "2026-12-21", status: "current", updated: "2026-10-01" };
-    expect(rowWords(row, "knowledge", NOW).map((p) => p.text)).toEqual(["verified 21.09", "practice matches"]);
-    expect(rowWords({ ...row, stale_after: "2026-01-01" }, "knowledge", NOW).map((p) => p.text)).toContain("stale since 01.01");
+    expect(rowWords(row, "knowledge", NOW).map((p) => p.text)).toEqual(["verified 21 Sep", "practice matches"]);
+    expect(rowWords({ ...row, stale_after: "2026-01-01" }, "knowledge", NOW).map((p) => p.text)).toContain("stale since 1 Jan");
     expect(rowWords({ path: "profile/p.md", folder: "", title: "p", until: "2034-05-01" }, "profile", NOW).map((p) => p.text))
-      .toEqual(["until 01.05.2034"]);
+      .toEqual(["until 1 May 2034"]);
   });
 });
 

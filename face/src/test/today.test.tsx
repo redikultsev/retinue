@@ -169,7 +169,7 @@ describe("TodayView", () => {
     const busy = screen.getByRole("region", { name: "Working" });
     const row = within(busy).getByTestId("running-row");
     expect(row.textContent).toContain("Trip to Ensk");
-    expect(row.textContent).toContain("✈️ Travel");
+    expect(row.textContent).toContain("Travel");
     expect(row.textContent).toContain("12 min");
     expect(row.getAttribute("href")).toBe("/s/run");
     expect(live.watch).toHaveBeenCalledWith("run"); // its transcript is read once for the last line

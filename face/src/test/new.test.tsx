@@ -93,7 +93,7 @@ describe("/new, the empty new task", () => {
     const field = screen.getByRole("textbox", { name: "What should I do?" }) as HTMLTextAreaElement;
     expect(field.value).toBe("About a letter from Acme:\n> pay: the invoice\n\n");
     expect(field.selectionStart).toBe(field.value.length);
-    expect(screen.getByRole("button", { name: "✈️ Travel" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Travel" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.change(field, { target: { value: `${field.value}why is it due?` } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/s/n2"));
@@ -112,7 +112,7 @@ describe("/new, the empty new task", () => {
     const toMain = vi.fn().mockResolvedValue({ session: "m1" });
     const newSession = vi.fn().mockResolvedValue({ session: "n3" });
     const { router } = await mountNew({ toMain, newSession });
-    fireEvent.click(screen.getByRole("button", { name: "✈️ Travel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Travel" }));
     expect(screen.getByRole("button", { name: "Main session" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByTestId("where-to").textContent).toBe("Into «Trip plans»");
     const field = screen.getByRole("textbox", { name: "What should I do?" });
@@ -124,9 +124,9 @@ describe("/new, the empty new task", () => {
     cleanup();
 
     await mountNew({ toMain, newSession });
-    fireEvent.click(screen.getByRole("button", { name: "✈️ Travel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Travel" }));
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
-    expect(screen.getByTestId("where-to").textContent).toBe("A separate session in ✈️ Travel");
+    expect(screen.getByTestId("where-to").textContent).toBe("A separate session in Travel");
     fireEvent.change(screen.getByRole("textbox", { name: "What should I do?" }), { target: { value: "apart" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(newSession).toHaveBeenCalled());
@@ -137,8 +137,8 @@ describe("/new, the empty new task", () => {
 
   it("names a sphere with no main session: the task starts it", async () => {
     await mountNew();
-    fireEvent.click(screen.getByRole("button", { name: "✈️ Travel" }));
-    expect(screen.getByTestId("where-to").textContent).toBe("Starts the main session of ✈️ Travel");
+    fireEvent.click(screen.getByRole("button", { name: "Travel" }));
+    expect(screen.getByTestId("where-to").textContent).toBe("Starts the main session of Travel");
   });
 
   it("opens a task begun elsewhere in a separate session, never the main one", async () => {

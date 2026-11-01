@@ -1,5 +1,5 @@
 // A write to a collection an agent proposed (retinue/colltools.py): what each operation would change, the writer's
-// words and why it is the owner's to apply; «Apply» writes it as his own, «Dismiss» sets it aside. A record that moved
+// words and why it is the owner's to apply — a card in the feed, a row on a Space's screen; «Apply» writes it as his own, «Dismiss» sets it aside. A record that moved
 // on since says who moved it, and the card stays for him to dismiss.
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
@@ -41,10 +41,12 @@ interface Props {
   api?: ProposalsApi;
   /** Called once a press changed it. */
   onDecided?: (proposal: CollectionProposal) => void;
+  /** A row of a Space's list rather than a card: its changes, its why, its two buttons. */
+  row?: boolean;
   className?: string;
 }
 
-export function CollectionProposalCard({ proposal: given, api = proposalsApi, onDecided, className }: Props) {
+export function CollectionProposalCard({ proposal: given, api = proposalsApi, onDecided, row = false, className }: Props) {
   const [proposal, setProposal] = useState(given);
   const [busy, setBusy] = useState<"apply" | "dismiss" | null>(null);
   const [moved, setMoved] = useState<string | null>(null);
@@ -88,6 +90,54 @@ export function CollectionProposalCard({ proposal: given, api = proposalsApi, on
     }
   }
 
+  const by = current.session ? (
+    <Link to="/s/$id" params={{ id: current.session }} className="underline-offset-4 hover:underline">
+      a session
+    </Link>
+  ) : (
+    actorWords(current.actor)
+  );
+  if (row)
+    return (
+      <li data-testid="collection-proposal" className={cn("flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-start sm:gap-4", className)}>
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          {shown.map((_, i) => {
+            const { title, what } = proposedWords(current, i);
+            return (
+              <span key={i} className="text-[13px] break-words">
+                <span className="font-medium">{title}</span>
+                <span className="text-muted-foreground">{` · ${what}`}</span>
+              </span>
+            );
+          })}
+          {current.changes.length > SHOWN && !all && (
+            <button type="button" className="w-fit text-xs text-muted-foreground hover:text-foreground" onClick={() => setAll(true)}>
+              {`Show all ${current.changes.length}`}
+            </button>
+          )}
+          <span data-testid="proposal-why" className="text-xs break-words text-muted-foreground">
+            {current.why ? `${current.why} — ` : ""}
+            {valueWords(current.collection)}, proposed by {by}
+            {current.needs && waiting ? `. Yours to apply: ${current.needs}` : ""}
+          </span>
+          {moved && (
+            <span role="alert" className="text-xs text-amber-700 dark:text-warning">
+              {`${moved} Dismiss it, or ask the session again.`}
+            </span>
+          )}
+        </span>
+        {waiting && (
+          <span className="flex shrink-0 gap-1.5">
+            <Button size="sm" disabled={busy !== null || moved !== null} onClick={() => void decide("apply")}>
+              {busy === "apply" ? "Applying…" : "Apply"}
+            </Button>
+            <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void decide("dismiss")}>
+              {busy === "dismiss" ? "Sending…" : "Dismiss"}
+            </Button>
+          </span>
+        )}
+      </li>
+    );
   return (
     <Card data-testid="collection-proposal" className={cn(waiting ? "border-primary/50 bg-primary/5" : "bg-muted/30", className)}>
       <CardHeader>

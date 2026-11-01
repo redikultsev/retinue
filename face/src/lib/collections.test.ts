@@ -97,7 +97,7 @@ describe("a row in words", () => {
     expect(cell(r, "deal", NOW)).toBe("Acme");
     expect(cell(r, "other", NOW)).toBeNull();
     expect(rowWords(r, ["deal", "other", "channel", "date", "amount", "urgent", "quiet", "missing"], NOW)).toEqual({
-      title: "Acme", rest: ["mail", "14.09", "54,000", "Urgent"],
+      title: "Acme", rest: ["mail", "14 Sep", "54,000", "Urgent"],
     });
     expect(rowWords(row(), ["company"], NOW)).toEqual({ title: "Untitled", rest: [] });
   });
@@ -112,7 +112,7 @@ describe("a number", () => {
 
   it("says its window and the period before", () => {
     const stat = { window: "week" as const, first: "2026-09-14", last: "2026-09-20", previous: 2 };
-    expect(windowWords(stat, NOW)).toBe("this week, 14.09–20.09");
+    expect(windowWords(stat, NOW)).toBe("this week, 14 Sep–20 Sep");
     expect(previousWords(stat)).toBe("last week: 2");
     expect(windowWords({ window: null, first: null, last: null })).toBe("all time");
     expect(previousWords({ window: null, previous: null })).toBeNull();
@@ -130,7 +130,7 @@ describe("rev", () => {
 
   it("dates an empty view's quiet, or says nothing was ever written", () => {
     expect(emptyWords({ name: "deals", rev: "01KDVDNA00TSV4RRFFQ69G5FAV", views: [] }, new Date("2026-09-01"))).toBe(
-      "Nothing here — no change since 01.01.",
+      "Nothing here — no change since 1 Jan.",
     );
     expect(emptyWords({ name: "deals", rev: null, views: [] })).toBe("No data yet: nothing was written here.");
   });

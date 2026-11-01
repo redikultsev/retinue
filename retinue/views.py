@@ -6,7 +6,8 @@ Five kinds, a closed set (`collections.VIEW_KEYS`):
 - `stat`, one number: the records a filter matches, or those whose field changed, this week or this month — with its
   goal from the form and the same number for the period before;
 - `board`, the records in columns by an enum, each with the days since that field last changed;
-- `queue`, the records a filter matches, the longest silent first (or by a field), with the days since;
+- `queue`, the records a filter matches, the longest silent first (or by a field), with the days since — and, by its
+  `latest`, the newest record of another collection that names each (a deal's last touch);
 - `agenda`, the records whose date falls in the days ahead, today first;
 - `chart`, the records counted by the week their date falls in, split by an enum.
 A view's `tab` names the tab of the screen it shows in; none, the Space's first.
@@ -275,13 +276,13 @@ def _marks(store: Collections, collection: str, ids: list[str], field: str | Non
 
 
 def _row(record: dict, fields: list[str] | None, refs: dict, since: dt.date | None, src: str | None, when: When,
-         rot: int | None, budget: list[int]) -> dict | None:
+         rot: int | None, budget: list[int], extra: dict | None = None) -> dict | None:
     """A record as a view shows it — or None when it would take the answer past its size."""
     days = (when.today - since).days if since is not None else None
     row = {"id": record["id"], "version": record["version"],
            "fields": {k: v for k, v in record["fields"].items() if fields is None or k in fields},
            "refs": refs.get(record["id"], {}), "src": src, "days": days,
-           "rotten": rot is not None and days is not None and days > rot}
+           "rotten": rot is not None and days is not None and days > rot, **(extra or {})}
     size = len(_json(row).encode()) + 1
     if size > budget[0]:
         return None
@@ -343,14 +344,41 @@ def _queue(store: Collections, collection: str, form: dict, view: dict, when: Wh
     if since is not None:
         days = {r["id"]: dt.date.fromisoformat(r["fields"][since]) for r in records if since in r["fields"]}
     rows, dropped, refs = [], total - len(records), _refs(store, form, records, fields)
+    latest = _latest(store, collection, view["latest"], [r["id"] for r in records]) if "latest" in view else {}
     for record in sorted(records, key=_sorted(sort, days)):
-        row = _row(record, fields, refs, days.get(record["id"]), srcs.get(record["id"]), when, rot, budget)
+        extra = {"latest": latest[record["id"]]} if record["id"] in latest else None
+        row = _row(record, fields, refs, days.get(record["id"]), srcs.get(record["id"]), when, rot, budget, extra)
         if row is None:
             dropped += 1
         else:
             rows.append(row)
     return {"rot": rot, "fields": fields or list(form["fields"]), "count": total, "rows": rows,
             "dropped": dropped, "mark": view.get("mark", "act")}
+
+
+def _latest(store: Collections, collection: str, spec: dict, ids: list[str]) -> dict[str, dict]:
+    """A queue's `latest`: for each of its records, the newest record of `spec["collection"]` whose ref names it — by
+    that form's first date field — as `{date, value, label, arrow}`: its day, its enum `field`'s value, the form's
+    words for it and the arrow the view draws it as. A record nothing names has none."""
+    form = store._form(spec["collection"])
+    if form is None:
+        raise Rejected(f"no collection {spec['collection']!r}")
+    ref = next((f for f, s in form["fields"].items() if s["type"] == "ref" and s["to"] == collection), None)
+    date = next((f for f, s in form["fields"].items() if s["type"] == "date"), None)
+    if ref is None or date is None:
+        raise Rejected(f"{spec['collection']!r} has no ref to {collection!r} and a date field to go by")
+    labels = _field(form, spec["field"], "enum").get("labels", {})
+    arrows, out = spec.get("arrows", {}), {}
+    for rid in ids:
+        where, params = store._where(spec["collection"], form, [{"field": ref, "op": "ref_is", "value": rid}], False)
+        found = store._db.execute(f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} AND {_path(date)} IS NOT NULL "
+                                  f"ORDER BY {_path(date)} DESC, id DESC LIMIT 1", params).fetchone()
+        if found:
+            fields = _record(found)["fields"]
+            value = fields.get(spec["field"])
+            out[rid] = {"date": fields[date], "value": value, "label": labels.get(value) if value else None,
+                        "arrow": arrows.get(value) if value else None}
+    return out
 
 
 def _agenda(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:

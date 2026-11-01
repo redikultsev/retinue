@@ -34,7 +34,7 @@ describe("sphereGroups", () => {
       NOW,
     );
     expect(groups.map((g) => [g.key, g.title])).toEqual([
-      ["travel", "✈️ Travel"],
+      ["travel", "Travel"],
       ["work", "Work"],
       ["mars", "mars"],
       ["", "No sphere"],

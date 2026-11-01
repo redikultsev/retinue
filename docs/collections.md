@@ -255,7 +255,7 @@ view names shows its numbers as tiles, its boards whole. A `filter` is the one [
 |---|---|---|
 | `stat` | `count`: `records` (the default) — those the filter matches, by their `date` field when there is a window — or `changed` — those the filter matches now whose `field` a change gave a value (one of `to`, when it names some); `window`: `week` (Monday to Sunday) or `month`, none for all the time; `goal`: a name of the form's `goals` | `{value, goal, previous, window, first, last}`: the number in this week or month, the same for the one before, the window's first and last day |
 | `board` | `group`: an enum; `folded`: its values shown folded; `fields`; `rot`: a name of the form's `rot`; `add` | `{group, rot, fields, columns: [{value, count, folded, rows}], dropped, add}`: a column per value, in the enum's order, then one for the records it is unknown in; in each, the longest in it first |
-| `queue` | `since`: a date field, else the record's last change; `sort`: a field to list them by, the least first and those without it last; `mark`: `act` (the default) — the owner's to do — or `wait` — his to wait for; `fields`; `rot`; `done`; `add` | `{rot, fields, count, rows, dropped, mark, done, add}`: the longest silent first, or by `sort` |
+| `queue` | `since`: a date field, else the record's last change; `sort`: a field to list them by, the least first and those without it last; `mark`: `act` (the default) — the owner's to do — or `wait` — his to wait for; `latest`, below; `fields`; `rot`; `done`; `add` | `{rot, fields, count, rows, dropped, mark, done, add}`: the longest silent first, or by `sort` |
 | `agenda` | `date`: a date field; `days`: how many days ahead, today among them (1–31, 7 by default); `fields` | `{date, fields, first, last, count, rows, dropped}`: the records whose `date` falls from today (`first`) to `last`, the soonest first, each row with its `date` whether `fields` names it or not; a row's `days` is 0 today and below zero after |
 | `chart` | `date`: a date field; `group`: an enum to split by; `weeks`: how many (2–26, 8 by default) | `{date, group, values, weeks: [{first, counts: [{value, count}]}]}`: the records counted by the week (Monday to Sunday) their `date` falls in, this week last, each split by `group`'s values |
 
@@ -269,8 +269,15 @@ Two keys are buttons, for the owner's [writes from the screen](#from-the-screen)
   none are named) and starting `values` as given; both are held to the form the same way. The label is plain text of
   at most 40 characters.
 
+A queue's **`latest`** — `{"collection": "touches", "field": "direction", "arrows": {"in": "in", "out": "out"}}` —
+puts on each row the newest record of that collection whose `ref` names it, by that form's first date field: a
+deal's last touch. The row carries `latest: {date, value, label, arrow}` — its day, its enum `field`'s value, the
+form's words for it, and `in` (towards the owner) or `out` (from him) for the values `arrows` names, `null` for the
+rest; a row nothing names has no `latest`. A collection with no `ref` to this one or no date field, or a `field`
+that is not an enum, shows why in the view's place.
+
 A board's and a queue's `fields` are the names its rows show, in order: the view's `fields`, else the form's. A row
-is `{id, version, fields, refs, src, days, rotten}`: only the view's `fields` when it names some; `refs` the words of
+is `{id, version, fields, refs, src, days, rotten}` (and a queue's `latest`): only the view's `fields` when it names some; `refs` the words of
 each `ref` it shows — the first `text` field of the record it names, so a row reads “Acme”, not an id; none for a
 deleted record, whose row shows the id; `src` that of
 the record's last change that had one; `days` since the day the group's field last changed (a board), since its `since`

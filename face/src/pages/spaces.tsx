@@ -13,9 +13,9 @@ import { Chart } from "@/components/views/chart";
 import { AddButton, Editor, type Move } from "@/components/views/edit";
 import { SpaceProposals } from "@/components/views/proposals";
 import { Queue } from "@/components/views/queue";
-import { StatList, StatStrip } from "@/components/views/stat";
+import { StatList, StatStrip, statsWindow } from "@/components/views/stat";
 import { Strip } from "@/components/views/strip";
-import { ArrowLeft, ChevronRight, MessageCircle, Plus } from "@/components/icons";
+import { ArrowLeft, ChevronRight, MessageCircle, Plus, SphereMark } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -28,7 +28,6 @@ import { plural, sessionStateWord, when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { listed } from "@/lib/store";
 import {
-  day,
   discussText,
   headWords,
   NATURE_WORDS,
@@ -126,7 +125,7 @@ function Section({ title, count, children, action }: { title: string; count?: nu
   return (
     <section className="flex flex-col gap-1.5">
       <div className="flex min-h-8 items-center gap-2 px-1">
-        <h2 className="text-[13px] font-semibold">{title}</h2>
+        <h2 className="text-[13px] font-medium">{title}</h2>
         {count !== undefined && <span className="text-[13px] text-muted-foreground tabular-nums">{count}</span>}
         <span className="flex-1" />
         {action}
@@ -263,9 +262,7 @@ export function SpacesPage({ read = spacesApi.list }: { read?: typeof spacesApi.
                   className="flex h-full min-h-24 flex-col gap-2 rounded-xl border bg-card p-3 hover:bg-accent"
                 >
                   <span className="flex items-center gap-2">
-                    <span aria-hidden className="text-xl leading-none">
-                      {sphere?.icon || "📁"}
-                    </span>
+                    <SphereMark icon={sphere?.icon || "📁"} className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate font-medium">{spaceTitle(row.name, sphere, row.title)}</span>
                   </span>
                   <Badges waiting={waiting} working={working} questions={row.questions} />
@@ -394,6 +391,7 @@ function Records({ space, view }: { space: string; view: SpaceView }) {
 /** A board or a queue in its own section; one the platform could not make says why in its place. */
 function Shown({ placed }: { placed: Placed }) {
   const { collection, view } = placed;
+  if (view.error === undefined && view.kind === "chart") return <Chart collection={collection} view={view} />; // titled inside
   const add = view.error === undefined && (view.kind === "queue" || view.kind === "board") ? view.add : null;
   return (
     <Section
@@ -407,8 +405,6 @@ function Shown({ placed }: { placed: Placed }) {
         <Queue collection={collection} view={view} />
       ) : view.kind === "board" ? (
         <Board collection={collection} view={view} />
-      ) : view.kind === "chart" ? (
-        <Chart collection={collection} view={view} />
       ) : null}
     </Section>
   );
@@ -418,8 +414,10 @@ function Shown({ placed }: { placed: Placed }) {
 
 /** The first tab: the boards as strips over the work, the queues down the middle, and — when the Space has them — the
  * days ahead and the numbers in a narrow column at the right, which stays in view; on a phone it comes after. */
-function FirstTab({ places, today, tz }: { places: Places; today: string; tz: string }) {
+function FirstTab({ places }: { places: Places }) {
   const side = places.agendas.length > 0 || places.stats.length > 0;
+  const numbers = statsWindow(places.stats);
+  const ahead = agendaDays(places.agendas);
   return (
     <div className="flex flex-col gap-3">
       {places.boards.map(({ collection, view }) =>
@@ -429,8 +427,8 @@ function FirstTab({ places, today, tz }: { places: Places; today: string; tz: st
           <Shown key={`${collection.name}/${view.name}`} placed={{ collection, view }} />
         ),
       )}
-      <div className={cn("grid gap-x-5 gap-y-4", side && "lg:grid-cols-[minmax(0,1fr)_18rem]")}>
-        <div className="flex min-w-0 flex-col gap-4">
+      <div className={cn("grid gap-x-8 gap-y-5", side && "lg:grid-cols-[minmax(0,1fr)_20rem]")}>
+        <div className="flex min-w-0 flex-col gap-5">
           {places.queues.map((p) => (
             <Shown key={`${p.collection.name}/${p.view.name}`} placed={p} />
           ))}
@@ -439,14 +437,14 @@ function FirstTab({ places, today, tz }: { places: Places; today: string; tz: st
           ))}
         </div>
         {side && (
-          <aside className="flex flex-col gap-4 lg:sticky lg:top-16 lg:self-start">
+          <aside className="flex flex-col gap-5 lg:sticky lg:top-16 lg:self-start">
             {places.agendas.length > 0 && (
-              <Section title="Days ahead">
+              <Section title={ahead ? `Next ${ahead} days` : "Days ahead"}>
                 <Agenda agendas={places.agendas} />
               </Section>
             )}
             {places.stats.length > 0 && (
-              <Section title="Numbers" action={<span className="text-xs text-muted-foreground">{today ? `${day(today)} · ${tz}` : ""}</span>}>
+              <Section title={numbers.title} action={<span className="text-xs text-muted-foreground">{numbers.days}</span>}>
                 <StatList stats={places.stats} />
               </Section>
             )}
@@ -472,6 +470,21 @@ function ViewsTab({ places }: { places: Places }) {
       )}
     </div>
   );
+}
+
+/** Whether a tab holds only queues, every one of them empty now. */
+const idle = (p: Places) =>
+  p.queues.length > 0 &&
+  p.stats.length + p.boards.length + p.agendas.length + p.charts.length === 0 &&
+  p.queues.every(({ view }) => view.error === undefined && view.kind === "queue" && view.count === 0);
+
+/** How many days the agendas span: the «Next 7 days» over them. */
+function agendaDays(agendas: Placed[]): number {
+  const views = agendas.flatMap(({ view }) => (view.error === undefined && view.kind === "agenda" ? [view] : []));
+  if (!views.length) return 0;
+  const first = views.map((v) => v.first).sort()[0]!;
+  const last = views.map((v) => v.last).sort().at(-1)!;
+  return Math.round((Date.parse(last) - Date.parse(first)) / 86_400_000) + 1;
 }
 
 /** The rows of a tab's queues that are the owner's to act on: the count its tab shows. */
@@ -525,8 +538,9 @@ export function SpacePage({
   const count = (items: ShowcaseItem[]) => items.filter((i) => i.list).length;
   const summary = [waiting && `${waiting} waiting`, working && `${working} working`].filter(Boolean);
   const revs = shown.data?.collections.map((c) => c.rev).join() ?? "";
-  // A Space without collections has only its Base: it opens there, as it always did.
-  const viewTabs = tabs.filter((t, i) => i > 0 || placedCount(t.places) > 0);
+  // A Space without collections has only its Base: it opens there, as it always did. A tab of queues alone, all empty
+  // now — drafts with none waiting — is not there until one has a row.
+  const viewTabs = tabs.filter((t, i) => (i > 0 || placedCount(t.places) > 0) && !(i > 0 && idle(t.places)));
   const names = [...viewTabs.map((t) => t.title ?? "Now"), BASE_TAB];
   const tab = names.includes(picked) ? picked : names[0]!;
   const pick = (name: string) => {
@@ -538,7 +552,7 @@ export function SpacePage({
   );
   counts[BASE_TAB] = count(questions) || undefined;
   const current = viewTabs.find((t) => (t.title ?? "Now") === tab);
-  const title = `${sphere?.icon ? `${sphere.icon} ` : ""}${spaceTitle(space, sphere, view?.title)}`;
+  const title = spaceTitle(space, sphere, view?.title);
   return (
     <Editor api={edit} today={shown.data?.today ?? ""} refresh={shown.refresh} reload={() => void shown.reload()} moves={moves}>
     <div className="flex flex-col">
@@ -552,7 +566,10 @@ export function SpacePage({
           >
             <ArrowLeft className="size-4" />
           </Link>
-          <h1 className="max-w-[40vw] shrink-0 self-center truncate pr-3 text-[15px] font-semibold md:max-w-none">{title}</h1>
+          <h1 className="flex max-w-[40vw] shrink-0 items-center gap-2 self-center truncate pr-3 text-[15px] font-medium md:max-w-none">
+            <SphereMark icon={sphere?.icon} className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate">{title}</span>
+          </h1>
           <div role="tablist" aria-label="Views of the Space" className="flex shrink-0 items-stretch">
             {names.map((name) => (
               <button
@@ -562,12 +579,12 @@ export function SpacePage({
                 aria-selected={tab === name}
                 onClick={() => pick(name)}
                 className={cn(
-                  "-mb-px inline-flex items-center gap-1 border-b-2 px-2.5 text-[13.5px] whitespace-nowrap transition-colors",
-                  tab === name ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+                  "-mb-px inline-flex items-center gap-1.5 border-b-2 px-2.5 text-[13px] whitespace-nowrap transition-colors",
+                  tab === name ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
                 )}
               >
                 {name}
-                {counts[name] !== undefined && <span className="text-xs text-muted-foreground tabular-nums">{counts[name]}</span>}
+                {counts[name] !== undefined && <span className="font-mono text-xs text-muted-foreground tabular-nums">{counts[name]}</span>}
               </button>
             ))}
           </div>
@@ -587,7 +604,7 @@ export function SpacePage({
           <>
             {current.title === null && <SpaceProposals space={space} api={proposals} />}
             {current.title === null ? (
-              <FirstTab places={current.places} today={shown.data?.today ?? ""} tz={shown.data?.tz ?? ""} />
+              <FirstTab places={current.places} />
             ) : (
               <ViewsTab places={current.places} />
             )}

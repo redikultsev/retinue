@@ -357,9 +357,9 @@ def parse_form(form: Any) -> dict:
         extra = TYPES[spec["type"]]
         if set(spec) & RIGHTS_KEYS:
             raise Rejected(RIGHTS_ELSEWHERE)
-        if unknown := set(spec) - {"type", "required", "index", *extra}:
+        if unknown := set(spec) - {"type", "required", "index", "hide", *extra}:
             raise Rejected(f"field {name!r}: a {spec['type']} takes no {', '.join(sorted(map(repr, unknown)))}")
-        for flag in ("required", "index"):
+        for flag in ("required", "index", "hide"):
             if not isinstance(spec.get(flag, False), bool):
                 raise Rejected(f"field {name!r}: \"{flag}\" is true or false")
         if spec["type"] == "enum":

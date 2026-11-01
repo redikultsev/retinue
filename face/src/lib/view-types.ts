@@ -153,6 +153,8 @@ export interface FieldSpec {
   /** A ref's collection. */
   to?: string;
   required?: boolean;
+  /** Kept for the agents: a record's sheet leaves it out. */
+  hide?: boolean;
 }
 
 export interface CollectionRecord {

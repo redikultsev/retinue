@@ -245,7 +245,7 @@ function RecordSheet({
   const target = record?.id ?? null;
   const moveSpec = move ? data?.fields[move.field] : undefined;
   // The facts first, the long ones (more than a line) after them; the field it moves by is the «Move to» row.
-  const facts = data && record ? Object.entries(data.fields).filter(([name]) => !EMPTY.has(record.fields[name] as never) && name !== move?.field) : [];
+  const facts = data && record ? Object.entries(data.fields).filter(([name, spec]) => !spec.hide && !EMPTY.has(record.fields[name] as never) && name !== move?.field) : [];
   const long = (v: unknown) => typeof v === "string" && v.length > LONG;
   return (
     <Dialog open sheet side onClose={onClose} title={data?.title ?? "Record"}>

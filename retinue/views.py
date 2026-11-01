@@ -487,8 +487,9 @@ def stats(store: Collections, named: list[tuple[str, str]], when: When) -> dict:
 
 
 def _fields(form: dict) -> dict:
-    """A form's fields as the screen asks for them: each one's type, and its values, `to` and `required`."""
-    return {name: {k: v for k, v in spec.items() if k in ("type", "values", "labels", "to", "required")}
+    """A form's fields as the screen asks for them: each one's type, and its values, labels, `to`, `required` and
+    `hide` — a field kept for the agents, which a record's sheet leaves out."""
+    return {name: {k: v for k, v in spec.items() if k in ("type", "values", "labels", "to", "required", "hide")}
             for name, spec in form["fields"].items()}
 
 

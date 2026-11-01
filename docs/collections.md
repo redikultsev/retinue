@@ -96,7 +96,8 @@ terminal (an agent's way to propose one comes later), and a `define` that change
 | `ref` | the id of a record, not deleted, in the collection the field's `to` names |
 
 `null` means unknown: a field set to `null` is left out of the record, and zero or an empty string are values. A
-`required` field cannot be left out.
+`required` field cannot be left out. A field with `"hide": true` is kept for the agents — a number from another
+tracker, a mark of what was inferred — and a record's sheet on the screen leaves it out.
 
 **Keys.** A record's id is its identity; the fields that name it in the world are ordinary fields, and can be
 changed.

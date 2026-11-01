@@ -131,8 +131,8 @@ describe("writing from the screen", () => {
 
   it("opens a card's sheet: «Move to» another column, and «Undo» on a change of its history", async () => {
     const record: RecordAnswer = {
-      name: "deals", rev: REV, title: "Acme", fields: { company: { type: "text", required: true }, stage: { type: "enum", values: ["lead", "proposal", "lost"] } },
-      record: { id: ids.acme, fields: { company: "Acme", stage: "proposal" }, version: 2, created: 0, updated: 0, deleted: null },
+      name: "deals", rev: REV, title: "Acme", fields: { company: { type: "text", required: true }, stage: { type: "enum", values: ["lead", "proposal", "lost"] }, n: { type: "int", hide: true } },
+      record: { id: ids.acme, fields: { company: "Acme", stage: "proposal", n: 7 }, version: 2, created: 0, updated: 0, deleted: null },
       changes: [
         { change_id: "01J8ZQ4Y7Z5G0000000000CHG2", ts: Date.now() / 1000 - 3600, as_of: null, batch: null, collection: "deals", id: ids.acme, op: "set", before: { stage: "lead" }, after: { stage: "proposal" }, actor: "assistant", model: null, via: "assistant", src: null, foreign: ["mail"], reverts: null, idem: null },
         { change_id: "01J8ZQ4Y7Z5G0000000000CHG3", ts: Date.now() / 1000 - 86400 * 3, as_of: null, batch: null, collection: "deals", id: ids.acme, op: "add", before: null, after: { company: "Acme", stage: "lead" }, actor: "owner", model: null, via: "screen", src: null, foreign: [], reverts: null, idem: null },
@@ -148,6 +148,7 @@ describe("writing from the screen", () => {
     await within(sheet).findByText("Stage: Lead → Proposal");
     expect(within(sheet).getByText("the assistant · 1 h ago · after reading mail")).toBeTruthy();
     expect(within(sheet).getByRole("button", { name: "Proposal" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(sheet).queryByText("N")).toBeNull(); // kept for the agents, left out of the sheet
     fireEvent.click(within(sheet).getByRole("button", { name: "Undo: Stage: Lead → Proposal" }));
     await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
     expect(api.write.mock.calls[0]![1]).toEqual([{ op: "revert", change_id: "01J8ZQ4Y7Z5G0000000000CHG2", version: 2 }]);

@@ -701,6 +701,7 @@ def test_a_records_sheet_lists_the_records_of_other_collections_that_name_it_the
         assert (followups["name"], followups["ref"], followups["date"]) == ("followups", "deal", "date")
         assert [r["fields"]["date"] for r in followups["records"]] == ["2026-09-14", "2026-09-10"]
         assert followups["fields"]["direction"]["values"] == ["in", "out"]
+        assert "hide" not in sheet["fields"]["company"]
         lone = await store.read(lambda: views.record_view(store, "followups", followups["records"][0]["id"]))
         assert lone["related"] == [], "nothing names a follow-up"
         await store.close()
@@ -725,12 +726,17 @@ def test_the_new_view_keys_and_an_enums_labels_are_checked_in_their_shape(tmp_pa
 
     async def body():
         store = Collections(str(tmp_path / "collections.sqlite"))
+        with pytest.raises(Rejected, match=re.escape('"hide" is true or false')):
+            await store.define(DEFINE, "deals", "work", {"fields": {"n": {"type": "int", "hide": "yes"}}}, NOW)
+        await store.define(DEFINE, "deals", "work", {"fields": {"n": {"type": "int", "hide": True}}}, NOW)
+        sheet = await store.read(lambda: views.form_view(store, "deals"))
+        assert sheet["fields"]["n"] == {"type": "int", "hide": True}, "the screen is told which fields to leave out"
         for labels, reason in (({"won": "Won"}, '"labels" gives some of its values words'),
                                ({"lead": ""}, '"labels" gives some of its values words'),
                                ([], '"labels" gives some of its values words')):
             form = {"fields": {"stage": {"type": "enum", "values": ["lead"], "labels": labels}}}
             with pytest.raises(Rejected, match=re.escape(reason)):
-                await store.define(DEFINE, "deals", "work", form, NOW)
+                await store.define(DEFINE, "leads", "work", form, NOW)
         await store.close()
 
     run(body)

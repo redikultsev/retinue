@@ -94,6 +94,24 @@ def test_a_press_lays_the_window_in_one_apply_and_undo_takes_back_only_what_is_s
     faced(tmp_path, run)
 
 
+def test_a_task_planned_on_one_day_is_laid_on_the_next_only_for_what_is_left(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        bill = await add(world, title="Pay the bill", minutes=15)
+        talk = await add(world, title="Record the talk", minutes=180, due="2026-11-13")
+        await planner.plan(msk(10, "18:00"))
+        from datetime import date
+        said = await planner.plan(msk(10, "18:00"), date(2026, 11, 11))
+        wed = [b for b in await blocks(world) if b["fields"]["start"] >= iso(msk(11, "10:00"))]
+        assert [(b["fields"]["task"], b["fields"]["minutes"]) for b in wed] == [(talk["id"], 90)], \
+            "the bill is Tuesday's already; of the talk's three hours Tuesday holds ninety, Wednesday the rest"
+        assert bill["id"] not in {b["fields"]["task"] for b in wed} and "1 task" in said
+        third = await planner.plan(msk(10, "18:00"), date(2026, 11, 12))
+        assert third.startswith("Nothing planned"), "nothing is left to lay: no task twice"
+    faced(tmp_path, run)
+
+
 def test_busy_lays_again_what_it_crosses_and_each_look_counts_what_passed_and_frees_what_is_closed(tmp_path):
     async def run(world):
         world.clock.now = time.time()

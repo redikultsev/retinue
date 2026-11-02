@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
-from retinue.plan_layout import Hours, Task, lay, meeting_busy, need_s, ordered, piece_s, window_at as _at, window_of as _of
+from retinue.plan_layout import Hours, Task, lay, left_s, meeting_busy, need_s, ordered, piece_s, window_at as _at, window_of as _of
 
 TUE = date(2026, 11, 3)
 H = Hours("Europe/Berlin", time(10, 0), time(1, 0))  # a day that runs past midnight, in a zone of its own
@@ -116,3 +116,10 @@ def test_hours_come_from_the_config_and_anything_off_is_the_default_day():
     assert Hours.parse("10:00-01:00", "Mars/Olympus") == Hours()
     day = _of(TUE)
     assert (datetime.fromtimestamp(day.start, ZoneInfo("UTC")).hour, day.end - day.start) == (9, 14 * 3600)
+
+
+def test_what_other_windows_hold_is_not_laid_again():
+    w = window_of(TUE)
+    assert left_s(Task("talk", 180, planned=90)) == 90 * 60 and left_s(Task("bill", 15, planned=15)) == 0
+    out = lay(w, at(TUE, "18:00"), [], [], [Task("bill", 15, planned=15), Task("talk", 180, planned=90)])
+    assert shown(out) == [("talk", "18:00", 90)] and not out.left, "the bill is another day's; nothing said about it"

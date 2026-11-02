@@ -99,7 +99,8 @@ def clean_plan(body: object, now: float) -> dict:
         raise Refusal("holds: a list")
     held = [{"from": float(h["from"]), "to": float(h["to"]), "label": line(str(h.get("label") or "Busy"), 40)}
             for h in holds if isinstance(h, dict) and all(type(h.get(k)) in (int, float) for k in ("from", "to"))]
-    told = {"at": float(said["at"]), "text": line(str(said.get("text") or ""), 500)} \
+    told = {"at": float(said["at"]), "text": line(str(said.get("text") or ""), 500),
+            **({"day": said["day"]} if isinstance(said.get("day"), str) and len(said["day"]) == 10 else {})} \
         if isinstance(said, dict) and type(said.get("at")) in (int, float) else {}
     window = body.get("window") or {}
     shaped = isinstance(window, dict) and isinstance(window.get("zone"), str) and len(window["zone"]) < 64 and \

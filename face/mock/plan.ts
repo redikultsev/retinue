@@ -69,7 +69,7 @@ block(report, wall(2, 19, 0), 90);
 block(domain, wall(0, 9, 0), 15, { state: "passed" });
 const plans: Record<string, unknown> = {};
 const holds: { from: number; to: number; label: string }[] = [];
-let said: { at?: number; text?: string } = {};
+let said: { at?: number; text?: string; day?: string } = {};
 
 const EVENTS = [
   [0, 8, 0, 8, 30, "Daily stand-up", true],
@@ -214,7 +214,7 @@ export function mockPlanPress(body: Record<string, unknown>): string {
       if (made.length === 4) break;
     }
     plans[d] = { id: pid, at: t, blocks: made, left: [], undone: false, failed: false };
-    said = { at: t, text: `Plan for ${d}: ${made.length} tasks.` };
+    said = { at: t, text: `Plan for ${d}: ${made.length} tasks.`, day: d };
   } else if (body.action === "undo") {
     for (const b of blocks.values()) if (b.fields.plan === body.plan && b.fields.state === "planned") b.fields.state = "skipped";
     for (const v of Object.values(plans)) if ((v as { id: string }).id === body.plan) (v as { undone: boolean }).undone = true;

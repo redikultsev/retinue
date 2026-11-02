@@ -110,7 +110,9 @@ function PlanCard({ plan, day, today }: { plan: Plan; day: string; today: string
   const entry = plan.plan.plans[day];
   const live = !!entry && !entry.undone && !entry.failed;
   const [open, close] = windowOf(day, plan.plan.window);
-  const said = plan.plan.said?.text && (plan.plan.said.at ?? 0) > plan.now - 600 ? plan.plan.said.text : null;
+  // What the last press came to, on the day it was for: Tuesday's plan is not said under Monday.
+  const s = plan.plan.said;
+  const said = s?.text && (s.at ?? 0) > plan.now - 600 && (!s.day || s.day === day) ? s.text : null;
   const byGoal = new Map<string, number>();
   for (const i of dayItems(plan, day))
     if (i.kind === "block" && i.placed.block.fields.state === "planned") {

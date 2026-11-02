@@ -135,7 +135,8 @@ class Planner:
     # --- what the window holds ------------------------------------------------------------------------------------
 
     async def _world(self, window: L.Window, now: float):
-        """The open tasks, the window's blocks, the minutes each candidate's passed pieces counted. None: unread."""
+        """The open tasks, the window's blocks, the minutes each task's passed pieces counted and the minutes its
+        pieces planned in other windows hold. None: unread."""
         tasks = await self._rows(TASKS, [{"field": "state", "op": "eq", "value": "open"}],
                                  ["title", "minutes", "due"])
         blocks = await self._rows(BLOCKS, [{"field": "start", "op": "between",
@@ -147,13 +148,19 @@ class Planner:
                     and (s := moment(b["fields"].get("start"))) is not None
                     and s + int(b["fields"].get("minutes") or 0) * 60 > window.start and s < window.end]
         done: dict[str, int] = {}
+        elsewhere: dict[str, int] = {}
+        here = {b["id"] for b in standing}
         ids = [t["id"] for t in tasks][:PAGE]
         if ids:
-            passed = await self._rows(BLOCKS, [{"field": "state", "op": "eq", "value": "passed"},
-                                               {"field": "task", "op": "in", "value": ids}], ["task", "minutes"])
-            for b in passed or []:
-                done[b["fields"]["task"]] = done.get(b["fields"]["task"], 0) + int(b["fields"].get("minutes") or 0)
-        return tasks, standing, done
+            pieces = await self._rows(BLOCKS, [{"field": "state", "op": "in", "value": ["passed", "planned"]},
+                                               {"field": "task", "op": "in", "value": ids}],
+                                      ["task", "minutes", "state"])
+            for b in pieces or []:
+                f = b["fields"]
+                into = done if f.get("state") == "passed" else elsewhere if b["id"] not in here else None
+                if into is not None:
+                    into[f["task"]] = into.get(f["task"], 0) + int(f.get("minutes") or 0)
+        return tasks, standing, (done, elsewhere)
 
     def _busy(self, window: L.Window, now: float) -> list[tuple[float, float]]:
         events = getattr(self.tasks, "events", None) or []
@@ -167,10 +174,12 @@ class Planner:
         return start, start + int(block["fields"].get("minutes") or 0) * 60
 
     @staticmethod
-    def _task(row: dict, done: dict[str, int]) -> L.Task:
+    def _task(row: dict, counted: tuple[dict[str, int], dict[str, int]]) -> L.Task:
         f = row["fields"]
+        done, elsewhere = counted
         return L.Task(row["id"], f.get("minutes") if isinstance(f.get("minutes"), int) else None,
-                      done.get(row["id"], 0), _day(f.get("due")) if f.get("due") else None, float(row.get("created") or 0))
+                      done.get(row["id"], 0), _day(f.get("due")) if f.get("due") else None, float(row.get("created") or 0),
+                      elsewhere.get(row["id"], 0))
 
     @staticmethod
     def _why(task: L.Task, window: L.Window) -> str:
@@ -405,7 +414,9 @@ class Planner:
             await self.push(now)
             return text
         text = await self._pressed(data, now, at)
-        self.said = {"at": now, "text": text}
+        day = (str(data.get("day") or "") or L.window_at(now, self.hours).day.isoformat()) \
+            if data.get("action") in ("plan", "place") else ""
+        self.said = {"at": now, "text": text, **({"day": day} if day else {})}
         await self.push(now)
         return text
 

@@ -89,7 +89,7 @@ export interface Plan {
     at: number | null;
     plans: Record<string, DayPlan>;
     holds: { from: number; to: number; label: string }[];
-    said: { at?: number; text?: string };
+    said: { at?: number; text?: string; day?: string };
     window: PlanWindow;
   };
 }

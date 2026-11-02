@@ -12,7 +12,8 @@ and the tests all run the same code.
   the older.
 - **A task goes in pieces** of CHUNK_MIN_S to CHUNK_MAX_S, one piece a window; what it still needs is its estimate
   less what its passed pieces counted — for a task with a due date never less than half of it until it is done, so
-  time counted for pieces he did not work cannot quietly empty it.
+  time counted for pieces he did not work cannot quietly empty it — and less what its pieces planned in other windows
+  hold, so a task planned on Monday is not laid again on Tuesday.
 - **Pauses** keep themselves: a piece may not make a run of tasks longer than RUN_S, the run counted by time — pieces
   less than GAP_S apart are one run, those already standing among them — so after 90 minutes the next piece starts 15
   later, and a short task cannot slip into the pause.
@@ -71,6 +72,7 @@ class Task:
     done: int = 0          # minutes its passed pieces counted
     due: date | None = None
     created: float = 0.0
+    planned: int = 0       # minutes its pieces still planned in other windows hold
 
 
 @dataclass
@@ -104,6 +106,11 @@ def need_s(task: Task) -> int:
         counted = min(counted, estimate // 2)
     left = estimate - counted
     return left if left > 0 else KEEP_PIECE_S
+
+
+def left_s(task: Task) -> int:
+    """What is left to lay in this window: what it needs less what other windows already hold; 0 — nothing."""
+    return max(0, need_s(task) - task.planned * 60)
 
 
 def piece_s(need: int) -> int:
@@ -152,7 +159,9 @@ def lay(window: Window, now: float, busy: list[tuple[float, float]], pieces: lis
     taken = list(busy) + list(pieces)
     standing = list(pieces)
     for task in ordered(tasks, window):
-        length = piece_s(need_s(task))
+        if not (need := left_s(task)):
+            continue
+        length = piece_s(need)
         at = start
         while at + length <= window.end:
             if _free(at, length, taken) and _run(at, length, standing) <= RUN_S:

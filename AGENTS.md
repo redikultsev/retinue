@@ -24,3 +24,20 @@ This repository is public. It is one person's platform, and it must say nothing 
   rules (no emoji, no tracked capitals, no `transition-all`, no text under 11 px) are a test that fails the build.
 - **See it before you call it done.** A change to the app is looked at in a browser at the sizes it is used at — a
   laptop window, a large screen, a phone — with short and long content, and on the deployed app after deploying.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `redikultsev/retinue`, which are public, so the rules above apply to every issue. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the root, alongside the per-part guides in `docs/`. See
+`docs/agents/domain.md`.

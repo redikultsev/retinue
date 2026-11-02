@@ -5,7 +5,7 @@
 //   the tabs' own screens (a session's screen has its own input box and a way back), sits above the home indicator
 //   (the safe area) and steps aside while the keyboard is up.
 // - A wide screen (≥ 1024 px), three columns as in Claude's desktop app: on the left (272 px) «New task», what
-//   waits («Today» with its count), «Pages», the Spaces, «Week» and the sessions by sphere; in the middle
+//   waits («Today» with its count), «Pages», the Spaces, «Numbers» and the sessions by sphere; in the middle
 //   the page — `/new` too; on the right one panel with tabs: a session's «Summary» (foldable, components/session-summary.tsx) and, when one is
 //   open, a Record, a session's diff or a file (`?pane=`, lib/pane.ts). The pane's tab is the URL's; «Summary» closes it.
 //   The columns are resized by dragging the lines between them (the left one folds away when dragged past its
@@ -115,7 +115,7 @@ export function Sidebar({ pathname, current, beside }: { pathname: string; curre
         </Link>
         <Link to="/week" className={navClass(pathname.startsWith("/week"))}>
           <Chart className="size-4" />
-          Week
+          Numbers
         </Link>
       </nav>
       <SessionList current={current} beside={beside} fill />

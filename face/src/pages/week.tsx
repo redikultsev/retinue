@@ -1,4 +1,4 @@
-// `/week`, «Week»: how the work went — the platform's tally of the last eight seven-day spans (`GET /api/stats`,
+// `/week`, «Numbers»: how the work went — the platform's tally of the last eight seven-day spans (`GET /api/stats`,
 // signals.tally). A row of tiles, each this week's number, the change from the week before and an eight-week line;
 // under them how the gate answered, how the cards ended and which tools failed. The screen compares and draws; it
 // never counts. Gate and tool-error counts start with the platform's journal, so weeks before it read zero.
@@ -125,7 +125,7 @@ export function WeekView({ weeks, error, onRetry }: { weeks: Tally[] | null; err
   const t = weeks?.[0];
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      <PageHeader title="Week" width="max-w-4xl">
+      <PageHeader title="Numbers" width="max-w-4xl">
         {t && <p className="-mt-1 text-sm text-muted-foreground">{spanLabel(t)}</p>}
       </PageHeader>
       <main className="min-h-0 flex-1 overflow-y-auto">

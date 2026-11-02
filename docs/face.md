@@ -210,7 +210,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `POST /api/waiting/press {t, action: done\|dismissed\|later\|open\|task}` · `{ref, action: task}` | `{ok}`: “Done”, “Not a task”, “Tomorrow”, “Undo” or “Make it a task” on a row of “From the assistant”, by its token — or “Make it a task” on a reminder of the digest, by its id (410 when it is not in the digest any more); the router applies it ([platform.md](platform.md#the-assistants-digest)) |
 | `GET /api/plan` | `{schema, now, tz, tasks: {rows, rev, space, goals, missing}, calendar: {events, at, failed, stale}, asks, reminders}` — what [Tasks, Day, Week](#tasks-day-week) show: the open tasks and every one with a slot from yesterday to two weeks on, the busy window the Router last pushed, the digest's person's rows and reminders |
 | `POST /api/waiting/detail {ref, t?}` | `{detail}`: [a row's pane](#her-rows-pane) of “From the assistant” — a person's row by its id and token, a draft by its id — asked of the router and relayed, never kept; 410 when the row is not in the digest any more or the router no longer knows it, 504 when the router said nothing within 12 s, 502 when what it said was off the contract, 429 while 8 already wait |
-| `GET /api/stats` | `{schema, now, weeks: [tally…]}` — the platform's tally (`signals.tally`) of the last eight seven-day spans, the newest first, for “Week” ([below](#week)) |
+| `GET /api/stats` | `{schema, now, weeks: [tally…]}` — the platform's tally (`signals.tally`) of the last eight seven-day spans, the newest first, for “Numbers” ([below](#numbers)) |
 | `GET /api/base/{id}` | `{card}` — the platform's own commit to the Base after a turn ([base.md](base.md#the-commit-after-a-turn)): its line (`said`), files, sha, whether “Undo” can be pressed |
 | `GET /api/base/{id}/diff` | `{diff, truncated}`: what the commit changed, at most 1 MB |
 | `POST /api/approvals/{id}/done` | `{toast, approval}`: “Done” on a courier card — `dropped → done`, out of “Waiting for you”; 400 for any other card |
@@ -292,7 +292,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
 | `/sessions` | the sessions by sphere ([below](#in-the-app)); on a wide screen the left column has them, the middle says so |
 | `/spaces`, `/spaces/<space>`, `/spaces/<space>/r/<path inside the Space>` | the Spaces of the Base, a Space's Showcase, a Record ([base.md](base.md)) |
 | `/pages` | your HTML pages: to read, interactive ones, small sites ([pages.md](pages.md)); `/read`, its old name, leads here |
-| `/week` | “Week”: how the work went ([below](#week)); in the left column on a wide screen, a link on “Today” on a phone |
+| `/week` | “Numbers”: how the work went ([below](#numbers)); in the left column on a wide screen, a link on “Today” on a phone |
 | `/s/<id>`, `/a/<id>`, `/f/<id>`, `/p/<id>`, `/login` | as before: a session, a card, a file, a push card, the login |
 
 - **The tab bar** stands under the tabs' own screens, not under a session (it has its own input box and “Back”, which
@@ -307,7 +307,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
   middle, the right panel.
 - **«＋»** is `/new`, a page in its own place, not a sheet over another ([below](#a-new-task)).
 - **On a wide screen**, the left column (272 px by default): on top, fixed, the places — “New task” (`/new`), “Today”
-  with the count, “Pages”, “Spaces”, “Week” — then the filters and the sessions by sphere, the one part of it that
+  with the count, “Pages”, “Spaces”, “Numbers” — then the filters and the sessions by sphere, the one part of it that
   scrolls. Starting a session in a sphere is the composer's sphere picker, the Spaces are their page: the column holds
   only where you go and what runs (Apple's HIG: two levels at most; NN/g: the rest one step away). The middle: the page. The right is one panel with tabs: a
   session's [“Summary”](#summary) (one session in the middle; the header's panel button folds it away and the device
@@ -502,9 +502,9 @@ One header and one list on every tab, after the design guidance the change was c
   tooltip; muted at rest, full contrast on the row's hover or focus — never hover-only — and a 44 px target on a touch
   screen (`.hit`). A page's “Finished” on “Pages” is a ring that fills with a check.
 
-### Week
+### Numbers
 
-“Week” (`/week`, `pages/week.tsx`) is how the work went, from the platform's own tally
+“Numbers” (`/week`, `pages/week.tsx`; it was “Week” until «Today» got a Week tab) is how the work went, from the platform's own tally
 ([platform.md](platform.md#how-the-work-went)): `GET /api/stats` answers its last eight seven-day spans, the newest
 first, each ending where the next starts. Six tiles — sessions (with sub-sessions), runs, your messages, approval
 cards, gate answers, tool errors — each with this week's number, the change from the week before and an eight-week

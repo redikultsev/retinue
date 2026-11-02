@@ -75,7 +75,7 @@ flowchart LR
   `WebSearch`. Bash is sandboxed and reaches only GitHub and the package registries (with one documented gap,
   see [Limits and known gaps](#limits-and-known-gaps)).
 - **face** (`face/`) is a React PWA, also opened from Telegram as a Mini App, reachable only over WireGuard from your
-  devices: tabs **Today · Sessions · ＋ · Spaces · Pages** (＋ is `/new`, a new task), plus «Week» in the sidebar.
+  devices: tabs **Today · Sessions · ＋ · Spaces · Pages** (＋ is `/new`, a new task), plus «Numbers» in the sidebar.
   «Today» is an inbox of what waits for you, each question with its brief; a session has a live transcript, approval
   cards, its diff (a tap on a line comments on it) and a line of what its turn wrote to the Base; a Space has its
   Records and its screen of collections (a board, a queue, the numbers against their goal); voice input everywhere.

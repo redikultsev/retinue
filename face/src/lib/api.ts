@@ -100,7 +100,7 @@ async function call<T>(path: string, init: RequestInit): Promise<T> {
 
 export const api = {
   meta: () => request<Meta>("/api/meta"),
-  /** The last eight seven-day spans of the platform's tally, the newest first («Week»). */
+  /** The last eight seven-day spans of the platform's tally, the newest first («Numbers»). */
   stats: () => request<{ now: number; weeks: Tally[] }>("/api/stats"),
   sessions: () => request<SessionsSnapshot>("/api/sessions"),
   /** «Archived»: what the owner archived, the latest first. */

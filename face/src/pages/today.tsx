@@ -124,14 +124,14 @@ export function TodayView({
         )}
         <div className="ml-auto flex min-w-0 items-center gap-3">
           <Status chips={feed?.chips ?? []} />
-          {/* the phone's way to «Week»: the tab bar has no room for it; the sidebar has it on a wide screen */}
+          {/* the phone's way to «Numbers»: the tab bar has no room for it; the sidebar has it on a wide screen */}
           <Link
             to="/week"
-            aria-label="The week in numbers"
+            aria-label="Numbers"
             className="hit inline-flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground lg:hidden"
           >
             <Chart className="size-4" />
-            {!onTab && "Week"}
+            {!onTab && "Numbers"}
           </Link>
         </div>
       </header>

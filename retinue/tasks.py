@@ -30,6 +30,7 @@ from datetime import datetime, time as wall, timedelta
 
 from . import clock
 from .courier import line
+from .mail import Unavailable
 
 log = logging.getLogger(__name__)
 
@@ -207,10 +208,15 @@ class Tasks:
         """What the digest's look does beside the push: the reconciliation, and the busy window when it is due."""
         try:
             await self.reconcile(now)
+        except Unavailable as exc:  # the platform restarting: the next look, 30 s on, tries again
+            log.warning("the tasks were not reconciled: %s", exc)
         except Exception:
             log.exception("the tasks were not reconciled")
         try:
             await self.calendar(now)
+        except Unavailable as exc:
+            self._calendar_at = 0.0  # not pushed: tried again at the next look, not in ten minutes
+            log.warning("the busy window was not pushed: %s", exc)
         except Exception:
             log.exception("the busy window was not pushed")
 

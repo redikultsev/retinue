@@ -609,6 +609,8 @@ class Core:
             await self.tell_owner(text, buttons=buttons, origin=origin, agent_id=agent.id)
         elif name == "!initiative" and self.proactive:
             await self.tell_owner(self.proactive.command(text), origin=origin, agent_id=agent.id)
+        elif name == "!plan" and getattr(self, "planner", None) is not None:
+            asyncio.create_task(self.planner.told(time.time()))
         elif name == "!check":
             await self.tell_owner(CHECK, buttons=[Button("I see it", "check"), Button("Second button", "check")],
                                   ttl_s=600, origin=origin, agent_id=agent.id)

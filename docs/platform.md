@@ -187,6 +187,10 @@ you busy (not when it is free time, declined or the whole day). The platform che
 tasks (`GET /api/plan`), and a window older than 30 minutes is said to be old, never shown as a free day. The titles are
 for your screen: no agent reads them here.
 
+**The day plan** goes the same way: the Router pushes its state whole after each change — `POST /owner/plan {at, plans,
+holds, said}`, the plans by window day with their id, blocks and what they left out, the holds, what the last press
+came to — and the platform keeps the last one for the app ([collections.md](collections.md#blocks)).
+
 The same push carries the **status chips** (`waiting.chips`, from `Pages.chips`): `[{key, text, level}]`,
 `key` one of `health`, `backup`, `limit`, `build` at most once each, `level` `ok`, `warn` or `bad`, the text folded and
 cut to 60 characters — the build's said without its age («pages built»), so the digest does not change every

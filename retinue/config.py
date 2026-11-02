@@ -125,6 +125,8 @@ class RouterConfig:
     telegram: TelegramConfig | None = None
     default_agent: str | None = None    # who gets messages without an address; the only agent, if there is one
     owner_tz: str = "UTC"               # IANA zone: every time the model and the owner see is local time here
+    plan_zone: str = ""                 # the day plan's window keeps this zone's clock wherever he is; empty: owner_tz
+    plan_hours: str = "09:00-23:00"     # the window: from-to, a «to» earlier than «from» is after midnight
     backup_status: str = "/status/backup.json"  # written by the host's backup; the morning summary reports it
     health_status: str = "/status/health.json"  # the containers, written by the host every 2 min (health.py)
     bus_listen_port: int = 9100         # agents reach the router here, on `agents`. The router listens on every

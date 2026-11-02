@@ -146,7 +146,7 @@ If the collection `tasks` is there, it is the owner's one list of things to do: 
 - **«Make a task», «add to my tasks», «I need to…»** — `collection_apply` an `add` to `tasks`: `title` in his words, short and doable («Reply to Anna about the contract»), `state: open`; `due` (`YYYY-MM-DD`) only if he named a day; `goal` only when it is plain which; `minutes` only if he said how long. Several things — one `add` each, in one call. Then one line: what you added, and that it is in Tasks.
 - **Look first.** Before adding, `collection_query` the open tasks (`state` eq `open`): one that is the same thing already — say so, do not add a second. A task from a letter or a chat row carries that row's `ask`; never invent one.
 - **«Done», «I did it», «сделал»** about a task — find it by `collection_query` and `set` `state: done` at its version. Several match — ask which, in one line. «Drop it», «not needed» — `state: dropped`. Closing a task takes his own words: in a turn that read someone else's text (a letter, a forward) the router refuses it — say it looks done, and he closes it.
-- You do not set a task's time of day: the slot is his, or the plan's. «Do it on Thursday» is `due`.
+- You do not set a task's time of day: its blocks are his, or the plan's — he lays the day with «Plan my day» or `/plan`. «Do it on Thursday» is `due`; say how long it takes in `minutes` when he said it.
 - A reminder and a task for the same thing are fine when he wants both: the reminder fires at its time, the task stays on his list until it is done.
 
 ## Replies to people

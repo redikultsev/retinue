@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useEditing } from "@/components/views/edit";
 import { Bell, Mail, MessageCircle } from "@/components/icons";
-import { dayOf, dayWords, hm, named, type Plan, slotOf, type Task } from "@/lib/plan";
+import { dayOf, dayWords, hm, named, nextBlock, type Plan, type Task, windowDay } from "@/lib/plan";
 import { cn, LIST } from "@/lib/utils";
 import { MakeTask, PlanMenu, TaskCheck, TaskMeta, useAddTask } from "./shared";
 
@@ -24,7 +24,8 @@ function Section({ title, count, hint, children }: { title: string; count?: numb
 
 export function TaskRow({ plan, task, today }: { plan: Plan; task: Task; today: string }) {
   const editing = useEditing();
-  const slot = slotOf(task);
+  const next = nextBlock(plan, task);
+  const slot = next ? next.start : null;
   const done = task.fields.state !== "open";
   return (
     <li className="flex min-h-11 items-center gap-3 px-3 py-2">
@@ -40,7 +41,7 @@ export function TaskRow({ plan, task, today }: { plan: Plan; task: Task; today: 
         <TaskMeta plan={plan} task={task} today={today} />
       </button>
       <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums max-sm:hidden">
-        {slot !== null ? `${dayWords(dayOf(slot, plan.tz), today, true)} ${hm(slot, plan.tz)}` : "no day"}
+        {slot !== null ? `${dayWords(windowDay(slot, plan.plan.window), today, true)} ${hm(slot, plan.tz)}` : "no day"}
       </span>
       {!done && <PlanMenu plan={plan} task={task} today={today} label={slot !== null ? "Move" : "Plan"} />}
     </li>
@@ -116,10 +117,13 @@ export function TasksTab({ plan, today, reload }: { plan: Plan; today: string; r
   const [by, setBy] = useState<Grouping>("when");
   const open = useMemo(() => plan.tasks.rows.filter((t) => t.fields.state === "open"), [plan]);
   const unplanned = useMemo(
-    () => open.filter((t) => slotOf(t) === null).sort((a, b) => (a.fields.due ?? "9999").localeCompare(b.fields.due ?? "9999") || a.created - b.created),
-    [open],
+    () => open.filter((t) => !nextBlock(plan, t)).sort((a, b) => (a.fields.due ?? "9999").localeCompare(b.fields.due ?? "9999") || a.created - b.created),
+    [plan, open],
   );
-  const planned = useMemo(() => open.filter((t) => slotOf(t) !== null).sort((a, b) => (slotOf(a) ?? 0) - (slotOf(b) ?? 0)), [open]);
+  const planned = useMemo(
+    () => open.filter((t) => nextBlock(plan, t)).sort((a, b) => (nextBlock(plan, a)?.start ?? 0) - (nextBlock(plan, b)?.start ?? 0)),
+    [plan, open],
+  );
   const doneToday = plan.tasks.rows.filter((t) => t.fields.state === "done" && dayOf(t.updated, plan.tz) === today);
   const groups = useMemo(() => {
     const out = plan.tasks.goals.map((g) => ({ key: g.value, title: g.label, rows: open.filter((t) => t.fields.goal === g.value) }));

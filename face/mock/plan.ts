@@ -19,8 +19,6 @@ const FORM = {
   state: { type: "enum", values: ["open", "done", "dropped"], required: true, labels: { open: "Open", done: "Done", dropped: "Dropped" } },
   due: { type: "date" },
   minutes: { type: "int" },
-  slot: { type: "instant" },
-  locked: { type: "bool" },
   ask: { type: "text", hide: true },
   notes: { type: "text" },
 };
@@ -53,10 +51,25 @@ add({ title: "Call Example Studio about the kitchen quote", goal: "work", minute
 add({ title: "Choose a hotel for the weekend from five options", goal: "home", minutes: 60, due: day(5) });
 add({ title: "Book the dentist", goal: "health", minutes: 15 });
 add({ title: "Ask Ivan for the soup recipe", minutes: 15 });
-add({ title: "Pay the hosting invoice", goal: "home", minutes: 15, slot: iso(wall(0, 18, 0)), ask: "letter:2" });
-add({ title: "Practise the guitar piece", goal: "study", minutes: 90, slot: iso(wall(1, 17, 30)), due: day(1), locked: true });
-add({ title: "Write the quarterly report, first half", goal: "work", minutes: 120, slot: iso(wall(2, 19, 0)) });
-add({ title: "Renew the domain", goal: "home", minutes: 15, state: "done", slot: iso(wall(0, 9, 0)) });
+const pay = add({ title: "Pay the hosting invoice", goal: "home", minutes: 15, ask: "letter:2" });
+const guitar = add({ title: "Practise the guitar piece", goal: "study", minutes: 90, due: day(1) });
+const report = add({ title: "Write the quarterly report, first half", goal: "work", minutes: 120 });
+const domain = add({ title: "Renew the domain", goal: "home", minutes: 15, state: "done" });
+
+interface Blk { id: string; fields: Fields; version: number }
+const blocks = new Map<string, Blk>();
+function block(task: Rec, start: number, minutes: number, extra: Fields = {}): Blk {
+  const b: Blk = { id: id(), fields: { task: task.id, start: iso(start), minutes, state: "planned", ...extra }, version: 1 };
+  blocks.set(b.id, b);
+  return b;
+}
+block(pay, wall(0, 18, 0), 15, { why: "overdue" });
+block(guitar, wall(1, 17, 30), 90, { locked: true });
+block(report, wall(2, 19, 0), 90);
+block(domain, wall(0, 9, 0), 15, { state: "passed" });
+const plans: Record<string, unknown> = {};
+const holds: { from: number; to: number; label: string }[] = [];
+let said: { at?: number; text?: string } = {};
 
 const EVENTS = [
   [0, 8, 0, 8, 30, "Daily stand-up", true],
@@ -95,10 +108,18 @@ export function mockPlan() {
     schema: 1,
     now: now(),
     tz: TZ,
-    tasks: { rows: [...tasks.values()].filter((t) => !t.deleted), rev, space: "home", goals: GOALS, missing: false },
+    tasks: {
+      rows: [...tasks.values()].filter((t) => !t.deleted),
+      rev,
+      space: "home",
+      goals: GOALS,
+      missing: false,
+      blocks: [...blocks.values()].filter((b) => b.fields.state !== "skipped"),
+    },
     calendar: calendar(),
     asks: ASKS,
     reminders: REMINDERS,
+    plan: { at: now(), plans, holds: holds.filter((h) => h.to > now()), said, window: { zone: "Asia/Dubai", opens: "10:00", closes: "01:00" } },
   };
 }
 
@@ -153,4 +174,60 @@ export function mockMakeTask(by: { t?: string; ref?: string }): boolean {
   add({ title: ask ? ask.title : reminder?.title, ask: name, ...(reminder?.when ? { due: reminder.when } : {}) });
   bump();
   return true;
+}
+
+/** The plan zone's day a moment's window is (an hour back: 00:30 is the evening before); the zone is UTC+4. */
+const windowDay = (ts: number) => new Date((ts + 4 * 3600 - 3600) * 1000).toISOString().slice(0, 10);
+
+/** `POST /api/blocks` and the owner's own blocks: add or move, as the platform writes them. */
+export function mockBlocksWrite(path: string, body: Record<string, unknown>) {
+  if (path !== "/api/c/blocks") return null;
+  const ops = Array.isArray(body.ops) ? (body.ops as Fields[]) : [];
+  const records: Blk[] = [];
+  for (const op of ops) {
+    if (op.op === "add") records.push(block(tasks.get(String((op.fields as Fields).task)) as Rec, Date.parse(String((op.fields as Fields).start)) / 1000, Number((op.fields as Fields).minutes), op.fields as Fields));
+    else {
+      const b = blocks.get(String(op.id));
+      if (!b) return { status: 400, data: { error: "no such block", kind: null, record: null, change: null } };
+      Object.assign(b.fields, op.fields as Fields);
+      b.version += 1;
+      records.push(b);
+    }
+  }
+  return { status: 200, data: { name: "blocks", rev: bump(), change_ids: records.map(() => rev), records }, moved: { name: "blocks", space: "home", rev } };
+}
+
+/** A press on the plan, done at once here as the Router does it a moment later: open tasks in a row from 19:00. */
+export function mockPlanPress(body: Record<string, unknown>): string {
+  const t = now();
+  const planned = new Set([...blocks.values()].filter((b) => b.fields.state === "planned").map((b) => b.fields.task));
+  if (body.action === "plan" || body.action === "place") {
+    const pid = `p${Math.random().toString(16).slice(2, 12).padEnd(10, "0")}`;
+    const d = String(body.day ?? windowDay(t));
+    let at = Math.max(Date.parse(`${d}T15:00:00Z`) / 1000, Math.ceil(t / 900) * 900);
+    const made: string[] = [];
+    for (const task of tasks.values()) {
+      if (task.fields.state !== "open" || planned.has(task.id) || (body.action === "place" && task.id !== body.task)) continue;
+      const m = Math.min(Number(task.fields.minutes ?? 30), 90);
+      made.push(block(task, at, m, { plan: pid }).id);
+      at += m * 60 + 900;
+      if (made.length === 4) break;
+    }
+    plans[d] = { id: pid, at: t, blocks: made, left: [], undone: false, failed: false };
+    said = { at: t, text: `Plan for ${d}: ${made.length} tasks.` };
+  } else if (body.action === "undo") {
+    for (const b of blocks.values()) if (b.fields.plan === body.plan && b.fields.state === "planned") b.fields.state = "skipped";
+    for (const v of Object.values(plans)) if ((v as { id: string }).id === body.plan) (v as { undone: boolean }).undone = true;
+    said = { at: t, text: "Taken back." };
+  } else if (body.action === "busy") {
+    holds.push({ from: t, to: t + Number(body.minutes ?? 60) * 60, label: "Busy" });
+    said = { at: t, text: "Busy." };
+  } else if (body.action === "free") {
+    holds.length = 0;
+  } else if (body.action === "remove") {
+    const b = blocks.get(String(body.block));
+    if (b) b.fields.state = "skipped";
+  }
+  bump();
+  return said.text ?? "";
 }

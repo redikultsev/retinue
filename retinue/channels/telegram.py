@@ -35,7 +35,7 @@ log = logging.getLogger("retinue.telegram")
 API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 50
 NO_PREVIEW = {"is_disabled": True}
-SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/check": "!check", "/mail": "!mail",
+SLASH_COMMANDS = {"/new": "!new", "/compact": "!compact", "/check": "!check", "/mail": "!mail", "/plan": "!plan",
                   "/initiative": "!initiative"}
 # Files a message may carry; the core reads them. A GIF (animation) also carries `document`: it is checked first.
 MEDIA = ("photo", "document", "voice", "audio", "video", "video_note")
@@ -59,6 +59,7 @@ MENU = ({"command": "new", "description": "new conversation"},
         {"command": "compact", "description": "compact the conversation"},
         {"command": "check", "description": "check the channel"},
         {"command": "mail", "description": "mail: inboxes and rules"},
+        {"command": "plan", "description": "plan the day: free time filled with tasks"},
         {"command": "initiative", "description": "how often the assistant writes first"},
         {"command": "help", "description": "help"})
 WAIT = {"command": "wait", "description": "what is waiting for you"}  # «Waiting for you» as text (`bridge.wait`), with the platform

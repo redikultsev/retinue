@@ -42,13 +42,6 @@
       "minutes": {
         "type": "int"
       },
-      "slot": {
-        "type": "instant",
-        "index": true
-      },
-      "locked": {
-        "type": "bool"
-      },
       "ask": {
         "type": "text",
         "index": true,
@@ -61,19 +54,15 @@
   },
   "views": [
     {
-      "name": "to_plan",
+      "name": "open",
       "kind": "queue",
-      "title": "To plan",
+      "title": "Open",
       "mark": "act",
       "filter": [
         {
           "field": "state",
           "op": "eq",
           "value": "open"
-        },
-        {
-          "field": "slot",
-          "op": "empty"
         }
       ],
       "fields": [

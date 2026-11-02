@@ -1,45 +1,38 @@
-// Week: seven days side by side from today — each with how full its hours are, its meetings, tasks and reminders in
-// order — and above them the week's planned time by goal. A task dragged to another day keeps its time of day there
-// and stays where the owner put it.
+// Week: seven windows side by side from today's — each with how full it is, its meetings, blocks and reminders in
+// order — and above them the week's planned time by goal. A block dragged to another day keeps its time of day there
+// and becomes the owner's own.
 import { useMemo } from "react";
 import { useEditing } from "@/components/views/edit";
 import { Bell } from "@/components/icons";
-import {
-  addDays,
-  at,
-  dayOf,
-  dayWords,
-  duration,
-  goalLabel,
-  goalSwatch,
-  hm,
-  iso,
-  minutesOf,
-  type Plan,
-  slotOf,
-  ymd,
-  type Task,
-} from "@/lib/plan";
+import { addDays, at, dayWords, duration, goalLabel, goalSwatch, hm, type Plan, placed, planDay, windowDay, windowOf, ymd } from "@/lib/plan";
 import { cn } from "@/lib/utils";
 import { dayItems, load } from "./day-tab";
-import { dragProps, TaskCheck, useDrop, useSetTask } from "./shared";
+import { dragProps, TaskCheck, useDrop, useOwnBlock } from "./shared";
 
 const WEEK_DAYS = 7;
 
 function Column({ plan, day, today }: { plan: Plan; day: string; today: string }) {
-  const set = useSetTask();
+  const own = useOwnBlock();
   const editing = useEditing();
   const tz = plan.tz;
+  const all = useMemo(() => placed(plan), [plan]);
   const items = dayItems(plan, day).filter((i) => i.kind !== "free");
-  const allDay = plan.calendar.events.filter((e) => e.all_day && dayOf(e.start, tz) <= day && dayOf(e.end - 1, tz) >= day);
+  const [open] = windowOf(day, plan.plan.window);
+  const allDay = plan.calendar.events.filter((e) => e.all_day && e.start <= open + 43200 && e.end > open);
   const { planned, free } = load(plan, day);
   const total = planned + free;
-  const drop = useDrop(plan, (task: Task) => {
-    const was = slotOf(task);
-    const [h = 18, m = 0] = (was !== null ? hm(was, tz) : "18:00").split(":").map(Number);
-    const start = at(day, h * 60 + m, tz);
-    void set(task, { slot: iso(start), locked: true }, `Moved to ${dayWords(day, today)}, ${hm(start, tz)}.`);
-  });
+  const drop = useDrop(
+    plan,
+    ({ placed: p, task }) => {
+      // The time of day it had, in the owner's zone, on this window's day: 19:00 goes to 19:00.
+      const [h = 19, m = 0] = (p ? hm(p.start, tz) : "19:00").split(":").map(Number);
+      let start = at(day, h * 60 + m, tz);
+      if (windowDay(start, plan.plan.window) !== day) start = at(addDays(day, 1), h * 60 + m, tz);
+      const what = `Moved to ${dayWords(day, today)}, ${hm(start, tz)}.`;
+      void (p ? own.move(p, start, what) : own.put(task, start, task.fields.minutes || 30, what));
+    },
+    all,
+  );
   const [, , dd] = ymd(day);
   return (
     <section
@@ -60,7 +53,9 @@ function Column({ plan, day, today }: { plan: Plan; day: string; today: string }
         </span>
       </header>
       {allDay.map((e, n) => (
-        <div key={n} className="rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground break-words">{e.title}</div>
+        <div key={n} className="rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground break-words">
+          {e.title}
+        </div>
       ))}
       <ol className="flex flex-col gap-1.5">
         {items.map((i) => {
@@ -80,33 +75,40 @@ function Column({ plan, day, today }: { plan: Plan; day: string; today: string }
                 </span>
               </li>
             );
-          if (i.kind !== "task") return null;
-          const task = i.task;
-          const done = task.fields.state !== "open";
+          if (i.kind === "hold")
+            return (
+              <li key={`h${i.start}`} className="rounded-md bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
+                <span className="font-mono tabular-nums">
+                  {hm(i.start, tz)}–{hm(i.end, tz)}
+                </span>{" "}
+                {i.label}
+              </li>
+            );
+          if (i.kind !== "block") return null;
+          const { block, task } = i.placed;
+          const passed = block.fields.state === "passed";
+          const done = task?.fields.state !== "open";
           return (
             <li
-              key={task.id}
-              {...(done ? {} : dragProps(task))}
-              className={cn("flex flex-col gap-1 rounded-md border bg-card px-2 py-1.5", !done && "cursor-grab active:cursor-grabbing")}
+              key={block.id}
+              {...(passed ? {} : dragProps({ block: block.id }))}
+              className={cn("flex flex-col gap-1 rounded-md border bg-card px-2 py-1.5", !passed && "cursor-grab active:cursor-grabbing", passed && "opacity-70")}
             >
-              <span
-                title={task.fields.locked ? "You put it here: it stays" : undefined}
-                className="font-mono text-[11px] text-muted-foreground tabular-nums"
-              >
+              <span title={block.fields.locked ? "You put it here: it stays" : undefined} className="font-mono text-[11px] text-muted-foreground tabular-nums">
                 {hm(i.start, tz)}–{hm(i.end, tz)}
-                {task.fields.locked && <span className="sr-only"> — you put it here</span>}
+                {block.fields.locked && <span className="sr-only"> — you put it here</span>}
               </span>
               <span className="flex items-start gap-2">
-                <TaskCheck task={task} className="mt-0.5" />
+                {task && <TaskCheck task={task} className="mt-0.5" />}
                 <button
                   type="button"
-                  onClick={() => editing?.open("tasks", task.id)}
+                  onClick={() => task && editing?.open("tasks", task.id)}
                   className={cn("min-w-0 flex-1 text-left text-[13px] break-words", done && "text-muted-foreground line-through")}
                 >
-                  {task.fields.title || "Untitled"}
+                  {task?.fields.title || "A task"}
                 </button>
               </span>
-              {goalLabel(plan.tasks.goals, task.fields.goal) && (
+              {task && goalLabel(plan.tasks.goals, task.fields.goal) && (
                 <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <span aria-hidden className={cn("size-2 rounded-[2px]", goalSwatch(plan.tasks.goals, task.fields.goal))} />
                   {goalLabel(plan.tasks.goals, task.fields.goal)}
@@ -120,20 +122,20 @@ function Column({ plan, day, today }: { plan: Plan; day: string; today: string }
   );
 }
 
-export function WeekTab({ plan, today }: { plan: Plan; today: string }) {
-  const days = Array.from({ length: WEEK_DAYS }, (_, n) => addDays(today, n));
-  const last = addDays(today, WEEK_DAYS - 1);
+export function WeekTab({ plan }: { plan: Plan; today: string }) {
+  const first = planDay(plan.now, plan.plan.window);
+  const days = Array.from({ length: WEEK_DAYS }, (_, n) => addDays(first, n));
+  const last = addDays(first, WEEK_DAYS - 1);
   const byGoal = useMemo(() => {
     const out = new Map<string, number>();
-    for (const t of plan.tasks.rows) {
-      const s = slotOf(t);
-      if (s === null || t.fields.state === "dropped") continue;
-      const d = dayOf(s, plan.tz);
-      if (d < today || d > last) continue;
-      out.set(t.fields.goal ?? "", (out.get(t.fields.goal ?? "") ?? 0) + minutesOf(t));
+    for (const p of placed(plan)) {
+      const d = windowDay(p.start, plan.plan.window);
+      if (d < first || d > last || p.block.fields.state !== "planned") continue;
+      const g = p.task?.fields.goal ?? "";
+      out.set(g, (out.get(g) ?? 0) + p.block.fields.minutes);
     }
     return out;
-  }, [plan, today, last]);
+  }, [plan, first, last]);
   return (
     <div className="flex min-h-0 w-full flex-col gap-4 px-4 py-5 md:px-6">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -149,7 +151,7 @@ export function WeekTab({ plan, today }: { plan: Plan; today: string }) {
       </div>
       <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-2 md:-mx-6 md:px-6">
         {days.map((d) => (
-          <Column key={d} plan={plan} day={d} today={today} />
+          <Column key={d} plan={plan} day={d} today={first} />
         ))}
       </div>
     </div>

@@ -55,6 +55,8 @@ class Tasks:
     def __init__(self, core) -> None:
         self.core = core
         self._calendar_at = 0.0
+        self.events: list[dict] = []  # the busy window as last read: what the plan lays around (`planner`)
+        self.planner = None           # the day plan's look rides on this one (`planner.Planner.cycle`)
         self._missing = False  # the collection or the rule's rights are not there: said once, then quiet
 
     # --- the platform ---------------------------------------------------------------------------------------------
@@ -198,6 +200,7 @@ class Tasks:
             log.warning("the calendar not read for the busy window: %s", exc)
             return False
         shown = [e for e in (occurrence(event, self.core.tz) for event in events) if e][:CALENDAR_EVENTS]
+        self.events = shown
         answer = await self.core.platform("calendar", {"events": shown, "at": now, "failed": len(failed)}, CALL_S)
         if answer.get("error"):
             log.warning("the platform refused the busy window: %s", answer["error"])
@@ -219,6 +222,8 @@ class Tasks:
             log.warning("the busy window was not pushed: %s", exc)
         except Exception:
             log.exception("the busy window was not pushed")
+        if self.planner is not None:
+            await self.planner.cycle(now)
 
 
 def occurrence(event: dict, tz: str) -> dict | None:
@@ -239,7 +244,10 @@ def occurrence(event: dict, tz: str) -> dict | None:
             ends = datetime.fromisoformat(str(end.get("dateTime") or start["dateTime"]).replace("Z", "+00:00")).timestamp()
     except (KeyError, TypeError, ValueError):
         return None
-    busy = not all_day and event.get("transparency") != "transparent" and event.get("answer") != "declined"
+    # His own, or an invitation he accepted or may go to: an invitation he never answered, or declined, keeps no one
+    # busy — someone else's «busy» does not empty his day.
+    busy = not all_day and event.get("transparency") != "transparent" and \
+        event.get("answer") not in ("declined", "needsAction")
     return {"start": begins, "end": max(ends, begins), "title": line(str(event.get("summary") or ""), EVENT_TITLE_CHARS)
             or "Busy", "all_day": all_day, "busy": busy}
 

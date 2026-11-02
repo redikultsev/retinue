@@ -30,6 +30,8 @@ from .memory import Memory
 from .proactive import Proactive
 from .protocol import Store
 from .speech import Scribe
+from .plan_layout import Hours
+from .planner import Planner
 from .tasks import Tasks
 from .travel import TravelOps
 from .waiting import chips, counts, detail, digest, press
@@ -120,6 +122,9 @@ def main() -> None:
         tasks = Tasks(core)  # the tasks against their rows, «Make it a task», the busy window
         bridge.task_waiting = tasks.press
         bridge.cycle = tasks.cycle
+        planner = Planner(core, tasks, Hours.parse(cfg.plan_hours, cfg.plan_zone or cfg.owner_tz))  # the day plan
+        tasks.planner = core.planner = bridge.planner = planner
+        core.actions.update({"plan-undo": planner.undo_pressed, "plan-busy": planner.busy_pressed})
         if mail:  # a mark by his Telegram button shows in the app at once too
             mail.changed = bridge.poke
     if bridge and pages:  # the owner's pages, for the face's «Read»

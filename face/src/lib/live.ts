@@ -43,6 +43,7 @@ export class Live {
   private listeners = new Set<() => void>();
   private cardListeners = new Set<(approval: Approval) => void>();
   private collectionListeners = new Set<(event: CollectionEvent) => void>();
+  private planListeners = new Set<() => void>();
   private proposalListeners = new Set<(proposal: CollectionProposal) => void>();
   private resyncListeners = new Set<() => void>();
   private source: EventSource | null = null;
@@ -186,6 +187,10 @@ export class Live {
     for (const kind of EVENT_KINDS) {
       source.addEventListener(kind, (e) => this.onEvent(kind, e as MessageEvent<string>));
     }
+    // The Router pushed the day plan's state (`plan.py`): «Today»'s Day reads it again.
+    source.addEventListener("plan", () => {
+      for (const l of this.planListeners) l();
+    });
     source.addEventListener("collection", (e) => {
       const event = JSON.parse((e as MessageEvent<string>).data) as CollectionEvent;
       for (const l of this.collectionListeners) l(event);
@@ -231,6 +236,12 @@ export class Live {
     if (event.kind === "session" && event.data.waiting > 0 && !this.watched.has(event.data.id)) {
       this.watch(event.data.id).catch(() => undefined);
     }
+  }
+
+  /** Told each time the Router pushes the day plan's state while the app is open. */
+  onPlan(listener: () => void): () => void {
+    this.planListeners.add(listener);
+    return () => this.planListeners.delete(listener);
   }
 
   /** Told of each change to a collection while the app is open: its name and its newest `rev`. */

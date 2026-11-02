@@ -154,6 +154,8 @@ class PlatformBridge:
         self.task_waiting: Callable[[str, str, float], Awaitable[bool]] | None = None
         # What each look at the digest does first (`tasks.Tasks.cycle`): the tasks against their rows, the calendar.
         self.cycle: Callable[[float], Awaitable[None]] | None = None
+        self.planner = None  # the day plan (`planner.Planner`): the app's presses on it go there
+        self._planning: set[asyncio.Task] = set()
         # A row's sheet the app asked for (`waiting.detail`): its id, its token, now; None — the router does not know it.
         self.detail_waiting: Callable[[str, str, float], dict | None] | None = None
         self._detailing: asyncio.Task | None = None
@@ -347,8 +349,19 @@ class PlatformBridge:
             await self._file(session, str(data["id"]), data)
         elif kind == "waiting-press":
             await self._waiting_press(data)
+        elif kind == "plan-press":
+            self._plan_press(data)
         else:
             log.warning("platform note %s of an unknown kind %r skipped", note.get("seq"), kind)
+
+    def _plan_press(self, data: dict) -> None:
+        """A press on the plan in the app (`planner.Planner.press`): run beside the notes, never in their way — a plan
+        reads and writes the collections, and the cards behind it do not wait for that."""
+        if self.planner is None:
+            return
+        task = asyncio.create_task(self.planner.press(data, time.time()))
+        self._planning.add(task)
+        task.add_done_callback(self._planning.discard)
 
     async def _waiting_press(self, data: dict) -> None:
         """«Done», «Not a task», «Tomorrow» or «Undo» on a row of «Waiting for you» in the app: marked by the router's own

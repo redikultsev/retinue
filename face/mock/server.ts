@@ -7,7 +7,7 @@
 //   POST /api/_mock/prune                old events are pruned and streams cut: clients get 410 and resync
 //   POST /api/_mock/collection[?quiet=1] a deal of the «work» Space moves a column on (a `collection` event; quiet:
 //                                        none, so the app's next write of that deal meets a conflict)
-import { mockMakeTask, mockPlan, mockTasksRead, mockTasksWrite } from "./plan.ts";
+import { mockBlocksWrite, mockMakeTask, mockPlan, mockPlanPress, mockTasksRead, mockTasksWrite } from "./plan.ts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as fx from "./fixtures.ts";
@@ -356,6 +356,19 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   if (path === "/api/plan") return json(res, 200, mockPlan());
   const taskRead = method === "GET" ? mockTasksRead(path) : null;
   if (taskRead) return json(res, taskRead.status, taskRead.data);
+  if (path === "/api/plan/press" && method === "POST") {
+    mockPlanPress(await body(req));
+    emit("plan", "plan", { at: now() });
+    emit("collection", "blocks", { name: "blocks", space: "home", rev: "01K" });
+    return json(res, 200, { ok: true });
+  }
+  if (path === "/api/c/blocks" && method === "POST") {
+    const wrote = mockBlocksWrite(path, await body(req));
+    if (wrote) {
+      if (wrote.moved) emit("collection", "blocks", wrote.moved);
+      return json(res, wrote.status, wrote.data);
+    }
+  }
   if (path === "/api/c/tasks" && method === "POST") {
     const wrote = mockTasksWrite(path, await body(req));
     if (wrote) {

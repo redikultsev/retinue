@@ -37,21 +37,6 @@
       ],
       "delete": false
     },
-    "code:plan": {
-      "add": false,
-      "set": [
-        "slot"
-      ],
-      "delete": false
-    },
-    "code:calsync": {
-      "add": false,
-      "set": [
-        "slot",
-        "locked"
-      ],
-      "delete": false
-    },
     "code:waiting": {
       "add": true,
       "set": [

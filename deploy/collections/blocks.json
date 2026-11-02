@@ -1,0 +1,16 @@
+{
+  "space": "home",
+  "form": {
+    "fields": {
+      "task": {"type": "ref", "to": "tasks", "required": true, "index": true},
+      "start": {"type": "instant", "required": true, "index": true},
+      "minutes": {"type": "int", "required": true},
+      "state": {"type": "enum", "values": ["planned", "passed", "skipped"], "required": true, "index": true,
+                "labels": {"planned": "Planned", "passed": "Passed", "skipped": "Skipped"}},
+      "locked": {"type": "bool"},
+      "plan": {"type": "text", "index": true, "hide": true},
+      "why": {"type": "text"}
+    }
+  },
+  "views": []
+}

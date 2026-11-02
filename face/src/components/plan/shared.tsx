@@ -11,24 +11,23 @@ import {
   at,
   dayOf,
   dayWords,
-  DEFAULT_MINUTES,
   duration,
-  firstFree,
   goalLabel,
   goalSwatch,
   hm,
   iso,
   minutesOf,
+  nextBlock,
+  type Placed,
   type Plan,
   planApi,
-  slotOf,
+  planDay,
+  type Press,
   type Task,
   type TaskFields,
-  taken,
 } from "@/lib/plan";
 import { cn } from "@/lib/utils";
 
-export const DURATIONS = [15, 30, 60, 90];
 export const PLAN_DAYS = 7;
 
 /** The owner's write of one task's fields: true once written. */
@@ -44,6 +43,33 @@ export function useAddTask() {
   const editing = useEditing();
   return (fields: TaskFields, what: string) =>
     editing ? editing.write("tasks", [{ op: { op: "add", fields: { state: "open", ...fields } }, target: null }], what) : Promise.resolve(false);
+}
+
+/** The owner's own block: one he put at an exact time or dragged — `locked`, so no plan moves it. */
+export function useOwnBlock() {
+  const editing = useEditing();
+  return {
+    put: (task: Task, start: number, minutes: number, what: string) =>
+      editing
+        ? editing.write("blocks", [{ op: { op: "add", fields: { task: task.id, start: iso(start), minutes, state: "planned", locked: true } }, target: null }], what)
+        : Promise.resolve(false),
+    move: (p: Placed, start: number, what: string) =>
+      editing
+        ? editing.write("blocks", [{ op: { op: "set", id: p.block.id, version: p.block.version, fields: { start: iso(start), locked: true } }, target: p.block.id }], what)
+        : Promise.resolve(false),
+  };
+}
+
+/** A press on the plan: the Router does it within seconds; the stream brings the result. */
+export async function press(body: Press, what: string): Promise<boolean> {
+  try {
+    await planApi.press(body);
+    toast(what);
+    return true;
+  } catch (e) {
+    toast(e instanceof Error ? e.message : "It did not go through.", "error", 6000);
+    return false;
+  }
 }
 
 /** The circle before a task: a press closes it, or opens it again. */
@@ -167,52 +193,33 @@ export function Popover({ label, children, button }: {
 
 const MENU_ROOM = 420;
 
-/** «Plan»: a day of the next week and how long — the first free time of it, in its evening — or an exact time,
- * which is the owner's and stays where he put it (`locked`). A planned task can be taken off the day. */
+/** «Plan»: a day of the next week — the Router puts the task at the first free time of that day's window, around
+ * the meetings and the blocks there — or an exact time, which is the owner's block and stays where he put it
+ * (`locked`). A planned task can be taken off its day. */
 export function PlanMenu({ plan, task, today, label = "Plan" }: { plan: Plan; task: Task; today: string; label?: string }) {
-  const set = useSetTask();
-  const [minutes, setMinutes] = useState(task.fields.minutes ?? DEFAULT_MINUTES);
-  const slot = slotOf(task);
-  const [exact, setExact] = useState(() => (slot ? localInput(slot, plan.tz) : ""));
-  const days = Array.from({ length: PLAN_DAYS }, (_, n) => addDays(today, n));
-  const place = (day: string, close: () => void) => {
-    const start = firstFree(day, minutes, taken(plan, task.id), plan.now, plan.tz);
-    close();
-    void set(task, { slot: iso(start), minutes, locked: false }, `Planned: ${dayWords(day, today)}, ${hm(start, plan.tz)}.`);
-  };
+  const own = useOwnBlock();
+  const next = nextBlock(plan, task);
+  const [exact, setExact] = useState(() => (next ? localInput(next.start, plan.tz) : ""));
+  const first = planDay(plan.now, plan.plan.window);
+  const days = Array.from({ length: PLAN_DAYS }, (_, n) => addDays(first, n));
   return (
     <Popover label={`${label}: ${task.fields.title ?? ""}`} button={label}>
       {(close) => (
         <div className="flex flex-col gap-2 text-[13px]">
-          <fieldset className="flex gap-1" aria-label="How long">
-            {DURATIONS.map((m) => (
-              <button
-                key={m}
-                type="button"
-                aria-pressed={minutes === m}
-                onClick={() => setMinutes(m)}
-                className={cn(
-                  "h-8 flex-1 rounded-md border font-mono text-xs tabular-nums transition-colors max-md:h-10",
-                  minutes === m ? "border-foreground bg-accent text-foreground" : "text-muted-foreground hover:bg-accent",
-                )}
-              >
-                {duration(m)}
-              </button>
-            ))}
-          </fieldset>
+          <p className="px-2 text-xs text-muted-foreground">{duration(minutesOf(task))} · at the first free time of the day</p>
           <div className="flex flex-col">
             {days.map((day) => (
               <button
                 key={day}
                 type="button"
                 role="menuitem"
-                onClick={() => place(day, close)}
-                className="flex h-8 items-center justify-between rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10"
+                onClick={() => {
+                  close();
+                  void press({ action: "place", day, task: task.id }, `Planning it for ${dayWords(day, today)}…`);
+                }}
+                className="flex h-8 items-center rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10"
               >
-                <span>{dayWords(day, today)}</span>
-                <span className="font-mono text-xs text-muted-foreground tabular-nums">
-                  {hm(firstFree(day, minutes, taken(plan, task.id), plan.now, plan.tz), plan.tz)}
-                </span>
+                {dayWords(day, today)}
               </button>
             ))}
           </div>
@@ -223,8 +230,8 @@ export function PlanMenu({ plan, task, today, label = "Plan" }: { plan: Plan; ta
               const start = fromLocalInput(exact, plan.tz);
               if (start === null) return toast("Pick a day and a time.", "error");
               close();
-              void set(task, { slot: iso(start), minutes, locked: true },
-                `Planned: ${dayWords(dayOf(start, plan.tz), today)}, ${hm(start, plan.tz)}.`);
+              const what = `Planned: ${dayWords(dayOf(start, plan.tz), today)}, ${hm(start, plan.tz)}.`;
+              void (next ? own.move(next, start, what) : own.put(task, start, minutesOf(task), what));
             }}
           >
             <input
@@ -239,13 +246,13 @@ export function PlanMenu({ plan, task, today, label = "Plan" }: { plan: Plan; ta
               Set
             </button>
           </form>
-          {slot !== null && (
+          {next && (
             <button
               type="button"
               role="menuitem"
               onClick={() => {
                 close();
-                void set(task, { slot: null, locked: null }, "Taken off the day.");
+                void press({ action: "remove", block: next.block.id }, "Taking it off the day…");
               }}
               className="flex h-8 items-center rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-foreground max-md:h-10"
             >
@@ -296,20 +303,21 @@ export function MakeTask({ by, what, onMade }: { by: { t: string } | { ref: stri
   );
 }
 
-/** Where a dragged task goes: its id travels in the drag, a drop gives it a slot that is the owner's own. */
-export const DRAG_TYPE = "application/x-retinue-task";
+/** Where a dragged block or task goes: its id travels in the drag, a drop puts it there as the owner's own. */
+export const DRAG_TYPE = "application/x-retinue-plan";
 
-export function dragProps(task: Task) {
+export function dragProps(what: { block: string } | { task: string }) {
   return {
     draggable: true,
     onDragStart: (e: React.DragEvent) => {
-      e.dataTransfer.setData(DRAG_TYPE, task.id);
+      e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(what));
       e.dataTransfer.effectAllowed = "move";
     },
   };
 }
 
-export function useDrop(plan: Plan, onDrop: (task: Task) => void) {
+/** A drop target: told the block or the task dropped on it. */
+export function useDrop(plan: Plan, onDrop: (dropped: { placed?: Placed; task: Task }) => void, all: Placed[]) {
   const [over, setOver] = useState(false);
   return {
     over,
@@ -322,11 +330,17 @@ export function useDrop(plan: Plan, onDrop: (task: Task) => void) {
       onDragLeave: () => setOver(false),
       onDrop: (e: React.DragEvent) => {
         setOver(false);
-        const id = e.dataTransfer.getData(DRAG_TYPE);
-        const task = plan.tasks.rows.find((t) => t.id === id);
+        let what: { block?: string; task?: string } = {};
+        try {
+          what = JSON.parse(e.dataTransfer.getData(DRAG_TYPE));
+        } catch {
+          return;
+        }
+        const p = what.block ? all.find((x) => x.block.id === what.block) : undefined;
+        const task = p?.task ?? plan.tasks.rows.find((t) => t.id === what.task);
         if (task) {
           e.preventDefault();
-          onDrop(task);
+          onDrop({ placed: p, task });
         }
       },
     },

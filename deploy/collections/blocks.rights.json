@@ -1,0 +1,5 @@
+{
+  "writers": {
+    "code:plan": {"add": true, "set": ["task", "start", "minutes", "state", "plan", "why"], "delete": false}
+  }
+}

@@ -55,19 +55,14 @@ def test_the_terminals_files_make_a_collection_the_router_and_the_assistant_writ
         world.clock.now = time.time()
         await define(world)
         store = world.platform.collections
-        schema = await store.schema("tasks")
-        assert schema["form"]["fields"]["slot"] == {"type": "instant", "index": True}
         added = await store.apply(Writer("assistant", "assistant"), "tasks", [
             {"op": "add", "fields": {"title": "Ответить Анне Петровой", "state": "open", "goal": "work"}}],
             world.clock.now)
         [task] = added["records"]
-        with pytest.raises(Rejected):  # her rights give no slot: a plan is a rule's
-            await store.apply(Writer("assistant", "assistant"), "tasks", [
+        with pytest.raises(Rejected):  # a task has no time of its own: its pieces are `blocks`, a rule's
+            await store.apply(Writer("code:plan", "code"), "tasks", [
                 {"op": "set", "id": task["id"], "version": 1, "fields": {"slot": "2026-11-04T17:00:00Z"}}],
                 world.clock.now)
-        moved = await store.apply(Writer("code:plan", "code"), "tasks", [
-            {"op": "set", "id": task["id"], "version": 1, "fields": {"slot": "2026-11-04T17:00Z"}}], world.clock.now)
-        assert moved["records"][0]["fields"]["slot"] == "2026-11-04T17:00:00Z", "kept with its seconds, to sort"
         said = await world.owner("collections/apply", {"actor": "assistant", "via": "code", "foreign": [],
                                                        "call": "x", "arguments": {"collection": "tasks", "ops": []}})
         assert not said["ok"] and "a rule's own" in said["text"], "via code is never hers"
@@ -85,18 +80,22 @@ def test_a_moment_is_kept_in_utc_and_matched_between_two(tmp_path):
         world.clock.now = time.time()
         await define(world)
         store = world.platform.collections
+        spec = json.loads((DEPLOY / "blocks.json").read_text())
+        await store.define(DEFINE, "blocks", spec["space"], spec["form"], world.clock.now, views=spec["views"])
+        [task] = (await store.apply(SCREEN, "tasks", [{"op": "add", "fields": {"title": "x", "state": "open"}}],
+                                    world.clock.now))["records"]
+        piece = {"task": task["id"], "minutes": 30, "state": "planned"}
         for bad in ("2026-11-04 17:00", "2026-11-04T17:00:00+01:00", "2026-13-04T17:00Z", "2026-11-04T25:00Z", 17):
             with pytest.raises(Rejected, match="a moment in UTC"):
-                await store.apply(SCREEN, "tasks", [{"op": "add", "fields": {"title": "x", "state": "open",
-                                                                             "slot": bad}}], world.clock.now)
-        for n, slot in enumerate(("2026-11-04T09:00:00Z", "2026-11-04T23:30Z", "2026-11-05T00:15:00Z")):
-            await store.apply(SCREEN, "tasks", [{"op": "add", "fields": {"title": f"t{n}", "state": "open",
-                                                                         "slot": slot}}], world.clock.now)
-        found = await store.query("tasks", [{"field": "slot", "op": "between",
-                                             "value": ["2026-11-04T12:00Z", "2026-11-05T00:15:00Z"]}])
-        assert [r["fields"]["title"] for r in found["rows"]] == ["t1", "t2"], "across midnight, by the moment"
+                await store.apply(SCREEN, "blocks", [{"op": "add", "fields": {**piece, "start": bad}}], world.clock.now)
+        for start in ("2026-11-04T09:00:00Z", "2026-11-04T23:30Z", "2026-11-05T00:15:00Z"):
+            await store.apply(SCREEN, "blocks", [{"op": "add", "fields": {**piece, "start": start}}], world.clock.now)
+        found = await store.query("blocks", [{"field": "start", "op": "between",
+                                              "value": ["2026-11-04T12:00Z", "2026-11-05T00:15:00Z"]}])
+        assert [r["fields"]["start"] for r in found["rows"]] == ["2026-11-04T23:30:00Z", "2026-11-05T00:15:00Z"], \
+            "kept with its seconds, matched across midnight by the moment"
         with pytest.raises(Rejected, match="two moments"):
-            await store.query("tasks", [{"field": "slot", "op": "between", "value": ["2026-11-04", "2026-11-05"]}])
+            await store.query("blocks", [{"field": "start", "op": "between", "value": ["2026-11-04", "2026-11-05"]}])
     faced(tmp_path, run)
 
 
@@ -204,17 +203,23 @@ def test_today_reads_its_tasks_its_window_and_the_digests_asks_at_once(tmp_path)
         assert (await world.get("/api/plan"))["tasks"]["missing"], "no collection yet: said, not an error"
         await define(world)
         store = world.platform.collections
-        slot = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now + 3600))
-        await store.apply(SCREEN, "tasks", [
+        start = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 3600))
+        made = await store.apply(SCREEN, "tasks", [
             {"op": "add", "fields": {"title": "open", "state": "open"}},
-            {"op": "add", "fields": {"title": "done today", "state": "done", "slot": slot}},
+            {"op": "add", "fields": {"title": "done today", "state": "done"}},
             {"op": "add", "fields": {"title": "done long ago", "state": "done"}}], now)
+        spec = json.loads((DEPLOY / "blocks.json").read_text())
+        await store.define(DEFINE, "blocks", spec["space"], spec["form"], now, views=spec["views"])
+        await store.apply(SCREEN, "blocks", [{"op": "add", "fields": {
+            "task": made["records"][1]["id"], "start": start, "minutes": 30, "state": "passed"}}], now)
         event = {"start": now + 7200, "end": now + 9000, "title": "Созвон с Acme", "all_day": False, "busy": True}
         assert (await world.post("/owner/calendar", {"events": [event], "at": now}))[0] == 200
         status, said = await world.post("/owner/calendar", {"events": [{**event, "end": now}], "at": now})
         assert status == 400, "an end before its start refuses the whole window"
         got = await world.get("/api/plan")
-        assert sorted(r["fields"]["title"] for r in got["tasks"]["rows"]) == ["done today", "open"]
+        assert sorted(r["fields"]["title"] for r in got["tasks"]["rows"]) == ["done today", "open"], \
+            "the open ones, and a closed one whose passed piece is on its day"
+        assert [b["fields"]["state"] for b in got["tasks"]["blocks"]] == ["passed"]
         assert [g["value"] for g in got["tasks"]["goals"]] == ["work", "home", "health", "study"]
         assert got["calendar"]["events"] == [event] and not got["calendar"]["stale"]
         world.clock.now = now + plan.CALENDAR_STALE_S + 1

@@ -437,7 +437,7 @@ until the owner gives her some.
 - **The platform away**: the tool answers “The platform did not answer — nothing was read or written”, and nothing
   waits to be sent again.
 - **The router's own code** writes as a rule, via `code` — never as her: `via code` is refused for any actor but a
-  `code:<rule>`, and a query by a rule via `code` answers its rows too (`answer`, `{rows, next}`), for code that
+  `code:<rule>`, and a query or a write by a rule via `code` answers its rows or records too (`answer`), for code that
   reads records rather than words.
 - **Upgrading an install.** Give her the grant — `collections: true` under the assistant in `router.yaml`, or run
   `deploy/setup.sh` again —, install `agents/assistant/CLAUDE.md` and `agent.yaml` again, rebuild the router's and the
@@ -447,7 +447,7 @@ until the owner gives her some.
 | Call (`/owner/…`, the router's token) | Body → answer |
 |---|---|
 | `collections/describe` · `query` · `apply` · `propose` | `{actor, via, model?, foreign, call, arguments}` → `{ok, text}`, always 200: a refusal is words for the model. An answer that shows records adds `foreign` (one someone else's text wrote); `describe` without a collection adds `writable`, `[{name, space, add, set}]`: what the writer may change, for the note of her judgement of mail |
-| `collections/changes` | `{after?, since?, limit?, exclude_actors?}` → `{changes, words, next}`: the assistant's and the rules' changes to records, oldest first, after the change_id `after` (else since the moment `since`), at most 200, without the rules `exclude_actors` names (up to 8 `code:<rule>`; the evening list leaves out `code:plan` and `code:calsync`, the owner's own moves carried out); each with its collection's `space`, its record's `title`, `reverted`, and for a revert `reverts_actor`, whose change it took back |
+| `collections/changes` | `{after?, since?, limit?, exclude_actors?}` → `{changes, words, next}`: the assistant's and the rules' changes to records, oldest first, after the change_id `after` (else since the moment `since`), at most 200, without the rules `exclude_actors` names (up to 8 `code:<rule>`; the evening list leaves out `code:plan` and `code:calsync`, the owner's own presses carried out); each with its collection's `space`, its record's `title`, `reverted`, and for a revert `reverts_actor`, whose change it took back |
 | `collections/revert` | `{change_id}` → `{ok, text}`: takes back that change, as `owner` via `assistant`, if the assistant or a rule made it |
 
 ### Tasks
@@ -464,16 +464,14 @@ owner's spheres):
 | `state` | enum `open`, `done`, `dropped`, indexed | |
 | `due` | date | the day it is due by; a time of day stays a reminder's |
 | `minutes` | int | how long it takes; 30 when not said |
-| `slot` | instant, indexed | when it is planned to start; none — not planned |
-| `locked` | bool | the owner put it there himself — dragged it, gave it an exact time: nothing moves it |
 | `ask` | text, indexed, hidden | the row of «Waiting for you» it came from — `letter:<id>`, `chat:<id>` (the digest's ids), `reminder:<id>` |
 | `notes` | text | |
 
 The rights the files give: the assistant adds and sets the title, goal, due, minutes, notes, state and ask — and
 closes a task only in a turn that read no one else's text (the router refuses it otherwise: a letter that says «done»
 is not the owner saying it); sessions and the Mac add and set the same but `ask`; `code:waiting` adds and sets the
-title, state, ask and due; `code:plan` sets the slot, `code:calsync` the slot and `locked` (both for the plan and the
-calendar to come); nobody but the owner deletes.
+title, state, ask and due; nobody but the owner deletes. A task has no time of its own: its pieces of time are
+[blocks](#blocks).
 
 **«Make it a task»** on a person's row of «Waiting for you», or on a reminder, is the owner's press in the app
 (`waiting-press`, action `task`): the router adds the task as `code:waiting`, titled with the row's own masked words, its
@@ -489,6 +487,36 @@ reminder's task is its own: closing it leaves the reminder.
 
 Reminders that were tasks all along are made into tasks once, from the router's container: `python -m retinue.tasks
 from-reminders <id>… [--title <id>=<words>]`.
+
+### Blocks
+
+`blocks` is when a task is done: one record a piece of time (`deploy/collections/blocks.json`) — its `task` (a ref),
+`start` (instant), `minutes`, `state` (`planned`, `passed` once its time is over and counted, `skipped` when taken
+off), `locked` (the owner put it there himself: no plan moves it), `plan` (the plan that laid it) and `why` (overdue,
+due today). Only `code:plan` writes them besides the owner, and it never deletes: taking a block off is `skipped`.
+
+**The day plan** (`retinue/planner.py`, `retinue/plan_layout.py`) is laid by a press — «Plan my day» in the app,
+`/plan` in Telegram, «Plan» on a task — never by itself:
+
+- the window is the owner's day as `router.yaml` sets it — `plan_hours: "10:00-01:00"` (a «to» before the «from» is
+  after midnight; the default is 09:00–23:00) in `plan_zone` (the default, `owner_tz`) — and keeps that zone's clock
+  whatever zone he travels to; a plan is for the window he is in while an hour of it is left, else the next one;
+- busy is his busy occurrences (his own, or invitations he accepted — one he never answered keeps no one busy), ten
+  minutes after each, his holds, and the blocks standing;
+- the order is code's — overdue and due today first, then by due date, then the shorter, then the older;
+- a task goes in pieces of 30 to 90 minutes, one a window; a run of pieces closer than ten minutes apart stays under 90,
+  so a quarter-hour pause follows it that no short task can slip into;
+- what its passed pieces counted comes off what a task needs — for one with a due date never more than half, until it is
+  done; a task whose time is all counted and not done goes on in half hours, with no question.
+
+One plan is one apply, all or none, kept in the Router's kv by window with what it left out; «Undo» skips its blocks
+still at the version it wrote, and names the ones the owner moved since. «Busy» (a hold from the moment of the press)
+lays again the plan's blocks it crosses — a piece already begun stays. At each look (30 s) a block whose time is over is
+`passed`, a closed task's blocks ahead are `skipped`, and a calendar or a hold that now crosses today's plan lays again
+only what it crosses; a task due today that no longer fits is said in Telegram. The Router pushes the plans and holds
+to the platform after each change (`POST /owner/plan`); the app reads them with the blocks (`GET /api/plan`) and
+presses through `POST /api/plan/press` (a `plan-press` note; one older than ten minutes when the Router takes it is
+dropped and said).
 
 ### The evening list
 

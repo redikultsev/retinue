@@ -81,7 +81,7 @@ A queue the owner works through to its end is a list and a pane (`components/inb
 ## A plan: tasks, a day, a week
 
 - **A row of a task** is the queue's row: the circle that closes it first, the title and its meta line (goal swatch ·
-  how long · by when · from where), the slot in mono at the right, one outlined button («Plan», «Move»).
+  how long · by when · from where), its next block in mono at the right, one outlined button («Plan», «Move»).
 - **A goal's swatch** is a series colour by the goal's place in the form (`bg-chart-N`), a 2 px-rounded square — never
   a meaning of its own; amber stays the owner's move (planned time in the strip and the week's load bars).
 - **A menu over a list** is drawn into the page's top layer at its button (below it, or above when the screen has no

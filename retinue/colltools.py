@@ -195,7 +195,7 @@ class CollTools:
                     out["answer"] = answer
                 return text, False
             if name == APPLY:
-                return await self.apply(writer, session, arguments, call_id, read)
+                return await self.apply(writer, session, arguments, call_id, read, out)
             if name == PROPOSE:
                 why = arguments.get("why")
                 if not _plain(why, WHY_CHARS) or not why.strip():
@@ -262,7 +262,7 @@ class CollTools:
         return await self.collections.read(work)
 
     async def apply(self, writer: Writer, session: dict | None, arguments: dict, call_id: str,
-                    read: list[str]) -> tuple[str, bool]:
+                    read: list[str], out: dict | None = None) -> tuple[str, bool]:
         collection, ops, idem = arguments.get("collection"), arguments.get("ops"), arguments.get("idem")
         if not isinstance(collection, str) or not NAME.fullmatch(collection):
             raise Rejected("collection: a collection's name")
@@ -275,6 +275,8 @@ class CollTools:
             needs = re.sub(r"^ops\[\d+\]: ", "", exc.reason).removesuffix(": propose it to him")
             return await self.propose(writer, session, call_id, collection, ops, None, needs)
         made = sum(1 for c in answer["change_ids"] if c)
+        if out is not None:
+            out["answer"] = {k: answer[k] for k in ("rev", "change_ids", "records")}
         head = f"Written: {made} change{'' if made == 1 else 's'}" if made else "Already so: nothing was written"
         read += [record["id"] for record in answer["records"] if record]
         return f"{head}. {FRAME.format(name=collection)}" + _dump(
@@ -483,7 +485,7 @@ class CollTools:
         out: dict = {}
         text, error = await self.call(writer, None, name, arguments, f"router:{call}", read, out)
         said: dict = {"ok": not error, "text": text}
-        if writer.via == "code" and "answer" in out:  # the Router's code reads the rows themselves
+        if writer.via == "code" and "answer" in out:  # the Router's code reads the rows and the records it wrote
             said["answer"] = out["answer"]
         if name == DESCRIBE and arguments.get("collection") is None and not error:
             said["writable"] = await self.writable(writer)

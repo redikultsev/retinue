@@ -208,7 +208,8 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/files/{id}/meta` | `{file}` — one file's row, for the page `/f/<id>` that Telegram's “Open” opens |
 | `GET /api/feed` | `{schema, count, groups: [{action, title, rows}], bot, assistant_at, deadlines, chips, closed_today, expired_week}` — “Waiting for you”, “Deadlines” and the status chips, [below](#the-feed) |
 | `POST /api/waiting/press {t, action: done\|dismissed\|later\|open\|task}` · `{ref, action: task}` | `{ok}`: “Done”, “Not a task”, “Tomorrow”, “Undo” or “Make it a task” on a row of “From the assistant”, by its token — or “Make it a task” on a reminder of the digest, by its id (410 when it is not in the digest any more); the router applies it ([platform.md](platform.md#the-assistants-digest)) |
-| `GET /api/plan` | `{schema, now, tz, tasks: {rows, rev, space, goals, missing}, calendar: {events, at, failed, stale}, asks, reminders}` — what [Tasks, Day, Week](#tasks-day-week) show: the open tasks and every one with a slot from yesterday to two weeks on, the busy window the Router last pushed, the digest's person's rows and reminders |
+| `GET /api/plan` | `{schema, now, tz, zone, tasks: {rows, rev, space, goals, missing, blocks}, calendar: {events, at, failed, stale}, asks, reminders, plan: {at, plans, holds, said}}` — what [Tasks, Day, Week](#tasks-day-week) show: the open tasks, the blocks planned or passed from yesterday to two weeks on (and the closed tasks they name), the busy window and the day plan's state the Router last pushed, the digest's person's rows and reminders |
+| `POST /api/plan/press {action, day?, task?, plan?, block?, minutes?}` | `{ok}`: «Plan my day» (`plan`), «Plan» to a day (`place`), «Undo» (`undo`), «Busy now» (`busy`, 30/60/120), its × (`free`), × on a block (`remove`) — a `plan-press` note for the Router ([collections.md](collections.md#blocks)) |
 | `POST /api/waiting/detail {ref, t?}` | `{detail}`: [a row's pane](#her-rows-pane) of “From the assistant” — a person's row by its id and token, a draft by its id — asked of the router and relayed, never kept; 410 when the row is not in the digest any more or the router no longer knows it, 504 when the router said nothing within 12 s, 502 when what it said was off the contract, 429 while 8 already wait |
 | `GET /api/stats` | `{schema, now, weeks: [tally…]}` — the platform's tally (`signals.tally`) of the last eight seven-day spans, the newest first, for “Numbers” ([below](#numbers)) |
 | `GET /api/base/{id}` | `{card}` — the platform's own commit to the Base after a turn ([base.md](base.md#the-commit-after-a-turn)): its line (`said`), files, sha, whether “Undo” can be pressed |
@@ -443,20 +444,22 @@ Days and times are the owner's zone's (the platform's, as the Router last told i
 
 - **Tasks**: «By when» or «By goal»; a box that adds a task by its title; **Needs you** — a person's ask the digest
   carries, or a reminder of the next seven days, that no open task names yet, each with «Make it a task»; **To plan** —
-  the open tasks without a slot, the due soonest first; **Planned** — those with one, the soonest first; **Done today**.
-  A row: the circle that closes it (or opens it again), its title, its goal, how long, by when — red once that day has
-  passed —, where it came from, its slot, and «Plan» («Move» once planned).
-- **«Plan»**: how long (15, 30, 60, 90 min) and a day of the next seven, each with the first free start of its hours —
-  17–23 on a weekday, 10–23 at the weekend —, clear of what keeps him busy and of the slots already there; or an exact
-  time, which is his and stays (`locked`); «Take off the day».
-- **Day**: a strip of seven days, each with its planned time (amber) or its free hours; «X planned of Y free in your
-  hours» with the split by goal; the day in order — the calendar's meetings (a dashed edge for free time), the tasks in
-  their slots, the reminders at their time, and the free stretches of its hours, onto which a task is dragged to start
-  there (`locked`). The whole-day events are tags by the day's title; a busy window older than 30 minutes says how old.
-  At the right (below, on a narrow screen): Needs you, and To plan — dragged from there, or planned by «Plan».
-- **Week**: seven columns from today, each with its load (planned of free), its whole-day events, its meetings, tasks
-  and reminders in order; a task dragged to another day keeps its time of day there and becomes the owner's; above
-  them the week's planned time by goal. Columns keep 10rem and scroll sideways when the screen has no room for seven.
+  the open tasks with no block ahead, the due soonest first; **Planned** — those with one, the soonest first; **Done
+  today**. A row: the circle that closes it (or opens it again), its title, its goal, how long, by when — red once that
+  day has passed —, where it came from, its next block, and «Plan» («Move» once planned).
+- **«Plan»**: a day of the next seven — the Router puts the task at the first free time of that day's window — or an
+  exact time, the owner's own block (`locked`); «Take off the day».
+- **Day** is a window of the plan's ([collections.md](collections.md#blocks)): the owner's day as the router's config
+  sets it, its times shown in his own zone. A strip of seven windows, each with its planned time (amber) or its free time; the plan's card —
+  «X planned of Y free», the split by goal, «Plan my day» or, once there is a plan, «Undo» and «Plan again», what it
+  left out and what the last press came to, «Busy now» (30 min, 1 h, 2 h; «Busy till 21:00 ×» while held); the window
+  in order — the calendar's meetings (a dashed edge for free time), the blocks with their why («overdue») and × to take
+  one off, «counted» on a passed one, the holds, the reminders, and the free stretches, onto which a task or a block is
+  dragged to stand there as the owner's own. At the right (below, on a narrow screen): Needs you, and the open tasks not
+  in this window — dragged from there, or planned by «Plan».
+- **Week**: seven windows from today's, each with its load (planned of free), its whole-day events, its meetings,
+  blocks, holds and reminders in order; a block dragged to another day keeps its time of day there and becomes the
+  owner's; above them the week's planned time by goal. Columns keep 10rem and scroll sideways.
 
 Without the collection the tabs say how it is set up. Dragging is the mouse's; on a touch screen «Plan» and «Move» do it.
 

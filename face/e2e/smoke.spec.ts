@@ -86,7 +86,9 @@ test("«Today»'s tasks, day and week open and fit, and a task plans from its me
   await fits(page);
   await page.getByRole("button", { name: /^Plan: / }).first().click(); // the mock is shared by the widths: any left
   await page.getByRole("menuitem", { name: /Tomorrow/ }).click();
-  await expect(page.getByText(/Planned: Tomorrow/)).toBeVisible();
+  await expect(page.getByText(/Planning it for Tomorrow/)).toBeVisible();
+  await page.getByRole("button", { name: /^Plan my day$|^Plan again$/ }).first().click();
+  await expect(page.getByText(/Planning/).first()).toBeVisible();
   await page.goto("/today?tab=week");
   await expect(page.getByText("This week, by goal")).toBeVisible();
   await fits(page);

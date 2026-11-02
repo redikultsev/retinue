@@ -1,7 +1,8 @@
 // «Today»'s tasks, day and week (docs/face.md «Tasks, Day, Week»): one read of the platform (`GET /api/plan`) — the
-// open tasks and those with a slot near, the calendar's busy window as the Router last pushed it, the digest's asks
-// and reminders — and the words and the arithmetic of the three tabs: a day in the owner's zone, a slot's place in
-// it, the first free time of an evening. Writes go through the collections' own route, as any screen's do.
+// open tasks, their blocks of time near, the calendar's busy window and the day plan's state as the Router last pushed
+// them, the digest's asks and reminders — and the words and the arithmetic of the three tabs. A day is a window of the
+// plan's: its hours in its zone, as the Router's config sets them, shown in the owner's own. Plans are pressed (`/api/plan/press`) and
+// laid by the Router; the owner's own moves of a block go through the collections' route, as any screen's do.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request } from "./api";
 import { live as theLive, type Live } from "./live";
@@ -12,8 +13,6 @@ export interface TaskFields {
   state?: "open" | "done" | "dropped";
   due?: string;
   minutes?: number;
-  slot?: string;
-  locked?: boolean;
   ask?: string;
   notes?: string;
 }
@@ -51,17 +50,62 @@ export interface PlanReminder {
   repeat: string | null;
 }
 
+export interface Block {
+  id: string;
+  fields: { task: string; start: string; minutes: number; state: "planned" | "passed" | "skipped"; locked?: boolean; plan?: string; why?: string };
+  version: number;
+}
+
+export interface DayPlan {
+  id: string;
+  at: number;
+  left: { task: string; title: string; why: string }[];
+  blocks: string[];
+  undone: boolean;
+  failed: boolean;
+}
+
+export interface PlanWindow {
+  zone: string;
+  opens: string;
+  closes: string;
+}
+
 export interface Plan {
   now: number;
   tz: string;
-  tasks: { rows: Task[]; rev: string | null; space: string | null; goals: { value: string; label: string }[]; missing: boolean };
+  tasks: {
+    rows: Task[];
+    rev: string | null;
+    space: string | null;
+    goals: { value: string; label: string }[];
+    missing: boolean;
+    blocks: Block[];
+  };
   calendar: { events: CalEvent[]; at: number | null; failed: number; stale: boolean };
   asks: PlanAsk[];
   reminders: PlanReminder[];
+  plan: {
+    at: number | null;
+    plans: Record<string, DayPlan>;
+    holds: { from: number; to: number; label: string }[];
+    said: { at?: number; text?: string };
+    window: PlanWindow;
+  };
 }
+
+export type Press =
+  | { action: "plan"; day?: string }
+  | { action: "place"; day: string; task: string }
+  | { action: "undo"; plan: string }
+  | { action: "busy"; minutes: 30 | 60 | 120 }
+  | { action: "free" }
+  | { action: "remove"; block: string };
 
 export const planApi = {
   get: () => request<Plan>("/api/plan"),
+  /** A press on the plan: the Router lays it, and the next read — at once, by the stream — has it. */
+  press: (body: Press) => request<{ ok: boolean }>("/api/plan/press", body),
   /** «Make it a task» on a person's row (its token) or a reminder (its id): the Router makes it, and the next read has it. */
   task: (by: { t: string } | { ref: string }) => request<{ ok: boolean }>("/api/waiting/press", { ...by, action: "task" }),
 };
@@ -87,10 +131,12 @@ export function usePlan(live: Live = theLive, api = planApi): { plan: Plan | nul
   useEffect(() => {
     reload();
     const timer = setInterval(reload, REFRESH_MS);
-    const off = live.onCollection((event) => event.name === "tasks" && reload());
+    const off = live.onCollection((event) => (event.name === "tasks" || event.name === "blocks") && reload());
+    const offPlan = live.onPlan(reload);
     return () => {
       clearInterval(timer);
       off();
+      offPlan();
     };
   }, [live, reload]);
   return { plan, error, reload };
@@ -179,52 +225,76 @@ export function duration(minutes: number): string {
   return rest ? `${h} h ${pad(rest)}` : `${h} h`;
 }
 
-/** A slot as kept: a moment in UTC, `YYYY-MM-DDTHH:MM:SSZ`. */
+/** A moment as the collections keep it: in UTC, `YYYY-MM-DDTHH:MM:SSZ`. */
 export function iso(ts: number): string {
   return new Date(Math.round(ts) * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-export function slotOf(task: Task): number | null {
-  const s = task.fields.slot;
-  if (!s) return null;
-  const t = Date.parse(s);
+export const moment = (value: string | undefined): number | null => {
+  const t = value ? Date.parse(value) : NaN;
   return Number.isFinite(t) ? t / 1000 : null;
-}
+};
 
 export const DEFAULT_MINUTES = 30;
-export const minutesOf = (task: Task) => task.fields.minutes && task.fields.minutes > 0 ? task.fields.minutes : DEFAULT_MINUTES;
+export const minutesOf = (task: Task) => (task.fields.minutes && task.fields.minutes > 0 ? task.fields.minutes : DEFAULT_MINUTES);
 
-/** The hours a day's tasks go in when none is named: an evening on a weekday, the day on a weekend. */
-export function hours(day: string): [number, number] {
-  const wd = weekday(day);
-  return wd === 0 || wd === 6 ? [10 * 60, 23 * 60] : [17 * 60, 23 * 60];
+const minutesOfDay = (hhmm: string) => {
+  const [h = 0, m = 0] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+};
+
+/** The plan's window of a day: from its opening to its closing — the next day when that is earlier — in its zone. */
+export function windowOf(day: string, w: PlanWindow): [number, number] {
+  const opens = minutesOfDay(w.opens);
+  const closes = minutesOfDay(w.closes);
+  return [at(day, opens, w.zone), at(closes <= opens ? addDays(day, 1) : day, closes, w.zone)];
 }
 
-const STEP = 15;
-
-/** The first free start of `minutes` on `day` inside its window, at a quarter hour, not before `now`, clear of what
- * keeps him busy and of the slots already there; past the window's end when nothing is free — the latest start that
- * still ends by midnight. */
-export function firstFree(day: string, minutes: number, taken: [number, number][], now: number, tz: string): number {
-  const [from, to] = hours(day);
-  for (let m = from; m + minutes <= to; m += STEP) {
-    const start = at(day, m, tz);
-    const end = start + minutes * 60;
-    if (start < now) continue;
-    if (taken.every(([a, b]) => end <= a || start >= b)) return start;
-  }
-  return at(day, Math.max(from, 24 * 60 - minutes), tz);
+/** The window a moment belongs to: one past midnight belongs to the evening before. */
+export function windowDay(ts: number, w: PlanWindow): string {
+  const day = dayOf(ts, w.zone);
+  const closes = minutesOfDay(w.closes);
+  const pastMidnight = closes <= minutesOfDay(w.opens) && minutesOfDay(hm(ts, w.zone)) < closes;
+  return pastMidnight ? addDays(day, -1) : day;
 }
 
-/** What keeps him busy and what is planned already, as moments: the calendar's busy occurrences and the open tasks'
- * slots, the one being moved aside. */
-export function taken(plan: Plan, except?: string): [number, number][] {
-  const out: [number, number][] = plan.calendar.events.filter((e) => e.busy).map((e) => [e.start, e.end]);
-  for (const t of plan.tasks.rows) {
-    const s = slotOf(t);
-    if (s !== null && t.id !== except && t.fields.state === "open") out.push([s, s + minutesOf(t) * 60]);
-  }
-  return out;
+/** The window a plan made now is for: the one we are in while an hour of it is left, else the next. */
+export function planDay(now: number, w: PlanWindow): string {
+  const day = windowDay(now, w);
+  return now < windowOf(day, w)[1] - 3600 ? day : addDays(day, 1);
+}
+
+export interface Placed {
+  block: Block;
+  task: Task | undefined;
+  start: number;
+  end: number;
+}
+
+/** The blocks still planned or passed, each with its task and its moments. */
+export function placed(plan: Plan): Placed[] {
+  const tasks = new Map(plan.tasks.rows.map((t) => [t.id, t]));
+  return plan.tasks.blocks
+    .filter((b) => b.fields.state !== "skipped")
+    .map((b) => {
+      const start = moment(b.fields.start) ?? 0;
+      return { block: b, task: tasks.get(b.fields.task), start, end: start + b.fields.minutes * 60 };
+    })
+    .filter((p) => !p.task || p.task.fields.state === "open" || p.block.fields.state === "passed");
+}
+
+/** A task's next planned block, if it has one ahead. */
+export function nextBlock(plan: Plan, task: Task): Placed | undefined {
+  return placed(plan)
+    .filter((p) => p.task?.id === task.id && p.block.fields.state === "planned" && p.end > plan.now)
+    .sort((a, b) => a.start - b.start)[0];
+}
+
+/** What its passed blocks counted of a task, in minutes. */
+export function doneOf(plan: Plan, task: Task): number {
+  return plan.tasks.blocks
+    .filter((b) => b.fields.task === task.id && b.fields.state === "passed")
+    .reduce((n, b) => n + b.fields.minutes, 0);
 }
 
 /** A goal's swatch, by its place in the form — a series' colour, never a meaning of its own. */

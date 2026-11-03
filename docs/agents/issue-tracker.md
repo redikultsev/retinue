@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs for this repo live as GitHub issues in `redikultsev/retinue`. Use the `gh` CLI for all operations.
+Issues and specs for this repo live as GitHub issues in `retinue-oss/retinue`. Use the `gh` CLI for all operations.
 
 ## Issues are public
 

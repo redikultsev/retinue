@@ -29,7 +29,7 @@ This repository is public. It is one person's platform, and it must say nothing 
 
 ### Issue tracker
 
-GitHub Issues on `redikultsev/retinue`, which are public, so the rules above apply to every issue. See
+GitHub Issues on `retinue-oss/retinue`, which are public, so the rules above apply to every issue. See
 `docs/agents/issue-tracker.md`.
 
 ### Triage labels

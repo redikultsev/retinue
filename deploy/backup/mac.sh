@@ -3,6 +3,8 @@
 #   mac.sh monthly   check every byte, restore the latest snapshot and open its databases, copy to a local
 #                    repository, and only then forget old snapshots and prune. Stops at the first failure.
 #   mac.sh check | restore | copy | forget   one step
+# A monthly run that went through tells the server when (status/restore.json, over ssh to $RETINUE_SSH_HOST): the
+# morning's health line says so once it is 35 days old.
 # Settings: $RETINUE_BACKUP_ENV (default ~/.config/retinue/backup.env, mode 600) — see docs/backup.md.
 set -euo pipefail
 
@@ -14,6 +16,7 @@ set +a
 : "${RESTIC_REPOSITORY:?}" "${AWS_ACCESS_KEY_ID:?}" "${AWS_SECRET_ACCESS_KEY:?}" "${RETINUE_LOCAL_REPO:?}"
 RESTIC=${RESTIC:-restic}
 PYTHON=${PYTHON:-python3}
+SSH=${SSH:-ssh}
 HOST=${RETINUE_BACKUP_HOST:-retinue}
 SNAPSHOTS=(--host "$HOST" --tag retinue)
 # Time-based, so that a compromised server making many fake snapshots cannot push the real ones out.
@@ -73,11 +76,22 @@ copy() {
   "$RESTIC" -r "$RETINUE_LOCAL_REPO" copy --from-repo "$RESTIC_REPOSITORY" "${SNAPSHOTS[@]}"
 }
 
+# Only after every step went through: the server learns when its copies were last proven whole.
+report() {
+  if [[ -z ${RETINUE_SSH_HOST:-} ]]; then
+    echo "restore check done; set RETINUE_SSH_HOST in $ENV_FILE so the server knows (docs/backup.md)" >&2
+    return 0
+  fi
+  printf '{"checked": %s}\n' "$(date +%s)" |
+    "$SSH" "$RETINUE_SSH_HOST" 'sudo tee /srv/retinue/status/restore.json >/dev/null' ||
+    echo "restore check done, but the server was not told: run it again or write status/restore.json" >&2
+}
+
 # The server's key may not delete, its own locks included: each night leaves one behind. Only stale ones go.
 forget() { "$RESTIC" unlock; "$RESTIC" forget "${SNAPSHOTS[@]}" "${KEEP[@]}" --prune; }
 
 case ${1:-} in
-  monthly) check; restore; copy; forget; "$RESTIC" -r "$RETINUE_LOCAL_REPO" check ;;
+  monthly) check; restore; copy; forget; "$RESTIC" -r "$RETINUE_LOCAL_REPO" check; report ;;
   check | restore | copy | forget) "$1" ;;
   *) echo "usage: $0 monthly | check | restore | copy | forget" >&2; exit 2 ;;
 esac

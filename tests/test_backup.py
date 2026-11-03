@@ -169,6 +169,11 @@ fi
 """
 
 
+FAKE_SSH = """#!/bin/bash
+echo "$* <<< $(cat)" >> "$FAKE_SSH_LOG"
+"""
+
+
 def mac(tmp_path, archive_bytes=None, platform=None, env=""):
     """The owner's Mac: an env file with the deleting key, a fake restic whose `restore` lays out last night's copies.
     `platform`: the platform's volume too — `{"collections": bool, "rows": [sha…], "blobs": {sha: bytes}}`, and
@@ -213,9 +218,13 @@ def mac(tmp_path, archive_bytes=None, platform=None, env=""):
     restic = tmp_path / "restic"
     restic.write_text(FAKE_MAC_RESTIC)
     restic.chmod(0o755)
+    ssh = tmp_path / "ssh"
+    ssh.write_text(FAKE_SSH)
+    ssh.chmod(0o755)
     run = subprocess.run(["bash", str(MAC), "monthly"], capture_output=True, text=True,
                          env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), "TMPDIR": str(tmp_path),
                               "RETINUE_BACKUP_ENV": str(env_file), "RESTIC": str(restic), "PYTHON": sys.executable,
+                              "SSH": str(ssh), "FAKE_SSH_LOG": str(tmp_path / "ssh.log"),
                               "FAKE_LOG": str(tmp_path / "restic.log"), "FAKE_RESTORE": str(snapshot), **volumes})
     calls = (tmp_path / "restic.log").read_text().splitlines() if (tmp_path / "restic.log").exists() else []
     steps = [call.split()[2] if call.startswith("-r ") else call.split()[0] for call in calls]  # -r <local repo> <command>
@@ -238,6 +247,18 @@ def test_monthly_care_on_the_mac_checks_restores_copies_and_only_then_prunes(tmp
     assert calls[6] == f"-r {tmp_path / 'local-repo'} check"
     assert "integrity ok: agent.sqlite, archive.sqlite, router.sqlite" in run.stdout
     assert not list(tmp_path.glob("retinue-restore.*")), "the restored copy is removed"
+    assert not (tmp_path / "ssh.log").exists() and "set RETINUE_SSH_HOST" in run.stderr, "no host named: said, not failed"
+
+
+def test_a_monthly_run_that_went_through_tells_the_server_and_a_broken_one_does_not(tmp_path):
+    run, _, _ = mac(tmp_path, env="RETINUE_SSH_HOST=server.example\n")
+    assert run.returncode == 0, run.stderr
+    [told] = (tmp_path / "ssh.log").read_text().splitlines()
+    assert told.startswith("server.example sudo tee /srv/retinue/status/restore.json >/dev/null <<< {\"checked\": ")
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    run, _, _ = mac(broken, archive_bytes=b"not a database", env="RETINUE_SSH_HOST=server.example\n")
+    assert run.returncode != 0 and not (broken / "ssh.log").exists(), "a failed check tells the server nothing"
 
 
 def test_a_broken_restore_stops_before_anything_is_deleted(tmp_path):

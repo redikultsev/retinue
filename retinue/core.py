@@ -80,6 +80,7 @@ LIMITED = ("The answer is late: the subscription limit was used up. The owner's 
 LIMIT_MARGIN_S = 60     # a retry waits this long after the limit window resets
 LIMIT_RETRY_S = 3600    # when the CLI did not say when the window resets, the retry comes this much later
 BACKUP_STALE_S = 26 * 3600  # a nightly backup older than this is missing: a day plus the timer's slack
+RESTORE_STALE_S = 35 * 86400  # the monthly restore check (mac.sh monthly) older than this is said: a month and slack
 DIGEST_STATUS = {"A": "new", "D": "deleted", "R": "moved"}  # how the evening list names a file's change
 FOREIGN = {"forwarded": "forwarded", "attachment": "attachment", "travel": "travel-ops results", "archive": "archive",
            "mail": "mail", "calendar": "calendar", "telegram": "Telegram", "collection": "collection records",
@@ -812,6 +813,8 @@ class Core:
             parts.append("subscription limit share unknown")
         if self.backup_status:
             parts.append(self.backup(now))
+            if restore := self.restore(now):
+                parts.append(restore)
         if self.mail:
             parts += self.mail.health(now)
         if self.pages and (built := self.pages.health(now)):
@@ -844,6 +847,23 @@ class Core:
         if not status.get("ok"):
             return f"{text}, the last run failed: {error}"
         return f"{text}, with a warning: {str(status['warning']).rstrip('. ')}" if status.get("warning") else text
+
+    def restore(self, now: float) -> str:
+        """The monthly restore check, said only when it is overdue: the Mac's `mac.sh monthly` writes
+        `restore.json` beside the backup's status after every step went through. Nothing while backups are not set up."""
+        if not os.path.exists(self.backup_status):
+            return ""
+        try:
+            with open(os.path.join(os.path.dirname(self.backup_status), "restore.json")) as file:
+                checked = json.load(file).get("checked")
+        except FileNotFoundError:
+            return "restore never checked: run mac.sh monthly on the Mac"
+        except (OSError, ValueError, AttributeError):
+            return "restore check status unreadable"
+        if type(checked) not in (int, float):
+            return "restore check status unreadable"
+        age = now - checked
+        return f"restore not checked for {round(age / 86400)} d: run mac.sh monthly" if age > RESTORE_STALE_S else ""
 
     async def summary(self, job: Job, now: float) -> None:
         """The morning summary: a run outside the conversation's session (`oneshot`), so the night's work does not

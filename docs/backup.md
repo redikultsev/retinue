@@ -109,6 +109,7 @@ AWS_SECRET_ACCESS_KEY=<its secret>
 AWS_DEFAULT_REGION=<the endpoint's region>
 RETINUE_LOCAL_REPO=/Users/<you>/Backups/retinue-restic
 RETINUE_PLATFORM=1          # with the platform on: a snapshot without its databases then fails the restore
+RETINUE_SSH_HOST=<your server's ssh host>   # where a run that went through reports itself (status/restore.json)
 ```
 
 ```bash
@@ -126,7 +127,10 @@ It stops at the first failure, so nothing is deleted after a bad check or restor
    password);
 4. `restic forget --keep-within-daily 7d --keep-within-weekly 1m --keep-within-monthly 6m --prune` — time-based,
    so that fake snapshots made by a compromised server cannot push the real ones out;
-5. `restic check` of the local repository.
+5. `restic check` of the local repository;
+6. the server is told when (`/srv/retinue/status/restore.json`, over ssh to `RETINUE_SSH_HOST`). The morning's
+   health line says «restore never checked» until the first report, and «restore not checked for N d» once the last
+   one is 35 days old; otherwise it says nothing of it. A run that failed reports nothing.
 
 ## Restore onto a new server
 

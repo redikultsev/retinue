@@ -752,7 +752,14 @@ def test_the_health_line_tells_how_old_the_backup_is(tmp_path):
         return core.health(now).removeprefix("Health for the day: ").split(", subscription limit share unknown, ")[1]
 
     assert health() == "backup not set up.", "no file: the host never ran a backup"
-    assert health(ok=True, finished=now - 5.5 * hour, snapshot="4f9c2a1b") == "backup — 5 h ago."
+    restore = status.parent / "restore.json"
+    assert health(ok=True, finished=now - 600) == \
+        "backup — under an hour ago, restore never checked: run mac.sh monthly on the Mac."
+    restore.write_text(json.dumps({"checked": now - 40 * 86400}))
+    assert health(ok=True, finished=now - 600) == \
+        "backup — under an hour ago, restore not checked for 40 d: run mac.sh monthly."
+    restore.write_text(json.dumps({"checked": now - 3 * 86400}))
+    assert health(ok=True, finished=now - 5.5 * hour, snapshot="4f9c2a1b") == "backup — 5 h ago.", "checked lately: not said"
     assert health(ok=True, finished=now - 600, snapshot="4f9c2a1b") == "backup — under an hour ago."
     assert health(ok=True, finished=now - 5 * hour, snapshot="4f", warning="Warning: 1 file unreadable") == \
         "backup — 5 h ago, with a warning: Warning: 1 file unreadable."

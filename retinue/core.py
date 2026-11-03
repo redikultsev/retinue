@@ -25,7 +25,7 @@ from a2a.helpers import get_message_text, new_raw_part, new_text_message
 from a2a.types import Role, SendMessageRequest
 from google.protobuf.json_format import MessageToDict
 
-from . import clock
+from . import clock, coderules
 from .archive import (ASSISTANT, CALENDAR, CHAT, KINDS, MAIL, NOTE, OWNER, SYSTEM, Archive, Attachment, Event, event_id,
                       exchange_of)
 from .attachments import Unreadable, Upload, prepare
@@ -93,7 +93,7 @@ DIGEST_AFTER = "collections.digest_after"  # the newest change of the collection
 DIGEST_AT = "21:00"     # the evening list's time when there is no base to take it from (`MemoryConfig.digest_at`)
 DIGEST_CHANGES = 100    # the collections' changes one evening list names; the rest come in the next
 COLLECTIONS_S = 30      # a call of the assistant's to the platform's collections waits no longer
-QUIET_RULES = ("code:plan", "code:calsync")  # the owner's own moves carried out: never in the evening list
+QUIET_RULES = coderules.QUIET  # the owner's own moves carried out: never in the evening list
 TASKS = "tasks"         # the owner's tasks (docs/collections.md#tasks): closed by her only on his own word
 CLOSED = ("done", "dropped")
 VALUE_CHARS = 40        # a value in a line of the evening list

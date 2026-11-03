@@ -33,17 +33,15 @@ import re
 from datetime import datetime, time as wall, timedelta
 
 from . import clock
+from .coderules import WAITING, Records, mark
 from .courier import line
-from .mail import Unavailable
+from .mirror import Mirror
 
 log = logging.getLogger(__name__)
 
 TASKS = "tasks"
-RULE = "code:waiting"         # the Router's writer of tasks: a press, the reconciliation
 SYNCED_KEY = "tasks.synced"   # the Router's kv: each task that names a row, as last left — [task, row], JSON
 TITLE_CHARS = 200             # a task's title, as the form takes it
-QUERY_PAGES = 5               # 200 rows a page: the tasks that name a row, at most this many pages read a look
-CALL_S = 15                   # a call to the platform waits no longer: it runs beside the digest's push
 CALENDAR_S = 600              # the busy window is read this often — the collector's own poll
 CALENDAR_DAYS = 14            # today and this many days after it
 CALENDAR_EVENTS = 400         # occurrences pushed at most
@@ -56,48 +54,20 @@ OPEN, DONE, DROPPED = "open", "done", "dropped"
 class Tasks:
     """The Router's side of the tasks, with its core: what a press, a look and the calendar's clock ask of it."""
 
-    def __init__(self, core) -> None:
+    def __init__(self, core, mirror: Mirror | None = None) -> None:
         self.core = core
+        self._tasks = Records(core.platform, WAITING, TASKS)  # the Router's writer of tasks: a press, the reconciliation
         self._calendar_at = 0.0
         self.events_at: float | None = None  # when the busy window was last read; none yet — a plan would land on meetings
         self.events: list[dict] = []  # the busy window as last read: what the plan lays around (`planner`)
-        self.planner = None           # the day plan's look rides on this one (`planner.Planner.cycle`)
-        self.gcal = None              # and the calendar «Retinue» after it (`gcal.Gcal.cycle`)
-        self._missing = False  # the collection or the rule's rights are not there: said once, then quiet
-
-    # --- the platform ---------------------------------------------------------------------------------------------
-
-    async def _call(self, name: str, arguments: dict, call: str) -> dict:
-        body = {"actor": RULE, "via": "code", "foreign": [], "call": call, "arguments": arguments}
-        return await self.core.platform(f"collections/{name}", body, CALL_S)
+        self._window: dict | None = None  # and as the platform takes it: `{events, at, failed}`
+        self._push = mirror.snapshot("calendar", lambda now: self._window, "the busy window", every_s=0) \
+            if mirror else None
 
     async def _named(self) -> list[dict] | None:
         """The tasks that name a row (`ask` set), every state; None when they cannot be read — no collection yet, no
         rights for the rule, the platform away."""
-        rows: list[dict] = []
-        after = None
-        for page in range(QUERY_PAGES):
-            arguments = {"collection": TASKS, "filter": [{"field": "ask", "op": "not_empty"}],
-                         "fields": ["title", "state", "ask", "due", "by"], **({"after": after} if after else {})}
-            data = await self._call("query", arguments, f"named/{page}/{after or ''}")
-            answer = data.get("answer") if data.get("ok") else None
-            if not isinstance(answer, dict):
-                if not self._missing:
-                    log.warning("tasks not read: %s", line(str(data.get("text") or "no answer"), 300))
-                    self._missing = True
-                return None
-            rows += [r for r in answer.get("rows") or [] if isinstance(r, dict)]
-            after = answer.get("next")
-            if not after:
-                break
-        self._missing = False
-        return rows
-
-    async def _apply(self, ops: list[dict], idem: str) -> bool:
-        data = await self._call("apply", {"collection": TASKS, "ops": ops, "idem": idem}, idem)
-        if not data.get("ok"):
-            log.warning("tasks not written: %s", line(str(data.get("text") or "no answer"), 300))
-        return bool(data.get("ok"))
+        return await self._tasks.query([{"field": "ask", "op": "not_empty"}], ["title", "state", "ask", "due", "by"])
 
     # --- «Plan» on a row ------------------------------------------------------------------------------------------
 
@@ -146,22 +116,15 @@ class Tasks:
             had = mine["fields"]
             change = {**({"due": due} if due and (not had.get("due") or due < had["due"]) else {}),
                       **({"by": by} if by and (not had.get("by") or by < had["by"]) else {})}
-            if change:
-                idem = f"task-due:{mine['id']}:{_hash(change)}"
-                data = await self._call("apply", {"collection": TASKS, "ops": [
-                    {"op": "set", "id": mine["id"], "version": mine["version"], "fields": change}], "idem": idem}, idem)
-                if not data.get("ok"):
-                    log.warning("the task's deadline not set: %s", line(str(data.get("text") or "no answer"), 300))
+            if change:  # refused: logged, and the task is laid as it is
+                await self._tasks.apply([{"op": "set", "id": mine["id"], "version": mine["version"], "fields": change}],
+                                        f"task-due:{mine['id']}:{mark(change, 12)}")
             return mine["id"]
         fields = {"title": line(title, TITLE_CHARS) or "Task", "state": OPEN, "ask": ask,
                   **({"due": due} if due else {}), **({"by": by} if by else {})}
-        idem = f"task:{ask}:{int(now // 60)}"
-        data = await self._call("apply", {"collection": TASKS, "ops": [{"op": "add", "fields": fields}], "idem": idem}, idem)
-        records = (data.get("answer") or {}).get("records") or [] if data.get("ok") else []
-        if not records:
-            log.warning("the task not made: %s", line(str(data.get("text") or "no answer"), 300))
-            return None
-        return records[0].get("id")
+        answer = await self._tasks.apply([{"op": "add", "fields": fields}], f"task:{ask}:{int(now // 60)}")
+        records = (answer or {}).get("records") or []
+        return records[0].get("id") if records and isinstance(records[0], dict) else None
 
     # --- the reconciliation ---------------------------------------------------------------------------------------
 
@@ -201,7 +164,7 @@ class Tasks:
             elif side != was_row and side != task:
                 # The row moved and the task is not where the row is now.
                 ops = [{"op": "set", "id": record["id"], "version": record["version"], "fields": {"state": side}}]
-                if await self._apply(ops, f"sync:{record['id']}:{record['version']}"):
+                if await self._tasks.apply(ops, f"sync:{record['id']}:{record['version']}") is not None:
                     task, changed = side, changed + 1
             kept[record["id"]] = [task, side]
         if kept != synced:
@@ -222,8 +185,9 @@ class Tasks:
     # --- the busy window ------------------------------------------------------------------------------------------
 
     async def calendar(self, now: float) -> bool:
-        """The calendar of today and the next CALENDAR_DAYS to the platform, every CALENDAR_S. True when pushed; an
-        unread calendar is not pushed, and the platform shows the last one with its age."""
+        """The calendar of today and the next CALENDAR_DAYS, read every CALENDAR_S and pushed to the platform. True
+        when pushed; an unread calendar is not pushed, and the platform shows the last one with its age. The platform
+        away: read and pushed again at the next look, not in ten minutes."""
         if self.core.platform is None or not self.core.mail or self.core.mail.collector is None:
             self.events_at = now  # no calendar to read: none keeps him busy, and that is known
             return False
@@ -239,31 +203,13 @@ class Tasks:
             return False
         shown = [e for e in (occurrence(event, self.core.tz) for event in events) if e][:CALENDAR_EVENTS]
         self.events, self.events_at = shown, now
-        answer = await self.core.platform("calendar", {"events": shown, "at": now, "failed": len(failed)}, CALL_S)
-        if answer.get("error"):
-            log.warning("the platform refused the busy window: %s", answer["error"])
+        self._window = {"events": shown, "at": now, "failed": len(failed)}
+        if self._push is None:
+            return False
+        if not await self._push(now):
+            self._calendar_at = 0.0
             return False
         return True
-
-    async def cycle(self, now: float) -> None:
-        """What the digest's look does beside the push: the reconciliation, and the busy window when it is due."""
-        try:
-            await self.reconcile(now)
-        except Unavailable as exc:  # the platform restarting: the next look, 30 s on, tries again
-            log.warning("the tasks were not reconciled: %s", exc)
-        except Exception:
-            log.exception("the tasks were not reconciled")
-        try:
-            await self.calendar(now)
-        except Unavailable as exc:
-            self._calendar_at = 0.0  # not pushed: tried again at the next look, not in ten minutes
-            log.warning("the busy window was not pushed: %s", exc)
-        except Exception:
-            log.exception("the busy window was not pushed")
-        if self.planner is not None:
-            await self.planner.cycle(now)
-        if self.gcal is not None:
-            self.gcal.cycle(now)  # in a task of its own: a slow Google holds neither the digest nor a press
 
 
 def _side(row: dict) -> str | None:
@@ -359,6 +305,3 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-def _hash(fields: dict) -> str:
-    import hashlib
-    return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()[:12]

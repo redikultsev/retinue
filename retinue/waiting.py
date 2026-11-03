@@ -1,5 +1,5 @@
 """What waits for the owner in the assistant's world, as the digest the router pushes to the platform for the one queue
-«Waiting for you» (`feed` on the platform's side; the bridge pushes it).
+«Waiting for you» (`feed` on the platform's side; the mirror pushes it, `snapshot`).
 
 Read from the router's own tables, by the rules they already have — nothing new is judged here:
 
@@ -81,6 +81,7 @@ MAILBOX = re.compile(r"[^\s@/?#&]{1,64}@[^\s@/?#&]{1,190}")
 USERNAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{3,31}")  # a Telegram @username, as t.me takes it
 LINK_DRAFT = "draft: send it yourself by the link"
 DRAFT = "a reply draft waits for «Send»"
+STALE_PRESS = "The press did not apply: the list is out of date."
 
 
 def _salt(core) -> bytes:
@@ -107,6 +108,12 @@ def said(text: str) -> str:
     text = URL.sub("‹link›", text)
     text = PHONE.sub("‹number›", text)
     return line(DIGITS.sub("••••", text), SAID_CHARS)
+
+
+def snapshot(core, now: float, bot: str = "") -> dict:
+    """What `/owner/waiting` takes, whole (the mirror's `waiting`): the rows, the bot's name for their links, the
+    status chips and the two counts."""
+    return {"items": digest(core, now), "bot": bot or "", "chips": chips(core, now), **counts(core, now)}
 
 
 def digest(core, now: float) -> list[dict]:
@@ -174,6 +181,14 @@ def press(core, token: str, action: str, now: float) -> bool:
         return False
     core.mail.store.mark(seqs, action, now, later_until(now, core.tz) if action == "later" else None)
     return True
+
+
+def pressed(core, data: dict, now: float) -> str | None:
+    """«Done», «Not a task», «Tomorrow» or «Undo» on a row in the app (its `waiting-press` note, `{t, action}`): a sign
+    that he was there, then `press`. None when applied — the digest is to go again at once; else what he is told."""
+    if getattr(core, "planner", None) is not None:
+        core.planner.sign(now)  # a press in the app: he was there
+    return None if press(core, str(data.get("t") or ""), str(data.get("action") or ""), now) else STALE_PRESS
 
 
 def detail(core, ref: str, token: str, now: float) -> dict | None:

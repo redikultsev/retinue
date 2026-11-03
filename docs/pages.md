@@ -222,7 +222,7 @@ and `notes`):
 | `author`, `scripts` | `owner` / `assistant`; `on` / `off` |
 | `sha256` | of the file's bytes |
 
-**In the app («Pages»).** The router pushes the list to the platform (`Pages.library`, `bridge.push_library`): each
+**In the app («Pages»).** The router pushes the list to the platform (`Pages.library`, the mirror's `library` snapshot, [platform.md](platform.md#the-routers-mirror)): each
 page's id, title, full address, Space, day and reading time — no description, no body, no path in the base; a page
 the last build refused (build.json) is left out. The app lists them and opens each on the owner's host, never inside
 the app ([face.md](face.md#pages)). The platform takes a page's address only as `<pages_origin>/<id>`, `pages_origin`

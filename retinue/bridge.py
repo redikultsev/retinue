@@ -24,7 +24,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 import httpx
@@ -38,6 +38,7 @@ from .core import ALBUM_S, defuse
 from .courier import CardView
 from .feed import DETAIL_HOLD_S
 from .mail import Unavailable
+from .mirror import Mirror
 from .outbox import Neighbour
 from .outfiles import ACTIVE, PHOTO_MAX, PHOTOS
 from .spoken import SPOKEN_MARK
@@ -67,13 +68,9 @@ ECHO_CHARS = 3000            # what was heard, said back, escaped: room is left 
 ALBUMS = "platform.albums"   # the router's kv: the albums being gathered or sent into sessions, as JSON
 ALBUM_KEYS = ("message_id", "caption", "media_group_id", "photo", "document")  # what is kept of a part
 FILES_TIMEOUT_S = 300        # the platform reads every picture and PDF of the message before it answers
-WAITING_LOOK_S = 30.0        # the assistant's digest («Waiting for you») is built this often…
-WAITING_PUSH_S = 3600.0      # …pushed when it changed, and at least this often anyway
-WAITING_TIMEOUT_S = 10.0     # a push waits no longer: it runs beside the notes' pump, never in its way
+SHORT_S = 10.0               # a snapshot or a sheet waits no longer: it runs beside the notes' pump, never in its way
 DETAIL_SPIN_S = 0.5          # the sheets' long call answered empty at once (an old platform): this pause, not a spin
 DECIDE_HINT = "Decide with its card's buttons or in the app."
-STALE_PRESS = "The press did not apply: the list is out of date."
-FAILED_PRESS = "The press did not apply: a server error. Try again."
 # `/wait`: what each row's icon is, by where it came from.
 ICONS = {"question": "❓", "approval": "⚠️", "courier": "📦", "session": "💬", "letter": "✉️", "chat": "💬",
          "draft": "📝", "deadline": "⏳", "reminder": "⏰", "base": "🗂", "push": "⬆️", "proposal": "🔀",
@@ -100,11 +97,10 @@ class PlatformClient(Neighbour):
             raise Unavailable(f"{self.name}: HTTP {response.status_code}")
         return await asyncio.to_thread(_file_answer, response.content)
 
-
-    async def waiting(self, body: dict) -> dict:
-        """The assistant's digest (`/owner/waiting`), with a short wait. A digest too big for the platform (413) is
-        its refusal, not silence: the same digest is not pushed again every look."""
-        return await self._digest("/owner/waiting", body)
+    async def publish(self, call: str, body: dict) -> dict:
+        """A snapshot of the mirror's (`mirror.Snapshot`) to `/owner/<call>`, with a short wait. One too big for the
+        platform (413) is its refusal, not silence: the same snapshot is not pushed again every look."""
+        return await self._short(f"/owner/{call}", body)
 
     async def asked(self) -> list[dict]:
         """The rows the app opened and waits to hear about (`/owner/waiting/asked`): the platform holds the call open
@@ -115,20 +111,16 @@ class PlatformClient(Neighbour):
 
     async def detail(self, body: dict) -> dict:
         """A row's sheet, the answer to one of them (`/owner/waiting/detail`), with a short wait."""
-        return await self._digest("/owner/waiting/detail", body)
+        return await self._short("/owner/waiting/detail", body)
 
-    async def library(self, body: dict) -> dict:
-        """The owner's list of pages for «Read» (`/owner/library`), the same way as the digest."""
-        return await self._digest("/owner/library", body)
-
-    async def _digest(self, path: str, body: dict) -> dict:
+    async def _short(self, path: str, body: dict) -> dict:
         try:
-            response = await self.http.post(f"{self.url}{path}", json=body, timeout=WAITING_TIMEOUT_S,
+            response = await self.http.post(f"{self.url}{path}", json=body, timeout=SHORT_S,
                                             headers={"Authorization": f"Bearer {self.token}"})
         except httpx.HTTPError as exc:
             raise Unavailable(f"unavailable: {self.name} ({type(exc).__name__})") from None
         if response.status_code == 413:
-            return {"error": "the digest is bigger than the platform takes (413)"}
+            return {"error": "bigger than the platform takes (413)"}
         try:
             data = response.json()
         except ValueError:
@@ -143,24 +135,10 @@ class PlatformBridge:
         self.neighbour, self.store, self.face_url = neighbour, store, face_url
         self.channel: TelegramChannel | None = None
         self.timers: dict[str, asyncio.Task] = {}  # an album's key -> the task that closes it (`files`)
-        # What waits for the owner in the assistant's world (`waiting.digest`), given by the router once its core is up.
-        self.waiting: Callable[[float], list[dict]] | None = None
-        self.chips: Callable[[float], list[dict]] | None = None  # the status chips, pushed with it
-        self.counts: Callable[[float], dict] | None = None  # its two numbers: closed today, run out in the week
-        # A press on a row of it in the app (`waiting.press`): the row's token and the mark; False — not known.
-        self.press_waiting: Callable[[str, str, float], bool] | None = None
-        # What each look at the digest does first (`tasks.Tasks.cycle`): the tasks against their rows, the calendar.
-        self.cycle: Callable[[float], Awaitable[None]] | None = None
-        self.planner = None  # the day plan (`planner.Planner`): the app's presses on it go there
-        self._planning: set[asyncio.Task] = set()
+        self.mirror: Mirror | None = None  # the app's presses on the Router's snapshots go there, by kind
         # A row's sheet the app asked for (`waiting.detail`): its id, its token, now; None — the router does not know it.
         self.detail_waiting: Callable[[str, str, float], dict | None] | None = None
         self._detailing: asyncio.Task | None = None
-        self._looked, self._pushed, self._pushed_mark = 0.0, 0.0, ""
-        self._pushing: asyncio.Task | None = None
-        # The owner's pages for the face's «Read» (`Pages.library`): None until the router has read them.
-        self.library: Callable[[], list[dict] | None] | None = None
-        self._library_looked, self._library_pushed, self._library_mark = 0.0, 0.0, ""
         self.spheres_at = 0.0  # when the platform last named its spheres (`refresh_spheres`)
 
     def attach(self, channel: TelegramChannel) -> None:
@@ -173,9 +151,7 @@ class PlatformBridge:
             await self.recover()
         except Exception:
             log.exception("the albums left by the previous router were not taken up")
-        if self.waiting is not None or self.library is not None:  # beside the notes: a hung push holds back no card
-            self._pushing = asyncio.create_task(self.push_loop())
-        if self.detail_waiting is not None:  # and the sheets the app asks for, beside both: none waits behind a card
+        if self.detail_waiting is not None:  # the sheets the app asks for, beside the notes: none waits behind a card
             self._detailing = asyncio.create_task(self.detail_loop())
         wait = PUMP_S
         while True:
@@ -217,45 +193,6 @@ class PlatformBridge:
                     log.exception("platform notes up to %s were not confirmed", done[-1])
         return len(done)
 
-    async def push_loop(self) -> None:
-        while True:
-            try:
-                await self.push_waiting(time.time())
-            except Unavailable as exc:
-                log.warning("the assistant's digest not pushed: %s", exc)
-            except Exception:
-                log.exception("the assistant's digest not pushed")
-            try:
-                await self.push_library(time.time())
-            except Unavailable as exc:
-                log.warning("the pages' list not pushed: %s", exc)
-            except Exception:
-                log.exception("the pages' list not pushed")
-            await asyncio.sleep(PUMP_S)
-
-    async def push_waiting(self, now: float) -> bool:
-        """The assistant's digest to the platform (`/owner/waiting`), replacing the one there whole: looked at every
-        WAITING_LOOK_S, pushed when it changed and at least every WAITING_PUSH_S. The platform never asks for it. A
-        digest it refuses is logged and not pushed again until it changes or the hour is up. True when pushed."""
-        if self.waiting is None or now - self._looked < WAITING_LOOK_S:
-            return False
-        self._looked = now
-        if self.cycle is not None:  # a task closed since the last look closes its row before the rows are read
-            await self.cycle(now)
-        body = {"items": self.waiting(now), "bot": getattr(self.channel, "username", "") or ""}
-        if self.chips is not None:
-            body["chips"] = self.chips(now)
-        if self.counts is not None:
-            body.update(self.counts(now))
-        mark = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-        if mark == self._pushed_mark and now - self._pushed < WAITING_PUSH_S:
-            return False
-        answer = await self.neighbour.waiting(body)  # Unavailable: the next look, 30 s on, tries again
-        if answer.get("error"):
-            log.warning("the platform refused the assistant's digest: %s", answer["error"])
-        self._pushed, self._pushed_mark = now, mark
-        return True
-
     async def detail_loop(self) -> None:
         """The rows the app opens, answered as soon as asked: a long call for what was asked (`PlatformClient.asked`),
         then each answered on its own. Nothing of it goes through the notes' journal, so a sheet never waits behind a
@@ -294,34 +231,6 @@ class PlatformBridge:
         except Unavailable as exc:  # one answer lost: the app's wait ends it; the others go on
             log.warning("the sheet for request %s did not reach the platform: %s", number, exc)
 
-    def poke(self) -> None:
-        """The digest changed by the owner's hand: looked at and pushed on the push loop's next turn, not in 30 s."""
-        self._looked = 0.0
-
-    async def push_library(self, now: float) -> bool:
-        """The owner's pages to the platform (`/owner/library`), replacing the list there whole, by the digest's rules:
-        looked at every WAITING_LOOK_S, pushed when it changed and at least every WAITING_PUSH_S, a refused list not
-        pushed again until it changes or the hour is up. Nothing before the router first read them. True when
-        pushed."""
-        if self.library is None or now - self._library_looked < WAITING_LOOK_S:
-            return False
-        self._library_looked = now
-        pages = self.library()
-        if pages is None:
-            return False
-        body = {"pages": pages}
-        mark = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-        if mark == self._library_mark and now - self._library_pushed < WAITING_PUSH_S:
-            return False
-        answer = await self.neighbour.library(body)
-        if answer.get("error"):
-            log.warning("the platform refused the pages' list: %s", answer["error"])
-        for page in answer.get("dropped") or []:  # the rest went up: these did not, and the log says which and why
-            if isinstance(page, dict):
-                log.warning("the platform dropped the page %s: %s", page.get("id"), page.get("why"))
-        self._library_pushed, self._library_mark = now, mark
-        return True
-
     async def _show(self, note: dict) -> None:
         kind, session, data = note.get("kind"), str(note.get("session") or ""), note.get("data") or {}
         if kind == "card":
@@ -344,42 +253,20 @@ class PlatformBridge:
             await self.say(f"{data['head']}\n\n{data['text']}", session)
         elif kind == "file":
             await self._file(session, str(data["id"]), data)
-        elif kind == "waiting-press":
-            await self._waiting_press(data)
-        elif kind == "plan-press":
-            self._plan_press(data)
+        elif self.mirror is not None and self.mirror.takes(kind):  # a press on «Waiting for you», on the plan
+            await self._pressed(kind, data)
         else:
             log.warning("platform note %s of an unknown kind %r skipped", note.get("seq"), kind)
 
-    def _plan_press(self, data: dict) -> None:
-        """A press on the plan in the app (`planner.Planner.press`): run beside the notes, never in their way — a plan
-        reads and writes the collections, and the cards behind it do not wait for that."""
-        if self.planner is None:
-            return
-        task = asyncio.create_task(self.planner.press(data, time.time()))
-        self._planning.add(task)
-        task.add_done_callback(self._planning.discard)
-
-    async def _waiting_press(self, data: dict) -> None:
-        """«Done», «Not a task», «Tomorrow» or «Undo» on a row of «Waiting for you» in the app: marked by the router's own
-        record of the row's token, then the digest goes again at once. A token it does not know marks nothing, and
-        the owner is told. Whatever fails here is logged, the owner is told it did not apply, and the note is done
-        with: a press never holds back the cards behind it."""
-        try:
-            if self.planner is not None:
-                self.planner.sign(time.time())  # a press in the app: he was there
-            if self.press_waiting is None:
-                return
-            if self.press_waiting(str(data.get("t") or ""), str(data.get("action") or ""), time.time()):
-                self.poke()
-            else:
-                await self.say(STALE_PRESS)
-        except Exception:
-            log.exception("a press on «Waiting for you» was not applied")
+    async def _pressed(self, kind: str, data: dict) -> None:
+        """A press in the app, applied by the Router's own record (`mirror.Mirror.press`), and what it came to said
+        when it did not apply. Done with whatever happens: a press never holds back the cards behind it."""
+        said = await self.mirror.press(kind, data)
+        if said:
             try:
-                await self.say(FAILED_PRESS)
+                await self.say(said)
             except Exception:
-                log.exception("the owner was not told a press failed")
+                log.exception("the owner was not told a press did not apply")
 
     async def _ping(self, seq: int, session: str, data: dict) -> None:
         """The end of a turn (`pings`): its header and text, split as any text is, each message answering into the

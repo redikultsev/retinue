@@ -77,6 +77,62 @@ A queue the owner works through to its end is a list and a pane (`components/inb
   sends. No line explaining the mechanics («Undo for 10 s») under it.
 - What a row is about opens in the pane itself — a date's Record too — never in a second pane beside it.
 - On a narrow screen the list is the screen and a row opens over it with «All» to come back.
+- **By action · Operator · Map** is a segmented switch at the list's top, as Tasks' «By when · By goal». «By project»
+  is gone: one grouping does not live in two places — the projects are the left panel's. Instead every row's
+  second line starts with its project
+  («Work · …», «Work / Site · …»). Tasks are not in it — they are their own tab. The operator's is one column of cards
+  (720 px), no pane.
+- **An operator's card**: the pane's top line over it, its number first in mono («#3»); inside, «You asked: …» in the
+  quiet text, the main line at 15 px, then what it needs. An ask's options are full-width outlined rows — the label,
+  what it changes under it — the advice first with a blue edge and «Recommended»; a step's command is a mono block with
+  «Copy» in its bar; the thing to look at is the files' own row, open. A card answered or gone stays where it was at
+  half opacity; nothing moves until «New: N — show».
+- **Every answer box has a microphone** beside it (an outlined round 36 px button, 44 on a phone): dictation into the
+  box, never a send by itself. While it records it is a small pill — a red dot that breathes (live), the time, stop,
+  cancel.
+- **Schedule** is the week's hourly grid, a day on a phone ([face.md](face.md#tasks-and-schedule)): no switch at its
+  top — the grid's own bar.
+
+## The map
+
+The ask: a map for the operator, where every session stays where it was. What it decides:
+
+- **Flat, and places never move.** Areas are the projects in the left panel's order, auto-filling at 300 px each; two
+  tiles to a row; a session's place is the platform's `slot`, so a state change only recolours a tile. A free place is
+  kept as blank space; only the next one is drawn, dashed. No 3D, no zoom, no reflow on open.
+- **A tile** is 88 px tall at least, a 8 px radius, the list's surface: the top line 12 px (its number in mono, amber,
+  while it waits; the relation's icon; the state word), the title 13 px on two lines at most, one line 12 px at the
+  foot, a 4 px bar for a plan. The edge says whose move — amber his, blue at work (a 6 px dot that breathes), a done
+  tile at 60 % opacity —; the fill stays the surface: one accent per meaning, no coloured fills.
+- **The card opens beside, never over**: on a wide screen a pane of 20–24rem is always there, empty with a dashed
+  hint until a tile is pressed, so the map does not move; on a phone a sheet.
+
+## A project
+
+The ask: a project should show its passport when it opens, and its screen read as one place rather than a list of
+parts; of three prototypes, «A · Passport, then the work» was taken, with the operator mode inside a project too.
+What it decides ([face.md](face.md#a-project)):
+
+- **The header is one line**, as every screen's: its mark, its name at 15 px, «project · N sub-projects» quiet, the
+  tabs with their counts — the Operator's count amber, his move.
+- **It opens on its passport**: one card, the why at 16 px on 24 px lines (the page's only text above 15, its
+  headline), at most 72 characters a line; under it a table of two columns, 13 px — the label column quiet and
+  104 px, the words in the foreground —: In scope, Not in scope, Rules (their first lines, the rest folded). One
+  outlined button, «Edit with a session». Then the owner's things and the sessions as `LIST`s, the sub-projects rows
+  of the same list.
+- **A project's operator is its tab**, «Cards · Map» the same switch, the same cards and numbers as «Today».
+- **Records are one list**: the nature on the second line with the head's words, no folder lines.
+
+## The left panel
+
+Of the prototypes, «4 · Projects with sessions» was taken: a project is a place.
+
+- **A project's row** is a session row's height (30 px, 44 on touch): its mark, its name at 13 px medium, the amber
+  count of what waits in it in mono at its right, the fold chevron after it; the row opens the project. A sub-project
+  is indented 14 px a level, its sessions with it. «Other» is a quiet 12 px heading, not a place.
+- **Talk to Retinue** is a column at the right (380 px) on a wide screen, a sheet on a phone: the sidebar's surface,
+  a one-line header (mark, «Retinue», «the voice · sees every project» quiet, ↗, ×), the conversation, the composer.
+  The header's microphone and chat icon are ghost icon buttons beside «Log out».
 
 ## A plan: tasks, a day, a week
 
@@ -89,6 +145,29 @@ A queue the owner works through to its end is a list and a pane (`components/inb
 - **The day** is a list of time rows (the time in a 48 px mono column, start over end), not a grid of hours: a grid is
   unreadable on a laptop beside the sidebar. Free stretches are quiet rows of their own, where a dragged task lands.
 - **The week** keeps each day at least 10rem and scrolls sideways rather than squeeze seven columns until words break.
+
+## A session
+
+The ask: a session's conversation and what it produced were mixed in one column, with too much at once; different
+things belong in different views. Of three prototypes, B was taken. What it decides ([face.md](face.md#a-session)):
+
+- **Different things, different tabs of their own thing.** A session is «Chat» (the conversation) and «Results N»
+  (everything it made: files, pages, commits to the Base, reports, the thing to look at, the diff, the push) — tabs in
+  the session's own header, not a section of the app, so a result stays beside its context. A finished session opens on
+  «Results», one working or waiting on «Chat».
+- **What waits on him is not history.** «Waiting for you · N» stands above the input box with each thing's buttons; the
+  conversation keeps a one-line anchor where it came (the amber dot: his move). Buttons sit on the row only when the
+  row shows the whole of what they decide; otherwise the row opens the card first.
+- **Decided is one line.** A card answered, allowed or set aside is a receipt — an icon, what happened, a chevron —
+  that opens to the card. A call a card stands for never shows its raw line by itself.
+- **The engineer's view is on demand.** «Details» (folder, model, mode, context, connectors, id) is behind ⓘ, closed by
+  default; ids, track and lane are not in the stream or a card's head.
+- **One icon per relation** across the app (`components/relation.tsx`): sub-session a branch, fork a turn, side
+  question a bubble with «?». A relation is an icon and the other session's title, never a word or an id. A count is a
+  number with a chevron, never a relation's icon. The main session's star is muted: blue stays the button and the
+  link.
+- **A row of «Results»** is the `LIST` row: a 16 px type icon, the name (a path in mono) over what it is (12 px), its
+  own button at the right («Undo», «Push · N»), its time in mono, a chevron when it opens.
 
 ## Copy
 

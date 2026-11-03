@@ -16,6 +16,10 @@ x-health: &health
 # changes nothing until the pin is moved on purpose. Squid serves five proxies, one pin.
 x-squid-image: &squid-image ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
 
+# Retinue's own images: a release's (RETINUE_IMAGE and RETINUE_VERSION in stack.env, written by deploy/update.sh), or
+# built here from the checkout as retinue*:local when neither is set (`up -d --build`).
+x-retinue-image: &retinue-image ${RETINUE_IMAGE:-retinue}:${RETINUE_VERSION:-local}
+
 # Memory: every service has a ceiling, from `docker stats` and the cgroups' peaks on the server with room on top. The
 # always-on part stays under 8 GiB (tests/test_deploy.py); the lanes and travel-ops are owner-started bursts, on a
 # host shared with other services.
@@ -62,7 +66,7 @@ services:
 
   router:
     build: { context: .., dockerfile: Dockerfile }
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     command: ["retinue-router", "--config", "/config/router.yaml"]
     mem_limit: 2g                   # ~120 MiB, plus a file's parse worker, itself capped at 1.5 GiB (attachments.py)
@@ -93,6 +97,7 @@ services:
       RETINUE_SENDER_TOKEN: ${RETINUE_SENDER_TOKEN:-}         # only with `sender_url`
       RETINUE_CALWRITE_TOKEN: ${RETINUE_CALWRITE_TOKEN:-}     # only with `calwrite_url`
       RETINUE_PLATFORM_TOKEN: ${RETINUE_PLATFORM_TOKEN:-}     # only with `platform_url`
+      RETINUE_VERSION: ${RETINUE_VERSION:-local}    # the release running (deploy/update.sh); local: built here
     # `outside`: Telegram; `travel-router`: price alerts; `mail-router`: what the mail collector found;
     # `tg-router`: the owner's chosen Telegram chats and replies in them; `send-router`: letters he confirmed;
     # `platform-router`: the lanes' sessions — their cards and summaries, his replies and presses
@@ -100,7 +105,7 @@ services:
                platform-router]
 
   assistant:
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     command: ["retinue-agent", "--config", "/agent/agent.yaml"]
     mem_limit: 2g                   # ~90 MiB idle; each run is a Claude Code CLI, up to three at once (bus.py)
@@ -185,7 +190,7 @@ services:
   # MAIL=1); the keys come from his Mac (deploy/mail/login.py).
   collector:
     profiles: ["mail"]
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     user: "10002:10002"
     command: ["retinue-collector"]
@@ -223,7 +228,7 @@ services:
   # Off until the owner turns it on (setup.sh SEND=1, which needs MAIL=1); the keys come from his Mac (--kind send).
   mail-send:
     profiles: ["send"]
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     user: "10004:10004"
     command: ["retinue-mail-send"]
@@ -280,7 +285,7 @@ services:
   # it on (setup.sh TGBUSINESS=1).
   tg-business:
     profiles: ["tgbusiness"]
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     user: "10003:10003"
     command: ["retinue-tg-business"]
@@ -310,7 +315,7 @@ services:
   pages-build:
     profiles: ["pages"]
     build: { context: ./pages }
-    image: retinue-pages-build:local
+    image: ${RETINUE_IMAGE:-retinue}-pages-build:${RETINUE_VERSION:-local}
     restart: unless-stopped
     user: "10001:10001"
     network_mode: none                          # a build reaches nothing
@@ -326,7 +331,7 @@ services:
 
   pages:
     profiles: ["pages"]
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     user: "10021:10021"
     command: ["retinue-pages"]
@@ -403,7 +408,7 @@ services:
   # PLATFORM=1).
   platform:
     profiles: ["platform"]
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     user: "10007:10007"
     command: ["retinue-platform"]
@@ -431,6 +436,7 @@ services:
       # token and read-only in lane-private; the platform's own repositories (what a card fetched) are in
       # platform-data.
       - /srv/retinue/code/mirrors:/code/mirrors
+      - /srv/retinue/egress/projects:/config/projects:ro   # a project's own hosts (docs/platform.md): no lane's
     # retinue-memory (10001): a push writes the hub's objects/ and refs/; the hub's checks see a uid other than the
     # router's and take the push for the owner's — his button. retinue-base (10020): the clone's files, shared with
     # lane-private.
@@ -454,10 +460,14 @@ services:
       # The owner's voice in the app (docs/face.md «Voice»): the platform calls ElevenLabs through platform-egress and
       # takes the key out of its environment at start; no lane is given it.
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      RETINUE_VERSION: ${RETINUE_VERSION:-local}  # the release running (deploy/update.sh); local: built here
     # The git tokens, RETINUE_GIT_TOKEN_<KEY> (docs/code.md): root's file, written by deploy/code/set-git-token.sh;
-    # in this container alone. No file yet: no token, every repository off.
+    # in this container alone. No file yet: no token, every repository off. And the projects' keys,
+    # RETINUE_PROJECT_KEY_<NAME> (docs/platform.md, «A project's own hosts»): root's file, the same way.
     env_file:
       - path: /srv/retinue/code/tokens.env
+        required: false
+      - path: /srv/retinue/egress/project-keys.env
         required: false
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -482,7 +492,7 @@ services:
   face:
     profiles: ["face"]
     build: { context: .., dockerfile: deploy/face/Dockerfile }
-    image: retinue-face:local
+    image: ${RETINUE_IMAGE:-retinue}-face:${RETINUE_VERSION:-local}
     restart: unless-stopped
     read_only: true
     tmpfs: ["/tmp:size=16m"]                    # nginx's pid and temporary files
@@ -525,6 +535,7 @@ services:
       context: ..
       dockerfile: deploy/lanes/Dockerfile
       args: { LANE: private, LANE_UID: "10005" }
+    image: ${RETINUE_IMAGE:-retinue}-lane-private:${RETINUE_VERSION:-local}   # the retired lanes: built here only
     restart: unless-stopped
     # The lane host takes SIGTERM from Docker's init (which also reaps the CLIs' orphaned grandchildren): every run
     # stopped as /stop stops it (SIGINT, SIGTERM after 10 s, SIGKILL after 5 more) and its end journaled.
@@ -644,7 +655,7 @@ services:
   # (retinue/sniguard.py). It never opens TLS. Behind it, the open proxy; the room reaches nothing else.
   lane-private-sni:
     profiles: ["platform"]
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     user: "10009:10009"
     command: ["python", "-m", "retinue.sniguard"]
@@ -667,7 +678,7 @@ services:
   # of its own (`reach-out`): CONNECT to 443 of public hosts only, never an inside one.
   reach:
     profiles: ["platform"]
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     user: "10022:10022"
     command: ["retinue-reach"]

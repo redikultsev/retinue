@@ -24,7 +24,7 @@ function mount(node: React.ReactNode) {
   return render(<RouterProvider router={router} />);
 }
 
-describe("«Summary»", () => {
+describe("«Details»", () => {
   it("reads the latest plan, the step in work, children of every kind and tokens in words", () => {
     const items = [plan(0, ["pending"]), plan(1, ["completed", "in_progress", "pending"])];
     expect(latestPlan(items)?.map((t) => t.status)).toEqual(["completed", "in_progress", "pending"]);
@@ -38,7 +38,7 @@ describe("«Summary»", () => {
     expect([tokensWord(840), tokensWord(84_200), tokensWord(1_240_000)]).toEqual(["840", "84k", "1.2M"]);
   });
 
-  it("shows only what the platform said: environment, context, plan, sub-sessions, connectors", async () => {
+  it("shows only what the platform said: where it runs, its context and id, what hangs under it, connectors — not the plan", async () => {
     const snapshot: SessionSnapshot = {
       schema: 1, cursor: 5, session: session("s1", { state: "active" }), approvals: [], summaries: [],
       items: [plan(0, ["completed", "in_progress"])],
@@ -48,14 +48,19 @@ describe("«Summary»", () => {
     live.dispatch({ type: "list", snapshot: { schema: 1, cursor: 4, sessions: [session("s1"), session("k1", { sub_of: "s1", title: "lodging" })] } });
     live.dispatch({ type: "session", snapshot });
     mount(<SessionSummary id="s1" />);
-    const env = await screen.findByRole("region", { name: "Environment" });
+    const env = await screen.findByRole("region", { name: "Where it runs" });
     expect(within(env).getByText("/work/retinue")).toBeTruthy();
     expect(within(env).getByText("claude-opus-5-5")).toBeTruthy();
     expect(within(env).queryByText("Mode")).toBeNull(); // not said: not shown
-    expect(screen.getByRole("region", { name: "Context" }).textContent).toContain("84k");
-    expect(screen.getByRole("region", { name: "Plan" }).textContent).toContain("1 of 2");
-    expect(within(screen.getByRole("region", { name: "Sub-sessions" })).getByText("lodging")).toBeTruthy();
-    expect(within(screen.getByRole("region", { name: "Connectors" })).getByText("retinue")).toBeTruthy();
+    expect(within(env).getByText("Context").parentElement!.textContent).toContain("84k");
+    expect(within(env).getByText("s1")).toBeTruthy(); // its id lives here, not in the header
+    // the plan is the line above the input box only; what it made is «Results»
+    expect(screen.queryByRole("region", { name: "Plan" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Files" })).toBeNull();
+    const related = screen.getByRole("region", { name: "Related" });
+    expect(within(related).getByText("lodging")).toBeTruthy();
+    expect(related.querySelector("svg[data-relation='sub-session']")).toBeTruthy(); // by its relation's icon
+    expect(within(screen.getByRole("region", { name: "Connectors" })).getByText("retinue")).toBeTruthy();
+    expect(screen.queryByText(/The platform does not know/)).toBeNull(); // the footer's disclaimer is gone
   });
 });

@@ -5,11 +5,12 @@
 //   the tabs' own screens (a session's screen has its own input box and a way back), sits above the home indicator
 //   (the safe area) and steps aside while the keyboard is up.
 // - A wide screen (≥ 1024 px), three columns as in Claude's desktop app: on the left (272 px) «New task», what
-//   waits («Today» with its count), «Pages», the Spaces, «Numbers» and the sessions by sphere; in the middle
-//   the page — `/new` too; on the right one panel with tabs: a session's «Summary» (foldable, components/session-summary.tsx) and, when one is
-//   open, a Record, a session's diff or a file (`?pane=`, lib/pane.ts). The pane's tab is the URL's; «Summary» closes it.
+//   waits («Today» with its count), «Pages», the Spaces, «Numbers» and the projects with their sessions; in the middle
+//   the page — `/new` too; on the right one panel with tabs: a session's «Details» (closed until asked for, components/session-summary.tsx) and, when one is
+//   open, a Record, a session's diff or a file (`?pane=`, lib/pane.ts). The pane's tab is the URL's; «Details» closes it.
 //   The columns are resized by dragging the lines between them (the left one folds away when dragged past its
-//   minimum, and comes back when dragged out); each layout is remembered in the browser.
+//   minimum, and comes back when dragged out); each layout is remembered in the browser. «Talk to Retinue», while it is
+//   open, is one more column at the very right (components/talk.tsx); on a phone it is a sheet.
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Group, type Layout, type LayoutChangedMeta, Panel, Separator } from "react-resizable-panels";
@@ -18,6 +19,8 @@ import { FileRow } from "@/components/files";
 import { AppWindow, Chart, Close, Grid, Home, List, Plus } from "@/components/icons";
 import { SessionList } from "@/components/session-list";
 import { SessionSummary } from "@/components/session-summary";
+import { ChatPane, ChatSheet } from "@/components/talk";
+import { useChatOpen } from "@/lib/talk";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import { useKeyboardUp } from "@/lib/keyboard";
@@ -147,17 +150,16 @@ function FilePane({ id }: { id: string }) {
 
 const PANE_TITLES: Record<Pane["kind"], string> = { record: "Record", diff: "Changes", file: "File" };
 
-/** The right column: one panel, its tabs a session's «Summary» and what is open beside the page (`pane`). */
+/** The right column: one panel, its tabs a session's «Details» and what is open beside the page (`pane`). */
 export function PaneView({ pane, session, onClose }: { pane: Pane | null; session?: string; onClose: () => void }) {
-  const { open } = usePane();
   const active = pane ? pane.kind : "summary";
   const tabs = [
-    ...(session ? [{ key: "summary", label: "Summary" }] : []),
+    ...(session ? [{ key: "summary", label: "Details" }] : []),
     ...(pane ? [{ key: pane.kind, label: PANE_TITLES[pane.kind] }] : []),
   ];
   return (
     <aside
-      aria-label={pane ? PANE_TITLES[pane.kind] : "Summary"}
+      aria-label={pane ? PANE_TITLES[pane.kind] : "Details"}
       className="flex h-full w-full flex-col border-l bg-sidebar"
     >
       <header className="flex min-h-12 shrink-0 items-center gap-1 border-b px-2">
@@ -195,11 +197,7 @@ export function PaneView({ pane, session, onClose }: { pane: Pane | null; sessio
       </header>
       <div className={cn("min-h-0 flex-1 overflow-y-auto", pane && "p-3")}>
         {!pane && session ? (
-          <SessionSummary
-            id={session}
-            onDiff={() => open({ kind: "diff", session })}
-            onFile={(id) => open({ kind: "file", id })}
-          />
+          <SessionSummary id={session} />
         ) : pane?.kind === "record" ? (
           <RecordPage space={pane.space} path={pane.path} pane />
         ) : pane?.kind === "diff" ? (
@@ -243,8 +241,21 @@ function saveSizes(layout: Layout, meta: LayoutChangedMeta) {
 const separatorClass =
   "w-1 shrink-0 bg-transparent transition-colors hover:bg-primary/30 focus-visible:bg-primary/40 data-[separator=active]:bg-primary/50";
 
-/** The three columns of a wide screen; the right one only while it has something to show. */
-function Columns({ sidebar, main, right, rightId }: { sidebar: React.ReactNode; main: React.ReactNode; right: React.ReactNode; rightId: "summary" | "pane" | null }) {
+/** The three columns of a wide screen; the right one only while it has something to show; the chat with Retinue at
+ * the very right while it is open. */
+function Columns({
+  sidebar,
+  main,
+  right,
+  rightId,
+  chat,
+}: {
+  sidebar: React.ReactNode;
+  main: React.ReactNode;
+  right: React.ReactNode;
+  rightId: "summary" | "pane" | null;
+  chat?: React.ReactNode;
+}) {
   const sizes = readSizes();
   return (
     // The library sets the group's own `height: 100%`, so the window's height is given by a box around it.
@@ -280,6 +291,14 @@ function Columns({ sidebar, main, right, rightId }: { sidebar: React.ReactNode; 
           </Panel>
         </>
       )}
+      {chat && (
+        <>
+          <Separator aria-label="Chat width" className={separatorClass} />
+          <Panel id="chat" defaultSize={sizes.chat ?? 380} minSize={300} maxSize="45%" groupResizeBehavior="preserve-pixel-size">
+            {chat}
+          </Panel>
+        </>
+      )}
     </Group>
     </div>
   );
@@ -293,6 +312,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const location = useRouterState({ select: (s) => s.location });
   const { pane, close } = usePane();
   const summaryOpen = useSummaryOpen();
+  const chatOpen = useChatOpen();
 
   const current = /^\/s\/([^/]+)/.exec(location.pathname)?.[1];
   const search = location.search as Record<string, unknown>;
@@ -316,6 +336,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         main={<main className="h-full min-h-0 min-w-0 overflow-y-auto">{children}</main>}
         right={rightId && <PaneView pane={pane} session={summarized} onClose={close} />}
         rightId={rightId}
+        chat={chatOpen ? <ChatPane /> : undefined}
       />
     );
   }
@@ -324,6 +345,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex h-dvh flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       {tabbed && !keyboard && <TabBar pathname={location.pathname} />}
+      <ChatSheet />
     </div>
   );
 }

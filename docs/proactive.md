@@ -5,6 +5,43 @@ Besides the reminders you set, the router writes to you on its own: the morning 
 deadlines from your knowledge base, the week's numbers of your collections, a Mac that has not pushed, and the assistant
 speaking first now and then. All of it lives in `retinue/proactive.py`; every state is in the router's SQLite.
 
+## The voice
+
+Who says all this is a setting of the install. `voice:` in `router.yaml`:
+
+```yaml
+voice:
+  engine: assistant    # the default: today's assistant over A2A, unchanged
+  # engine: session    # the main session of the root project on the platform; channels: [telegram]
+```
+
+With `session`, the router's core composes every turn as for the assistant — your message, a reminder, the morning
+summary, the weekly review — and writes it into the main session of the root project (`POST /owner/voice`,
+`retinue/voice.py`): a session in the root of the Base, started when there is none, resumed when it closed. The call
+is held until the turn is over (10 minutes at most); its words come back to Telegram through the router, once — not
+again as the session's ping. A longer turn, or one waiting on a card, says so, and its answer comes as the session's
+ping. A turn the schedule started is no one's word (`by: schedule`): it cannot set a follow-up, and a sub-session it
+asks for is your card. Someone else's letter (the mail's triage) and an answer in a fixed form are not given to the
+session: code takes them, as when the assistant fails. `!compact` is the CLI's own.
+
+The platform's side, `voice:` in `platform.yaml`:
+
+```yaml
+spheres:
+  - {name: life, title: Life, track: voice}       # the root project: its sessions run in the Base's root
+voice:
+  sphere: life
+  tools: [Read, Grep, Glob, Edit, Write, Skill, TodoWrite, ToolSearch, mcp__retinue]   # optional
+  engine: claude-code                             # the lanes' CLI, the only engine yet
+```
+
+Its character is a file at the root of the Base (`VOICE.md`) that the root's `AGENTS.md` includes (`@VOICE.md`), so
+it is read with the root's rules for every run. Its rights are the install's, out of every session's reach: its
+track's `allow`, `deny` and `card` rules, which the gate and the CLI enforce as for any session, and `tools`, the only
+tools a session of its sphere may call — any other call is denied at the hook before the gate is asked. Another
+engine that reads `AGENTS.md`, Agent Skills and MCP takes the CLI's place in the lanes (`cliengine`); the voice's own
+code writes messages and reads summaries and assumes none.
+
 ## Your time zone follows you
 
 `owner_tz` in `router.yaml` is only where you start. Tell the assistant «I'm in Ensk» or «switch my zone to

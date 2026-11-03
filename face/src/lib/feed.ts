@@ -10,7 +10,54 @@ import type { State } from "./store";
 import type { Approval, Proposal } from "./types";
 import type { CollectionProposal } from "./view-types";
 
-export type FeedAction = "answer" | "decide" | "reply" | "read" | "assistant";
+export type FeedAction = "answer" | "decide" | "step" | "reply" | "read" | "assistant";
+
+/** A thing a turn ending shows, as the platform serves it (retinue/endings.py): `src` the URL it opens in place — null
+ * with `why` while there is none (a file of `out/` not collected yet) — and what it is. */
+export interface EndingArtifact {
+  path?: string;
+  url?: string;
+  title?: string;
+  src: string | null;
+  kind: "image" | "pdf" | "html" | "markdown" | "text" | "audio" | "video" | "other" | "link" | string;
+  why?: string;
+}
+
+/** What a session's turn left the owner, as it declared it (`turn_ending`, docs/platform.md#turn-endings). */
+export interface TurnEnding {
+  kind: "ask" | "approve" | "look" | "step" | "done";
+  /** What he asked and why, in his words: «You asked: …». Every kind but step. */
+  request?: string;
+  /** ask, approve: why the decision is his. */
+  why_owner?: "goal" | "fact" | "money" | "secret" | "external";
+  /** ask: his choices, the advice first; `effect` is what changes. */
+  options?: { label: string; effect: string }[];
+  /** ask with options: what was found and what the advice rests on. */
+  context?: string;
+  /** ask without options: why it asks, and short likely answers. */
+  why?: string;
+  guesses?: string[];
+  /** ask, approve: what happens with no answer. */
+  without?: string;
+  /** approve: what will be done, and what exactly where. */
+  will?: string;
+  items?: string[];
+  artifact?: EndingArtifact;
+  artifacts?: EndingArtifact[];
+  /** look: what to look at. */
+  checks?: string[];
+  /** step: what he does, where, the command or text to copy, what to send back, whether the session waits; done: what
+   * came out. */
+  what?: string;
+  where?: string;
+  command?: string;
+  copy?: string;
+  expect?: string;
+  wait?: boolean;
+  /** done: what next and whose move. */
+  next?: string;
+  next_by?: "me" | "you";
+}
 /** Where a row came from: a card's kind, a session, or the kind of the assistant's item. */
 export type FeedSourceKind =
   | "question"
@@ -35,6 +82,9 @@ export interface FeedRow {
   sphere: string | null;
   sphere_title: string | null;
   sphere_icon: string | null;
+  /** The project it comes from: its path in the Base (`work/acme`) — a session's by its folder, else its sphere's; her
+   * rows by their sphere. Null or absent (a platform before projects): none, «Other» on «Today». */
+  project?: string | null;
   /** A session's title, or who the assistant's item is about. */
   title: string;
   /** Since when it waits (seconds). */
@@ -53,6 +103,8 @@ export interface FeedRow {
   proposal?: Proposal;
   /** «Decide»: a write to a collection a session proposed, applied or dismissed in place (retinue/colltools.py). */
   collection_proposal?: CollectionProposal;
+  /** What the session's turn left him (`ending:<session>` rows): its card by kind. */
+  ending?: TurnEnding;
   /** «From the assistant»: a person's row's token — what «Done», «Not a task», «Tomorrow» name it by. Absent on a draft
    * and a date. */
   t?: string;

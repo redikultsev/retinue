@@ -19,7 +19,7 @@ There is no bug bounty.
 
 Anything that lets data leave the server, or lets someone other than the owner act as the owner. For example:
 
-- a way past the gate, the exfil guard or the SNI guard from inside a session;
+- a way past the gate, the exfil guard, the SNI guard or a project's list of hosts from inside a session;
 - a way out of the assistant's container other than the model API;
 - a way to reach the face API or the owner's pages host from outside the owner's devices, a page reading another
   page's values or the app's, or the public pages reaching anything but what was shared;

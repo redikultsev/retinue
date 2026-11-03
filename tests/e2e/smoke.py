@@ -1,6 +1,7 @@
-"""End-to-end smoke: register an owner, join the agent room, send a message, expect the echo reply.
+"""End-to-end smoke: register an owner, join the agent room, send a message, expect the echo reply. It brings the
+stack up itself, the owner before the router:
 
-    docker compose -f tests/e2e/compose.yml up -d && python3 tests/e2e/smoke.py
+    docker build -t retinue:local . && python3 tests/e2e/smoke.py
 """
 
 import json
@@ -20,21 +21,52 @@ def call(token, method, path, body=None):
         return json.load(response)
 
 
+def compose(*args):
+    return subprocess.run(["docker", "compose", "-f", f"{HERE}/compose.yml", *args], check=False).returncode
+
+# From the router's container: the agent answers HTTP at all (a 404 is an answer).
+AGENT_UP = ("import urllib.request, urllib.error\n"
+            "try:\n    urllib.request.urlopen('http://agent-echo:9000/', timeout=2)\n"
+            "except urllib.error.HTTPError:\n    pass\n")
+
+
 def main():
-    subprocess.run(["docker", "compose", "-f", f"{HERE}/compose.yml", "exec", "-T", "router", "python", "-c",
-                    "from retinue.admin import register; register('http://tuwunel:6167','owner','e2e-token','pw-123456')"],
-                   check=False)
+    # The router invites the owner when it makes its rooms at start, so he is registered before it starts.
+    compose("down", "-v")
+    compose("up", "-d", "tuwunel")
+    for _ in range(120):
+        try:
+            urllib.request.urlopen(HS + "/_matrix/client/versions")
+            break
+        except OSError:
+            time.sleep(1)
+    compose("run", "--rm", "--no-deps", "router", "python", "-c",
+            "from retinue.admin import register; register('http://tuwunel:6167','owner','e2e-token','pw-123456')")
+    compose("up", "-d")
     login = urllib.request.Request(HS + "/_matrix/client/v3/login", method="POST", data=json.dumps(
         {"type": "m.login.password", "identifier": {"type": "m.id.user", "user": "owner"}, "password": "pw-123456"}
     ).encode(), headers={"Content-Type": "application/json"})
     token = json.load(urllib.request.urlopen(login))["access_token"]
-    invites = call(token, "GET", "/_matrix/client/v3/sync?timeout=0").get("rooms", {}).get("invite", {})
     rooms = {}
-    for room_id, invite in invites.items():
-        call(token, "POST", f"/_matrix/client/v3/rooms/{urllib.parse.quote(room_id)}/join", {})
-        for event in invite["invite_state"]["events"]:
-            if event["type"] == "m.room.name":
-                rooms[event["content"]["name"]] = room_id
+    for _ in range(60):
+        invites = call(token, "GET", "/_matrix/client/v3/sync?timeout=0").get("rooms", {}).get("invite", {})
+        for room_id, invite in invites.items():
+            call(token, "POST", f"/_matrix/client/v3/rooms/{urllib.parse.quote(room_id)}/join", {})
+            for event in invite["invite_state"]["events"]:
+                if event["type"] == "m.room.name":
+                    rooms[event["content"]["name"]] = room_id
+        if "Echo" in rooms:
+            break
+        time.sleep(1)
+    else:
+        raise SystemExit("FAIL: no invite to the agent's room")
+    # The router does not ask again for a turn the agent missed while it was starting.
+    for _ in range(60):
+        if compose("exec", "-T", "router", "python", "-c", AGENT_UP) == 0:
+            break
+        time.sleep(1)
+    else:
+        raise SystemExit("FAIL: the agent never came up")
     room = urllib.parse.quote(rooms["Echo"])
     call(token, "PUT", f"/_matrix/client/v3/rooms/{room}/send/m.room.message/t{time.time_ns()}",
          {"msgtype": "m.text", "body": "ping"})

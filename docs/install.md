@@ -15,8 +15,14 @@ reaches only the model API, and only through a proxy.
 
 ## 2. Prepare the host
 
+A fresh Debian 13 server (x86_64 or arm64, [below](#debian-13-and-arm64)) needs a few packages and Docker Engine with
+the compose plugin: Dokploy's installer sets Docker up, or take it from Docker's repository for Debian
+([docs.docker.com](https://docs.docker.com/engine/install/debian/): `docker-ce`, `docker-ce-cli`, `containerd.io`,
+`docker-buildx-plugin`, `docker-compose-plugin`).
+
 ```bash
-git clone https://github.com/<you>/retinue /opt/retinue
+sudo apt-get install -y git curl ca-certificates python3 openssl iproute2 apparmor
+sudo git clone https://github.com/<you>/retinue /opt/retinue
 sudo TELEGRAM_OWNER_ID=123456789 bash /opt/retinue/deploy/setup.sh
 ```
 
@@ -121,6 +127,30 @@ commit and push it, put the new SHA in `deploy/compose.yml` (`tests/test_deploy.
 rebuild without the cache: `docker compose … build --no-cache travel-ops && docker compose … up -d`. Google keeps
 only recent Chrome packages, so a build with an old pin fails — that failure is the reminder.
 
+## Updating
+
+A tag `vX.Y.Z` pushed to the repository publishes Retinue's own images to the owner's GitHub registry as
+`ghcr.io/<owner>/retinue*:vX.Y.Z` (`.github/workflows/release.yml`), each for linux/amd64 and linux/arm64 under the
+one tag: the server pulls its own. A server on releases has
+`RETINUE_IMAGE=ghcr.io/<owner>/retinue` and `RETINUE_VERSION=vX.Y.Z` in `stack.env`; compose runs those images and
+gives the version to the router and the platform. Without the two lines compose builds from the checkout as
+`retinue*:local`, as before; on a server on releases, leave `--build` out.
+
+For a private repository, log the server in once with a token that has `read:packages` only
+(`sudo docker login ghcr.io`). Then, from the checkout:
+
+```bash
+sudo RETINUE_IMAGE=ghcr.io/<owner>/retinue bash deploy/update.sh v1.2.0   # RETINUE_IMAGE the first time only
+```
+
+It checks the stack is healthy, pulls the tag's images (a tag not published stops here, nothing changed), stops the
+stack, snapshots its volumes (but the lanes' working trees), the code services' state folders and `stack.env` into
+`/var/backups/retinue/updates/`, writes the version to `stack.env`, starts the stack — each service migrates its
+database when it opens it — and waits up to five minutes for every service to be healthy (`deploy/health`). When one
+is not, it puts the snapshot back and starts the version before. The compose file is the checkout's: when a release
+changes `deploy/compose.yml` or `setup.sh`, check out the tag and run `setup.sh` first. Under Dokploy, set the two
+lines in *Environment* and redeploy: no snapshot, no way back.
+
 ## Hosts the proxy lets through
 
 `/srv/retinue/egress/allowed-hosts.txt` starts with one line, `api.anthropic.com`. If a run fails and the proxy
@@ -142,6 +172,8 @@ Every line must have `"is_error": false`; the first line must show `"api_key_in_
 
 Every image `deploy/compose.yml` pulls from a registry is pinned by digest — Squid once, as `x-squid-image` in `deploy/compose.yml`, Tuwunel,
 the public pages' nginx, and dnsmasq in `deploy/split-dns/compose.yml` — and `tests/test_deploy.py` refuses a bare tag.
+Retinue's own images are the exception: a release's are named by its tag, set by `deploy/update.sh` («Updating»
+above), and without one they are built from the checkout.
 To move a pin, pull the tag on the server, take its digest and put it in:
 
 ```bash
@@ -151,6 +183,32 @@ sudo docker pull ubuntu/squid:<tag> && sudo docker image inspect --format '{{ind
 Every service has a `mem_limit`, sized from `docker stats --no-stream` and the cgroups' `memory.peak` on the server
 with room on top. What runs all the time is capped at under 8 GiB in total; the room and travel-ops, which work when
 you use them, have their own ceilings. A container that reaches its ceiling is killed by the kernel and restarted by Docker, and the owner hears of it (`docs/health.md`).
+
+## Debian 13 and arm64
+
+The install works on Debian 13 (trixie) on x86_64 and on arm64. What was checked:
+
+- **Rehearsed in CI** (`.github/workflows/install.yml`, `tests/e2e/install/host.sh`): on a fresh host the packages
+  above and Docker from Docker's repository, `setup.sh` with every switch but travel (Matrix, memory, mail, send,
+  Telegram Business, pages, platform, face, backup) on test values, every image built, the stack started, and every
+  service healthy by `deploy/health`'s own unit; then the assistant has no route out, bubblewrap runs in the lane
+  under its AppArmor profile, and the lane's pinned CLI starts. On x86_64 the host is Debian 13's own cloud image in
+  a VM (its kernel, systemd and AppArmor); on arm64 it is GitHub's arm64 runner, Ubuntu 24.04, with no VM.
+- **Not rehearsed**: anything that needs a real secret — Telegram (a made-up bot token is refused at start, so the
+  router runs on its Matrix channel there), a model call, Google's mail, ElevenLabs, the backup's S3 — and Dokploy
+  itself, WireGuard and Traefik's certificates. The container probe ([platform.md](platform.md)) is yours to run on
+  the server.
+- **arm64 pieces**: every image pinned by digest (Squid, Tuwunel, nginx-unprivileged, dnsmasq, the face's Node) is a
+  multi-platform index with linux/arm64; the Dockerfiles' bases (`python:3.12-slim`, `python:3.12-slim-trixie`,
+  `node:24.22.1-trixie-slim`, `ghcr.io/astral-sh/uv:0.6.12`) too. `uv.lock` has a manylinux aarch64 or pure wheel for
+  every package Linux installs, `claude-agent-sdk` and its bundled CLI included; `face/pnpm-lock.yaml` carries the
+  linux arm64 (glibc and musl) builds of rolldown, lightningcss, Tailwind's oxide, Biome and TypeScript's native
+  compiler; `deploy/lanes/cli.lock` has the CLI's linux-arm64 tarball; `setup.sh` pins restic's linux_arm64 file
+  by its own sha256. A release publishes each of Retinue's images for both architectures under one tag.
+- **Travel does not run on arm64**: travel-ops' Dockerfile installs Google Chrome's amd64 package, and Google ships
+  no Chrome for Linux on arm64. Take an x86 server if you want travel.
+
+When you move a digest pin, keep the multi-platform index's digest (`RepoDigests` gives it), not one platform's.
 
 ## Matrix (optional)
 
@@ -179,6 +237,6 @@ Smoke test with a real homeserver and an echo agent, no model:
 
 ```bash
 docker build -t retinue:local .
-docker compose -f tests/e2e/compose.yml up -d && python3 tests/e2e/smoke.py
+python3 tests/e2e/smoke.py      # brings the stack up itself: the homeserver, the owner, then the router
 docker compose -f tests/e2e/compose.yml down -v
 ```

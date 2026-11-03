@@ -1,4 +1,4 @@
-// «Plan»: the week as an hourly grid (FullCalendar v7; a day on a phone) — meetings grey, the plan's blocks in their
+// «Schedule»: the week as an hourly grid (FullCalendar v7; a day on a phone) — meetings grey, the plan's blocks in their
 // goal's colour, the plan's window in the owner's zone as the lit hours — under the bar of presses: «Plan my day»,
 // «Plan my week», «Undo» of the last plan, «Now» (an activity or «Busy»), the window's hours (its settings), and what
 // the last press came to. The places the meals keep are hatched. A block dragged or stretched
@@ -87,6 +87,18 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
   const editing = useEditing();
   const calendar = useRef<CalendarRef>(null);
   const [title, setTitle] = useState("");
+  // The calendar says its dates while it renders, before this grid has mounted (React refuses that update, at
+  // random): its title is read once mounted, and from then on as it says it.
+  const mounted = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new width is a new calendar (its key), read again
+  useEffect(() => {
+    mounted.current = true;
+    const shown = calendar.current?.getApi().view?.title;
+    if (shown) setTitle(shown);
+    return () => {
+      mounted.current = false;
+    };
+  }, [wide]);
   const [menu, setMenu] = useState<{ p: Placed; x: number; y: number } | null>(null);
   const all = useMemo(() => placed(plan), [plan]);
   const goals = plan.tasks.goals;
@@ -198,7 +210,7 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
           nowIndicator
           ref={calendar}
           headerToolbar={false}
-          datesSet={(info) => setTitle(info.view.title)}
+          datesSet={(info) => mounted.current && setTitle(info.view.title)}
           height="auto"
           allDaySlot
           allDayText=""

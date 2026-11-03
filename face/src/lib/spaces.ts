@@ -2,7 +2,7 @@
 // words a Record's head is shown in. Read only: the Base changes through a session, never here.
 import { ApiError, request } from "./api";
 import { RECENT_S } from "./store";
-import type { Head, Nature, RecordRow, RecordView, SpaceRow, SpaceView } from "./space-types";
+import type { Head, Nature, ProjectNode, RecordRow, RecordView, SpaceRow, SpaceView } from "./space-types";
 import type { Session, Sphere } from "./types";
 
 export * from "./space-types";
@@ -34,8 +34,16 @@ export function isAppHref(href: unknown): href is string {
 }
 
 export const spacesApi = {
-  list: () => request<{ head: string; spaces: SpaceRow[] }>("/api/spaces"),
-  space: (name: string) => request<{ head: string; space: SpaceView }>(`/api/spaces/${seg(name)}`),
+  /** The grid, and every project at any depth (absent from a platform before it). */
+  list: () => request<{ head: string; spaces: SpaceRow[]; projects?: ProjectNode[] }>("/api/spaces"),
+  space: (name: string) => request<{ head: string; space: SpaceView; sessions?: string[] }>(`/api/spaces/${seg(name)}`),
+  /** A project at any depth, by its folder; `sessions`: those started in that folder. */
+  project: (path: string) => {
+    const at = segs(path);
+    return at === null
+      ? Promise.reject(new ApiError(404, "No such project."))
+      : request<{ head: string; project: SpaceView; sessions: string[] }>(`/api/projects/${at}`);
+  },
   record: (name: string, path: string) => {
     const at = segs(path);
     return at === null
@@ -43,6 +51,10 @@ export const spacesApi = {
       : request<{ head: string; record: RecordView }>(`/api/spaces/${seg(name)}/r/${at}`);
   },
 };
+
+/** Where a project's file is: its bytes (`/api/base/…`) and, for a PDF, its frame (`/api/base-view/…`). */
+export const baseFile = (path: string) => `/api/base/${segs(path) ?? ""}`;
+export const baseView = (path: string) => `/api/base-view/${segs(path) ?? ""}`;
 
 // --- sessions by Space ------------------------------------------------------------------------------------------
 
@@ -224,13 +236,21 @@ export function quoteLine(text: string): string {
 /** What «Discuss» sends as the session's first message: a line of the owner's, the framing, then the Base's content
  * quoted — every piece folded to one `> ` line (the Record's path and title, or the question with its links as Base
  * paths) — then the owner's own words. Nothing from the Base stands outside the quote. */
-export function discussText(space: string, what: { record?: { path: string; title: string }; question?: string }, own: string): string {
+export function discussText(
+  space: string,
+  what: { record?: { path: string; title: string }; question?: string; task?: string; passport?: boolean },
+  own: string,
+): string {
   const quoted = (lead: string, pieces: string[]) => [`${lead} ${QUOTE_FRAME}`, ...pieces.map((p) => `> ${quoteLine(p)}`)].join("\n");
   const head = what.record
     ? quoted("Let's discuss a Record from the Base.", [`${space}/${what.record.path}`, what.record.title])
     : what.question
       ? quoted("Let's discuss an Open question from the Showcase.", [`${space}/AGENTS.md`, basePaths(what.question)])
-      : "";
+      : what.task
+        ? quoted("Let's plan a Task from the Showcase: what it takes, the steps, by when.", [`${space}/AGENTS.md`, basePaths(what.task)])
+        : what.passport
+          ? `Let's edit this project's passport: the «## Why» section at the top of ${space ? `${space}/` : ""}AGENTS.md — why the project is, a line «In scope: …» and a line «Not in scope: … → where it goes instead». Ask me what is unclear before you write it.`
+          : "";
   return [head, own.trim()].filter(Boolean).join("\n\n");
 }
 

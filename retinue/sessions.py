@@ -22,7 +22,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import changes, transcript
+from . import changes, migrate, transcript
 from .spoken import unmarked
 
 RAW_KEEP_S = 90 * 86400
@@ -40,6 +40,40 @@ def _json(data) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+def _converge(db: sqlite3.Connection) -> None:
+    """Step 1: what the upgrade at open did before the steps were numbered — the columns a database from before them
+    lacks."""
+    columns = migrate.columns(db, "sessions")
+    for column, kind in (("pinned", "INTEGER NOT NULL DEFAULT 0"), ("parent", "TEXT"),
+                         ("context_tokens", "INTEGER"), ("sphere", "TEXT"), ("main", "INTEGER NOT NULL DEFAULT 0"),
+                         ("fork_of", "TEXT"), ("seen_at", "REAL"), ("news_at", "REAL"), ("cwd", "TEXT"),
+                         ("turn_started", "REAL"), ("sub_of", "TEXT"), ("title", "TEXT"), ("turn_by", "TEXT"),
+                         ("sphere_by", "TEXT"), ("hops", "INTEGER NOT NULL DEFAULT 0"), ("owner_hold", "TEXT"),
+                         ("owner_joined", "INTEGER NOT NULL DEFAULT 0"), ("stopped_run", "TEXT"),
+                         ("archived", "REAL")):
+        if column not in columns:  # a database from before the column
+            db.execute(f"ALTER TABLE sessions ADD COLUMN {column} {kind}")
+    for table, column, kind in (("runs", "mode", "TEXT"), ("approvals", "why", "TEXT NOT NULL DEFAULT ''"),
+                                ("queue", "content", "TEXT"), ("queue", "by", "TEXT"), ("inputs", "by", "TEXT"),
+                                ("inputs", "attachments", "TEXT NOT NULL DEFAULT '[]'"),
+                                ("inputs", "turn", "INTEGER"), ("inputs", "n", "INTEGER"),
+                                ("push_repos", "why", "TEXT NOT NULL DEFAULT ''")):
+        if column not in migrate.columns(db, table):
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+
+
+def _slots(db: sqlite3.Connection) -> None:
+    """Step 2: a session's place on the face's map — `slot`, its number among its project's live sessions, and
+    `slot_in`, that project's key (`PlatformStore.take_slot`). A session from before keeps none until it moves; the
+    face puts those after the numbered ones."""
+    for column in ("slot INTEGER", "slot_in TEXT"):
+        db.execute(f"ALTER TABLE sessions ADD COLUMN {column}")
+
+
+# The store's numbered migrations (`migrate`, docs/migrations.md): append a step, never change one released.
+STEPS: tuple[migrate.Step, ...] = (_converge, _slots)
+
+
 class PlatformStore:
     def __init__(self, path: str, clock: Callable[[], float] = time.time) -> None:
         if path != ":memory:":
@@ -48,8 +82,9 @@ class PlatformStore:
         self.clock = clock  # an event's `at`; the platform gives its own
         self.listener: Callable[[], None] | None = None  # told of every event written: the face's open streams
         self.base_shown: Callable[[], bool] = lambda: True  # `tobase`: a session's `base` count only with a Base on
-        self.db.executescript(
-            """
+        # `feed`: the project a session runs in — its folder in the Base — by its lane, track and directory
+        self.project_of: Callable[[str, str, str | None], str | None] = lambda lane, track, cwd: None
+        migrate.run(self.db, "sessions", STEPS, """
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,                -- 8 hex
                 track TEXT NOT NULL,
@@ -232,23 +267,6 @@ class PlatformStore:
                 at REAL NOT NULL
             );
             """)
-        columns = {row[1] for row in self.db.execute("PRAGMA table_info(sessions)")}
-        for column, kind in (("pinned", "INTEGER NOT NULL DEFAULT 0"), ("parent", "TEXT"),
-                             ("context_tokens", "INTEGER"), ("sphere", "TEXT"), ("main", "INTEGER NOT NULL DEFAULT 0"),
-                             ("fork_of", "TEXT"), ("seen_at", "REAL"), ("news_at", "REAL"), ("cwd", "TEXT"),
-                             ("turn_started", "REAL"), ("sub_of", "TEXT"), ("title", "TEXT"), ("turn_by", "TEXT"),
-                             ("sphere_by", "TEXT"), ("hops", "INTEGER NOT NULL DEFAULT 0"), ("owner_hold", "TEXT"),
-                             ("owner_joined", "INTEGER NOT NULL DEFAULT 0"), ("stopped_run", "TEXT"),
-                             ("archived", "REAL")):
-            if column not in columns:  # a database from before the column
-                self.db.execute(f"ALTER TABLE sessions ADD COLUMN {column} {kind}")
-        for table, column, kind in (("runs", "mode", "TEXT"), ("approvals", "why", "TEXT NOT NULL DEFAULT ''"),
-                                    ("queue", "content", "TEXT"), ("queue", "by", "TEXT"), ("inputs", "by", "TEXT"),
-                                    ("inputs", "attachments", "TEXT NOT NULL DEFAULT '[]'"),
-                                    ("inputs", "turn", "INTEGER"), ("inputs", "n", "INTEGER"),
-                                    ("push_repos", "why", "TEXT NOT NULL DEFAULT ''")):
-            if column not in {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}:
-                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
         # One main session per sphere, held by SQLite itself: two `/travel` racing cannot both make one.
         self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS sessions_main ON sessions (sphere) WHERE main = 1")
         self.db.commit()
@@ -272,9 +290,39 @@ class PlatformStore:
                         "? AND NOT EXISTS (SELECT 1 FROM sessions WHERE sphere = ? AND main = 1), ?, ?, ?, ?, ?",
                         (session, track, lane, kind, now, now, parent, sphere, fork_of, int(main and sphere is not None),
                          sphere, cwd, now, sub_of, title, "parent" if sub_of else "owner"))
+        self.take_slot(session)
         self._session_event(session)
         self.db.commit()
         return session
+
+    # --- the map: each live session's place in its project ----------------------------------------------------------
+
+    def _slot_key(self, session: str) -> str | None:
+        """The project a session's place is in: its folder in the Base (`project_of`), else its sphere, else ''; None
+        for no such session."""
+        row = self.db.execute("SELECT lane, track, cwd, sphere FROM sessions WHERE id = ?", (session,)).fetchone()
+        if row is None:
+            return None
+        lane, track, cwd, sphere = row
+        return self.project_of(lane, track, cwd) or sphere or ""
+
+    def take_slot(self, session: str) -> None:
+        """The session's place on the face's map, inside the caller's transaction: the lowest number no other live
+        (not archived) session of its project holds, kept for its whole life — a state changing moves nothing. One
+        that is in its project's places already keeps its own."""
+        key = self._slot_key(session)
+        if key is None:
+            return
+        slot, slot_in = self.db.execute("SELECT slot, slot_in FROM sessions WHERE id = ?", (session,)).fetchone()
+        if slot is not None and slot_in == key:
+            return
+        taken = {n for (n,) in self.db.execute("SELECT slot FROM sessions WHERE slot_in = ? AND id != ? AND slot IS NOT "
+                                               "NULL AND archived IS NULL", (key, session))}
+        free = next(n for n in range(len(taken) + 1) if n not in taken)
+        self.db.execute("UPDATE sessions SET slot = ?, slot_in = ? WHERE id = ?", (free, key, session))
+
+    def _free_slot(self, session: str) -> None:
+        self.db.execute("UPDATE sessions SET slot = NULL, slot_in = NULL WHERE id = ?", (session,))
 
     # --- spheres: the owner's grouping, a main session per sphere, what he has not seen yet ----------------------
 
@@ -322,10 +370,12 @@ class PlatformStore:
         cursor = self.db.execute("UPDATE sessions SET sphere = ?, main = 0, sphere_by = ? WHERE id = ?",
                                  (sphere, by, session))
         if cursor.rowcount == 1:
+            self.take_slot(session)  # in another project now: a place there
             self._session_event(session)
             for (child,) in self.db.execute("SELECT id FROM sessions WHERE sub_of = ? AND sphere_by IS NOT 'owner'",
                                             (session,)).fetchall():
                 self.db.execute("UPDATE sessions SET sphere = ?, main = 0 WHERE id = ?", (sphere, child))
+                self.take_slot(child)
                 self._session_event(child)
         self.db.commit()
         return cursor.rowcount == 1
@@ -375,6 +425,7 @@ class PlatformStore:
         for id_ in ids:
             # Out of the list, and no sphere's main session: the next `/<sphere>` or «＋» starts a new one.
             self.db.execute("UPDATE sessions SET archived = COALESCE(archived, ?), main = 0 WHERE id = ?", (now, id_))
+            self._free_slot(id_)  # its place on the map is free for the next one; no other moves
             self._session_event(id_)
         self.db.commit()
         return ids
@@ -391,6 +442,7 @@ class PlatformStore:
             SELECT s.id FROM sessions s JOIN kin ON s.id = kin.id WHERE s.archived = ?""", (session, row[0])).fetchall()
         for (id_,) in rows:
             self.db.execute("UPDATE sessions SET archived = NULL WHERE id = ?", (id_,))
+            self.take_slot(id_)  # back on the map, in the lowest place free now
             self._session_event(id_)
         self.db.commit()
         if main:
@@ -889,13 +941,13 @@ class PlatformStore:
         (SELECT COUNT(*) FROM sessions c WHERE c.sub_of = s.id AND c.state != 'closed'),
         s.state = 'active' AND EXISTS (SELECT 1 FROM queue q WHERE q.session = s.id)
             AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.session = s.id AND r.ended IS NULL),
-        s.archived IS NOT NULL
+        s.archived IS NOT NULL, s.cwd, s.slot
         FROM sessions s"""
 
-    @staticmethod
-    def _face_session(row: tuple) -> dict:
+    def _face_session(self, row: tuple) -> dict:
         session, track, lane, kind, state, created, at, pinned, parent, sphere, main, fork_of, unread, first, \
-            waiting, base, push, push_why, turn_started, sub_of, children, queued, archived = row
+            waiting, base, push, push_why, turn_started, sub_of, children, queued, archived, cwd, slot = row
+        project = self.project_of(lane, track, cwd)
         return {"id": session, "track": track, "lane": lane, "kind": kind, "state": state, "created": created,
                 "at": at, "title": unmarked(first or "")[:TITLE_LEN] or track, "waiting": waiting, "pinned": bool(pinned),
                 "parent": parent, "sphere": sphere, "main": bool(main), "fork_of": fork_of, "unread": bool(unread),
@@ -904,7 +956,11 @@ class PlatformStore:
                 # `side`: a side question (its `parent`); `sub_of`: a sub-session's parent session, `children` its own
                 # open ones, `queued`: waiting for room in the lane (`subs`).
                 "side": parent is not None, "sub_of": sub_of, "children": children, "queued": bool(queued),
-                **({"archived": True} if archived else {})}
+                **({"archived": True} if archived else {}),
+                # `project`: the Base folder it runs in (`work/acme`), when it runs in one
+                **({"project": project} if project is not None else {}),
+                # `slot`: its place among its project's live sessions on the map (`take_slot`)
+                **({"slot": slot} if slot is not None else {})}
 
     def face_session(self, session: str) -> dict | None:
         """A session as the face lists it: its title is the first thing the owner wrote into it, or its track,

@@ -2,12 +2,12 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { live } from "@/lib/live";
 import { QUOTE_FRAME, type RecordView, type SpaceView } from "@/lib/spaces";
 import { BaseMarkdown } from "@/components/base-markdown";
 import type { Session } from "@/lib/types";
-import { Discuss, forgetRead, RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
+import { Discuss, forgetRead, ProjectPage, RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
 
 const session = (id: string, over: Partial<Session> = {}): Session => ({
   id, track: "notes", lane: "private", kind: "private", state: "idle", created: 1, at: Date.now() / 1000, title: `Session ${id}`,
@@ -65,9 +65,10 @@ function mount(node: React.ReactNode, at = "/") {
       return <p>record {s}/{_splat}</p>;
     },
   });
+  const project = createRoute({ getParentRoute: () => root, path: "/spaces/$space/p/$", component: () => <p>project</p> });
   const one = createRoute({ getParentRoute: () => root, path: "/s/$id", component: () => <p>session opened</p> });
   const router = createRouter({
-    routeTree: root.addChildren([page, spaces, space, record, one]),
+    routeTree: root.addChildren([page, spaces, space, project, record, one]),
     history: createMemoryHistory({ initialEntries: [at] }),
   });
   render(<RouterProvider router={router} />);
@@ -127,31 +128,69 @@ describe("SpacesPage", () => {
 });
 
 describe("SpacePage", () => {
-  it("shows the Space's sessions, Open questions, Tasks and Records by nature, with a search", async () => {
+  const PASSPORTED: SpaceView = {
+    ...SPACE,
+    passport: {
+      why: "Trips without surprises: tickets, stays and documents in one place.",
+      in_scope: "flights, trains, stays",
+      not_in_scope: "visas → Documents",
+    },
+    projects: [{ name: "travel/lisbon", title: "Lisbon in May", questions: 1, tasks: 0 }],
+  };
+
+  it("test_a_project_opens_on_its_passport_then_what_is_his_then_its_sessions", async () => {
     live.dispatch({
       type: "list",
       snapshot: { schema: 1, cursor: 1, sessions: [
         session("t1", { sphere: "travel", state: "waiting", title: "Tickets for June" }),
         session("c1", { sphere: "work", title: "Quarterly report" }),
+        session("l1", { sphere: "travel", project: "travel/lisbon", title: "A flat in the old town" }),
       ] },
     });
-    mount(<SpacePage space="travel" read={vi.fn().mockResolvedValue({ head: "h", space: SPACE })} />);
-    await screen.findByText("Take the transit through the hub?");
+    mount(<SpacePage space="travel" read={vi.fn().mockResolvedValue({ head: "h", space: PASSPORTED })} />);
+    const passport = await screen.findByRole("region", { name: "Passport" });
+    // the header is one line: its name, what it is, its tabs — «Overview» first and open
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Travel");
+    expect(screen.getByText("project · 1 sub-project")).toBeTruthy();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Records3", "Operator"]);
+    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("1 waiting")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Base1" }).getAttribute("aria-selected")).toBe("true");
-    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Open questions", "Tasks", "Records", "Sessions"]);
-    expect(screen.getByRole("link", { name: /Tickets for June/ })).toBeTruthy();
-    expect(screen.queryByText("Quarterly report")).toBeNull();
-    expect(screen.getByRole("link", { name: "transit" }).getAttribute("href")).toBe("/spaces/travel/r/knowledge/transit.md");
-    expect(screen.getByText("Knowledge 2 · Profile 1")).toBeTruthy();
-    const transit = screen.getByRole("link", { name: /Airport transfer/ });
-    expect(transit.textContent).toContain("verified 21 Sep");
-    expect(transit.textContent).toContain("practice diverges");
-    expect(screen.getByText("docs/")).toBeTruthy();
-    expect(screen.queryByText("**knowledge/**")).toBeNull();
-    expect(screen.getByText("Deadlines")).toBeTruthy();
 
+    expect(within(passport).getByText("Trips without surprises: tickets, stays and documents in one place.")).toBeTruthy();
+    expect([...passport.querySelectorAll("dt")].map((d) => d.textContent)).toEqual(["In scope", "Not in scope", "Rules"]);
+    expect(within(passport).getByText("visas → Documents")).toBeTruthy();
+    expect(within(passport).getByText("Live prices only")).toBeTruthy();
+    expect(within(passport).getByRole("button", { name: "Edit with a session" })).toBeTruthy();
+
+    expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(["Yours", "Sessions"]);
+    const yours = within(screen.getByRole("list", { name: "Yours" }));
+    expect(yours.getAllByRole("listitem").map((li) => li.querySelector("button")?.textContent)).toEqual(["Discuss", "Plan"]);
+    expect(yours.getByRole("link", { name: "transit" }).getAttribute("href")).toBe("/spaces/travel/r/knowledge/transit.md");
+    const listed = within(screen.getByRole("list", { name: "Sessions" }));
+    expect(listed.getByRole("link", { name: /Tickets for June/ })).toBeTruthy();
+    expect(listed.getByRole("link", { name: /Lisbon in May/ }).getAttribute("href")).toBe("/spaces/travel/p/lisbon");
+    expect(listed.getByRole("link", { name: /Lisbon in May/ }).textContent).toContain("sub-project · 1 session · 1 question");
+    expect(screen.queryByText("Quarterly report")).toBeNull();
+    expect(screen.queryByText("A flat in the old town"), "a sub-project's session is on its own page").toBeNull();
+    expect(screen.getByText("Deadlines")).toBeTruthy();
+    expect(screen.queryByText("**knowledge/**")).toBeNull();
+
+    // «Records»: one list, its nature and its head on the second line, no folder lines
+    fireEvent.click(screen.getByRole("tab", { name: "Records3" }));
+    const records = within(screen.getByRole("list", { name: "Records" }));
+    const transit = records.getByRole("link", { name: /Airport transfer/ });
+    expect(transit.textContent).toBe("Airport transferKnowledge · verified 21 Sep · practice diverges");
+    expect(transit.getAttribute("href")).toBe("/spaces/travel/r/knowledge/transit.md");
+    expect(records.getByRole("link", { name: /Passport/ }).textContent).toBe("PassportProfile · until 1 Jan 2030");
+    expect(screen.queryByText("docs/")).toBeNull();
+    expect(screen.getByText("Knowledge 2 · Profile 1")).toBeTruthy();
+  });
+
+  it("finds a Record by its name once there are more than a few", async () => {
+    const many = Array.from({ length: 6 }, (_, n) => ({ path: `knowledge/k${n}.md`, folder: "", title: `Note ${n}` }));
+    const big: SpaceView = { ...SPACE, records: { ...SPACE.records, knowledge: [...SPACE.records.knowledge, ...many] } };
+    mount(<SpacePage space="travel" read={vi.fn().mockResolvedValue({ head: "h", space: big })} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Records9" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Find a Record" }), { target: { value: "hotel" } });
     expect(screen.queryByRole("link", { name: /Airport transfer/ })).toBeNull();
     expect(screen.getByRole("link", { name: /Airport hotels/ })).toBeTruthy();
@@ -159,13 +198,81 @@ describe("SpacePage", () => {
     expect(screen.getByText("Nothing found.")).toBeTruthy();
   });
 
-  it("«Discuss» on an Open question opens the dialog with the question quoted", async () => {
+  it("«Discuss», «Plan» and «Edit with a session» open a session's first message on what they are about", async () => {
     mount(<SpacePage space="travel" read={vi.fn().mockResolvedValue({ head: "h", space: SPACE })} />);
     fireEvent.click(await screen.findByRole("button", { name: "Discuss the question" }));
-    const dialog = await screen.findByRole("dialog", { name: "Discuss: open question" });
+    let dialog = await screen.findByRole("dialog", { name: "Discuss: open question" });
     expect(within(dialog).getByTestId("discuss-head").textContent).toBe(
       `Let's discuss an Open question from the Showcase. ${QUOTE_FRAME}\n> travel/AGENTS.md\n> Take the transit through the hub?`,
     );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Plan the task" }));
+    dialog = await screen.findByRole("dialog", { name: "Plan a task" });
+    expect(within(dialog).getByTestId("discuss-head").textContent).toBe(
+      `Let's plan a Task from the Showcase: what it takes, the steps, by when. ${QUOTE_FRAME}\n> travel/AGENTS.md\n> Recheck the transit (travel/knowledge/transit.md)`,
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    // no passport yet: the card says so, and the same button writes one
+    expect(screen.getByText(/No passport yet/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Write it with a session" }));
+    dialog = await screen.findByRole("dialog", { name: "Edit the passport" });
+    expect(within(dialog).getByTestId("discuss-head").textContent).toMatch(/^Let's edit this project's passport: the «## Why» section at the top of travel\/AGENTS\.md/);
+  });
+});
+
+describe("ProjectPage", () => {
+  const DEEP = "acme/clients/anna";
+  const PROJECT: SpaceView = {
+    name: DEEP, path: DEEP, parent: "acme/clients", title: "Anna Petrova", rules: "", marker: true,
+    counts: { questions: 1, tasks: 0 },
+    sections: [{ heading: "Open questions", kind: "questions", items: [{ text: "Renew the contract?", list: true }] }],
+    records: { knowledge: [], profile: [], journal: [], artifacts: [] },
+    files: [
+      { path: "AGENTS.md", size: 120, kind: "markdown" },
+      { path: "media/call.mp4", size: 2000, kind: "video" },
+      { path: "media/voice.m4a", size: 500, kind: "audio" },
+      { path: "photo.png", size: 1024, kind: "image" },
+      { path: "scan.pdf", size: 80, kind: "pdf" },
+    ],
+    projects: [{ name: `${DEEP}/cases`, title: "Cases", questions: 2, tasks: 0 }],
+  };
+
+  it("test_a_projects_screen_lists_all_its_files_and_sub_projects", async () => {
+    live.dispatch({
+      type: "list",
+      snapshot: { schema: 1, cursor: 1, sessions: [session("in1", { title: "Renewal letter" }), session("out1", { title: "Elsewhere" })] },
+    });
+    const read = vi.fn().mockResolvedValue({ head: "h", project: PROJECT, sessions: ["in1"] });
+    const start = vi.spyOn(api, "newSession").mockResolvedValue({ session: "77889900" });
+    mount(<ProjectPage path={DEEP} read={read} />);
+    await screen.findByText("Renew the contract?");
+    expect(read).toHaveBeenCalledWith(DEEP);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Files5", "Operator"]);
+    expect(screen.getByRole("link", { name: /Cases/ }).getAttribute("href")).toBe(`/spaces/acme/p/clients/anna/cases`);
+    expect(screen.getByRole("link", { name: "To the project above" }).getAttribute("href")).toBe("/spaces/acme/p/clients");
+    expect(screen.getByRole("link", { name: /Renewal letter/ })).toBeTruthy();
+    expect(screen.queryByText("Elsewhere")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Files5" }));
+    const files = within(screen.getByRole("list", { name: "Project files" }));
+    expect(files.getAllByRole("listitem").map((li) => li.querySelector(".font-medium")?.textContent)).toEqual(
+      PROJECT.files!.map((f) => f.path),
+    );
+    expect(document.querySelector("img")?.getAttribute("src")).toBe(`/api/base/${DEEP}/photo.png`);
+    expect(document.querySelector("video")?.getAttribute("src")).toBe(`/api/base/${DEEP}/media/call.mp4`);
+    expect(document.querySelector("audio")?.getAttribute("src")).toBe(`/api/base/${DEEP}/media/voice.m4a`);
+    const pdf = files.getAllByRole("listitem").find((li) => li.textContent?.includes("scan.pdf"))!;
+    fireEvent.click(within(pdf).getByRole("button", { name: "Open" }));
+    const frame = pdf.querySelector("iframe")!;
+    expect(frame.getAttribute("src")).toBe(`/api/base-view/${DEEP}/scan.pdf`);
+    expect(frame.hasAttribute("sandbox")).toBe(false);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    fireEvent.click(screen.getByRole("button", { name: "New session here" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "Draft the letter" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+    expect(start.mock.calls[0]![5]).toBe(DEEP);
   });
 });
 

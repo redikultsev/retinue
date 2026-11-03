@@ -5,7 +5,7 @@
 // started says so, as that turn's own start would on its card: the brief may carry a page the child read.
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { Fork } from "@/components/icons";
+import { RelationIcon } from "@/components/relation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,17 +33,17 @@ interface Props {
   press?: typeof api.proposal;
   /** Called once a press changed it. */
   onDecided?: (proposal: Proposal) => void;
+  /** The brief shown whole at once, however long: the owner opened it to read it («Show the brief» in the dock). */
+  opened?: boolean;
   className?: string;
 }
 
-export function ProposalCard({ proposal: given, live = defaultLive, press = api.proposal, onDecided, className }: Props) {
-  // The card as the app knows it now: a press elsewhere may be newer than the copy it was given.
-  const known = useLiveState().proposals[given.id];
-  const proposal = known && known.at >= given.at ? known : given;
-  const [open, setOpen] = useState(() => shortBrief(proposal.brief));
+/** «Start» / «Not now»: the press, its answer said, the proposal as it now reads in the store. */
+export function useProposalPress(
+  proposal: Proposal,
+  { live = defaultLive, press = api.proposal, onDecided }: Pick<Props, "live" | "press" | "onDecided"> = {},
+) {
   const [busy, setBusy] = useState<"start" | "dismiss" | null>(null);
-  const waiting = proposal.state === "open";
-
   async function decide(action: "start" | "dismiss") {
     setBusy(action);
     try {
@@ -57,19 +57,29 @@ export function ProposalCard({ proposal: given, live = defaultLive, press = api.
       setBusy(null);
     }
   }
+  return { busy, decide };
+}
+
+export function ProposalCard({ proposal: given, live = defaultLive, press = api.proposal, onDecided, opened = false, className }: Props) {
+  // The card as the app knows it now: a press elsewhere may be newer than the copy it was given.
+  const known = useLiveState().proposals[given.id];
+  const proposal = known && known.at >= given.at ? known : given;
+  const [open, setOpen] = useState(() => opened || shortBrief(proposal.brief));
+  const { busy, decide } = useProposalPress(proposal, { live, press, onDecided });
+  const waiting = proposal.state === "open";
 
   return (
     <Card
       data-testid="proposal-card"
-      className={cn(waiting ? "border-primary/50 bg-primary/5" : "bg-muted/30", className)}
+      className={cn(waiting ? "border-warning/70 bg-warning/5" : "bg-muted/30", className)}
     >
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
           <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
-            <Fork className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <RelationIcon how="sub-session" className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 break-words">Sub-session: {proposal.title}</span>
           </CardTitle>
-          <Badge variant={waiting ? "default" : "secondary"}>{STATE_WORDS[proposal.state]}</Badge>
+          <Badge variant={waiting ? "warning" : "secondary"}>{STATE_WORDS[proposal.state]}</Badge>
         </div>
         {waiting && (
           <p className="text-[13px] text-muted-foreground">

@@ -139,7 +139,9 @@ class Spheres:
         if last is not None and transcript.deferred_of(last[0]):
             return DEFERRED
         track = self.platform.tracks.get(parent["track"])
+        # A session in a project of the Base ran in that project's folder, not its sphere's: there its fork runs too.
         if track is None or track.lane != parent["lane"] or (
-                parent.get("cwd") is not None and self.platform.cwd_for(track, parent.get("sphere")) != parent["cwd"]):
+                parent.get("cwd") is not None and self.platform.cwd_for(track, parent.get("sphere")) != parent["cwd"]
+                and not self.platform.in_base_dir(track, parent["cwd"])):
             return MOVED
         return None

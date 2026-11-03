@@ -29,8 +29,9 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, citecheck, cliengine, collections_admin, colltools, courier, episodes, face, feed, finish, followups, inbox,
-               lanetravel, outfiles, pings, plan, questions, signals, subs, tobase, topush, transcript, views)
+from . import (approvals, attachments, citecheck, cliengine, collections_admin, colltools, courier, episodes, events, face, feed, finish,
+               followups, inbox, lanetravel, outfiles, pings, plan, projecthosts, questions, signals, spaces, subs, tobase,
+               topush, transcript, views)
 from .base import BaseRepo, under
 from . import library as library_mod
 from . import reach as reach_mod
@@ -39,6 +40,8 @@ from .code import CodeRepos
 from . import collections as collections_mod
 from .collections import Collections
 from .spheres import Spheres
+from . import voice as voice_mod
+from .voice import Voice
 from .config import PlatformConfig
 from .gate import Gate, retire
 from .mail import Unavailable
@@ -116,15 +119,22 @@ class Platform:
         citecheck.prepare(store)  # a turn's cited addresses checked by a clean session (`citecheck`)
         store.set(signals.STARTED_KEY, str(clock()))  # a day worse than the week names it (`signals.worse`)
         self.spheres = Spheres(self)  # the owner's spheres, their main sessions, forks (`spheres.py`)
+        # The voice: the root project's main session, the router's one face when its engine is a session (`voice.py`);
+        # None: no `voice:` in platform.yaml.
+        self.voice = Voice(self) if cfg.voice is not None else None
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
         self.followups = followups.FollowUps(self)  # a session brought back to a task that waits (`followups.py`)
         self.colltools = colltools.CollTools(self)  # the agents' tools for the collections, and their proposals
+        self.events = events.wire(self)  # the projects' events and their reactions (`events.py`)
         self.plan = plan.Plan(self)  # «Today»'s tasks, day and week, and the busy window the Router pushes
         self._stopped_runs: set[str] = set()  # runs the owner's «Stop» ended: not errors (`episodes`)
         # travel-ops' tools on the same server, for every session (`lanetravel.py`); None: no travel-ops in this stack.
         self.travel = lanetravel.LaneTravel(cfg.travel_url) if cfg.travel_url else None
         # The page reader's read_page on the same server, for every session (`reach.py`); None: no reader here.
         self.reach = reach_mod.LaneReach(cfg.reach_url) if cfg.reach_url else None
+        # A project's own hosts (`projecthosts.py`): the install's lists and keys; the gate checks, this server sends.
+        self.projects = self.gate.projects = projecthosts.load(
+            base=cfg.base.tree if cfg.base else None, forbidden=[lane.work_mount for lane in cfg.lanes.values()])
         self.feed.subs = self.subs  # the feed's proposals of sub-sessions, under «Decide»
         self.feed.colltools = self.colltools  # and of writes to the collections
         # The owner's Base cloned into a lane (`base.py`): kept fresh here, committed by his button.
@@ -156,12 +166,13 @@ class Platform:
                         web.post("/owner/new", self.owner_new), web.post("/owner/input", self.owner_input),
                         web.post("/owner/press", self.owner_press), web.post("/owner/login", self.owner_login),
                         web.post("/owner/file", self.owner_file), web.post("/owner/sphere", self.owner_sphere),
-                        web.post("/owner/spheres", self.owner_spheres),
+                        web.post("/owner/spheres", self.owner_spheres), web.post("/owner/voice", self.owner_voice),
                         web.post("/owner/waiting", self.owner_waiting), web.post("/owner/feed", self.owner_feed),
                         web.post("/owner/waiting/asked", self.owner_waiting_asked),
                         web.post("/owner/waiting/detail", self.owner_waiting_detail),
                         web.post("/owner/library", self.owner_library), web.post("/owner/stats", self.owner_stats),
                         *self.views.owner_routes(), *self.colltools.owner_routes(), *self.plan.owner_routes(),
+                        *events.Routes(self).owner_routes(),
                         web.post("/items", self.items),
                         web.post("/items/confirm", self.confirm)])
         return app
@@ -179,7 +190,12 @@ class Platform:
     async def hook(self, request: web.Request) -> web.Response:
         if (body := await _hook_body(request)) is None:
             return web.json_response({"error": "hook: body over 16 MB"}, status=413)
-        return web.json_response(await self.gate.hook(request.match_info["event"], _bearer(request), body))
+        event, token = request.match_info["event"], _bearer(request)
+        # A voice's session calling a tool its settings do not grant: denied before the gate is asked (`voice.py`).
+        if self.voice is not None and event == "PreToolUse" and \
+                (refused := self.voice.refusal(event, self.gate.run_of(token), body)) is not None:
+            return web.json_response(refused)
+        return web.json_response(await self.gate.hook(event, token, body))
 
     async def mark(self, request: web.Request) -> web.Response:
         if (body := await _hook_body(request)) is None:
@@ -228,6 +244,18 @@ class Platform:
         if not all(isinstance(v, str) for v in (input_id, name, text)) or not input_id:
             return web.json_response({"error": "input_id, sphere, text: not strings"}, status=400)
         return web.json_response(await self.spheres.command(input_id, name, text))
+
+    async def owner_voice(self, request: web.Request) -> web.Response:
+        """The router's turn for its voice (`voice.Voice.answer`): written into the root project's main session and
+        held until the turn is over. `by`: `schedule` for the router's own writes; none for the owner's word."""
+        body = await _body(request)
+        input_id, text, by = body.get("input_id"), body.get("text"), body.get("by")
+        if not isinstance(input_id, str) or not input_id or not isinstance(text, str) or \
+                by not in (None, voice_mod.SCHEDULE):
+            return web.json_response({"error": "input_id, text: strings; by: schedule or none"}, status=400)
+        if self.voice is None:
+            return web.json_response({"ok": False, "say": voice_mod.NO_VOICE})
+        return web.json_response(await self.voice.answer(input_id, text, body.get("attachments"), by))
 
     async def owner_spheres(self, request: web.Request) -> web.Response:
         """The spheres, for the router: which `/<name>` are the platform's, and the bot's menu."""
@@ -375,11 +403,13 @@ class Platform:
 
     async def new_session(self, input_id: str, name: str, text: str, parent: str | None = None,
                           prompt: str | None = None, attachments: object = None, sphere: str | None = None,
-                          fork_of: str | None = None, main: bool = False) -> dict:
+                          fork_of: str | None = None, main: bool = False, project: str | None = None) -> dict:
         """A session on track `name` — or a sphere's name: its track, in that sphere — started with `text` and the
         owner's attachments; the same `input_id` again names the same session. A side session (`parent`) is sent
         `prompt` instead: its title stays the owner's own question. A fork (`fork_of`) starts from that session's
-        conversation (`Spheres.fork`)."""
+        conversation (`Spheres.fork`). `project`: a project's folder in the Base (docs/base.md, «Projects»), checked
+        by the caller to be one — the session runs there; a fork or a side question of a session in the Base runs
+        where that session ran."""
         if name in self.spheres.by_name and name not in self.tracks:
             sphere, name = name, self.spheres.by_name[name].track
         track = self.tracks.get(name)
@@ -390,6 +420,13 @@ class Platform:
             return {"ok": False, "say": f"No such sphere: {sphere}."}
         session = self.store.input_session(input_id)
         cwd = self.cwd_for(track, sphere)
+        origin = self.store.session(fork_of or parent) if fork_of or parent else None
+        if origin is not None and self.in_base_dir(track, self.cwd_of(origin, track)):
+            cwd = self.cwd_of(origin, track)
+        if project is not None:
+            cwd = spaces.project_cwd(self.cfg.base.tree, project) if self.cfg.base is not None else ""
+            if not self.in_base_dir(track, cwd):
+                return {"ok": False, "say": f"Track {track.name} does not run in the Base's projects."}
         if session is None and self._code_track(track) and parent is None and fork_of is None:
             found = self._code_cwd(text)  # `/new code <repo> [text]`: the session starts in that repository
             if isinstance(found, str):
@@ -436,6 +473,14 @@ class Platform:
         track's."""
         found = self.spheres.by_name.get(sphere) if sphere else None
         return found.cwd if found is not None and found.cwd and found.track == track.name else track.cwd
+
+    def in_base_dir(self, track, cwd: str) -> bool:
+        """Whether a session of `track` may run in `cwd` as a folder of the Base — a project's: the track on the
+        Base's lane, the folder inside the clone and inside the track's own directory."""
+        base = self.cfg.base
+        if base is None or track.lane != base.lane or not under(cwd, base.tree):
+            return False
+        return not track.cwd.strip("/") or under(cwd, track.cwd)
 
     @staticmethod
     def cwd_of(session: dict, track) -> str:
@@ -1260,8 +1305,10 @@ class Platform:
         sub = f" · sub-session {row['sub_of']}" if row.get("sub_of") else ""
         head = f"Result · {session['track']} · session {session['id']}{side}{sub}"
         machine = row.get("turn_by") in ("parent", "report") and not row.get("owner_joined")
-        pings.add(self.store, row, head, text, kind, self.clock(), run=run, spheres=_sphere_titles(self.cfg),
-                  quiet=machine if quiet is None else quiet, **extra)
+        seq = pings.add(self.store, row, head, text, kind, self.clock(), run=run, spheres=_sphere_titles(self.cfg),
+                        quiet=machine if quiet is None else quiet, **extra)
+        if self.voice is not None:  # the router's call waits for it: its answer, not a ping (`voice.py`)
+            self.voice.summarized(row["id"], seq)
 
     summary = _summary
 
@@ -1415,6 +1462,7 @@ class Platform:
                 log.warning("session %s not stopped: %s", run["session"], answer)
             elif answer.get("status") == "stopping":  # not_running: it ended on its own, its lines say how
                 self.store.interrupt(run["run"], self.clock())
+        await self.events.idle()  # the reactions under way written before the file closes
         await self.collections.close()
 
 

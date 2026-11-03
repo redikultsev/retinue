@@ -413,7 +413,9 @@ class Face:
                                   "tracks": [{"name": t.name, "lane": t.lane, "kind": t.kind}
                                              for t in self.cfg.tracks],
                                   "general": general_track(self.cfg),
-                                  "spheres": self.platform.spheres.listed(), "speech": self._speech_off() is None})
+                                  "spheres": self.platform.spheres.listed(), "speech": self._speech_off() is None,
+                                  # the voice's sphere (`voice.py`): its main session is the app's chat with Retinue
+                                  "voice": voice.sphere.name if (voice := self.platform.voice) is not None else None})
 
     async def sessions(self, request: web.Request) -> web.Response:
         return web.json_response({"schema": SCHEMA, "cursor": self.store.cursor(),
@@ -554,8 +556,14 @@ class Face:
     async def view(self, request: web.Request) -> web.StreamResponse:
         """An HTML file a session handed over, for the face's frame: inline, under the hub's /pages/ rules — the
         `sandbox` policy gives it an opaque origin (no cookie, no API, no storage of the face's), no script runs, and
-        nothing loads but its own inline styles and `data:` images. Only the face may frame it."""
+        nothing loads but its own inline styles and `data:` images. Only the face may frame it. A PDF — only a file
+        that starts as one — in the browser's own viewer, which refuses one under `sandbox`: its policy names only who
+        may frame it, as a PDF of the Base's (`spaces.view`); a turn ending opens it in place (`endings`)."""
         found = self.platform.out.content(request.match_info["id"])
+        if found is not None and found[0]["mime"] == "application/pdf" and found[1].startswith(b"%PDF-"):
+            return web.Response(body=found[1], headers={
+                "Content-Type": "application/pdf", "Content-Disposition": "inline",
+                "Content-Security-Policy": f"frame-ancestors {self.cfg.face_origin or NO_FRAME}"})
         if found is None or not found[0]["mime"].startswith("text/html"):
             return _error(404, "No such page.")
         policy = f"{VIEW_CSP}; frame-ancestors {self.cfg.face_origin or NO_FRAME}"
@@ -618,7 +626,8 @@ class Face:
     async def new(self, request: web.Request) -> web.Response:
         """A new session: on `track`, in `sphere` (optional) — a sphere alone runs on its own track. With `main: true`
         and a sphere, the message goes into the sphere's main session instead, as `/<sphere> text` does — a new one,
-        made main, when it has none."""
+        made main, when it has none. With `project` (a project's folder in the Base, '' its root), the session runs
+        in that folder."""
         body = await _body(request)
         input_id, sphere, text = body.get("input_id"), body.get("sphere"), body.get("text") or ""
         if body.get("main") is True:
@@ -635,8 +644,18 @@ class Face:
         if not isinstance(input_id, str) or not INPUT_ID.fullmatch(input_id) or not isinstance(track, str) or \
                 not isinstance(text, str) or not (sphere is None or isinstance(sphere, str)):
             return _error(400, "input_id (face:<uuid4>), track or sphere, text: invalid")
+        project = body.get("project")  # a project of the Base: the session runs in its folder (docs/base.md)
+        if project is not None and self.store.input_session(input_id) is None:
+            if spaces.project_path(project) is None:
+                return _error(400, "project: not a project's folder")
+            try:
+                _, known_projects = await asyncio.to_thread(lambda: self.spaces.tree().projects())
+            except (spaces.Refused, spaces.Unreadable):
+                return _error(400, "The Base cannot be read now — try again in a minute.")
+            if project not in known_projects:
+                return _error(400, "No such project.")
         answer = await self.platform.new_session(input_id, track, text, attachments=body.get("attachments"),
-                                                 sphere=sphere)
+                                                 sphere=sphere, project=project if isinstance(project, str) else None)
         if not answer["ok"]:
             return _error(400, answer["say"])
         return web.json_response({"session": answer["session"], "say": answer["say"]})

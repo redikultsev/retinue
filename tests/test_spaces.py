@@ -177,6 +177,48 @@ def test_the_showcase_splits_at_the_marker_and_groups_its_lines_by_heading():
 def test_a_showcase_without_the_marker_is_all_rules():
     parsed = showcase("# Без маркера\n\n## Задачи\n\n- одна\n")
     assert parsed["sections"] == [] and not parsed["marker"] and "- одна" in parsed["rules"]
+    assert parsed["passport"] is None, "no «Why» section: no passport"
+
+
+PASSPORTED = f"""# Travel
+
+## Why
+
+Trips without surprises: tickets, stays and documents in one place,
+checked against the carriers' own rules.
+
+In scope: flights, trains, stays and [transfers](knowledge/transit.md)
+- **Not in scope:** visas → Documents; spending on trips → Money
+
+## Rules of the domain
+
+- Live prices only.
+
+{MARKER}
+
+## Задачи
+
+- one
+"""
+
+
+def test_the_passport_is_the_why_section_above_the_marker_and_not_among_the_rules():
+    route = "/spaces/travel/r/knowledge/transit.md"
+    parsed = showcase(PASSPORTED, lambda text: text.replace("(knowledge/transit.md)", f"({route})"))
+    assert parsed["passport"] == {
+        "why": "Trips without surprises: tickets, stays and documents in one place,\n"
+               "checked against the carriers' own rules.",
+        "in_scope": f"flights, trains, stays and [transfers]({route})",
+        "not_in_scope": "visas → Documents; spending on trips → Money"}, "its links resolved as the rules' are"
+    assert parsed["rules"] == "## Rules of the domain\n\n- Live prices only.", "the passport is not said twice"
+    assert [s["kind"] for s in parsed["sections"]] == ["tasks"]
+    russian = showcase("# Путешествия\n\n## Зачем\n\nПоездки без сюрпризов.\n\n**Входит:** билеты, жильё\n"
+                       "Не входит: визы → Документы\n\n## Правила\n\n- живые цены\n")
+    assert russian["passport"] == {"why": "Поездки без сюрпризов.", "in_scope": "билеты, жильё",
+                                   "not_in_scope": "визы → Документы"}
+    assert russian["rules"] == "## Правила\n\n- живые цены"
+    below = showcase(f"# X\n\n{MARKER}\n\n## Why\n\nnot a passport: below the marker\n")
+    assert below["passport"] is None, "only above the marker: what the assistant writes below is no passport"
 
 
 def test_the_head_is_safe_yaml_and_its_dates_are_text():

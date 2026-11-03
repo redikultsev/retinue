@@ -16,6 +16,7 @@ const GOALS = [
 const FORM = {
   title: { type: "text", required: true },
   goal: { type: "enum", values: GOALS.map((g) => g.value), labels: Object.fromEntries(GOALS.map((g) => [g.value, g.label])) },
+  project: { type: "text" },
   state: { type: "enum", values: ["open", "done", "dropped"], required: true, labels: { open: "Open", done: "Done", dropped: "Dropped" } },
   due: { type: "date" },
   by: { type: "instant" },
@@ -47,14 +48,15 @@ function add(fields: Fields): Rec {
   tasks.set(rec.id, rec);
   return rec;
 }
-add({ title: "Reply to Anna Petrova about the contract", goal: "work", minutes: 15, due: day(2) });
+add({ title: "Reply to Anna Petrova about the contract", goal: "work", project: "work/acme", minutes: 15, due: day(2) });
 add({ title: "Call Example Studio about the kitchen quote", goal: "work", minutes: 30 });
-add({ title: "Choose a hotel for the weekend from five options", goal: "home", minutes: 60, due: day(5) });
+add({ title: "Put the new mockup on the site's front page", goal: "work", project: "work/acme/site", minutes: 45, due: day(3) });
+add({ title: "Choose a hotel for the weekend from five options", goal: "home", project: "travel", minutes: 60, due: day(5) });
 add({ title: "Book the dentist", goal: "health", minutes: 15 });
 add({ title: "Ask Ivan for the soup recipe", minutes: 15 });
-const pay = add({ title: "Pay the hosting invoice", goal: "home", minutes: 15, ask: "letter:2" });
+const pay = add({ title: "Pay the hosting invoice", goal: "home", project: "home", minutes: 15, ask: "letter:2" });
 const guitar = add({ title: "Practise the guitar piece", goal: "study", minutes: 90, due: day(1) });
-const report = add({ title: "Write the quarterly report, first half", goal: "work", minutes: 120, by: iso(wall(2, 18, 0)) });
+const report = add({ title: "Write the quarterly report, first half", goal: "work", project: "work/acme", minutes: 120, by: iso(wall(2, 18, 0)) });
 const domain = add({ title: "Renew the domain", goal: "home", minutes: 15, state: "done" });
 
 interface Blk { id: string; fields: Fields; version: number }

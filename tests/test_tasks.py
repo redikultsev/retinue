@@ -75,6 +75,48 @@ def test_the_terminals_files_make_a_collection_the_router_and_the_assistant_writ
     faced(tmp_path, run)
 
 
+def test_a_task_is_filed_under_a_project_and_moved(tmp_path):
+    async def run(world):
+        now = world.clock.now = time.time()
+        store = world.platform.collections
+        spec = json.loads((DEPLOY / "tasks.json").read_text())
+        before = {**spec["form"], "fields": {k: v for k, v in spec["form"]["fields"].items() if k != "project"}}
+        await store.define(DEFINE, "tasks", spec["space"], before, now)
+        [old] = (await store.apply(SCREEN, "tasks", [{"op": "add", "fields": {
+            "title": "Renew the passport", "state": "open", "goal": "home"}}], now))["records"]
+        await define(world)  # the form grows by `project`: the task made before it is not rewritten
+        [kept] = (await store.query("tasks"))["rows"]
+        assert (kept["fields"], kept["version"]) == (old["fields"], 1), "it keeps its goal and has no project"
+
+        said = await world.owner("collections/apply", {
+            "actor": "assistant", "via": "assistant", "foreign": [], "call": "t1", "arguments": {
+                "collection": "tasks", "ops": [{"op": "add", "fields": {
+                    "title": "Send Acme the draft", "state": "open", "project": "work/acme"}}]}})
+        assert said["ok"], said
+        filed = await store.query("tasks", [{"field": "project", "op": "eq", "value": "work/acme"}])
+        [task] = filed["rows"]
+        assert task["fields"]["title"] == "Send Acme the draft", "her tool files it under the project"
+
+        said = await world.owner("collections/apply", {
+            "actor": "assistant", "via": "assistant", "foreign": [], "call": "t2", "arguments": {
+                "collection": "tasks", "ops": [{"op": "set", "id": task["id"], "version": task["version"],
+                                                "fields": {"project": "work/acme/site"}}]}})
+        assert said["ok"], said
+        [moved] = (await store.query("tasks", [{"field": "project", "op": "eq", "value": "work/acme/site"}]))["rows"]
+        assert moved["id"] == task["id"] and moved["version"] == 2, "moved, the same task"
+        assert not (await store.query("tasks", [{"field": "project", "op": "eq", "value": "work/acme"}]))["rows"]
+
+        session = Writer("session:s1", "session")
+        await store.apply(session, "tasks", [{"op": "set", "id": old["id"], "version": 1,
+                                              "fields": {"project": "home/papers"}}], now)
+        [moved] = (await store.query("tasks", [{"field": "project", "op": "eq", "value": "home/papers"}]))["rows"]
+        assert moved["fields"]["goal"] == "home", "moved by a session: its goal stays"
+        with pytest.raises(Rejected):  # the Router's rule takes in rows; it never files or moves a task
+            await store.apply(Writer(RULE, "code"), "tasks", [{"op": "set", "id": old["id"], "version": 2,
+                                                               "fields": {"project": "work"}}], now)
+    faced(tmp_path, run)
+
+
 def test_a_moment_is_kept_in_utc_and_matched_between_two(tmp_path):
     async def run(world):
         world.clock.now = time.time()

@@ -33,7 +33,9 @@ OPEN_MAX = 3
 ALL_MAX = 15
 MIN_HOURS, MAX_HOURS = 1, 21 * 24
 WHY_CHARS = 300
-MACHINE_TURNS = ("report", "follow_up")  # turns no one's word started: they widen nothing (`subs`, the gate)
+# Turns no one's word started — a report, a follow-up, the router's schedule writing to the voice (`voice.py`), a
+# reaction to an event (`events.py`): they widen nothing (`subs`, the gate).
+MACHINE_TURNS = ("report", "follow_up", "schedule", "event")
 
 TOOLS = [
     {"name": FOLLOW,

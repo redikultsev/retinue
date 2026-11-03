@@ -130,13 +130,32 @@ export const More = icon(
     <circle cx="5" cy="12" r="1" />
   </>,
 );
-export const Fork = icon(
-  "Fork",
+export const Info = icon(
+  "Info",
   <>
-    <circle cx="12" cy="18" r="3" />
-    <circle cx="6" cy="6" r="3" />
-    <circle cx="18" cy="6" r="3" />
-    <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9M12 12v3" />
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4M12 8h.01" />
+  </>,
+);
+export const FileDiff = icon(
+  "FileDiff",
+  <>
+    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+    <path d="M9 10h6M12 7v6M9 17h6" />
+  </>,
+);
+export const Eye = icon(
+  "Eye",
+  <>
+    <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0" />
+    <circle cx="12" cy="12" r="3" />
+  </>,
+);
+export const CornerDownRight = icon(
+  "CornerDownRight",
+  <>
+    <path d="m15 10 5 5-5 5" />
+    <path d="M4 4v7a4 4 0 0 0 4 4h12" />
   </>,
 );
 export const Database = icon(

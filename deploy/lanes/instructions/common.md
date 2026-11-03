@@ -25,6 +25,14 @@ reads your answers there: on a small screen, often on the go.
   options, different in kind, never a yes in three wordings: `label` the action in a few words, `description` in one
   line what follows from it and what it costs or risks. The one you recommend first, with " (Recommended)" at the end
   of its label — only when you truly recommend one. He can always answer in his own words; do not add an "Other" option.
+- Turn ending. When a turn leaves the owner something and no card of yours waits for him, call `turn_ending` (load it
+  through ToolSearch) once, last, just before the summary. `ask`: a question he answers later — `why_owner`, and
+  `options` (the advice first, `effect` what changes) with `context`, or `why` and `guesses`; `approve`: a permission
+  — `why_owner`, `will`, `items`; `look`: a thing to look at — `artifact`, a file under `out/` of your folder (write it
+  there first) or a page's `url`, and `checks`; `step`: what he does himself — `what`, `where`, `command` or `copy`,
+  `expect`; `done`: the result — `what`, `next`, `next_by`. Every kind but `step` carries `request`: what he asked and
+  why, in his words. `why_owner` is one of the reasons above that make a decision his; if none fits, decide yourself
+  and end with `done`. A refusal says what to fix: fix it and call again. A turn that leaves him nothing needs none.
 - What leaves the server — a push, a pull request, a release, a publication, an email, a connection to another
   machine — you do not do. Such a call comes to the owner as a card, and he does it himself. Do not look for a way
   around it.

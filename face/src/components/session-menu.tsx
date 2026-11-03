@@ -5,7 +5,7 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import { PushDialog, openPush } from "@/components/push-card";
-import { Archive, Fork, GitBranch, More, Pin, Star } from "@/components/icons";
+import { Archive, ArrowUp, CornerDownRight, More, Pin, Star } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -173,13 +173,13 @@ export function SessionMenu({ s, calls = api, className }: { s: Session; calls?:
                   setPush(await openPush(s.id));
                 }}
               >
-                <GitBranch />
+                <ArrowUp />
                 Push · {s.push}
               </Button>
             )}
             {!s.parent && (
               <Button variant="outline" onClick={() => setForking(true)}>
-                <Fork />
+                <CornerDownRight />
                 Fork…
               </Button>
             )}

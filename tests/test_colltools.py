@@ -247,3 +247,30 @@ def test_a_press_claims_the_card_first_and_one_the_platform_stopped_in_is_open_a
         status, data, _ = await world.call("POST", f"/api/c/_proposals/{proposal}/apply", {})
         assert status == 200 and data["proposal"]["state"] == "applied"
     subs_scenario(tmp_path, body, SubsFaceWorld)
+
+
+def test_a_session_proposes_a_projects_description_and_only_the_owners_apply_applies_it(tmp_path):
+    async def body(world: SubsFaceWorld):
+        await world.login()
+        session = await world.parent()
+        description = {"collections": {"invoices": {"form": {"fields": {"state": {"type": "enum", "values": [
+            "open", "paid"]}}}}}, "events": {"paid": {"collection": "invoices", "when": {"field": "state",
+                                                                                         "to": ["paid"]}}}}
+        said, error = await tool(world, session, colltools.PROPOSE, {"project": "billing", "description": {
+            "rights": {}}, "why": "x"}, "toolu_r")
+        assert error and "rights are the owner's" in said
+        said, error = await tool(world, session, colltools.PROPOSE, {"project": "billing", "description": description,
+                                                                     "why": "Track paid invoices."}, "toolu_d")
+        assert not error and "Proposed to the owner" in said, said
+        assert await world.platform.collections.project("billing") is None, "proposed, not applied"
+        assert await world.platform.collections.schema("invoices") is None
+        proposal = said.split("(proposal ")[1].split(")")[0]
+        card = world.platform.colltools.face_proposal(proposal)
+        assert (card["collection"], card["space"]) == (colltools.PROJECT, "billing")
+        assert [c["title"] for c in card["changes"]] == ["invoices: form", "billing: events"]
+        status, data, _ = await world.call("POST", f"/api/c/_proposals/{proposal}/apply", {})
+        assert status == 200 and data["proposal"]["state"] == "applied", data
+        assert (await world.platform.collections.project("billing"))["description"]["events"]["paid"]["collection"] \
+            == "invoices"
+        assert (await world.platform.collections.schema("invoices"))["space"] == "billing"
+    subs_scenario(tmp_path, body, SubsFaceWorld)

@@ -21,6 +21,8 @@ from retinue.config import AgentConfig, PlatformConfig, RouterConfig
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = yaml.safe_load((ROOT / "deploy" / "compose.yml").read_text())
 SERVICES = COMPOSE["services"]
+# Retinue's own image: a release's by its tag, or built here as retinue:local (deploy/update.sh, docs/install.md)
+RETINUE = "${RETINUE_IMAGE:-retinue}:${RETINUE_VERSION:-local}"
 
 
 def setup(tmp_path, **env):
@@ -229,6 +231,45 @@ def test_backup_is_off_until_asked_and_then_stays_on(tmp_path):
         "a later run without BACKUP=1 keeps it, and what the owner filled in"
     assert not any(value in again.stdout + again.stderr for value in filled.values()), "names only, never values"
     assert "Backup: on" in again.stdout
+
+
+# restic 0.19.1's SHA256SUMS, its signature by CF8F18F2844575973F79D4E191A6868BD3F7A907 checked (gpg --verify).
+RESTIC_SUMS = {"amd64": "f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c",
+               "arm64": "a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465"}
+
+
+def install_restic(tmp_path, machine: str, **fakes: str) -> subprocess.CompletedProcess:
+    """setup.sh's install_restic alone, with a fake `uname -m` and any other fakes given (name: bash body)."""
+    script = (ROOT / "deploy" / "setup.sh").read_text()
+    [function] = re.findall(r"\nRESTIC_VERSION=.*?\ninstall_restic\(\) \{\n.*?\n\}\n", script, re.S)
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    for name, body in {"uname": f"echo {machine}", **fakes}.items():
+        (fake / name).write_text(f"#!/bin/bash\n{body}\n")
+        (fake / name).chmod(0o755)
+    return subprocess.run(["bash", "-c", function + "install_restic"], capture_output=True, text=True,
+                          env={"PATH": f"{fake}:{os.environ['PATH']}", "LOG": str(tmp_path / "log")})
+
+
+@pytest.mark.parametrize("machine, arch", [("x86_64", "amd64"), ("aarch64", "arm64")])
+def test_restic_is_fetched_for_the_hosts_architecture_and_checked_against_its_pinned_hash(tmp_path, machine, arch):
+    """An x86 server and an arm64 one: the release's file for `uname -m`, checked against that file's
+    pinned sha256 before anything is unpacked. curl and sha256sum are fakes that record what they got; the fake check
+    fails, so nothing is installed."""
+    run = install_restic(tmp_path, machine,
+                         curl='echo "$@" >> "$LOG.curl"; while (( $# )); do [[ $1 == -o ]] && : > "$2"; shift; done',
+                         sha256sum='cat >> "$LOG.sha"; exit 1')
+    assert run.returncode == 1 and "is not the pinned file" in run.stderr, "a file failing its check is not installed"
+    assert "/usr/local/bin/restic" not in run.stderr, "refused before `install`, even with errexit off"
+    [url] = [arg for arg in (tmp_path / "log.curl").read_text().split() if arg.startswith("https://")]
+    assert url == f"https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_{arch}.bz2"
+    assert (tmp_path / "log.sha").read_text().split()[0] == RESTIC_SUMS[arch], "the pin of this architecture's file"
+
+
+def test_restic_refuses_an_architecture_with_no_pin(tmp_path):
+    run = install_restic(tmp_path, "riscv64", curl='echo "$@" >> "$LOG.curl"')
+    assert run.returncode == 1 and "linux amd64 and arm64" in run.stderr and "riscv64" in run.stderr
+    assert not (tmp_path / "log.curl").exists(), "nothing fetched"
 
 
 def test_backup_units_run_the_script_nightly_and_catch_up():
@@ -516,7 +557,7 @@ def test_the_collector_shares_a_network_with_the_router_alone_and_goes_out_to_go
     for net in ("mail-router", "mail-out"):
         assert COMPOSE["networks"][net] == {"internal": True}, f"{net}: no route out"
     collector, proxy = SERVICES["collector"], SERVICES["mail-egress"]
-    assert collector["image"] == "retinue:local" and collector["command"] == ["retinue-collector"]
+    assert collector["image"] == RETINUE and collector["command"] == ["retinue-collector"]
     assert collector["user"] == "10002:10002", "not the containers' 10001: the router and the assistant cannot read its keys"
     assert collector["volumes"] == ["/srv/retinue/mail/keys:/keys:ro", "/srv/retinue/mail/state:/state"]
     assert collector["environment"] == {"RETINUE_COLLECTOR_TOKEN": "${RETINUE_COLLECTOR_TOKEN:-}",
@@ -567,7 +608,7 @@ def test_the_pages_are_built_with_no_network_kept_behind_the_key_and_shared_by_a
     assert build["profiles"] == serve["profiles"] == public["profiles"] == ["pages"], "off until the owner turns it on"
     assert build["network_mode"] == "none" and build["read_only"] and build["user"] == "10001:10001"
     assert build["volumes"] == ["/srv/retinue/pages/data:/data:ro", "/srv/retinue/pages/site:/site"]
-    assert serve["image"] == "retinue:local" and serve["command"] == ["retinue-pages"] and serve["user"] == "10021:10021"
+    assert serve["image"] == RETINUE and serve["command"] == ["retinue-pages"] and serve["user"] == "10021:10021"
     assert serve["volumes"] == ["/srv/retinue/pages/site:/site:ro", "pages-data:/store", "/srv/retinue/pages/public:/public"]
     assert serve["networks"] == public["networks"] == ["dokploy-network"], "Traefik's alone: no Retinue network"
     assert serve["read_only"] and serve["cap_drop"] == ["ALL"] and public["read_only"] and public["cap_drop"] == ["ALL"]
@@ -892,9 +933,11 @@ def test_the_platform_and_its_lanes_are_off_until_asked_and_locked_down():
                                    "/srv/retinue/owner-memory:/owner-memory:ro",
                                    "/srv/retinue/base/tree:/lanes/private/base", "/srv/retinue/memory/hub.git:/hub:ro",
                                    "/srv/retinue/memory/hub.git/objects:/hub/objects",
-                                   "/srv/retinue/memory/hub.git/refs:/hub/refs", "/srv/retinue/code/mirrors:/code/mirrors"]
-    assert platform["env_file"] == [{"path": "/srv/retinue/code/tokens.env", "required": False}], \
-        "the git tokens: in the platform alone, and a missing file turns the repositories off, not the platform"
+                                   "/srv/retinue/memory/hub.git/refs:/hub/refs", "/srv/retinue/code/mirrors:/code/mirrors",
+                                   "/srv/retinue/egress/projects:/config/projects:ro"]
+    assert platform["env_file"] == [{"path": "/srv/retinue/code/tokens.env", "required": False},
+                                    {"path": "/srv/retinue/egress/project-keys.env", "required": False}], \
+        "the git tokens and the projects' keys: in the platform alone; a missing file turns them off, not the platform"
     assert platform["group_add"] == ["10001", "10020"], "the hub's group for a push, the Base's for the clone"
     assert not any("10020" in str(service.get("user", "")) + str((service.get("build") or {}).get("args", ""))
                    for service in SERVICES.values()), "the Base's group is no service's own uid or gid"
@@ -907,8 +950,8 @@ def test_the_platform_and_its_lanes_are_off_until_asked_and_locked_down():
                                                "RETINUE_FACE_ORIGIN",
                                                "RETINUE_HOOK_SECRET", "RETINUE_LANE_TOKEN_CODE",
                                                "RETINUE_LANE_TOKEN_PRIVATE", "RETINUE_LANE_TOKEN_WEB",
-                                               "RETINUE_PLATFORM_TOKEN", "RETINUE_REACH_URL", "RETINUE_TRAVEL_URL", "RETINUE_WEBAPP_KEY",
-                                               "TELEGRAM_OWNER_ID"], \
+                                               "RETINUE_PLATFORM_TOKEN", "RETINUE_REACH_URL", "RETINUE_TRAVEL_URL",
+                                               "RETINUE_VERSION", "RETINUE_WEBAPP_KEY", "TELEGRAM_OWNER_ID"], \
         "the lanes' login, which it sends with each run; no bot token: the Mini App's key is derived from it, not it"
     assert platform["environment"]["CLAUDE_CODE_OAUTH_TOKEN"] == "${CLAUDE_CODE_OAUTH_TOKEN}"
     holders = sorted(name for name, service in SERVICES.items()
@@ -991,7 +1034,7 @@ def test_each_lane_is_on_its_own_internal_network_and_goes_out_through_its_own_p
     assert members["room-out"] == ["lane-private-egress", "lane-private-sni"]
     assert guard["networks"] == ["lane-private", "room-out"] and guard["command"] == ["python", "-m", "retinue.sniguard"]
     assert guard["environment"] == {"RETINUE_SNI_UPSTREAM": "lane-private-egress:3128"}
-    assert guard["image"] == "retinue:local" and guard["read_only"] is True and guard["cap_drop"] == ["ALL"]
+    assert guard["image"] == RETINUE and guard["read_only"] is True and guard["cap_drop"] == ["ALL"]
     assert guard["user"] not in {s.get("user") for n, s in SERVICES.items() if n != "lane-private-sni"}
     assert SERVICES["lane-private"]["environment"]["HTTPS_PROXY"] == "http://lane-private-sni:3128"
     assert (ROOT / "deploy" / "egress" / "lane-code-hosts.txt").read_text().split() == [
@@ -1285,6 +1328,10 @@ def test_setup_with_the_platform(tmp_path, monkeypatch):
     # The code's folders (docs/code.md): the mirrors, the tokens' file root's alone and empty, the platform's way out.
     assert (target / "code" / "mirrors").is_dir() and (target / "code" / "tokens.env").read_text() == ""
     assert oct((target / "code" / "tokens.env").stat().st_mode & 0o777) == "0o600"
+    assert (target / "egress" / "projects").is_dir() and not list((target / "egress" / "projects").iterdir()), \
+        "a project's own hosts: none until the owner writes a list"
+    assert (target / "egress" / "project-keys.env").read_text() == ""
+    assert oct((target / "egress" / "project-keys.env").stat().st_mode & 0o777) == "0o600"
     assert (target / "egress" / "platform-hosts.txt").read_text().split() == ["github.com", "api.github.com",
                                                                               "gitlab.com", "api.elevenlabs.io"]
     # A list written before the voice (no marker yet, its last line without a newline): ElevenLabs added once, the
@@ -1440,7 +1487,7 @@ def test_the_face_is_nginx_read_only_behind_traefik_for_the_owners_devices():
     else; Traefik lets through the owner's devices only (404 for anyone else) and adds the key nginx checks."""
     face = SERVICES["face"]
     assert face["profiles"] == ["face"], "off until the owner turns it on"
-    assert face["build"] == {"context": "..", "dockerfile": "deploy/face/Dockerfile"} and face["image"] == "retinue-face:local"
+    assert face["build"] == {"context": "..", "dockerfile": "deploy/face/Dockerfile"} and face["image"] == "${RETINUE_IMAGE:-retinue}-face:${RETINUE_VERSION:-local}"
     assert face["read_only"] is True and face["cap_drop"] == ["ALL"] and face["init"] is True
     assert face["security_opt"] == ["no-new-privileges:true"] and face["tmpfs"] == ["/tmp:size=16m"]
     assert face["mem_limit"] and face["pids_limit"] and "ports" not in face and "user" not in face
@@ -1533,7 +1580,7 @@ def test_face_nginx_serves_every_app_route_and_a_records_path_however_deep_the_r
 
     for uri in ("/", "/login", "/today", "/sessions", "/new", "/read", "/uploads", "/spaces", "/spaces/travel",
                 "/spaces/travel/r/a.md", "/spaces/travel/r/knowledge/ensk-transit.md",
-                "/spaces/work/r/profile/acme/2026-10-01-x.v2.md", "/s/a1b2c3d4", "/a/5f3a9c21", "/f/f1",
+                "/spaces/work/r/profile/acme/2026-10-01-x.v2.md", "/spaces/acme/p/clients/anna", "/s/a1b2c3d4", "/a/5f3a9c21", "/f/f1",
                 "/b/b1", "/p/p1"):
         assert served(uri) == "app", uri
     for uri in ("/spaces/travel/r/.scratch/x.md", "/spaces/travel/r/knowledge/.x.md"):
@@ -1569,7 +1616,7 @@ def test_face_nginx_serves_the_app_and_streams_the_events():
     assert '~^/assets/      "public, max-age=31536000, immutable";' in cache
     assert '~^/api/         "";' in cache and 'default         "no-cache";' in cache, \
         "index.html, sw.js and the manifest revalidate; the API keeps its own no-store"
-    assert "location ~ ^/(|login|today|sessions|new|pages|read|week|uploads|spaces|spaces/[^/]+|spaces/[^/]+/r/.+|s/[^/]+|a/[^/]+|f/[^/]+|b/[^/]+|p/[^/]+)$ { try_files /index.html =404; }" in server, \
+    assert "location ~ ^/(|login|today|sessions|new|pages|read|week|uploads|spaces|spaces/[^/]+|spaces/[^/]+/r/.+|spaces/[^/]+/p/.+|s/[^/]+|a/[^/]+|f/[^/]+|b/[^/]+|p/[^/]+)$ { try_files /index.html =404; }" in server, \
         "the app's routes only"
     assert "location / { try_files $uri =404; }" in server and "location ~ /\\. { return 404; }" in server
     for passed in ("Cookie $http_cookie", "Origin $http_origin", "X-Retinue $http_x_retinue", 'X-Face-Key ""',
@@ -1724,12 +1771,20 @@ def test_every_service_has_a_memory_ceiling_and_the_always_on_part_stays_small()
 
 def test_every_image_is_pinned_by_digest_or_built_here():
     """A deploy runs exactly what was checked: a tag can be moved by its owner, a digest cannot. Built images are
-    named `*:local`; their own base images are pinned in their Dockerfiles or by the commit they are built from."""
+    named `*:local`; their own base images are pinned in their Dockerfiles or by the commit they are built from.
+    Retinue's own images are a release's, by the tag deploy/update.sh writes, or built here: each one a service builds."""
     files = [ROOT / "deploy" / "compose.yml", ROOT / "deploy" / "split-dns" / "compose.yml",
              ROOT / "tests" / "e2e" / "compose.yml"]
+    own = re.compile(r"\$\{RETINUE_IMAGE:-retinue\}(-face|-pages-build|-lane-private)?:\$\{RETINUE_VERSION:-local\}")
     for path in files:
-        for name, service in yaml.safe_load(path.read_text())["services"].items():
+        services = yaml.safe_load(path.read_text())["services"]
+        built = {service.get("image") for service in services.values() if "build" in service}
+        for name, service in services.items():
             image = service.get("image", "")
+            if own.fullmatch(image):
+                assert image in built, f"{path.name}: {name}: no service builds {image} for a local run"
+                continue
+            assert "RETINUE_VERSION" not in image, f"{path.name}: {name}: {image}"
             if "build" in service or image.endswith(":local"):
                 continue
             assert re.fullmatch(r"[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}", image), f"{path.name}: {name}: {image}"
@@ -1743,6 +1798,8 @@ def test_the_faces_nginx_config_loads_in_its_own_image(tmp_path):
     """Text tests of the config miss what only nginx sees: an unquoted `{8}` in a location regex took the face down."""
     image = re.search(r"^FROM (nginxinc/nginx-unprivileged\S+)", (ROOT / "deploy" / "face" / "Dockerfile").read_text(), re.M)[1]
     (tmp_path / "key.conf").write_text('set $face_key "x";\n')
+    # pytest makes tmp_path 0700; on Linux the bind mount keeps that, and the image's nginx (uid 101) cannot read it.
+    tmp_path.chmod(0o755)
     run = subprocess.run(["docker", "run", "--rm", "--add-host", "platform:127.0.0.1",
                           "-v", f"{ROOT / 'deploy' / 'face' / 'nginx.conf'}:/etc/nginx/conf.d/default.conf:ro",
                           "-v", f"{tmp_path}:/etc/nginx/face:ro", image, "nginx", "-t"],

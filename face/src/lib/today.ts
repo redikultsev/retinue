@@ -1,8 +1,9 @@
 // «Today»: what the home screen folds from what the app already has — the session rows (sphere, state, unread), the
 // stream's items and the text being written, the feed's deadlines. Nothing here asks the server anything.
-import { useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
+import type { Feed, FeedRow } from "./feed";
 import { plural } from "./format";
-import type { Item, Session } from "./types";
+import type { Item, Session, Sphere } from "./types";
 
 const isWaiting = (s: Session) => s.state === "waiting" || s.waiting > 0;
 
@@ -176,4 +177,77 @@ export const visits = new Visits(storage());
 
 export function useSince(source: Visits = visits): number {
   return useSyncExternalStore(source.subscribe, source.getSince);
+}
+
+// --- by action, the operator ---------------------------------------------------------------------------------------
+
+/** How «Waiting» is shown: by what the owner does about it (the default), or the sessions' requests alone, one card
+ * each. «By project» was a third way: the left panel holds the projects now, so it is gone — a device or a link that kept it lands on «By action». */
+export type TodayMode = "action" | "operator" | "map";
+export const MODE_KEY = "retinue-today-mode";
+
+/** A mode as written down anywhere — the device, a link —, as one of today's: an old «project» is «action». */
+export function modeOf(value: unknown): TodayMode | undefined {
+  return value === "operator" || value === "map" ? value : value === "action" || value === "project" ? "action" : undefined;
+}
+
+/** The way picked last on this device; «By action» the first time, and wherever the device keeps nothing. */
+export function keptMode(store: Pick<Storage, "getItem"> | null = storage()): TodayMode {
+  try {
+    return modeOf(store?.getItem(MODE_KEY)) ?? "action";
+  } catch {
+    return "action";
+  }
+}
+
+export function keepMode(mode: TodayMode, store: Pick<Storage, "setItem"> | null = storage()): void {
+  try {
+    store?.setItem(MODE_KEY, mode);
+  } catch {
+    // storage unavailable: the pick holds while the app is open
+  }
+}
+
+/** The way «Waiting» is shown, kept on the device as it is picked; a link's own (`?mode=`) wins and is kept. */
+export function useTodayMode(asked?: TodayMode): [TodayMode, (mode: TodayMode) => void] {
+  const [mode, setMode] = useState<TodayMode>(() => {
+    if (asked) keepMode(asked);
+    return asked ?? keptMode();
+  });
+  const pick = useCallback((next: TodayMode) => {
+    keepMode(next);
+    setMode(next);
+  }, []);
+  return [mode, pick];
+}
+
+/** A project's path as the app compares it — no slash at either end; "" for none. */
+export const projectKey = (project: string | null | undefined): string => (project ?? "").trim().replace(/^\/+|\/+$/g, "");
+
+/** A project in the owner's words: its folders joined by « / », the first by its sphere's title when it is a sphere's
+ * («Travel / ensk»); none is «Other». */
+export function projectTitle(project: string, spheres: Sphere[]): string {
+  const parts = projectKey(project).split("/").filter(Boolean);
+  if (!parts.length) return "Other";
+  const first = spheres.find((s) => s.name === parts[0])?.title ?? parts[0]!;
+  return [first, ...parts.slice(1)].join(" / ");
+}
+
+const REQUESTS = new Set(["answer", "decide", "reply", "read", "step"]);
+
+/** The operator's: what a session asks of the owner — a question, a card to decide, its message awaited, a step of
+ * his own, a finished turn to look at —, in the feed's order. Her world, the dates and the tasks are not among them. */
+export function sessionRequests(feed: Feed | null): FeedRow[] {
+  return (feed?.groups ?? []).flatMap((g) => g.rows).filter((r) => !!r.session && REQUESTS.has(r.action));
+}
+
+// --- the address ------------------------------------------------------------------------------------------------
+
+/** «Today»'s address: «Today» bare, `?mode=operator`, `?tab=tasks`, `?tab=schedule`. «Schedule» is the week as an hourly
+ * grid (a day on a phone); the day and the week were tabs of their own once, and the grid was «Plan»: a link to one
+ * (`?tab=day`, `?tab=week`, `?tab=plan`) lands on «Schedule»; `?mode=project`, a way gone, lands on «By action». */
+export function todaySearch(s: Record<string, unknown>): { tab?: "tasks" | "schedule"; mode?: TodayMode } {
+  const tab = s.tab === "tasks" ? "tasks" : s.tab === "schedule" || s.tab === "day" || s.tab === "week" || s.tab === "plan" ? "schedule" : undefined;
+  const mode = tab ? undefined : modeOf(s.mode);
+  return { tab, ...(mode ? { mode } : {}) };
 }

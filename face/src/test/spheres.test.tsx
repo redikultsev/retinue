@@ -6,6 +6,7 @@ import { SessionMenu } from "@/components/session-menu";
 import { Toaster } from "@/components/toaster";
 import { live } from "@/lib/live";
 import { useMarkSeen } from "@/lib/seen";
+import { forgetProjects, setProjects } from "@/lib/projects";
 import { foldRows } from "@/lib/spheres";
 import { listed } from "@/lib/store";
 import type { Session } from "@/lib/types";
@@ -42,8 +43,19 @@ afterEach(() => {
   live.meta = null;
 });
 
-describe("SessionList by sphere", () => {
-  it("groups by sphere, the main one first and starred, a fork indented, unread marked, a «＋» per sphere", async () => {
+/** A section's session rows: its links but the one that opens the project. */
+const sessionLinks = (el: HTMLElement) =>
+  within(el)
+    .queryAllByRole("link")
+    .filter((a) => !a.getAttribute("aria-label")?.startsWith("Open the project"));
+
+describe("SessionList by project", () => {
+  afterEach(() => {
+    localStorage.clear();
+    forgetProjects();
+  });
+
+  it("puts the sessions under their projects, the main one first and starred, a fork indented, unread marked, a «＋» per sphere", async () => {
     live.dispatch({
       type: "list",
       snapshot: {
@@ -57,7 +69,9 @@ describe("SessionList by sphere", () => {
     });
     mount(<SessionList />);
     const travel = (await screen.findByRole("heading", { name: /Travel/ })).closest("section")!;
-    const links = within(travel as HTMLElement).getAllByRole("link");
+    // the project is a place: its row opens its page
+    expect(within(travel as HTMLElement).getByRole("link", { name: "Open the project Travel" }).getAttribute("href")).toBe("/spaces/travel");
+    const links = sessionLinks(travel as HTMLElement);
     expect(links.map((a) => a.textContent)).toEqual([
       expect.stringContaining("main: Session m1"),
       expect.stringContaining("fork: by train"),
@@ -66,10 +80,45 @@ describe("SessionList by sphere", () => {
     expect((links[1]!.closest("li") as HTMLElement).style.marginLeft).toBe("1.25rem");
     expect(within(links[2]!).getByRole("img", { name: "unread" })).toBeTruthy();
     expect(within(links[0]!).queryByRole("img", { name: "unread" })).toBeNull();
-    expect(screen.getByRole("heading", { name: /No sphere/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Other" })).toBeTruthy(); // a session of no project and no sphere
+    expect(screen.getByRole("heading", { name: /Health/ })).toBeTruthy(); // every project is a place, sessions or not
     fireEvent.click(within(travel as HTMLElement).getByRole("button", { name: "New session: Travel" }));
     const dialog = await screen.findByRole("dialog", { name: "New session · Travel" });
     expect(within(dialog).queryByRole("radio")).toBeNull(); // the sphere is the one pressed: nothing to choose
+  });
+
+  it("nests a sub-project inside its project, its sessions under it, the project's own first", async () => {
+    setProjects([
+      { name: "travel", title: "Travel", parent: "", questions: 0, tasks: 0 },
+      { name: "travel/lisbon", title: "Lisbon in May", parent: "travel", questions: 0, tasks: 0 },
+      { name: "work", title: "Work", parent: "", questions: 0, tasks: 0 },
+    ]);
+    live.dispatch({
+      type: "list",
+      snapshot: {
+        schema: 1, cursor: 5, sessions: [
+          session("t1", { sphere: "travel", project: "travel", at: 5, title: "plan the trip" }),
+          session("l1", { sphere: "travel", project: "travel/lisbon/notes", at: 6, title: "a flat", state: "waiting", waiting: 1 }),
+          session("s1", { sub_of: "t1", sphere: "travel", project: "travel/lisbon", at: 7, title: "trains north" }),
+        ],
+      },
+    });
+    mount(<SessionList />);
+    const heads = (await screen.findAllByRole("heading", { level: 2 })).map((h) => h.textContent);
+    expect(heads).toEqual(["Projects", "Travel1", "Lisbon in May1", "Health", "Work"]);
+    const lisbon = screen.getByRole("link", { name: "Open the project Lisbon in May · 1 waiting for you" });
+    expect(lisbon.getAttribute("href")).toBe("/spaces/travel/p/lisbon");
+    const inner = lisbon.closest("section") as HTMLElement;
+    expect(sessionLinks(inner).map((a) => a.textContent)).toEqual([expect.stringContaining("a flat")]);
+    // a sub-session stays under the session that started it, in that one's project
+    expect(sessionLinks(screen.getByRole("heading", { name: /^Open the project Travel/ }).closest("section") as HTMLElement).map((a) => a.textContent)).toEqual([
+      expect.stringContaining("plan the trip"),
+      expect.stringContaining("trains north"),
+    ]);
+    // folding the project folds its sub-project too
+    fireEvent.click(screen.getByRole("button", { name: "Collapse: Travel" }));
+    expect(screen.queryByRole("link", { name: /Open the project Lisbon in May/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand: Travel (3)" })).toBeTruthy();
   });
 });
 
@@ -93,7 +142,7 @@ describe("sub-sessions, as Claude Code's sidebar has them", () => {
     });
   }
   const section = async () => (await screen.findByRole("heading", { name: /Travel/ })).closest("section") as HTMLElement;
-  const titlesIn = (el: HTMLElement) => within(el).queryAllByRole("link").map((a) => a.textContent ?? "");
+  const titlesIn = (el: HTMLElement) => sessionLinks(el).map((a) => a.textContent ?? "");
 
   it("nest under the session that started them (`sub_of`), side questions under theirs; folds are remembered", async () => {
     seedTravel();
@@ -109,13 +158,13 @@ describe("sub-sessions, as Claude Code's sidebar has them", () => {
       expect.stringContaining("side question: and this?"),
     ]);
     expect(titles()[1]).not.toContain("side question:");
-    expect((within(travel).getAllByRole("link")[1]!.closest("li") as HTMLElement).style.marginLeft).toBe("1.25rem");
+    expect((sessionLinks(travel)[1]!.closest("li") as HTMLElement).style.marginLeft).toBe("1.25rem");
     expect(within(travel).getByRole("button", { name: "Collapse nested: Travel" }).getAttribute("title")).toBe(
       "Collapse nested: 2 · sub-sessions open: 2",
     );
 
-    // 44 px to tap on a touch screen, the heading and the fold alike; small to look at with a mouse
-    expect(within(travel).getByRole("button", { name: /^Travel/ }).className).toContain("pointer-coarse:min-h-11");
+    // 44 px to tap on a touch screen, the project's row and the fold alike; small to look at with a mouse
+    expect(within(travel).getByRole("link", { name: /^Open the project Travel/ }).className).toContain("pointer-coarse:min-h-11");
     expect(within(travel).getByRole("button", { name: "Collapse nested: Travel" }).className).toMatch(
       /pointer-coarse:h-11 pointer-coarse:min-w-11/,
     );
@@ -128,23 +177,25 @@ describe("sub-sessions, as Claude Code's sidebar has them", () => {
     expect(within(travel).getByRole("button", { name: "Expand: Travel (2, 1 waiting)" }).getAttribute("aria-expanded"))
       .toBe("false");
 
-    const header = within(travel).getByRole("button", { name: /^Travel/ });
-    fireEvent.click(header);
-    expect(header.getAttribute("aria-expanded")).toBe("false");
+    // the project folds by its chevron; what waits in it stays said, amber, on its row
+    const fold = within(travel).getByRole("button", { name: "Collapse: Travel" });
+    expect(fold.className).toMatch(/pointer-coarse:h-11 pointer-coarse:min-w-11/);
+    fireEvent.click(fold);
+    expect(within(travel).getByRole("button", { name: "Expand: Travel (6)" }).getAttribute("aria-expanded")).toBe("false");
     expect(titles()).toEqual([]);
-    expect(within(header).getByLabelText("1 waiting").textContent).toBe("1 waiting");
+    expect(within(travel).getByTitle("1 waiting for you").textContent).toBe("1");
     expect(screen.getByRole("heading", { name: /Health/ })).toBeTruthy(); // the others stay open
 
     view.unmount();
     mount(<SessionList />);
     const again = await section();
-    expect(within(again).queryAllByRole("link")).toHaveLength(0);
-    fireEvent.click(within(again).getByRole("button", { name: /^Travel/ }));
-    expect(within(again).getAllByRole("link")).toHaveLength(4); // the main one is still folded
+    expect(sessionLinks(again)).toHaveLength(0);
+    fireEvent.click(within(again).getByRole("button", { name: /^Expand: Travel/ }));
+    expect(sessionLinks(again)).toHaveLength(4); // the main one is still folded
   });
 
   it("under «Waiting» nothing folded hides what waits", async () => {
-    localStorage.setItem("retinue-list-folded", JSON.stringify(["m1", "sphere:travel"]));
+    localStorage.setItem("retinue-list-folded", JSON.stringify(["m1", "project:travel"]));
     seedTravel();
     mount(<SessionList />);
     const travel = await section();
@@ -154,8 +205,8 @@ describe("sub-sessions, as Claude Code's sidebar has them", () => {
     fireEvent.click(screen.getByRole("button", { name: "All" }));
   });
 
-  it("never hides the session on screen: its sphere and its parent stay open", async () => {
-    localStorage.setItem("retinue-list-folded", JSON.stringify(["m1", "sphere:travel"]));
+  it("never hides the session on screen: its project and its parent stay open", async () => {
+    localStorage.setItem("retinue-list-folded", JSON.stringify(["m1", "project:travel"]));
     seedTravel();
     mount(<SessionList current="c2" />);
     const travel = await section();

@@ -34,9 +34,11 @@ settings: no session can rewrite it. A change takes an image rebuild.
 ## The repository's rules
 
 For every run — a resume too — the lane host (`retinue/instructions.py`, `compose`) reads the chain of folders from
-the top of the session's repository (its first folder under `/work`) down to its working directory, as the pinned CLI
-loads them on your Mac (probed with 2.1.304): each folder's `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md`;
-only when no folder of the chain has any of these, each folder's `AGENTS.md` and `.claude/AGENTS.md` instead. Then
+the top of the session's repository (its first folder under `/work`) down to its working directory: in each folder,
+top first, its `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md`, as the pinned CLI loads them on your Mac
+(probed with 2.1.304), then its `AGENTS.md` and `.claude/AGENTS.md` — always, where the CLI reads them only when no
+folder of the chain has a CLAUDE file: a project of the Base keeps its rules there, and a session in a project three
+folders deep gets every level's ([base.md](base.md#reading-the-base-in-the-app)), none of a sibling's. Then
 each `@path` they include, five levels deep, not inside code. A track whose `cwd` is `''` (the lane's `/work` itself)
 is in no repository and gets none.
 

@@ -115,6 +115,19 @@ class ProactiveConfig:
     week: list[str] = field(default_factory=list)  # the week's numbers: `stat` views of his collections, in order
 
 
+VOICE_ENGINES = ("assistant", "session")
+VOICE_CHANNELS = ("telegram",)  # the router's channel the platform reaches the owner through
+
+
+@dataclass
+class VoiceConfig:
+    """Who speaks for Retinue in the owner's channels (docs/proactive.md, «The voice»): `assistant` — today's assistant
+    over A2A, unchanged; `session` — the main session of the root project on the platform (`router.SessionVoice`),
+    whose tools are the platform's to grant (`VoiceSessionConfig`)."""
+    engine: str = "assistant"
+    channels: list[str] = field(default_factory=lambda: ["telegram"])  # session: the channels it hears and speaks in
+
+
 @dataclass
 class RouterConfig:
     agents: list[RouterAgent]
@@ -149,6 +162,7 @@ class RouterConfig:
     platform_url: str = ""              # the platform (`retinue-platform`): sessions in the lanes; empty = none
     platform_token: str = ""            # from RETINUE_PLATFORM_TOKEN
     face_url: str = ""                  # the platform's face, https://<host>: a card's «Open in the app», /app
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
 
     @classmethod
     def load(cls, path: str | Path) -> RouterConfig:
@@ -158,6 +172,10 @@ class RouterConfig:
         telegram = TelegramConfig(**raw.pop("telegram")) if raw.get("telegram") else None
         memory = MemoryConfig(**raw.pop("memory")) if raw.get("memory") else None
         proactive = ProactiveConfig(**(raw.pop("proactive", None) or {}))
+        given = raw.pop("voice", None) or {}
+        if not isinstance(given, dict) or set(given) - set(VoiceConfig.__dataclass_fields__):
+            raise SystemExit(f"router config: voice is a section of {', '.join(VoiceConfig.__dataclass_fields__)}")
+        voice = VoiceConfig(**given)
         raw.pop("matrix", None)
         raw.pop("telegram", None)
         raw.pop("memory", None)
@@ -169,9 +187,11 @@ class RouterConfig:
         if retired := [key for key in ("plan_hours", "plan_zone") if raw.pop(key, None) is not None]:
             log.warning("router config: %s is no longer read — the plan's window is set in the app (docs/collections.md)",
                         ", ".join(retired))
-        cfg = cls(agents=agents, matrix=matrix, telegram=telegram, memory=memory, proactive=proactive, **raw)
+        cfg = cls(agents=agents, matrix=matrix, telegram=telegram, memory=memory, proactive=proactive, voice=voice,
+                  **raw)
         if not (cfg.matrix or cfg.telegram):
             raise SystemExit("router config: no channel — add a `telegram:` or a `matrix:` section")
+        _check_voice_channels(cfg)
         if cfg.matrix:
             cfg.matrix.as_token = _env("RETINUE_AS_TOKEN")
             cfg.matrix.hs_token = _env("RETINUE_HS_TOKEN")
@@ -216,6 +236,19 @@ class RouterConfig:
         if cfg.telegram and cfg.default_agent is None:
             raise SystemExit("router config: Telegram is one chat without addresses — set `default_agent`")
         return cfg
+
+
+def _check_voice_channels(cfg: RouterConfig) -> None:
+    """`voice.engine: session` is a session on the platform, which reaches the owner through Telegram."""
+    voice = cfg.voice
+    if voice.engine not in VOICE_ENGINES:
+        raise SystemExit(f"router config: voice.engine {voice.engine!r} is not one of {', '.join(VOICE_ENGINES)}")
+    if voice.engine != "session":
+        return
+    if not cfg.platform_url:
+        raise SystemExit("router config: voice.engine session is the root project's main session — add platform_url")
+    if voice.channels != list(VOICE_CHANNELS):
+        raise SystemExit(f"router config: voice.channels is [telegram], not {voice.channels!r}")
 
 
 @dataclass
@@ -437,6 +470,19 @@ class SpeechConfig:
     proxy: str = ""                     # the platform's way out to api.elevenlabs.io; '' : code.proxy
 
 
+SESSION_ENGINES = ("claude-code",)  # what runs a platform session: the lanes' pinned CLI (`cliengine`), the only one yet
+
+
+@dataclass
+class VoiceSessionConfig:
+    """The voice as the main session of the root project (`voice.py`, docs/proactive.md «The voice»): the sphere
+    whose directory is the root of the Base, and the tools its sessions may call. Absent: no voice here."""
+    sphere: str
+    # The only tools its sessions may call; `mcp__<server>` names every tool of that server. None: its track's rules.
+    tools: list[str] | None = None
+    engine: str = "claude-code"         # what runs it: the lanes' CLI (`cliengine`), the one engine there is yet
+
+
 @dataclass
 class PlatformConfig:
     """The platform (`retinue-platform`): its lanes, the owner's tracks and their always rules, its own SQLite."""
@@ -472,6 +518,7 @@ class PlatformConfig:
     stt_key: str = ""                   # from ELEVENLABS_API_KEY: the app's dictation; without it voice is refused aloud
     travel_url: str = ""                # from RETINUE_TRAVEL_URL: travel-ops' MCP; '' = no travel tools in sessions
     reach_url: str = ""                 # from RETINUE_REACH_URL: the page reader (`reach`); '' = no read_page
+    voice: VoiceSessionConfig | None = None
 
     @classmethod
     def load(cls, path: str | Path = "/config/platform.yaml") -> PlatformConfig:
@@ -488,11 +535,12 @@ class PlatformConfig:
         if given is not None and "author" not in given:
             raise SystemExit("base: author is not «Name <email>» — the owner, whose commits the button makes")
         code = _code(raw.pop("code", None))
-        voice = _speech(raw.pop("speech", None))
+        speech = _speech(raw.pop("speech", None))
+        voice = _voice(raw.pop("voice", None))
         if raw.pop("hub_origin", None):  # the retired life hub's: «Pages» stays empty until pages_origin is written
             log.warning("platform config: hub_origin is the retired life hub's — write pages_origin (docs/pages.md)")
         cfg = cls(lanes=lanes, tracks=tracks, spheres=spheres, base=BaseConfig(**given) if given else None, code=code,
-                  speech=voice, **raw)
+                  speech=speech, voice=voice, **raw)
         for lane in cfg.lanes.values():
             if not LANE_NAME.fullmatch(lane.name):
                 raise SystemExit(f"platform config: lane name {lane.name!r} is not {LANE_NAME.pattern}")
@@ -523,6 +571,7 @@ class PlatformConfig:
                 raise SystemExit(f"track {track.name}: allow {open_web[0]} on a web lane would take every fetch past "
                                  "the classifier; leave the web tools to it (docs/platform.md, «The room»)")
         _check_spheres(cfg)
+        _check_voice(cfg)
         _check_base(cfg)
         _check_code(cfg)
         _check_speech(cfg)
@@ -585,6 +634,42 @@ def _check_spheres(cfg: PlatformConfig) -> None:
                 sphere.cwd and track.cwd and not _inside(sphere.cwd, track.cwd)):
             raise SystemExit(f"sphere {sphere.name}: cwd {sphere.cwd!r} is not a path inside its track's "
                              f"{track.cwd or '/work'}")
+
+
+def _voice(given: object) -> VoiceSessionConfig | None:
+    if given is None:
+        return None
+    if not isinstance(given, dict) or "sphere" not in given or \
+            set(given) - set(VoiceSessionConfig.__dataclass_fields__):
+        raise SystemExit("platform config: voice is a section of sphere and, optionally, "
+                         f"{', '.join(k for k in VoiceSessionConfig.__dataclass_fields__ if k != 'sphere')}")
+    return VoiceSessionConfig(**given)
+
+
+TOOL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,127}")  # a tool's name as the engine calls it: `Read`, `mcp__retinue`
+
+
+def _check_voice(cfg: PlatformConfig) -> None:
+    """The voice is the main session of the root project: a sphere whose sessions run in a top folder of the lane's
+    /work — the Base's root when there is a Base."""
+    voice = cfg.voice
+    if voice is None:
+        return
+    sphere = next((s for s in cfg.spheres if s.name == voice.sphere), None)
+    if sphere is None:
+        raise SystemExit(f"platform config: voice.sphere {voice.sphere!r} is not one of the spheres")
+    track = next(t for t in cfg.tracks if t.name == sphere.track)
+    root = (sphere.cwd or track.cwd).strip("/")
+    if not root or "/" in root or (cfg.base is not None and root != cfg.base.tree):
+        raise SystemExit(f"platform config: voice.sphere {voice.sphere}: its sessions run in {root or '/work'!r}, not "
+                         f"in the root of {'the Base, ' + repr(cfg.base.tree) if cfg.base else 'a repository'}")
+    if voice.tools is not None and not (isinstance(voice.tools, list) and voice.tools and all(
+            isinstance(t, str) and TOOL_NAME.fullmatch(t) for t in voice.tools)):
+        raise SystemExit(f"platform config: voice.tools is a list of tool names (Read, mcp__retinue…), not "
+                         f"{voice.tools!r}")
+    if voice.engine not in SESSION_ENGINES:
+        raise SystemExit(f"platform config: voice.engine {voice.engine!r}: the lanes run {', '.join(SESSION_ENGINES)} "
+                         "only")
 
 
 def _inside(path: str, folder: str) -> bool:

@@ -15,7 +15,7 @@ import re
 
 import pytest
 
-from retinue import views
+from retinue import pagesd, project, views
 from retinue.collections import Collections, Rejected, Writer, parse_views
 from retinue.views import When
 from retinue.face import COOKIE
@@ -772,3 +772,127 @@ def test_the_new_view_keys_and_an_enums_labels_are_checked_in_their_shape(tmp_pa
         await store.close()
 
     run(body)
+
+
+# --- sums by month, a year's line, money and files ------------------------------------------------------------------
+
+LEDGER = {
+    "fields": {
+        "what": {"type": "text"},
+        "amount": {"type": "money", "currency": "EUR"},
+        "kind": {"type": "enum", "values": ["rent", "food"]},
+        "date": {"type": "date"},
+        "receipt": {"type": "file"},
+    },
+}
+LEDGER_VIEWS = [
+    {"name": "spent", "kind": "months", "title": "Spent by month", "date": "date", "sum": "amount", "group": "kind",
+     "months": 3},
+    {"name": "count", "kind": "months", "date": "date"},
+    {"name": "year", "kind": "year", "title": "This year", "date": "date", "sum": "amount"},
+]
+
+
+def test_sums_by_month_and_a_years_line_count_to_the_cent(tmp_path):
+    async def body():
+        store = Collections(str(tmp_path / "collections.sqlite"))
+        await store.define(DEFINE, "ledger", "home", LEDGER, NOW, views=LEDGER_VIEWS)
+        for amount, kind, date in (("0.10", "food", "2026-09-01"), (0.2, "food", "2026-09-15"),
+                                   ("900", "rent", "2026-09-01"), ("12.5", "food", "2026-08-31"),
+                                   ("100", "rent", "2025-03-03"), ("7", "food", "2026-06-30")):
+            await add(store, "ledger", {"amount": amount, "kind": kind, "date": date}, NOW)
+        answer = await store.read(lambda: views.space_views(store, "home", When("UTC", NOW)))
+        got = {v["name"]: v for v in answer["collections"][0]["views"]}
+        spent = got["spent"]
+        assert (spent["unit"], spent["values"]) == ("EUR", ["rent", "food"])
+        assert spent["months"] == [
+            {"first": "2026-07-01", "totals": []},
+            {"first": "2026-08-01", "totals": [{"value": "food", "total": "12.50"}]},
+            {"first": "2026-09-01", "totals": [{"value": "rent", "total": "900.00"}, {"value": "food", "total": "0.30"}]},
+        ], "the last three months, this one last, each split in the enum's order, in exact cents"
+        assert [m["totals"] for m in got["count"]["months"]][-4:] == [[{"value": None, "total": 1}], [], [
+            {"value": None, "total": 1}], [{"value": None, "total": 3}]], "no sum: the records counted"
+        year = got["year"]
+        assert (year["year"], year["through"], year["unit"]) == (2026, 9, "EUR")
+        assert [m["running"] for m in year["months"]][5:9] == ["7.00", "7.00", "19.50", "919.80"]
+        assert year["previous"][2] == {"first": "2025-03-01", "total": "100.00", "running": "100.00"}
+        for bad, reason in (("12.345", "at most two places"), (True, "at most two places"), ("1e3", "two places")):
+            with pytest.raises(Rejected, match=reason):
+                await add(store, "ledger", {"amount": bad}, NOW)
+        with pytest.raises(Rejected, match="there is no such file"):
+            await add(store, "ledger", {"receipt": "0" * 64}, NOW)
+        file, _ = await store.put_file(b"%PDF-1.7 receipt", "acme-receipt.pdf", "application/pdf", NOW)
+        await add(store, "ledger", {"what": "Lunch", "receipt": file["sha256"]}, NOW)
+        await store.define(DEFINE, "ledger", "home", LEDGER, NOW, views=[
+            {"name": "all", "kind": "queue", "fields": ["what", "receipt"],
+             "filter": {"field": "receipt", "op": "not_empty"}}])
+        (row,) = (await store.read(lambda: views.one_view(store, "ledger", "all", When("UTC", NOW))))["view"]["rows"]
+        assert row["refs"] == {"receipt": "acme-receipt.pdf"}, "a file by its name, never its sha256"
+        with pytest.raises(Rejected, match="would become another type"):
+            await store.define(DEFINE, "ledger", "home", {"fields": {**LEDGER["fields"], "amount": {
+                "type": "money", "currency": "USD"}}}, NOW)
+        for given, reason in (([{"name": "x", "kind": "months"}], "names the date field"),
+                              ([{"name": "x", "kind": "months", "date": "d", "months": 25}], "from 2 to 24"),
+                              ([{"name": "x", "kind": "year", "date": "d", "group": "g"}], "not 'group'")):
+            with pytest.raises(Rejected, match=re.escape(reason)):
+                parse_views(given)
+        await store.define(DEFINE, "ledger", "home", LEDGER, NOW, views=[
+            {"name": "bad", "kind": "year", "date": "date", "sum": "what"}])
+        bad = (await store.read(lambda: views.one_view(store, "ledger", "bad", When("UTC", NOW))))["view"]
+        assert bad["error"] == "'what' is a text, not a int or money", "only a number or money adds up"
+        await store.close()
+
+    run(body)
+
+
+PAGE = ("<!doctype html><title>Burn</title><p id=n></p><script>addEventListener('message', e => "
+        "{ document.getElementById('n').textContent = e.data.view.rows.length })</script>")
+BILLING = """
+collections:
+  invoices:
+    form:
+      fields:
+        company: {type: text}
+        amount: {type: money, currency: EUR}
+views:
+  - {name: burn, kind: code, collection: invoices, title: Burn-down, tab: Money}
+"""
+
+
+def test_a_projects_own_view_gets_its_data_and_no_network(tmp_path):
+    async def body(world):
+        store = world.platform.collections
+        given = project.read(BILLING.replace("tab: Money}", "tab: Money, file: views/burn.html}"), "billing",
+                             {"views/burn.html": PAGE.encode()}.get)
+        await project.apply(store, "billing", given, NOW)
+        await add(store, "invoices", {"company": "Acme", "amount": "10"}, NOW)
+        src = "/api/c/invoices/_code/burn"
+        assert (await world.api.request("GET", src)).status == 401, "behind the app's login"
+        await world.login()
+        got = await world.get("/api/c/_space?space=billing")
+        (code,) = [v for c in got["collections"] for v in c["views"] if v["kind"] == "code"]
+        assert (code["name"], code["title"], code["tab"], code["src"]) == ("burn", "Burn-down", "Money", src)
+        assert [r["fields"] for r in code["rows"]] == [{"company": "Acme", "amount": "10.00"}], "its data, from the app"
+        assert code["fields"]["amount"] == {"type": "money", "currency": "EUR"}
+        assert "html" not in code, "the page itself is not in the data"
+        assert code["sandbox"] == pagesd.SANDBOX[True] and "allow-same-origin" not in code["sandbox"], \
+            "the frame's sandbox: the pages service's, scripts on, an opaque origin"
+        again = await world.get("/api/c/invoices?view=burn")
+        assert again["view"]["rows"] == code["rows"], "read again by name, as any view"
+
+        response = await world.api.request("GET", src, headers={"Cookie": f"{COOKIE}={world.cookie}"})
+        assert response.status == 200 and await response.text() == PAGE
+        assert response.headers["Content-Type"].startswith("text/html")
+        policy = dict(d.strip().split(" ", 1) for d in response.headers["Content-Security-Policy"].split(";"))
+        assert policy["default-src"] == "'none'" and policy["connect-src"] == "'none'", "no network at all"
+        assert policy["script-src"] == "'unsafe-inline'", "its own scripts run, nothing loaded from anywhere"
+        assert policy["sandbox"] == pagesd.SANDBOX[True] and policy["frame-ancestors"] == world.cfg.face_origin
+        assert all(policy[d] == "'none'" for d in ("frame-src", "worker-src", "form-action", "base-uri"))
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        missing = await world.api.request("GET", "/api/c/invoices/_code/other",
+                                          headers={"Cookie": f"{COOKIE}={world.cookie}"})
+        assert missing.status == 404
+        with pytest.raises(Rejected, match="loads nothing from elsewhere"):
+            project.read(BILLING.replace("tab: Money}", "html: '<img src=\"https://example.com/p.png\">'}"), "billing")
+
+    faced(tmp_path, body)

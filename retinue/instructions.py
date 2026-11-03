@@ -10,9 +10,10 @@ itself and hands them to the CLI as `--append-system-prompt-file`:
 - the chain is the folders from the top of the session's repository (its first folder under /work) down to its
   working directory; a session whose directory is /work itself has no repository and gets nothing. Never a folder
   above the repository: /work holds every track of the lane, and a file there would speak to them all;
-- in it, as the pinned CLI loads them on the owner's Mac (probed): each folder's `CLAUDE.md`, `.claude/CLAUDE.md`
-  and `CLAUDE.local.md`; only when no folder of the chain has any of them, each folder's `AGENTS.md` and
-  `.claude/AGENTS.md`;
+- in it, each folder's `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md`, as the pinned CLI loads them on the
+  owner's Mac (probed), and each folder's `AGENTS.md` and `.claude/AGENTS.md` — the rules of every level, whatever
+  the CLI files say: a project of the Base three folders deep gets the `AGENTS.md` of its own folder and of every
+  folder above it, and none of a sibling (docs/base.md, «Projects»);
 - each `@path` include, as the CLI resolves it (relative to the file, five levels deep, not inside code), but only
   inside the repository: an include, a link or `..` that leads out of it is left out, so a repository cannot pull
   `/proc/self/environ` or the lane's own files into a prompt; one that cannot even be looked at is left out too;
@@ -52,7 +53,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 NAMES = ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md")  # a folder's own, in the CLI's order
-FALLBACK = ("AGENTS.md", ".claude/AGENTS.md")  # only when no folder of the chain has any of NAMES (2.1.304, probed)
+# Every folder's too, after its CLAUDE files. The CLI reads these only when no folder of the chain has any of NAMES
+# (2.1.304, probed); the lanes read them always: AGENTS.md is where a project of the Base keeps its rules.
+AGENTS = ("AGENTS.md", ".claude/AGENTS.md")
 MAX_DEPTH = 5               # include hops, as the CLI's own limit
 MAX_FILE = 128 * 1024       # bytes of one file; a larger one is left out, named
 MAX_TOTAL = 256 * 1024      # bytes of the whole text of one run, the list of what is left out with it
@@ -166,8 +169,9 @@ def _read(path: Path, root: Path) -> str | None:
 def compose(cwd: Path, work: Path, nonce: str | None = None) -> str:
     """The text of the run's `--append-system-prompt-file`, or '' when the session is in no repository (its cwd is
     /work itself, or outside it) or the repository has no rules. The chain is the repository's top folder down to the
-    cwd. As 2.1.304 loads it on the Mac (probed): each folder's `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`;
-    only when none of the chain has any of them, each folder's `AGENTS.md` and `.claude/AGENTS.md`."""
+    cwd; in each folder, top first, its `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` (as 2.1.304 loads them on
+    the Mac, probed), then its `AGENTS.md` and `.claude/AGENTS.md`. Nothing of a folder beside the chain or below the
+    cwd."""
     work, cwd = Path(os.path.realpath(work)), Path(os.path.realpath(cwd))
     if not cwd.is_relative_to(work) or cwd == work:
         return ""
@@ -175,9 +179,8 @@ def compose(cwd: Path, work: Path, nonce: str | None = None) -> str:
     root = work / relative[0]
     composer = _Composer(root, nonce or secrets.token_hex(8))
     folders = [root.joinpath(*relative[1:i]) for i in range(1, len(relative) + 1)]
-    names = NAMES if any(os.path.lexists(folder / name) for folder in folders for name in NAMES) else FALLBACK
     for folder in folders:
-        for name in names:
+        for name in (*NAMES, *AGENTS):
             if os.path.lexists(folder / name):
                 composer.add(folder / name, 0)
     if not composer.parts:

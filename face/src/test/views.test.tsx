@@ -105,7 +105,7 @@ describe("a Space's views", () => {
     const tabbed = answer([{ name: "deals", rev: REV, views: [{ ...STATS[0]!, tab: "Numbers" } as View, QUEUE] }]);
     mount(<SpacePage space="work" read={read} views={views(tabbed)} />);
     await screen.findByTestId("queue-waiting");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Now4", "Numbers", "Base1"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview4", "Numbers", "Operator"]);
     expect(screen.queryByTestId("stat-made")).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: "Numbers" }));
     expect((await screen.findByTestId("stat-made")).textContent).toBe("Follow-ups done3of 10this week, 14 Sep–20 Seplast week: 7");
@@ -141,13 +141,13 @@ describe("a Space's views", () => {
     const drafts: View = { ...EMPTY, name: "drafts", title: "Drafts", tab: "Drafts", rot: 2 } as View;
     mount(<SpacePage space="work" read={read} views={views(answer([{ name: "followups", rev: REV, views: [QUEUE, drafts] }]))} />);
     await screen.findByTestId("queue-waiting");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Now4", "Base1"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview4", "Operator"]);
     cleanup();
     forgetViews();
     const one = { ...drafts, count: 1, rows: [row({ name: "To Acme" }, 3)] } as View;
     mount(<SpacePage space="work" read={read} views={views(answer([{ name: "followups", rev: REV, views: [QUEUE, one] }]))} />);
     await screen.findByTestId("queue-waiting");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Now4", "Drafts1", "Base1"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview4", "Drafts1", "Operator"]);
   });
 
   it("shows a board on the first tab as a strip of its columns, a column's cards on a press", async () => {
@@ -193,8 +193,8 @@ describe("a Space's views", () => {
       mount(<SpacePage space="work" read={read} views={api} />);
       await screen.findByText("Which vendor first?");
       await waitFor(() => expect(api.space).toHaveBeenCalledWith("work"));
-      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Base1"]);
-      expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(["Open questions", "Tasks", "Records", "Sessions"]);
+      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Operator"]);
+      expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(["Yours", "Sessions"]);
       cleanup();
     }
   });

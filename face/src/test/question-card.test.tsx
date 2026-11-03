@@ -107,7 +107,7 @@ describe("QuestionCard", () => {
     expect(screen.getByText("Expired: you wrote a new message")).toBeTruthy();
   });
 
-  it("waits on the owner like a card, and takes its item's place in the transcript", () => {
+  it("waits on the owner like a card; in the transcript its item is one line pointing to «Waiting for you»", () => {
     expect(shownApprovals({ q: question() })).toHaveLength(1);
     const item: Item = {
       session: "a1b2c3d4",
@@ -116,9 +116,14 @@ describe("QuestionCard", () => {
       kind: "question",
       data: { id: "toolu_q", questions: ASK.questions, answer: null },
     };
-    render(<Transcript items={[item]} approvals={[question()]} running={false} />);
-    expect(screen.getAllByText("Where to stay?")).toHaveLength(1);
+    const onWaiting = vi.fn();
+    render(<Transcript items={[item]} approvals={[question()]} running={false} onWaiting={onWaiting} />);
+    const anchor = screen.getByTestId("waiting-anchor");
+    expect(anchor.textContent).toContain("Where to stay?");
+    expect(screen.queryByTestId("question-card")).toBeNull(); // its buttons are in the dock, not here
     expect(screen.queryByText(/Awaiting an answer — in the question card/)).toBeNull();
+    fireEvent.click(anchor);
+    expect(onWaiting).toHaveBeenCalledWith(`a:${question().id}`);
   });
 });
 

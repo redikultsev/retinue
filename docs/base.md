@@ -48,7 +48,14 @@ The example `platform.yaml` gives spheres no `cwd`: their sessions start in the 
 ([instructions.md](instructions.md)). Every consumer of a session's directory — the run's `cwd`, `out/` and its
 attribution, the face's diff, a fork — uses the directory stored with the session (`sessions.cwd`), not the track's.
 A fork runs where its parent ran; it is refused («the session's track is now … in another folder») only when the configuration
-would put a new session of that sphere elsewhere.
+would put a new session of that sphere elsewhere and the parent's folder is not a folder of the Base its track reaches.
+
+**A session in a project.** «New» and «Discuss» on a project's page in the app start the session with `project` (`POST
+/api/sessions`): it runs in `/work/<tree>/<project>`, whatever the sphere's `cwd`, and so gets the `AGENTS.md` of
+every folder from the Base's root down to the project, none of a sibling's ([instructions.md](instructions.md)). The
+project must be one in the commit, and the track on the Base's lane with the project inside its own `cwd`; otherwise
+400. A fork or a side question of a session in the Base runs where that session ran. `/<sphere>` in Telegram still
+starts in the sphere's `cwd`.
 
 The lane is told about the Base by `deploy/lanes/instructions/base.md` (baked into lane-private's image): the platform
 pulls before each turn and commits and pushes after it; a new Record gets its Showcase row in the same turn and the
@@ -279,27 +286,66 @@ no config of the tree) at its `main`, the hub's commit the clone is on as of the
 opened, because the tree is never opened. The answers carry `head`, that commit, and are cached by it: a new commit
 (a refresh, a commit after a turn) drops the cache.
 
-- **A Space** is a top-level folder whose `AGENTS.md` is a regular file of the commit and whose name is
-  `[a-z0-9][a-z0-9_-]*` (64 at most): so not `.cache`, not a folder of no Showcase, not a Showcase that is a link.
+- **A project** is any folder whose `AGENTS.md` (its Showcase) is a regular file of the commit, at any depth, each
+  folder name `[a-z0-9][a-z0-9_-]*` (64 at most), 8 folders at most: so not `.cache`, not a folder of no Showcase,
+  not a Showcase that is a link. Projects nest: a project's **sub-projects** are the project folders below it with no
+  other project between, and a file, a Record or a folder belongs to the nearest project above it. **A Space** is a
+  top-level project; the grid shows the projects right below the root (the Spaces, and a deeper project no project
+  holds). `GET /api/projects/<path>` answers a project at any depth (`/api/projects`: the root, when it has an
+  `AGENTS.md`) as `/api/spaces/<space>` answers a Space — with its `files`, its `projects` (sub-projects), its
+  `parent` — and `sessions`, the ids of the sessions started in its folder. In the app a project below a Space is
+  `/spaces/<space>/p/<the rest>`.
+- **A project's files** are every regular file of the commit in its folder and not in a sub-project's — its Records
+  too —, no dot segment, at most 3000 listed, each with its size and what the app does with it (`kind`: image, pdf,
+  audio, video, markdown, text, html, other). `GET /api/base/<path>` serves one as its extension's type (never
+  sniffed, under `default-src 'none'; sandbox`): a picture, a recording or a film inline and in ranges (a phone's
+  player asks for them), anything else as a download; a link (`120000`), a dot segment, a path out of the Base, a file
+  in no project: 404; over 25 MB: 413. `GET /api/base-view/<path>` serves a PDF — only a file that starts with
+  `%PDF-` — for the app's frame: the browser's own viewer refuses a PDF under `sandbox`, so its policy is only
+  `frame-ancestors <the app>`, and nginx adds neither its own policy nor `X-Frame-Options` there.
 - **A Showcase** is split at the line that starts with `<!-- Витрина:`. Above it: the rules (the title, its first
   `#` heading, left out), shown folded. Below: the lines by heading (`##` to `######`, not inside a code block), each
   a top-level list item with what is indented under it, or a paragraph. A heading with «Открыт… вопрос…» holds the Open
   questions, one that starts with «Задач» the Tasks, «Запис» the Records (not shown: the app lists the Records from the
   commit). Their counts are list items; «Пока … нет» there is a placeholder, not a line. No marker: all of it is rules.
-- **The grid** (`GET /api/spaces`) reads only each Showcase; a Space's Records are read when that Space is opened,
+- **A project's passport** is the `## Why` section above the marker (`## Зачем` too): why the project is, in its
+  prose, and its scope in lines of their own — `In scope: …` and `Not in scope: … → where it goes instead` (`Входит:`,
+  `Не входит:`; a list item or in bold too). The answer carries it as `passport: {why, in_scope, not_in_scope}`, its
+  links resolved as the rules' are, and the rules are what is above the marker without it; no such section: `null`.
+  The app opens a project on it ([face.md](face.md#a-project)), and «Edit with a session» asks a session in the
+  project's folder to write it:
+
+  ```markdown
+  # Travel
+
+  ## Why
+
+  Trips without surprises: tickets, stays and documents for every trip in one place.
+
+  In scope: flights, trains, stays, transfers, travel documents and insurance
+  Not in scope: visas → Documents; spending on trips → Money
+
+  ## Rules of the domain
+
+  - Live prices only, with a link.
+  ```
+- **The grid** (`GET /api/spaces`) reads only each Showcase — beside the Spaces, `projects`: every project at any depth
+  with its title, the project it is in and its counts, every Showcase in one batch —; a Space's Records are read when that Space is opened,
   and each only for its head — a Record up to 64 KB in one batch, a bigger one only its first 16 KB.
-- **The Records** of a Space are its `knowledge/`, `profile/`, `journal/`, `artifacts/` files, with one level of
+- **The Records** of a project are its `knowledge/`, `profile/`, `journal/`, `artifacts/` files, with one level of
   subfolders, each with what its head says of `id, title, type, status, date, verified, stale_after, updated, from,
-  until, practice` (the Journal newest first, the rest by title); at most 3000 a Space, 8 MB read for them.
+  until, practice` (the Journal newest first, the rest by title); at most 3000 a project, 8 MB read for them. A
+  sub-project's Records are its own: `/spaces/<space>/r/<path below the Space>` finds a Record's project and holds the
+  path rules below it.
 - **A Record** is its head, parsed as safe YAML (`yaml.safe_load` of at most 16 KB; dates as ISO text; a head of more
   than 2000 values — an alias bomb — or one that does not parse is no head, and the whole file is the body, with
   `bad_head`), and its body as markdown. Its relative links become the app's routes — `[x](../profile/p.md)` →
-  `/spaces/<space>/r/profile/p.md`, a Space's `AGENTS.md` or folder → `/spaces/<space>` — when the target is a file
+  `/spaces/<space>/r/profile/p.md`, a project's `AGENTS.md` or folder → its page — when the target is a file
   of the commit the path rules allow; web and mail links stay; any other link (to `.cache`, a script, a missing
   file, an absolute path, an anchor, `javascript:`, `data:`) is dropped to its text. A reference-style definition
   (`[x]: path`) is resolved the same way, or removed, so its uses stay as text. Code is left as it is. Images and other files are not
   served.
-- **The path rules**, for a Record asked for and a link alike: `*.md`, at most two folders below its Space
+- **The path rules**, for a Record asked for and a link alike: `*.md`, at most two folders below its project
   (`knowledge/acme/x.md`), no segment that starts with a dot, no `..`, `.` or empty segment, no control character
   or backslash, at most 512 characters; a regular file of the commit (mode `100644`/`100755` — never a link, `120000`,
   nor a submodule); at most 512 KB (bigger: 413, and listed with `big`). A Showcase is read up to 256 KB.

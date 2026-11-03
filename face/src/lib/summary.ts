@@ -44,14 +44,15 @@ export function tokensWord(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
-// The wide screen's panel is open or folded away; the device remembers it. One value for every session.
-const KEY = "retinue-summary-open";
+// The wide screen's «Details» panel is closed until the owner opens it (ⓘ); the device remembers it. One value for
+// every session. A new key: the old «Summary» was open by default, and that choice is not his.
+const KEY = "retinue-details-open";
 const listeners = new Set<() => void>();
 let open = (() => {
   try {
-    return localStorage.getItem(KEY) !== "0";
+    return localStorage.getItem(KEY) === "1";
   } catch {
-    return true;
+    return false;
   }
 })();
 

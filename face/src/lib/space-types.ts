@@ -53,10 +53,51 @@ export interface RecordRow {
   big?: boolean;
 }
 
-export interface SpaceView {
+/** A file of a project (its own: none of a sub-project's), by its path inside the project. */
+export interface ProjectFile {
+  path: string;
+  size: number;
+  kind: "image" | "pdf" | "audio" | "video" | "markdown" | "text" | "html" | "other";
+  /** Too big for the app: listed, not sent. */
+  big?: boolean;
+}
+
+/** A sub-project: `name` is its folder in the Base. */
+export interface ProjectRow {
   name: string;
   title: string;
-  /** Markdown above the Showcase's marker, the title line left out. */
+  questions: number;
+  tasks: number;
+}
+
+/** Every project at any depth, as `/api/spaces` lists it beside the grid: the left panel's projects. */
+export interface ProjectNode extends ProjectRow {
+  /** The project it is in: "" the Base's root, null none. */
+  parent: string | null;
+}
+
+/** Why a project is and what is in its scope: the `## Why` section of its AGENTS.md, markdown. */
+export interface Passport {
+  why: string;
+  in_scope: string;
+  not_in_scope: string;
+}
+
+/** A project — a Space is a top-level one. The project fields are absent from a platform before projects. */
+export interface SpaceView {
+  /** Its passport; null or absent: its AGENTS.md has no `## Why`. */
+  passport?: Passport | null;
+  name: string;
+  /** Its folder in the Base. */
+  path?: string;
+  /** The project it is a sub-project of; null: none. */
+  parent?: string | null;
+  files?: ProjectFile[];
+  /** Files past the listing's cap. */
+  more_files?: number;
+  projects?: ProjectRow[];
+  title: string;
+  /** Markdown above the Showcase's marker, the title line and the passport left out. */
   rules: string;
   marker: boolean;
   sections: ShowcaseSection[];
@@ -68,6 +109,8 @@ export type Head = Record<string, unknown>;
 
 export interface RecordView {
   space: string;
+  /** The project it belongs to: the Space, or a project below it. */
+  project?: string;
   path: string;
   nature: string;
   title: string;

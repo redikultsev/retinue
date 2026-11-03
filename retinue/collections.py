@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import decimal
 import hashlib
 import json
 import os
@@ -119,6 +120,24 @@ SCHEMA = """
         created REAL NOT NULL,
         revoked REAL                        -- when the owner took it back: the token opens nothing from then on
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS projects (
+        project TEXT PRIMARY KEY,           -- the project (a Space): its collections are those of its `space`
+        description TEXT NOT NULL CHECK (json_valid(description)),  -- its project.yaml as applied (`project.py`)
+        rev INTEGER NOT NULL,               -- 1 at its first apply, one more at each after
+        updated REAL NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS events (
+        id TEXT PRIMARY KEY,                -- a ULID
+        source TEXT NOT NULL,               -- what fired it: change:<change_id>, or call:<writer>/<idem>
+        project TEXT NOT NULL,              -- the project that declares it, and its name there
+        name TEXT NOT NULL,
+        collection TEXT,
+        record TEXT,
+        depth INTEGER NOT NULL,             -- 0 for a change no reaction made; one more along a chain
+        at REAL NOT NULL,
+        outcome TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(outcome)),  -- what each reaction did
+        UNIQUE (source, project, name)
+    ) STRICT;
     CREATE INDEX IF NOT EXISTS changes_record ON changes (collection, id, seq);
     CREATE INDEX IF NOT EXISTS changes_collection ON changes (collection, seq);
     CREATE TRIGGER IF NOT EXISTS changes_append_only_u BEFORE UPDATE ON changes
@@ -137,14 +156,20 @@ DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z")  # a moment in UTC: 2026-11-04T17:30:00Z
 ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+PROJECT = r"[a-z0-9][a-z0-9_-]{0,63}"           # a project's name, as a Space's (`SPACE` below)
 ACTOR = re.compile(r"owner|assistant|session:[A-Za-z0-9_-]{1,64}|mac:[a-z0-9][a-z0-9_-]{0,39}/[A-Za-z0-9_-]{1,64}"
-                   r"|code:[a-z][a-z0-9_-]{0,39}|import:[0-9A-HJKMNP-TV-Z]{26}|define:[1-9][0-9]{0,8}")
-VIA = ("screen", "session", "mac", "assistant", "mail", "code", "import", "define")
+                   rf"|code:[a-z][a-z0-9_-]{{0,39}}|project:{PROJECT}|import:[0-9A-HJKMNP-TV-Z]{{26}}"
+                   r"|define:[1-9][0-9]{0,8}")
+VIA = ("screen", "session", "mac", "assistant", "mail", "code", "event", "import", "define")
 SRC = re.compile(r"(?:mail|tg|owner_words|cal|file|record|web):\S{1,1000}")
 LABEL = re.compile(r"[a-z][a-z0-9_]{0,31}")      # a mark of foreign text the writer read (core.FOREIGN's keys)
 TYPES = {  # each type, and the keys its field takes beside `type`, `required` and `index`
     "text": (), "int": (), "enum": ("values", "labels"), "date": (), "instant": (), "bool": (), "ref": ("to",),
+    "money": ("currency",), "file": (),
 }
+CURRENCY = re.compile(r"[A-Z]{3}")              # an ISO 4217 code: a money field's one currency
+MONEY = re.compile(r"-?\d{1,13}(?:\.\d{1,2})?")  # an amount as given: at most two places, so cents add up exactly
+MONEY_MAX = 10**13                              # an amount's whole part stays under this
 OP_KEYS = {  # each operation of `apply`, and the keys it takes
     "add": {"op", "fields", "as_of", "src", "distinct"},
     "set": {"op", "id", "version", "fields", "as_of", "src", "distinct"},
@@ -153,8 +178,8 @@ OP_KEYS = {  # each operation of `apply`, and the keys it takes
     "revert": {"op", "change_id", "version", "src"},
 }
 OWNERS = ("owner", "import", "define")  # classes that may do anything: the owner, and what he runs from the terminal
-WRITER_CLASS = re.compile(r"assistant|session|mac|code:[a-z][a-z0-9_-]{0,39}")  # the classes rights name
-SET_BY_CLASS = re.compile(r"owner|assistant|session|mac|code:[a-z][a-z0-9_-]{0,39}")
+WRITER_CLASS = re.compile(rf"assistant|session|mac|code:[a-z][a-z0-9_-]{{0,39}}|project:{PROJECT}")  # rights' classes
+SET_BY_CLASS = re.compile(rf"owner|assistant|session|mac|code:[a-z][a-z0-9_-]{{0,39}}|project:{PROJECT}")
 DEFAULT_RIGHTS = {  # a new collection's: sessions add and set, deleting by a proposal; the Mac without deleting;
     "writers": {    # the assistant and every code: rule nothing, until the owner gives them some
         "session": {"add": True, "set": "*", "delete": "propose"},
@@ -169,7 +194,10 @@ VIEW_KEYS = {  # each kind of view (`views.py`), and the keys it takes
     "queue": {"name", "kind", "title", "tab", "filter", "fields", "since", "sort", "mark", "rot", "done", "add", "latest"},
     "agenda": {"name", "kind", "title", "tab", "filter", "date", "fields", "days"},
     "chart": {"name", "kind", "title", "tab", "filter", "date", "group", "weeks"},
+    "months": {"name", "kind", "title", "tab", "filter", "date", "sum", "group", "months"},
+    "year": {"name", "kind", "title", "tab", "filter", "date", "sum"},
 }
+MONTHS = (2, 24)            # the months a `months` view sums, this one among them
 MARKS = ("act", "wait")     # a queue's rows: the owner's to act on, or his to wait for
 TAB_MAX = 24                # characters of a view's tab
 LABEL_WORDS_MAX = 40        # characters of an enum value's label
@@ -199,6 +227,7 @@ DELETED = "_deleted"        # in a change's before/after, the record's deleted s
 TEXT_MAX = 2000             # characters of a text field
 RECORD_MAX = 16 * 2**10     # bytes of a record's fields, as JSON
 FORM_MAX = 64 * 2**10       # bytes of a form, as JSON
+PROJECT_MAX = 2 * 2**20     # bytes of a project's description, its own views' pages in it
 OPS_MAX = 200               # operations in one apply
 ENUM_MAX = 200              # values of one enum
 INT_MAX = 2**53 - 1         # what a JSON number keeps exactly
@@ -321,6 +350,22 @@ def _instant(value: object) -> str | None:
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def money(value: object) -> str | None:
+    """An amount as it is kept: a decimal string with two places (`"12.50"`), from a string or a JSON number of at
+    most two places — so a sum of them is exact in cents — or None when it is not one."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return None
+        value = repr(value)
+    text = str(value)
+    if not MONEY.fullmatch(text):
+        return None
+    amount = decimal.Decimal(text)
+    return f"{amount:.2f}" if abs(amount) < MONEY_MAX else None
+
+
 def _json(value: object) -> str | None:
     return None if value is None else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
@@ -390,6 +435,9 @@ def parse_form(form: Any) -> dict:
                                f"{LABEL_WORDS_MAX} characters: {{\"pack_ready\": \"Ready to send\"}}")
         if spec["type"] == "ref" and not (isinstance(spec.get("to"), str) and NAME.fullmatch(spec["to"])):
             raise Rejected(f"field {name!r}: \"to\" names the collection its records are in")
+        if spec["type"] == "money" and not (isinstance(spec.get("currency"), str)
+                                            and CURRENCY.fullmatch(spec["currency"])):
+            raise Rejected(f"field {name!r}: \"currency\" is its one currency, three capital letters: \"EUR\"")
         kept[name] = dict(spec)
     form_kept: dict = {"fields": kept}
     if "key" in form:
@@ -443,10 +491,10 @@ def parse_views(views: Any) -> list[dict]:
             raise Rejected(f"{where}: \"tab\" is plain text of at most {TAB_MAX} characters: the tab it shows in")
         if "mark" in view and view["mark"] not in MARKS:
             raise Rejected(f"{where}: \"mark\" is one of {', '.join(MARKS)}")
-        for key, (least, most) in (("days", AGENDA_DAYS), ("weeks", CHART_WEEKS)):
+        for key, (least, most) in (("days", AGENDA_DAYS), ("weeks", CHART_WEEKS), ("months", MONTHS)):
             if key in view and not (type(view[key]) is int and least <= view[key] <= most):
                 raise Rejected(f"{where}: \"{key}\" is a whole number from {least} to {most}")
-        for key in ("group", "date", "field", "since", "sort", "goal", "rot"):
+        for key in ("group", "date", "field", "since", "sort", "goal", "rot", "sum"):
             if key in view and not (isinstance(view[key], str) and NAME.fullmatch(view[key])):
                 raise Rejected(f"{where}: \"{key}\" names a field of the form")
         for key in ("fields", "folded", "to"):
@@ -464,7 +512,7 @@ def parse_views(views: Any) -> list[dict]:
             _latest_shape(view["latest"], where)
         if kind == "board" and "group" not in view:
             raise Rejected(f"{where}: \"group\" names the enum its columns are")
-        if kind in ("agenda", "chart") and "date" not in view:
+        if kind in ("agenda", "chart", "months", "year") and "date" not in view:
             raise Rejected(f"{where}: \"date\" names the date field it goes by")
         if kind == "stat":
             count, window = view.get("count", "records"), view.get("window")
@@ -524,10 +572,10 @@ def _adding(add: Any, where: str) -> None:
         raise Rejected(shape)
 
 
-def _names(names: Any, fields: dict, what: str) -> list[str]:
-    if (not isinstance(names, list) or not 0 < len(names) <= KEY_MAX or not all(isinstance(n, str) for n in names)
+def _names(names: Any, fields: dict, what: str, most: int = KEY_MAX) -> list[str]:
+    if (not isinstance(names, list) or not 0 < len(names) <= most or not all(isinstance(n, str) for n in names)
             or len(set(names)) != len(names)):
-        raise Rejected(f"{what} is a list of 1 to {KEY_MAX} distinct fields of the form")
+        raise Rejected(f"{what} is a list of 1 to {most} distinct fields of the form")
     if unknown := [n for n in names if n not in fields]:
         raise Rejected(f"{what}: the form has no field {', '.join(map(repr, unknown))}")
     return list(names)
@@ -550,15 +598,16 @@ def parse_rights(rights: Any, form: dict) -> dict:
     kept: dict = {"writers": {}, "set_by": {}}
     for cls, grant in writers.items():
         if not WRITER_CLASS.fullmatch(cls):
-            raise Rejected(f"writers: {cls!r} is not a writer's class: assistant, session, mac or code:<rule> "
-                           "(the owner may do anything, and is not listed)")
+            raise Rejected(f"writers: {cls!r} is not a writer's class: assistant, session, mac, code:<rule> or "
+                           "project:<name> (the owner may do anything, and is not listed)")
         if not isinstance(grant, dict) or (unknown := set(grant) - {"add", "set", "delete"}):
             raise Rejected(f"writers.{cls} takes \"add\", \"set\" and \"delete\"")
         add, open_, delete = grant.get("add", False), grant.get("set", []), grant.get("delete", False)
         if not isinstance(add, bool):
             raise Rejected(f"writers.{cls}.add is true or false")
         if open_ != "*":
-            open_ = _names(open_, fields, f"writers.{cls}.set") if open_ != [] else []
+            # any of the form's fields, each once: a writer's fields are not a key's, and need not fit in KEY_MAX
+            open_ = _names(open_, fields, f"writers.{cls}.set", len(fields)) if open_ != [] else []
         if delete not in (True, False, "propose") or type(delete) is int:
             raise Rejected(f"writers.{cls}.delete is true, false or \"propose\"")
         kept["writers"][cls] = {"add": add, "set": open_, "delete": delete}
@@ -574,7 +623,7 @@ def parse_rights(rights: Any, form: dict) -> dict:
             if (not isinstance(who, list) or not who or len(set(map(str, who))) != len(who)
                     or not all(isinstance(c, str) and SET_BY_CLASS.fullmatch(c) for c in who)):
                 raise Rejected(f"set_by.{name}.{value} is a list of classes: owner, assistant, session, mac, "
-                               "code:<rule>")
+                               "code:<rule>, project:<name>")
         kept["set_by"][name] = {value: list(who) for value, who in values.items()}
     return kept
 
@@ -587,7 +636,8 @@ def _grows(old: dict, new: dict) -> None:
         now = new["fields"].get(name)
         if now is None:
             raise Rejected(f"field {name!r} would be gone: {GROWS}")
-        if now["type"] != spec["type"] or now.get("to") != spec.get("to"):
+        if (now["type"] != spec["type"] or now.get("to") != spec.get("to")
+                or now.get("currency") != spec.get("currency")):
             raise Rejected(f"field {name!r} would become another type: {GROWS}")
         if lost := [v for v in spec.get("values", ()) if v not in now["values"]]:
             raise Rejected(f"field {name!r} would lose {', '.join(map(repr, lost))}: {GROWS}")
@@ -625,9 +675,9 @@ def _indexes(collection: str, form: dict) -> dict[str, str]:
 
 
 def writer_class(actor: str) -> str:
-    """The class a writer's rights and its idems go by: a `code:` rule its own, every other actor its kind
-    (`session:<id>` is a session)."""
-    return actor if actor.startswith("code:") else actor.split(":")[0]
+    """The class a writer's rights and its idems go by: a `code:` rule and a project's reactions (`project:<name>`,
+    `events.py`) their own, every other actor its kind (`session:<id>` is a session)."""
+    return actor if actor.startswith(("code:", "project:")) else actor.split(":")[0]
 
 
 def idem_scope(actor: str, derived: bool = False) -> str:
@@ -683,6 +733,10 @@ class Collections:
         # newest change_id (`PlatformStore.collection_event`, for the open apps). `moved` finds those another process
         # wrote.
         self.changed: Callable[[str, str | None, str | None], None] | None = None
+        # Told, on the loop, of every `apply` that changed records: its writer, the collection and the changes it made
+        # — what a project's events are fired by (`events.Events`). An import, a define and a batch's taking back
+        # fire none.
+        self.applied: Callable[[Writer, str, list[str]], None] | None = None
         self._spaces: dict[str, str] = {}  # each collection's Space, as this process last read or wrote it
         self._watched: tuple[int, dict[str, str | None]] | None = None  # `moved`: the data_version, the revs
 
@@ -782,6 +836,15 @@ class Collections:
             return work()
         finally:
             self._db.execute("COMMIT")
+
+    async def write(self, work: Callable[[sqlite3.Connection], T]) -> T:
+        """`work(db)` on the thread, in one transaction taken for writing: kept whole, or not at all — for the tables
+        beside the records that others keep here (`events.py`'s log). Raises Refused."""
+        return await self._run(self._write_with, work)
+
+    def _write_with(self, work: Callable[[sqlite3.Connection], T]) -> T:
+        with self._write() as db:
+            return work(db)
 
     async def close(self) -> None:
         if self._closed:
@@ -1034,8 +1097,11 @@ class Collections:
         and keeps nothing: the answer then has `changes` too, each operation's change as it would be (None where it
         would change nothing) — what a proposal shows the owner before his press. Raises Rejected, Refused."""
         answer = await self._run(self._apply, writer, collection, ops, now, batch, idem, dry)
+        made = [] if dry or batch is not None else [c for c in answer["change_ids"] if c]
         if not dry and any(answer["change_ids"]):
             self._tell(collection, answer["rev"])
+        if made and self.applied is not None:  # a call made again answers its first changes: their events are known
+            self.applied(writer, collection, made)
         return answer
 
     def _apply(self, writer: Writer, collection: str, ops: Any, now: float, batch: str | None,
@@ -1315,6 +1381,19 @@ class Collections:
         elif kind == "bool":
             if type(value) is not bool:
                 raise Rejected(f"{name!r} is true or false: not {value!r}")
+        elif kind == "money":
+            kept = money(value)
+            if kept is None:
+                raise Rejected(f"{name!r} is an amount of {spec['currency']}, at most two places: \"12.50\" or 12.5, "
+                               f"not {value!r}")
+            value = kept
+        elif kind == "file" and probe:
+            if not isinstance(value, str) or not SHA256.fullmatch(value):
+                raise Rejected(f"{name!r} is an uploaded file's sha256: not {value!r}")
+        elif kind == "file":
+            if not isinstance(value, str) or self._file(value) is None:
+                raise Rejected(f"{name!r} is an uploaded file's sha256 (POST /api/c/_files): there is no such file "
+                               f"as {value!r}")
         elif kind == "ref" and probe:
             if not isinstance(value, str) or not ULID.fullmatch(value):
                 raise Rejected(f"{name!r} is the id of a record in {spec['to']}: not {value!r}")
@@ -1682,6 +1761,55 @@ class Collections:
             "WHERE c.collection = ? GROUP BY b.id ORDER BY b.id DESC LIMIT 10", (collection,))
         return {**shown, "form": json.loads(row[1]), "rights": json.loads(row[2]), "views": json.loads(row[3]),
                 "batches": [dict(zip(("id", "kind", "state", "actor", "created", "changes"), b)) for b in batches]}
+
+    # --- projects -----------------------------------------------------------------------------------------------------
+
+    async def project(self, name: str) -> dict | None:
+        """A project's description as applied (`project.py`): `{project, description, rev, updated}`, or None.
+        Raises Refused."""
+        return await self._run(self._read, lambda: self._project(name))
+
+    def _project(self, name: str) -> dict | None:
+        row = self._db.execute("SELECT project, description, rev, updated FROM projects WHERE project = ?",
+                               (name,)).fetchone()
+        return {"project": row[0], "description": json.loads(row[1]), "rev": row[2], "updated": row[3]} if row else None
+
+    def _projects(self) -> list[dict]:
+        """On the thread: every project's description as applied, by name."""
+        return [{"project": p, "description": json.loads(d), "rev": r, "updated": u} for p, d, r, u in self._db.execute(
+            "SELECT project, description, rev, updated FROM projects ORDER BY project").fetchall()]
+
+    async def put_project(self, writer: Writer, name: str, description: dict, now: float, dry: bool = False) -> dict:
+        """A project's events, reactions and own views in place of the ones it had — its collections are defined
+        apart (`project.apply`): `{project, rev, before, after, unchanged}`. The owner's alone: from the server's
+        terminal, or his «Apply» of a proposal. Raises Rejected, Refused."""
+        _check_writer(writer)
+        if writer_class(writer.actor) not in ("owner", "define"):
+            raise Rejected("a project's description is the owner's to apply: propose it to him")
+        if not isinstance(name, str) or not SPACE.fullmatch(name):
+            raise Rejected(f"not a project's name: {name!r}")
+        if not isinstance(description, dict) or len(_json(description).encode()) > PROJECT_MAX:
+            raise Rejected(f"a project's description is an object of at most {PROJECT_MAX // 2**10} KB")
+        answer = await self._run(self._put_project, name, description, now, dry)
+        if not dry and not answer["unchanged"]:
+            for collection in sorted({v["collection"] for v in description.get("views", [])}
+                                     | {v["collection"] for v in (answer["before"] or {}).get("views", [])}):
+                self._tell(collection, await self._run(self._rev, collection))
+        return answer
+
+    def _put_project(self, name: str, description: dict, now: float, dry: bool) -> dict:
+        with self._write() as db:
+            old = self._project(name)
+            before = old["description"] if old else None
+            answer = {"project": name, "rev": old["rev"] if old else 0, "before": before, "after": description,
+                      "unchanged": before == description}
+            if answer["unchanged"] or dry:
+                return answer
+            answer["rev"] += 1
+            db.execute("INSERT INTO projects (project, description, rev, updated) VALUES (?, ?, ?, ?) ON CONFLICT "
+                       "(project) DO UPDATE SET description = excluded.description, rev = excluded.rev, "
+                       "updated = excluded.updated", (name, _json(description), answer["rev"], now))
+            return answer
 
     # --- reading ----------------------------------------------------------------------------------------------------
 

@@ -9,9 +9,14 @@ Built by code on every read from the platform's own rows — never a copy kept b
 - «Decide»: an approval card shown, a courier card of the last day he has not closed («Done») nor written to its session
   since, a sub-session a session proposed
   («Start» / «Not now», `subs`), and a write to a collection a session proposed («Apply» / «Dismiss», `colltools`);
+- «Your step»: a session whose turn ended on a step of his own (`endings`);
 - «Reply»: a session waiting for his message with no card shown;
 - «Read»: a session whose finished turn he has not read (the session's `unread`; nothing without it);
 - «From the assistant»: the assistant's digest.
+
+A session whose turn ended with a turn ending (`endings`) and no card shown is placed by the ending's kind instead —
+ask under «Answer the question», approve under «Decide», step under «Your step», look and done under «Read» (while
+unread, as any turn there) — and its row carries the ending whole (`ending`).
 
 The digest is the one thing kept. The router knows what waits in her world — a letter or a chat she judged to ask
 something of him, a draft waiting for «Send», a deadline of the base — and pushes it here (`POST /owner/waiting`)
@@ -33,20 +38,23 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import posixpath
 import re
 import secrets
 import unicodedata
 from datetime import date
 from typing import TYPE_CHECKING
 
-from . import questions
+from . import migrate, questions
 from .courier import INVISIBLE, line
 
 if TYPE_CHECKING:
     from .sessions import PlatformStore
 
-ACTIONS = (("answer", "Answer the question"), ("decide", "Decide"), ("reply", "Reply"), ("read", "Read"),
-           ("assistant", "From the assistant"))
+ACTIONS = (("answer", "Answer the question"), ("decide", "Decide"), ("step", "Your step"), ("reply", "Reply"),
+           ("read", "Read"), ("assistant", "From the assistant"))
+# A turn ending's row, by its kind (`endings.KINDS`).
+ENDING_ACTIONS = {"ask": "answer", "approve": "decide", "step": "step", "look": "read", "done": "read"}
 COURIER_S = 86400            # a courier card waits in «Decide» this long, unless he wrote into its session after it
 RECENT_S = 7 * 86400         # a summary older than this leaves nothing to read in the feed
 ESSENCE_CHARS = 200          # the one line a row says
@@ -359,6 +367,16 @@ def _said(text: str) -> str:
     return cut[: cut.rfind("\n")].rstrip() + "\n\n…" if "\n" in cut else cut.rstrip() + "…"
 
 
+def _ending_essence(ending: dict) -> str:
+    """A turn ending's one line: what it asks of him or says, by its kind."""
+    kind = ending["kind"]
+    first = (ending.get("artifact") or (ending.get("artifacts") or [{}])[0]) if kind == "look" else {}
+    said = {"ask": ending.get("context") or ending.get("why"), "approve": ending.get("will"),
+            "look": first.get("title") or first.get("path") or first.get("url"), "step": ending.get("what"),
+            "done": ending.get("what")}[kind]
+    return _essence(said or ending.get("request"))
+
+
 def _call(tool: str, tool_input: dict) -> str:
     """A card's call in one line: the command, the file, or the input."""
     for key in ("command", "file_path", "notebook_path", "url", "pattern", "path"):
@@ -374,6 +392,18 @@ def _open_question(approval: dict) -> int:
     return next((n for n in range(len(asked)) if str(n) not in answered), 0)
 
 
+def project_of(cwd: str | None, tree: str) -> str | None:
+    """A folder of the Base as its project's path (`base/work/acme` → `work/acme`), relative to the lane's /work as a
+    session's `cwd` is; the Base's root, a folder outside it or one under a dot-led folder: no project."""
+    if not isinstance(cwd, str) or not cwd.strip("/"):
+        return None
+    path, root = posixpath.normpath(cwd.strip("/")), posixpath.normpath(tree.strip("/"))
+    if not path.startswith(root + "/"):
+        return None
+    project = path[len(root) + 1:]
+    return project if not any(part.startswith(".") for part in project.split("/")) else None
+
+
 def spheres(cfg) -> dict[str, dict]:
     """The spheres the platform's config names, by name: their title and icon. None configured: none."""
     out = {}
@@ -384,17 +414,25 @@ def spheres(cfg) -> dict[str, dict]:
     return out
 
 
+def _converge(db) -> None:
+    """Step 1: what the upgrade at open did before the steps were numbered — the digest's chips and numbers."""
+    columns = migrate.columns(db, "assistant_digest")
+    if "chips" not in columns:
+        db.execute("ALTER TABLE assistant_digest ADD COLUMN chips TEXT NOT NULL DEFAULT '[]'")
+    if "counts" not in columns:
+        db.execute("ALTER TABLE assistant_digest ADD COLUMN counts TEXT NOT NULL DEFAULT '{}'")
+
+
+# The store's numbered migrations (`migrate`, docs/migrations.md): append a step, never change one released.
+STEPS: tuple[migrate.Step, ...] = (_converge,)
+
+
 class Feed:
     def __init__(self, store: PlatformStore, cfg=None) -> None:
         self.store, self.cfg = store, cfg
-        store.db.execute("CREATE TABLE IF NOT EXISTS assistant_digest (id INTEGER PRIMARY KEY CHECK (id = 1), "
-                         "items TEXT NOT NULL, bot TEXT NOT NULL DEFAULT '', at REAL NOT NULL)")
-        columns = {row[1] for row in store.db.execute("PRAGMA table_info(assistant_digest)")}
-        if "chips" not in columns:
-            store.db.execute("ALTER TABLE assistant_digest ADD COLUMN chips TEXT NOT NULL DEFAULT '[]'")
-        if "counts" not in columns:
-            store.db.execute("ALTER TABLE assistant_digest ADD COLUMN counts TEXT NOT NULL DEFAULT '{}'")
-        store.db.commit()
+        store.project_of = self.session_project  # every session's row in the face names its project
+        migrate.run(store.db, "feed", STEPS, "CREATE TABLE IF NOT EXISTS assistant_digest (id INTEGER PRIMARY KEY "
+                    "CHECK (id = 1), items TEXT NOT NULL, bot TEXT NOT NULL DEFAULT '', at REAL NOT NULL)")
 
     # --- the assistant's digest ---------------------------------------------------------------------------------
 
@@ -427,6 +465,7 @@ class Feed:
         is to read newest first, the assistant's as she sent them."""
         db = self.store.db
         sessions = {s["id"]: s for s in self.store.face_sessions(now)}
+        self._projects = self._session_projects(sessions)
         out: dict[str, list[dict]] = {action: [] for action, _ in ACTIONS}
         busy = set()
         cards = db.execute(
@@ -472,11 +511,13 @@ class Feed:
                 row = self._row(key, "decide", "collection_proposal", session, proposal["created"], essence)
             elif proposal["session"] is None:  # the assistant's, a Mac's or a rule's: no session to name it by
                 row = {"key": key, "action": "decide", "source": "collection_proposal", "session": None,
-                       "track": None, **self._sphere(None), "title": _proposer(proposal["actor"]),
+                       "track": None, **self._sphere(None), "project": None, "title": _proposer(proposal["actor"]),
                        "since": proposal["created"], "essence": essence, "ref": proposal["id"]}
             else:
                 continue
             out["decide"].append({**row, "collection_proposal": proposal, "hint": CPROPOSAL_HINT})
+        endings = getattr(subs, "endings", None)  # what a turn left him (`endings`), current ones only
+        ended = endings.current([s for s in sessions if s not in busy]) if endings is not None else {}
         said = {session: (seq, json.loads(data)) for session, seq, data in db.execute(
             "SELECT n.session, n.seq, n.data FROM notes n JOIN (SELECT MAX(seq) AS seq FROM notes WHERE kind = "
             "'summary' GROUP BY session) m ON n.seq = m.seq")}
@@ -485,18 +526,26 @@ class Feed:
                 continue
             seq, data = said.get(session["id"], (None, {}))
             at = data.get("at") if isinstance(data.get("at"), (int, float)) else None
-            if session["state"] == "waiting" and not session.get("waiting"):
+            if session["id"] in ended:
+                ending, declared = ended[session["id"]]
+                action = ENDING_ACTIONS[ending["kind"]]
+                if action != "read" or (session.get("unread") is True and declared >= now - RECENT_S):
+                    out[action].append({**self._row(f"ending:{session['id']}", action, "session", session, declared,
+                                                    _ending_essence(ending) or _essence(data.get("text"))),
+                                        "ending": ending})
+            elif session["state"] == "waiting" and not session.get("waiting"):
                 out["reply"].append(self._row(f"reply:{session['id']}/{seq}", "reply", "session", session,
                                               at or session["at"], _essence(data.get("text"))))
             elif session.get("unread") is True and (at or session["at"]) >= now - RECENT_S:
                 out["read"].append(self._row(f"read:{session['id']}", "read", "session", session,
                                              at or session["at"], _essence(data.get("text"))))
-        for action in ("answer", "decide", "reply"):
+        for action in ("answer", "decide", "step", "reply"):
             out[action].sort(key=lambda r: r["since"])
         out["read"].sort(key=lambda r: -r["since"])
         items, _, _ = self.digest()
         out["assistant"] = [{"key": f"assistant:{i['id']}", "action": "assistant", "source": i["kind"],
-                             "session": None, "track": None, **self._sphere(i.get("sphere")), "title": i["who"],
+                             "session": None, "track": None, **self._sphere(i.get("sphere")), "project": None,
+                             "title": i["who"],
                              "since": i["since"], "essence": i["title"], "ref": i["id"],
                              **({"t": i["t"]} if i.get("t") else {})}
                             # a deadline days ahead waits under «Deadlines» only; a reminder is the day's, not a queue's
@@ -505,8 +554,23 @@ class Feed:
 
     def _row(self, key: str, action: str, source: str, session: dict, since: float, essence: str) -> dict:
         return {"key": key, "action": action, "source": source, "session": session["id"], "track": session["track"],
-                **self._sphere(session.get("sphere")), "title": session["title"], "since": since, "essence": essence,
-                "ref": session["id"]}
+                **self._sphere(session.get("sphere")), "project": getattr(self, "_projects", {}).get(session["id"]),
+                "title": session["title"], "since": since, "essence": essence, "ref": session["id"]}
+
+    def session_project(self, lane: str, track: str, cwd: str | None) -> str | None:
+        """A session's project: its folder in the Base (`project_of`) — the folder it was made with, its track's for
+        one older than that column; none off the Base's lane."""
+        base = getattr(self.cfg, "base", None)
+        if base is None or lane != base.lane:
+            return None
+        if cwd is None:
+            known = next((t for t in getattr(self.cfg, "tracks", None) or () if t.name == track), None)
+            cwd = known.cwd if known else None
+        return project_of(cwd, base.tree)
+
+    def _session_projects(self, sessions: dict[str, dict]) -> dict[str, str | None]:
+        """Each session's project, as its row in the face says it (`session_project`, set on the store above)."""
+        return {session["id"]: session.get("project") for session in sessions.values()}
 
     def _sphere(self, name: object) -> dict:
         known = spheres(self.cfg).get(name) if isinstance(name, str) else None

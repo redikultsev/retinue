@@ -109,10 +109,12 @@ export const api = {
   approval: (id: string) => request<{ approval: Approval }>(`/api/approvals/${encodeURIComponent(id)}`),
   file: (id: string) => request<{ file: OutFile }>(`/api/files/${encodeURIComponent(id)}/meta`),
   diff: (id: string) => request<DiffResponse>(`/api/sessions/${encodeURIComponent(id)}/diff`),
-  newSession: (track: string, text: string, id = inputId(), sphere: string | null = null, attachments: Encoded[] = []) =>
+  /** `project`: a project's folder in the Base — the session runs there. */
+  newSession: (track: string, text: string, id = inputId(), sphere: string | null = null, attachments: Encoded[] = [], project?: string) =>
     request<{ session: string }>("/api/sessions", {
       track,
       ...(sphere ? { sphere } : {}),
+      ...(project !== undefined ? { project } : {}),
       text,
       input_id: id,
       ...(attachments.length ? { attachments } : {}),

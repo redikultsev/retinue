@@ -1,0 +1,137 @@
+// «Today» as the operator sees it: only the sessions' requests, one card each, answered in place — a card drawn by how
+// the session's turn ended (components/ending-card.tsx), else by the card it shows (a question, an approval, a
+// proposal, a push). A card that waits has a short number of its own. The order holds while he reads: a new card is
+// counted at the top, one answered or gone stays in its place, dimmed, until he lays the list out again. No key
+// answers a card here: one press would reach them all.
+import { useEffect, useMemo, useRef } from "react";
+import { ApprovalCard } from "@/components/approval-card";
+import { CollectionProposalCard } from "@/components/collection-proposal-card";
+import { EndingCard, FRAME } from "@/components/ending-card";
+import { ProposalCard } from "@/components/proposal-card";
+import { PushButton } from "@/components/push-card";
+import { QuestionDecide } from "@/components/question-decide";
+import { Crumb, Reply } from "@/components/reply";
+import { Button } from "@/components/ui/button";
+import { type Feed, type FeedRow, feedSource, waited } from "@/lib/feed";
+import { endingOf, keepNumbers, keptNumbers, type Numbers, releaseHeld, renumber, useHeld, verbOf, waits } from "@/lib/operator";
+import { projectTitle, sessionRequests } from "@/lib/today";
+import type { Sphere } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+function Body({ row }: { row: FeedRow }) {
+  const refresh = () => void feedSource.refresh();
+  const e = endingOf(row);
+  if (e) return <EndingCard row={row} e={e} />;
+  if (row.approval?.kind === "question")
+    return (
+      <div className={FRAME}>
+        <QuestionDecide approval={row.approval} said={row.said} onDecided={refresh} keys={false} />
+      </div>
+    );
+  if (row.approval) return <ApprovalCard approval={row.approval} onDecided={refresh} />;
+  if (row.proposal) return <ProposalCard proposal={row.proposal} onDecided={refresh} />;
+  if (row.collection_proposal) return <CollectionProposalCard proposal={row.collection_proposal} onDecided={refresh} />;
+  if (row.source === "push" && row.session)
+    return (
+      <div className={FRAME}>
+        <h2 className="text-[15px] font-medium">{row.essence}</h2>
+        <div>
+          <PushButton session={row.session} count={row.push ?? 0} repo={row.repos?.length === 1 ? undefined : row.repos?.[0]} />
+        </div>
+      </div>
+    );
+  return (
+    <div className={FRAME}>
+      <p className="max-w-[68ch] break-words">{row.essence || (row.action === "reply" ? "It waits for your message." : "Its turn is done.")}</p>
+      {row.session && <Reply session={row.session} placeholder={row.action === "reply" ? "It waits for your message" : "Reply to go on with it"} />}
+    </div>
+  );
+}
+
+/** The waiting cards' numbers, each its own while it waits, kept on the device. */
+function useNumbers(waiting: string[], now: number): Numbers {
+  const key = waiting.join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is `waiting`'s content; `now` only stamps a freed one
+  const numbers = useMemo(() => renumber(keptNumbers(), waiting, now), [key]);
+  useEffect(() => keepNumbers(numbers), [numbers]);
+  return numbers;
+}
+
+/** The operator's numbers of every waiting card, the same on «Today», a project's «Operator», the map and to the
+ * header's microphone. */
+export function useOperatorNumbers(feed: Feed | null, now: number): Numbers {
+  return useNumbers(sessionRequests(feed).filter(waits).map((r) => r.key), now);
+}
+
+/** One request as its card: the top line (its number while it waits, its project, its title, what it asks, since
+ * when) over the card drawn by how its turn ended — the operator's, the map's pane alike. */
+export function OperatorCard({ row, n, spheres, now, off = false }: { row: FeedRow; n?: number; spheres: Sphere[]; now: number; off?: boolean }) {
+  return (
+    <article
+      aria-label={row.title}
+      data-testid="operator-card"
+      data-kind={endingOf(row)?.kind ?? row.action}
+      className={cn("flex flex-col gap-2 transition-opacity", off && "opacity-50")}
+    >
+      <Crumb session={row.session}>
+        {n !== undefined && <span className="mr-1.5 font-mono font-medium text-foreground tabular-nums">#{n}</span>}
+        {row.project ? `${projectTitle(row.project, spheres)} · ` : ""}
+        {row.title} · {verbOf(row)} · {off ? "answered or gone" : waited(row.since, now)}
+      </Crumb>
+      <Body row={row} />
+    </article>
+  );
+}
+
+export function Operator({
+  feed,
+  spheres,
+  now,
+  head,
+  filter,
+  empty = "No session is asking you for anything.",
+}: {
+  feed: Feed | null;
+  spheres: Sphere[];
+  now: number;
+  head?: React.ReactNode;
+  /** Only these cards — a project's and its sub-projects' (its page's «Operator»). The numbers stay the ones «Today»
+   * gives: «3» is the same card on either screen and to the header's microphone. */
+  filter?: (row: FeedRow) => boolean;
+  empty?: string;
+}) {
+  const all = sessionRequests(feed);
+  const rows = filter ? all.filter(filter) : all;
+  // the last word of every card shown, so one gone from the feed keeps its place with what it said
+  const last = useRef(new Map<string, FeedRow>());
+  for (const r of rows) last.current.set(r.key, r);
+  const { shown, incoming, gone } = useHeld(rows.map((r) => r.key));
+  const numbers = useNumbers(all.filter(waits).map((r) => r.key), now);
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-4 pt-3 pb-16 md:px-6">
+        {head}
+        {incoming.length > 0 && (
+          <div>
+            <Button variant="outline" size="sm" onClick={releaseHeld}>
+              New: {incoming.length} — show
+            </Button>
+          </div>
+        )}
+        {!feed ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : shown.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{empty}</p>
+        ) : (
+          shown.map((key) => {
+            const row = last.current.get(key);
+            if (!row) return null;
+            const off = gone.has(key);
+            const n = waits(row) && !off ? numbers[key]?.n : undefined;
+            return <OperatorCard key={key} row={row} n={n} spheres={spheres} now={now} off={off} />;
+          })
+        )}
+      </div>
+    </div>
+  );
+}

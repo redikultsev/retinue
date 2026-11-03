@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from . import project as project_mod
 from .collections import (CHANGE_COLUMNS, LABEL, NAME, SPACE, ULID, Refused, Rejected, Writer, _change, _digest,
                           _plain, writer_class)
 from .views import _body, _fields, _ref_words, _title
@@ -95,18 +96,26 @@ TOOLS = [
     {"name": PROPOSE,
      "description": "Propose a write to the owner instead of making it: what your rights do not give you, or what "
                     "you want him to decide. He sees what each operation would change and your words, and applies it "
-                    "or dismisses it; go on with your work, do not wait.",
+                    "or dismisses it; go on with your work, do not wait. With `project` and `description` instead "
+                    "of `collection` and `ops`, propose a project's whole description — its project.yaml as an "
+                    "object: collections, events, reactions, views (a view's page as `html`).",
      "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
-     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["collection", "ops", "why"],
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["why"],
                      "properties": {"collection": {"type": "string"}, "ops": _OPS,
+                                    "project": {"type": "string", "description": "a project's name, instead of "
+                                                                                 "collection"},
+                                    "description": {"type": "object", "description": "the project's description "
+                                                                                     "(docs/events.md), instead of ops"},
                                     "why": {"type": "string", "description": "why, in a line or two, for the owner"}}}},
 ]
+PROJECT = "_project"        # a proposal's `collection` when it is of a project's description, not of records
 
 ROUTER_VIA = ("assistant", "mail", "code")  # a Router's writer comes by her turn, her judgement of mail, or its own code
 CHANGES_MAX = 200           # changes one `/owner/collections/changes` returns
 EXCLUDED_MAX = 8            # rules one call leaves out of them
 RULE = re.compile(r"code:[a-z][a-z0-9_-]{0,39}")
-CHANGES_SQL = "(actor = 'assistant' OR actor LIKE 'code:%')"  # the machines' changes: what the evening list names
+# The machines' changes — the assistant's, the rules', the projects' reactions (`events.py`): what the evening list names.
+CHANGES_SQL = "(actor = 'assistant' OR actor LIKE 'code:%' OR actor LIKE 'project:%')"
 OWNER_PRESS = Writer("owner", "assistant")  # his press in Telegram under the evening list: through her channel
 NOT_FOUND = ("Change not found — nothing was taken back. The collections may have been restored from a backup "
              "since the list was made.")
@@ -200,6 +209,11 @@ class CollTools:
                 why = arguments.get("why")
                 if not _plain(why, WHY_CHARS) or not why.strip():
                     return f"why: a line or two for the owner, at most {WHY_CHARS} characters", True
+                if "project" in arguments or "description" in arguments:
+                    if "collection" in arguments or "ops" in arguments:
+                        return "Propose either a collection's ops, or a project's description: not both.", True
+                    return await self.propose_project(writer, session, call_id, arguments.get("project"),
+                                                      arguments.get("description"), why.strip())
                 return await self.propose(writer, session, call_id, arguments.get("collection"), arguments.get("ops"),
                                           why.strip(), None)
         except Rejected as exc:
@@ -336,6 +350,87 @@ class CollTools:
         values = [c[side] for c in changes for side in ("before", "after")]
         return space, {"changes": changes, "fields": _fields(form), "words": _ref_words(store, form, values)}
 
+    async def propose_project(self, writer: Writer, session: dict | None, call: str, name: object, given: object,
+                              why: str) -> tuple[str, bool]:
+        """A project's description put to the owner (docs/events.md#the-description): checked as the file is, tried
+        as his apply — every collection's form on its records — and kept with what it would change, part by part.
+        His «Apply» applies it as his own; a session never does. The same call again, or the same description while
+        it waits, is the proposal made."""
+        db, now = self.store.db, self.platform.clock()
+        if not isinstance(name, str) or not SPACE.fullmatch(name):
+            raise Rejected("project: a project's name")
+        description = project_mod.parse(given, name)  # a view's page comes as `html`: no folder is read here
+        await project_mod.apply(self.collections, name, description, now, dry=True)
+        digest = _digest([PROJECT, name, description])
+        pattern = _proposer(writer.actor)
+        known = db.execute("SELECT id FROM collection_proposals WHERE call = ? OR (actor LIKE ? ESCAPE '\\' AND "
+                           "digest = ? AND state = 'open' AND at > ?)", (call, pattern, digest,
+                                                                         now - PROPOSAL_S)).fetchone()
+        if known is not None:
+            return f"Proposal {known[0]} is already with the owner. Go on with your work.", False
+        if not self.platform.cfg.face_origin:
+            return NO_APP, True
+        if self._open(pattern, now) >= PROPOSALS_MAX:
+            return (f"{PROPOSALS_MAX} of your proposals wait for the owner already — this one is not made. Name it in "
+                    "your summary instead."), True
+        changes = await self._described(name, description)
+        if not changes:
+            return "Already so: the project is described so now.", False
+        proposal = secrets.token_hex(6)
+        cls = writer_class(writer.actor)
+        foreign = ",".join(sorted({*writer.foreign, *((cls,) if cls in ("session", "mac") else ())})) or None
+        db.execute('INSERT INTO collection_proposals (id, call, session, actor, collection, space, ops, shown, why, '
+                   '"foreign", needs, digest, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                   (proposal, call, session["id"] if session else None, writer.actor, PROJECT, name,
+                    _dump(description), _dump({"changes": changes, "fields": {}, "words": {}}), why, foreign,
+                    "A project's description is the owner's to apply.", digest, now))
+        self._event(proposal)
+        db.commit()
+        return (f"Proposed to the owner (proposal {proposal}): he applies {name}'s description or not. Go on with "
+                "your work."), False
+
+    async def _described(self, name: str, description: dict) -> list[dict]:
+        """What a description would change, a change for each part — a collection's form, its views, the events,
+        the reactions, the views in code — `{op, id, before, after, title}`, each side the part's JSON in words."""
+        changes = []
+        for collection, spec in description["collections"].items():
+            schema = await self.collections.schema(collection)
+            for part in ("form", "views"):
+                before = schema[part] if schema else None
+                if (before or None) != (spec[part] or None):
+                    changes.append({"op": "set", "id": None, "title": f"{collection}: {part}",
+                                    "before": {part: _dump(before)} if before is not None else None,
+                                    "after": {part: _dump(spec[part])}})
+        applied = await self.collections.project(name)
+        for part in ("events", "reactions", "views"):
+            before = applied["description"].get(part) if applied else None
+            if (before or None) != (description[part] or None):
+                changes.append({"op": "set", "id": None, "title": f"{name}: {part}",
+                                "before": {part: _dump(before)} if before else None,
+                                "after": {part: _dump(description[part])}})
+        return changes
+
+    async def ask(self, actor: str, event: dict, text: str, needs: str | None, key: str) -> str:
+        """A question a project's reaction puts to the owner — or what it would do outside the install, which is his
+        to do — as a card in «Waiting for you»: its words, and none to apply. «Apply» says he has seen to it,
+        «Dismiss» sets it aside; nothing is written either way. Once by `key`: its id."""
+        db, now = self.store.db, self.platform.clock()
+        call = f"event:{key}"
+        if (known := db.execute("SELECT id FROM collection_proposals WHERE call = ?", (call,)).fetchone()) is not None:
+            return known[0]
+        if not self.platform.cfg.face_origin:
+            raise Rejected(NO_APP)
+        proposal = secrets.token_hex(6)
+        about = f"{event['project']}/{event['name']}"
+        db.execute('INSERT INTO collection_proposals (id, call, session, actor, collection, space, ops, shown, why, '
+                   '"foreign", needs, digest, at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                   (proposal, call, actor, event["collection"] or PROJECT, actor.split(":", 1)[1], "[]",
+                    _dump({"changes": [], "fields": {}, "words": {}}), f"{text} (on {about})",
+                    ",".join(event["foreign"]) or None, needs, _digest([call]), now))
+        self._event(proposal)
+        db.commit()
+        return proposal
+
     def _open(self, pattern: str, now: float) -> int:
         return self.store.db.execute("SELECT count(*) FROM collection_proposals WHERE actor LIKE ? ESCAPE '\\' AND "
                                      "state = 'open' AND at > ?", (pattern, now - PROPOSAL_S)).fetchone()[0]
@@ -375,7 +470,14 @@ class CollTools:
                                        "proposal": row})
         writer = Writer(OWNER.actor, OWNER.via, foreign=tuple(foreign.split(",")) if foreign else ())
         try:
-            answer = await self.collections.apply(writer, collection, json.loads(ops), now, idem=f"proposal:{proposal}")
+            if collection == PROJECT and ops != "[]":  # a project's description: applied as he would from the terminal
+                await project_mod.apply(self.collections, row["space"], json.loads(ops), now)
+                answer = {"name": collection, "rev": None, "change_ids": [], "records": []}
+            elif ops == "[]":  # a reaction's question: he has seen to it, nothing to write
+                answer = {"name": collection, "rev": None, "change_ids": [], "records": []}
+            else:
+                answer = await self.collections.apply(writer, collection, json.loads(ops), now,
+                                                      idem=f"proposal:{proposal}")
         except (Rejected, Refused) as exc:
             db.execute("UPDATE collection_proposals SET state = 'open', decided = NULL WHERE id = ?", (proposal,))
             db.commit()
@@ -541,7 +643,7 @@ class CollTools:
             change = await store.read(lambda: store._change_of(cid))
             if change is None or change["id"] is None:
                 return web.json_response({"ok": False, "text": NOT_FOUND})
-            if change["actor"] != "assistant" and not change["actor"].startswith("code:"):
+            if change["actor"] != "assistant" and not change["actor"].startswith(("code:", "project:")):
                 return web.json_response({"ok": False, "text": NOT_A_MACHINE})
             record = await store.get(change["collection"], change["id"])
             answer = await store.apply(OWNER_PRESS, change["collection"], [

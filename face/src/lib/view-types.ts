@@ -115,16 +115,57 @@ export interface ChartView extends Named {
   weeks: { first: string; counts: { value: string | null; count: number }[] }[];
 }
 
+/** A sum: an amount of money as its exact string («1250.00»), a count or a whole number as a number. */
+export type Sum = string | number;
+
+/** Sums by month: the records added up by the month their `date` falls in — their `sum` field, else one each — this
+ * month last, each split by the enum `group` names. `unit` is the money's currency; null for a number or a count. */
+export interface MonthsView extends Named {
+  kind: "months";
+  date: string;
+  sum: string | null;
+  unit: string | null;
+  group: string | null;
+  values: string[];
+  months: { first: string; totals: { value: string | null; total: Sum }[] }[];
+}
+
+/** A year's line: each month of this year with its sum and the running total to its end, beside the year before;
+ * `through` the month (1–12) that holds today. */
+export interface YearView extends Named {
+  kind: "year";
+  date: string;
+  sum: string | null;
+  unit: string | null;
+  year: number;
+  through: number;
+  months: { first: string; total: Sum; running: Sum }[];
+  previous: { first: string; total: Sum; running: Sum }[];
+}
+
+/** A project's own view, in code: its page at `src`, framed under `sandbox`, and the data the app gives it by message
+ * — the collection's fields and records. */
+export interface CodeView extends Named {
+  kind: "code";
+  src: string;
+  sandbox: string;
+  fields: Record<string, FieldSpec>;
+  labels: Labels;
+  count: number;
+  rows: ViewRow[];
+  dropped: number;
+}
+
 /** A view the platform could not make: a field its form lacks, a goal or a threshold it does not have. */
 export interface BrokenView {
   name: string;
-  kind: "stat" | "board" | "queue" | "agenda" | "chart";
+  kind: "stat" | "board" | "queue" | "agenda" | "chart" | "months" | "year" | "code";
   title: string;
   tab?: string;
   error: string;
 }
 
-export type View = StatView | BoardView | QueueView | AgendaView | ChartView | BrokenView;
+export type View = StatView | BoardView | QueueView | AgendaView | ChartView | MonthsView | YearView | CodeView | BrokenView;
 
 /** Every enum field of a form, with the words it gives some of its values. */
 export type Labels = Record<string, Record<string, string>>;
@@ -158,8 +199,10 @@ export interface OneView extends Moment {
 // --- writing (docs/collections.md#from-the-screen) ------------------------------------------------------------------
 
 export interface FieldSpec {
-  type: "text" | "int" | "enum" | "date" | "instant" | "bool" | "ref";
+  type: "text" | "int" | "enum" | "date" | "instant" | "bool" | "ref" | "money" | "file";
   values?: string[];
+  /** A money field's one currency. */
+  currency?: string;
   /** An enum's words for some of its values. */
   labels?: Record<string, string>;
   /** A ref's collection. */

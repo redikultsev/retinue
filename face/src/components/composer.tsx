@@ -294,6 +294,20 @@ export function ComposerBox({
   useLayoutEffect(() => {
     if (field.current) fitField(field.current, Math.round(height * GROW_TO));
   }, [text, height]);
+  // a field laid out narrow first (a column that opens from nothing) measured its text too tall: measured again as
+  // its width changes
+  useEffect(() => {
+    const el = field.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let width = el.clientWidth;
+    const watch = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      fitField(el, Math.round(height * GROW_TO));
+    });
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [height]);
 
   /** The English transcript, put into the field when it could not be sent: never lost. */
   function keep(message: string, why: string) {

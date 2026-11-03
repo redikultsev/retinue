@@ -5,6 +5,7 @@
       "set": [
         "title",
         "goal",
+        "project",
         "due",
         "by",
         "minutes",
@@ -19,6 +20,7 @@
       "set": [
         "title",
         "goal",
+        "project",
         "due",
         "minutes",
         "notes",
@@ -31,6 +33,7 @@
       "set": [
         "title",
         "goal",
+        "project",
         "due",
         "minutes",
         "notes",

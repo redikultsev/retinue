@@ -422,3 +422,23 @@ def test_a_device_is_added_with_its_token_shown_once_listed_and_revoked_without_
         finally:
             await store.close()
     asyncio.run(check())
+
+
+def test_a_projects_description_is_read_from_its_folder_and_kept_on_yes(tmp_path):
+    folder = tmp_path / "billing"
+    (folder / "views").mkdir(parents=True)
+    (folder / "views" / "burn.html").write_text("<p>burn</p>")
+    (folder / "project.yaml").write_text(
+        "collections:\n  invoices:\n    form: {fields: {state: {type: enum, values: [open, paid]}}}\n"
+        "events:\n  paid: {collection: invoices, when: {field: state, to: [paid]}}\n"
+        "views:\n  - {name: burn, kind: code, collection: invoices, file: views/burn.html}\n")
+    code, said = cli(tmp_path, "project", "billing", str(folder), answer="n")
+    assert code == 1 and "invoices form" in said and "billing events" in said and "Nothing applied." in said
+    code, said = cli(tmp_path, "project", "billing", str(folder))
+    assert code == 0 and "Applied: the description of billing." in said
+    code, said = cli(tmp_path, "project", "billing", str(folder))
+    assert code == 0 and "nothing to apply" in said and "[asked]" not in said
+    (folder / "project.yaml").write_text("views:\n  - {name: x, kind: code, collection: invoices, file: ../x.html}\n")
+    (tmp_path / "x.html").write_text("<p>outside</p>")
+    code, said = cli(tmp_path, "project", "billing", str(folder))
+    assert code == 1 and "a page's path" in said

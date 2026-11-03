@@ -43,6 +43,16 @@ afterEach(() => {
 });
 
 describe("SessionList", () => {
+  it("test_the_list_says_it_is_the_projects_and_its_chips_filter_their_sessions_by_state", async () => {
+    seed([session("a1", { title: "lodging" })]);
+    mount(<SessionList />);
+    const nav = await screen.findByRole("navigation", { name: "Projects" });
+    const heading = within(nav).getByRole("heading", { name: "Projects" });
+    const chips = within(nav).getByRole("group", { name: "Show" });
+    expect(heading.compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // the name above the chips
+    expect(within(chips).getAllByRole("button").map((b) => b.textContent)).toEqual(expect.arrayContaining(["Waiting", "Working", "Done"]));
+  });
+
   it("says when a session waits for room in the lane, and in its own header too", async () => {
     seed([session("a1b2c3d4", { sub_of: null, queued: true, title: "lodging" }), session("b2", { title: "another" })]);
     mount(<SessionList />);

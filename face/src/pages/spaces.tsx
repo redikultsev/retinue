@@ -1,21 +1,29 @@
 // «Spaces»: the Base in the app, read only (retinue/spaces.py). `/spaces` — the grid of Spaces with what waits
-// in each; `/spaces/<space>` — its Showcase as a screen: its sessions, Open questions, Tasks, Records by nature with a
-// search; `/spaces/<space>/r/<path>` — one Record to read, its head in plain words. «Discuss» starts a session in
-// the Space's sphere with the Record or the question in its first message: the Base changes only through a session.
+// in each; `/spaces/<space>` — a project as a screen (docs/face.md «A project»): «Overview» — its passport, what is
+// the owner's in it, its sessions and sub-projects —, its collections' views, «Records», «Files» and «Operator»;
+// `/spaces/<space>/p/<path>` — a project below it, the same screen; `/spaces/<space>/r/<path>` — one Record to read,
+// its head in plain words. «Discuss», «Plan» and «Edit with a session» start a session in the project's folder, in
+// the Space's sphere, with the Record, the question, the task or the passport in its first message: the Base changes
+// only through a session.
 import { PageHeader, PAGE_X } from "@/components/page-header";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BaseMarkdown } from "@/components/base-markdown";
+import { FileRow } from "@/components/files";
+import { MapView } from "@/components/map";
+import { Operator } from "@/components/operator";
+import { RELATION_WORDS, RelationIcon, upOf } from "@/components/relation";
 import { Agenda } from "@/components/views/agenda";
 import { Board } from "@/components/views/board";
 import { SpaceChanges } from "@/components/views/changes";
 import { Chart } from "@/components/views/chart";
 import { AddButton, Editor, type Move } from "@/components/views/edit";
+import { Figure, isFigure } from "@/components/views/figures";
 import { SpaceProposals } from "@/components/views/proposals";
 import { Queue } from "@/components/views/queue";
 import { StatList, StatStrip, statsWindow } from "@/components/views/stat";
 import { Strip } from "@/components/views/strip";
-import { ArrowLeft, ChevronRight, Layers, MessageCircle, Plus, SphereMark } from "@/components/icons";
+import { ArrowLeft, ChevronRight, Circle, Database, Layers, MessageCircle, Pencil, Plus, Question, SphereMark } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -25,30 +33,36 @@ import { ApiError, api } from "@/lib/api";
 import { collectionsApi, layout, type Placed, type Places, placedCount, type SpaceViews, useSpaceViews } from "@/lib/collections";
 import { type EditApi, editApi, type ProposalsApi, proposalsApi } from "@/lib/edit";
 import { plural, sessionStateWord, when } from "@/lib/format";
+import { useFeed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
-import { listed } from "@/lib/store";
+import { waits } from "@/lib/operator";
+import { knownProjects, rowWaits, rowWithin, sessionProject, useProjects, within } from "@/lib/projects";
+import { listed, RECENT_S } from "@/lib/store";
 import {
+  baseFile,
+  baseView,
   discussText,
   headWords,
   NATURE_WORDS,
   NATURES,
-  type Nature,
   orderSpaces,
   ownTitle,
-  type RecordRow,
+  type Passport,
+  type ProjectFile,
+  type ProjectRow,
   type RecordView,
   rowWords,
   type ShowcaseItem,
   type SpaceRow,
   type SpaceView,
   sessionBadges,
-  sessionsOf,
   spacesApi,
   TYPE_WORDS,
 } from "@/lib/spaces";
+import { sessionRequests } from "@/lib/today";
 import { toast } from "@/lib/toast";
 import type { Session, Sphere } from "@/lib/types";
-import { cn, inputId, LIST } from "@/lib/utils";
+import { cn, inputId, LIST, LIST_ROW } from "@/lib/utils";
 
 const NO_SPHERES: Sphere[] = [];
 
@@ -155,11 +169,35 @@ function Badges({ waiting, working, questions }: { waiting: number; working: num
 
 // --- «Discuss» -------------------------------------------------------------------------------------------------------
 
-type Topic = { record?: { path: string; title: string }; question?: string };
+type Topic = { record?: { path: string; title: string }; question?: string; task?: string; passport?: boolean };
 
-/** A new session in the Space's sphere (its track), its first message naming the Record or quoting the question; the
- * owner adds his own words. A Space no sphere names: the owner picks the track. */
-export function Discuss({ space, topic, onClose, start = api.newSession }: { space: string; topic: Topic | null; onClose: () => void; start?: typeof api.newSession }) {
+/** The dialog's title and what its first message is about, by its topic. */
+function topicWords(topic: Topic | null): { title: string; what: string } {
+  if (topic?.record) return { title: "Discuss: record", what: "Record" };
+  if (topic?.question) return { title: "Discuss: open question", what: "Open question" };
+  if (topic?.task) return { title: "Plan a task", what: "Task" };
+  if (topic?.passport) return { title: "Edit the passport", what: "Passport" };
+  return { title: "New session", what: "" };
+}
+
+/** A new session in the project's folder (`project`, the Space itself by default) and the Space's sphere (its track),
+ * its first message naming the Record or quoting the question; the owner adds his own words. A Space no sphere names:
+ * the owner picks the track. */
+export function Discuss({
+  space,
+  project = space,
+  title,
+  topic,
+  onClose,
+  start = api.newSession,
+}: {
+  space: string;
+  project?: string;
+  title?: string;
+  topic: Topic | null;
+  onClose: () => void;
+  start?: typeof api.newSession;
+}) {
   const spheres = useSpheres();
   const sphere = sphereOf(spheres, space);
   const tracks = live.meta?.tracks ?? [];
@@ -168,14 +206,14 @@ export function Discuss({ space, topic, onClose, start = api.newSession }: { spa
   const [busy, setBusy] = useState(false);
   const [id, setId] = useState(inputId);
   const navigate = useNavigate();
-  const text = topic ? discussText(space, topic, own) : "";
+  const text = topic ? discussText(topic.record ? space : project, topic, own) : "";
   const chosen = sphere?.track ?? track;
 
   async function submit() {
     if (!chosen || !text.trim()) return;
     setBusy(true);
     try {
-      const res = await start(chosen, text, id, sphere?.name ?? null);
+      const res = await start(chosen, text, id, sphere?.name ?? null, [], project);
       setOwn("");
       setId(inputId());
       onClose();
@@ -187,9 +225,9 @@ export function Discuss({ space, topic, onClose, start = api.newSession }: { spa
     }
   }
 
-  const what = topic?.record ? "Record" : topic?.question ? "Open question" : "";
+  const { title: heading, what } = topicWords(topic);
   return (
-    <Dialog open={topic !== null} onClose={onClose} title={what ? `Discuss: ${what.toLowerCase()}` : "New session"}>
+    <Dialog open={topic !== null} onClose={onClose} title={heading}>
       <form
         className="flex flex-col gap-3"
         onSubmit={(e) => {
@@ -198,11 +236,11 @@ export function Discuss({ space, topic, onClose, start = api.newSession }: { spa
         }}
       >
         <p className="text-sm text-muted-foreground">
-          New session in the Space “{spaceTitle(space, sphere)}”{what ? ", the first message will be:" : "."}
+          New session in {project === space ? "the Space" : "the project"} “{title ?? spaceTitle(space, sphere)}”{what ? ", the first message will be:" : "."}
         </p>
         {what && (
           <blockquote data-testid="discuss-head" className="max-h-40 overflow-y-auto rounded-md border bg-muted/40 p-2 text-sm whitespace-pre-wrap">
-            {discussText(space, topic ?? {}, "")}
+            {discussText(topic?.record ? space : project, topic ?? {}, "")}
           </blockquote>
         )}
         {!sphere && tracks.length > 1 && (
@@ -217,7 +255,7 @@ export function Discuss({ space, topic, onClose, start = api.newSession }: { spa
           </fieldset>
         )}
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">{what ? "What should I ask or do?" : "What should I do?"}</span>
+          <span className="text-sm font-medium">{topic?.passport ? "What should change?" : what ? "What should I ask or do?" : "What should I do?"}</span>
           <Textarea value={own} onChange={(e) => setOwn(e.target.value)} rows={3} placeholder={what ? "Can be empty" : ""} />
         </label>
         <div className="flex justify-end gap-2">
@@ -256,17 +294,13 @@ export function SpacesPage({ read = spacesApi.list }: { read?: typeof spacesApi.
             const { waiting, working } = badges(row);
             return (
               <li key={row.name}>
-                <Link
-                  to="/spaces/$space"
-                  params={{ space: row.name }}
-                  className="flex h-full min-h-24 flex-col gap-2 rounded-xl border bg-card p-3 hover:bg-accent"
-                >
+                <ToProject path={row.name} className="flex h-full min-h-24 flex-col gap-2 rounded-xl border bg-card p-3 hover:bg-accent">
                   <span className="flex items-center gap-2">
                     {sphere?.icon ? <SphereMark icon={sphere.icon} className="size-4 shrink-0 text-muted-foreground" /> : <Layers className="size-4 shrink-0 text-muted-foreground" />}
                     <span className="min-w-0 flex-1 truncate font-medium">{spaceTitle(row.name, sphere, row.title)}</span>
                   </span>
                   <Badges waiting={waiting} working={working} questions={row.questions} />
-                </Link>
+                </ToProject>
               </li>
             );
           })}
@@ -276,27 +310,7 @@ export function SpacesPage({ read = spacesApi.list }: { read?: typeof spacesApi.
   );
 }
 
-// --- one Space ---------------------------------------------------------------------------------------------------------
-
-function SessionRow({ s }: { s: Session }) {
-  const waits = s.state === "waiting" || s.waiting > 0;
-  return (
-    <li>
-      <Link to="/s/$id" params={{ id: s.id }} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent">
-        <span
-          className={cn("size-2 shrink-0 rounded-full", waits ? "bg-warning" : s.state === "active" ? "animate-pulse bg-primary" : "bg-muted-foreground/40")}
-        />
-        <span className="min-w-0 flex-1">
-          <span className={cn("block truncate text-[15px] md:text-sm", s.unread && "font-semibold")}>{s.title || s.track}</span>
-          <span className="block truncate text-xs text-muted-foreground">
-            {waits ? "waiting for you" : sessionStateWord(s.state)} · {when(s.at)}
-          </span>
-        </span>
-        {s.waiting > 0 && <Badge variant="warning">{s.waiting}</Badge>}
-      </Link>
-    </li>
-  );
-}
+// --- the pieces of a project's screen ------------------------------------------------------------------------
 
 function Lines({ items, onDiscuss }: { items: ShowcaseItem[]; onDiscuss?: (item: ShowcaseItem) => void }) {
   return (
@@ -323,75 +337,11 @@ function Lines({ items, onDiscuss }: { items: ShowcaseItem[]; onDiscuss?: (item:
   );
 }
 
-function RecordLink({ space, nature, row }: { space: string; nature: Nature; row: RecordRow }) {
-  const words = rowWords(row, nature);
-  return (
-    <li>
-      <Link
-        to="/spaces/$space/r/$"
-        params={{ space, _splat: row.path }}
-        className="flex min-h-12 items-center gap-2 rounded-lg px-2 py-2 hover:bg-accent"
-      >
-        <span className="min-w-0 flex-1">
-          <span className="block text-[15px] leading-snug md:text-sm">{row.title}</span>
-          {(words.length > 0 || row.big) && (
-            <span className="block truncate text-xs text-muted-foreground">
-              {words.map((w, i) => (
-                <span key={w.key} className={cn(w.warn && "text-amber-700 dark:text-warning")}>
-                  {i > 0 && " · "}
-                  {w.text}
-                </span>
-              ))}
-              {row.big && `${words.length ? " · " : ""}large — on a computer`}
-            </span>
-          )}
-        </span>
-        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-      </Link>
-    </li>
-  );
-}
-
-function Records({ space, view }: { space: string; view: SpaceView }) {
-  const [query, setQuery] = useState("");
-  const q = query.trim().toLowerCase();
-  const shown = (row: RecordRow) => !q || row.title.toLowerCase().includes(q) || row.path.toLowerCase().includes(q);
-  const total = NATURES.reduce((n, k) => n + view.records[k].length, 0);
-  const found = NATURES.map((nature) => ({ nature, rows: view.records[nature].filter(shown) })).filter((g) => g.rows.length);
-  return (
-    <Section title="Records" count={total}>
-      <p className="px-1 text-sm text-muted-foreground">
-        {NATURES.filter((n) => view.records[n].length)
-          .map((n) => `${NATURE_WORDS[n]} ${view.records[n].length}`)
-          .join(" · ") || "No Records."}
-      </p>
-      {total > 0 && (
-        <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a Record" aria-label="Find a Record" className="my-1" />
-      )}
-      {q && found.length === 0 && <Empty>Nothing found.</Empty>}
-      {found.map(({ nature, rows }) => (
-        <div key={nature} className="flex flex-col">
-          <h3 className="px-1 pt-2 text-sm font-medium">{NATURE_WORDS[nature]}</h3>
-          <ul className="flex flex-col">
-            {rows.map((row, i) => (
-              <Fragment key={row.path}>
-                {row.folder && row.folder !== rows[i - 1]?.folder && (
-                  <li className="px-2 pt-1 font-mono text-xs text-muted-foreground">{row.folder}/</li>
-                )}
-                <RecordLink space={space} nature={nature} row={row} />
-              </Fragment>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </Section>
-  );
-}
-
 /** A board or a queue in its own section; one the platform could not make says why in its place. */
 function Shown({ placed }: { placed: Placed }) {
   const { collection, view } = placed;
   if (view.error === undefined && view.kind === "chart") return <Chart collection={collection} view={view} />; // titled inside
+  if (isFigure(view)) return <Figure collection={collection} view={view} />; // sums by month, a year's line, a view in code
   const add = view.error === undefined && (view.kind === "queue" || view.kind === "board") ? view.add : null;
   return (
     <Section
@@ -501,10 +451,503 @@ export function movesOf(answer: SpaceViews | null | undefined): Record<string, M
   return moves;
 }
 
-/** The tab a Space was left on, kept while the app is open. */
+// --- one project: a Space or a project below it --------------------------------------------------------------------
+
+/** The waiting dot of a session's row: amber — it waits for the owner; blue, breathing — at work; none — quiet. */
+function StateDot({ s }: { s: Session }) {
+  const waits = s.state === "waiting" || s.waiting > 0;
+  return (
+    <span
+      aria-hidden
+      className={cn("size-2 shrink-0 rounded-full", waits ? "bg-warning" : s.state === "active" ? "animate-pulse bg-primary" : "bg-transparent")}
+    />
+  );
+}
+
+/** A session in the project's «Sessions»: its state, its title (how it hangs under another, by its icon), its state
+ * in words and when, a chevron. */
+function SessionRow({ s }: { s: Session }) {
+  const waits = s.state === "waiting" || s.waiting > 0;
+  const up = upOf(s);
+  return (
+    <li>
+      <Link to="/s/$id" params={{ id: s.id }} className={cn(LIST_ROW, "min-h-11 items-center gap-3")}>
+        <StateDot s={s} />
+        <span className="min-w-0 flex-1">
+          <span className={cn("block truncate text-sm", s.unread && "font-medium")}>
+            {up && (
+              <span title={RELATION_WORDS[up.how]} className="text-muted-foreground">
+                <RelationIcon how={up.how} className="mr-1 inline size-3 align-[-1px]" />
+                <span className="sr-only">{up.how}: </span>
+              </span>
+            )}
+            {s.title || s.track}
+          </span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {waits ? "waiting for you" : sessionStateWord(s.state)} · {when(s.at)}
+          </span>
+        </span>
+        {s.waiting > 0 && <Badge variant="warning">{s.waiting}</Badge>}
+        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      </Link>
+    </li>
+  );
+}
+
+/** A sub-project in the project's «Sessions»: a place to open, with what waits in it. */
+function SubProjectRow({ row, waiting, sessions }: { row: ProjectRow; waiting: number; sessions: number }) {
+  const words = [
+    "sub-project",
+    sessions ? `${sessions} ${plural(sessions, "session", "sessions")}` : "",
+    row.questions ? `${row.questions} ${plural(row.questions, "question", "questions")}` : "",
+  ].filter(Boolean);
+  return (
+    <li>
+      <ToProject path={row.name} className={cn(LIST_ROW, "min-h-11 items-center gap-3")}>
+        <Layers className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm">{row.title}</span>
+          <span className="block truncate text-xs text-muted-foreground">{words.join(" · ")}</span>
+        </span>
+        {waiting > 0 && (
+          <span className="shrink-0 font-mono text-xs font-medium text-warning-foreground tabular-nums dark:text-warning" title={`${waiting} waiting for you`}>
+            {waiting}
+          </span>
+        )}
+        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      </ToProject>
+    </li>
+  );
+}
+
+/** The rules' first lines, joined: what the passport's «Rules» row says before «All rules» opens them whole. */
+export function rulesGist(rules: string, most = 3): { gist: string; more: boolean } {
+  const lines = rules.split("\n").map((l) => l.trim()).filter((l) => l && !/^#{1,6}\s/.test(l));
+  const items = lines.filter((l) => /^([-*+]|\d{1,3}[.)])\s+/.test(l)).map((l) => l.replace(/^([-*+]|\d{1,3}[.)])\s+/, "").replace(/[.;]$/, ""));
+  const pool = items.length ? items : lines;
+  // more than the gist says: more lines than it shows, or prose beside its list
+  const more = pool.length > most || (items.length > 0 && lines.length > items.length);
+  return { gist: pool.slice(0, most).join(" · "), more };
+}
+
+/** A project's passport at the top of its page: why it is (16 px), what is in its scope and what is not, its rules —
+ * a table of two columns —, and «Edit with a session». No passport yet: said, with the same way to write one. */
+function PassportCard({ passport, rules, onEdit }: { passport: Passport | null | undefined; rules: string; onEdit: () => void }) {
+  const { gist, more } = rulesGist(rules);
+  const row = "contents";
+  const label = "text-[13px] leading-5 text-muted-foreground";
+  const cell = "min-w-0 text-[13px] leading-5 [&_p]:m-0";
+  return (
+    <section aria-label="Passport" className="flex flex-col gap-3 rounded-xl border bg-card px-4 py-4 md:px-5">
+      {passport?.why ? (
+        <BaseMarkdown text={passport.why} className="max-w-[72ch] text-base leading-6 text-pretty md:text-base [&_p]:m-0" />
+      ) : (
+        <p className="text-sm text-muted-foreground">No passport yet: the project's AGENTS.md has no «Why» section.</p>
+      )}
+      {(passport?.in_scope || passport?.not_in_scope || rules) && (
+        <dl className="grid max-w-[60rem] grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4 gap-y-1.5 max-sm:grid-cols-1 max-sm:gap-y-0.5">
+          {passport?.in_scope && (
+            <div className={row}>
+              <dt className={label}>In scope</dt>
+              <dd className={cn(cell, "max-sm:mb-1.5")}>
+                <BaseMarkdown text={passport.in_scope} className="text-[13px] leading-5 md:text-[13px]" />
+              </dd>
+            </div>
+          )}
+          {passport?.not_in_scope && (
+            <div className={row}>
+              <dt className={label}>Not in scope</dt>
+              <dd className={cn(cell, "max-sm:mb-1.5")}>
+                <BaseMarkdown text={passport.not_in_scope} className="text-[13px] leading-5 md:text-[13px]" />
+              </dd>
+            </div>
+          )}
+          {rules && (
+            <div className={row}>
+              <dt className={label}>Rules</dt>
+              <dd className={cell}>
+                {gist && <BaseMarkdown text={gist} className="text-[13px] leading-5 md:text-[13px]" />}
+                {(more || !gist) && (
+                  <details className="group/rules mt-1">
+                    <summary className="w-fit cursor-pointer text-xs text-muted-foreground hover:text-foreground">All rules</summary>
+                    <BaseMarkdown text={rules} className="pt-2 text-[13px] md:text-[13px]" />
+                  </details>
+                )}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+      <div>
+        <Button variant="outline" size="sm" onClick={onEdit} className="max-md:h-11">
+          <Pencil />
+          {passport ? "Edit with a session" : "Write it with a session"}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/** «Yours»: what in the project is the owner's — its Open questions (each with «Discuss») and its Tasks (each with
+ * «Plan») — one list; a line of prose between them stays as it is. */
+function Yours({ questions, tasks, onTopic }: { questions: ShowcaseItem[]; tasks: ShowcaseItem[]; onTopic: (t: Topic) => void }) {
+  const rows = [...questions.map((item) => ({ item, kind: "question" as const })), ...tasks.map((item) => ({ item, kind: "task" as const }))].filter(
+    (r) => r.item.list,
+  );
+  if (!rows.length) return null;
+  return (
+    <Section title="Yours" count={rows.length}>
+      <ul className={LIST} aria-label="Yours">
+        {rows.map(({ item, kind }, i) => (
+          <li key={`${kind}:${i}`} className="flex min-h-11 items-center gap-3 px-3 py-2">
+            {kind === "question" ? (
+              <Question aria-label="Open question" className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <Circle aria-label="Task" className="size-4 shrink-0 text-muted-foreground" />
+            )}
+            <BaseMarkdown text={item.text} className="min-w-0 flex-1 text-sm md:text-sm [&_p]:m-0" />
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0 max-md:h-11"
+              onClick={() => onTopic(kind === "question" ? { question: item.text } : { task: item.text })}
+              aria-label={kind === "question" ? "Discuss the question" : "Plan the task"}
+            >
+              {kind === "question" ? "Discuss" : "Plan"}
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+/** «Records»: every Record of the project in one list — its nature and what its head says on the second line —, with
+ * a search once there are more than a few. */
+function RecordsList({ space, below, view }: { space: string; below: string; view: SpaceView }) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const all = NATURES.flatMap((nature) => view.records[nature].map((row) => ({ nature, row })));
+  const shown = all.filter(({ row }) => !q || row.title.toLowerCase().includes(q) || row.path.toLowerCase().includes(q));
+  const summary = NATURES.filter((n) => view.records[n].length)
+    .map((n) => `${NATURE_WORDS[n]} ${view.records[n].length}`)
+    .join(" · ");
+  return (
+    <Section title="Records" count={all.length} action={summary ? <span className="text-xs text-muted-foreground">{summary}</span> : undefined}>
+      {all.length === 0 && <Empty>No Records.</Empty>}
+      {all.length > 6 && (
+        <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a Record" aria-label="Find a Record" className="mb-1" />
+      )}
+      {q && shown.length === 0 && <Empty>Nothing found.</Empty>}
+      {shown.length > 0 && (
+        <ul className={LIST} aria-label="Records">
+          {shown.map(({ nature, row }) => {
+            const words = rowWords(row, nature);
+            return (
+              <li key={`${nature}:${row.path}`}>
+                <Link to="/spaces/$space/r/$" params={{ space, _splat: below ? `${below}/${row.path}` : row.path }} className={cn(LIST_ROW, "min-h-11 items-center gap-3")}>
+                  <Database className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{row.title}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {NATURE_WORDS[nature]}
+                      {words.map((w) => (
+                        <span key={w.key} className={cn(w.warn && "text-warning-foreground dark:text-warning")}>
+                          {" · "}
+                          {w.text}
+                        </span>
+                      ))}
+                      {row.big && " · large — on a computer"}
+                    </span>
+                  </span>
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
+type OperatorView = "cards" | "map";
+const OPERATOR_VIEW_KEY = "retinue-project-operator";
+
+function keptOperatorView(): OperatorView {
+  try {
+    return localStorage.getItem(OPERATOR_VIEW_KEY) === "map" ? "map" : "cards";
+  } catch {
+    return "cards";
+  }
+}
+
+function keepOperatorView(view: OperatorView): void {
+  try {
+    localStorage.setItem(OPERATOR_VIEW_KEY, view);
+  } catch {
+    // storage unavailable: the pick holds while the page is open
+  }
+}
+
+/** A project's «Operator» as cards or as the map of its sessions in their places — the switch «Today» has. */
+function OperatorSwitch({ view, onView }: { view: OperatorView; onView: (v: OperatorView) => void }) {
+  return (
+    <fieldset aria-label="Show" className="inline-flex h-9 w-fit items-center self-start rounded-md border p-0.5 max-md:h-11">
+      {(["cards", "map"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={view === v}
+          onClick={() => onView(v)}
+          className={cn("h-7 rounded px-3 text-[13px] max-md:h-9 whitespace-nowrap transition-colors", view === v ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
+        >
+          {v === "cards" ? "Cards" : "Map"}
+        </button>
+      ))}
+    </fieldset>
+  );
+}
+
+const OVERVIEW = "Overview";
+const RECORDS = "Records";
+const FILES = "Files";
+const OPERATOR = "Operator";
+
+/** The tab a project was left on, kept while the app is open. */
 const tabOf = new Map<string, string>();
 
-const BASE_TAB = "Base";
+const sessionWaits = (s: Session) => s.state === "waiting" || s.waiting > 0;
+
+/** One project — a Space (`space`, with its collections' views) or a project below it — as a screen: a header of one
+ * line (its mark, its name, «project · N sub-projects», its tabs), and the tabs: «Overview» — its passport, what is
+ * the owner's in it, its sessions and sub-projects —, the views its collections name, «Records», «Files» and
+ * «Operator»: the sessions' requests of this project and its sub-projects, as on «Today». */
+function ProjectScreen({
+  path,
+  data,
+  error,
+  ids,
+  views,
+  edit,
+  proposals,
+}: {
+  path: string;
+  data: SpaceView | undefined;
+  error: string | null;
+  /** The sessions the platform says were started in its folder. */
+  ids: string[];
+  /** A Space's collections; absent below a Space. */
+  views?: { shown: SpaceViews | null | undefined; error: string | null; tabs: ReturnType<typeof layout> };
+  edit?: EditApi;
+  proposals?: ProposalsApi;
+}) {
+  const { sessions } = useLiveState();
+  const spheres = useSpheres();
+  const nodes = useProjects();
+  const feed = useFeed();
+  const now = useNowS();
+  const subs = data?.projects ?? [];
+  // the projects a session's folder is matched against: the app's list, and this one and its own sub-projects (the
+  // list may not be read yet)
+  const known = useMemo(
+    () => new Set([...knownProjects(nodes, spheres), path, ...(data?.projects ?? []).map((p) => p.name)]),
+    [nodes, spheres, path, data],
+  );
+  const [top = "", ...rest] = path.split("/");
+  const below = rest.join("/");
+  const sphere = below ? undefined : sphereOf(spheres, top);
+  const [topic, setTopic] = useState<Topic | null>(null);
+  const [picked, setPicked] = useState<string>(() => tabOf.get(path) ?? OVERVIEW);
+  const [operatorView, setOperatorView] = useState<OperatorView>(keptOperatorView);
+  const pickOperatorView = (v: OperatorView) => {
+    keepOperatorView(v);
+    setOperatorView(v);
+  };
+  const title = sphere?.title || data?.title || path.split("/").pop() || path;
+
+  // its own sessions: started in its folder, or of its sphere with no folder of their own; not a side question
+  const mine = useMemo(() => {
+    const at = Date.now() / 1000;
+    const rank = (s: Session) => (sessionWaits(s) ? 0 : s.state === "active" ? 1 : 2);
+    return listed(sessions)
+      .filter((s) => !(s.side ?? !!s.parent))
+      .filter((s) => s.state !== "closed" || sessionWaits(s) || at - s.at < RECENT_S)
+      .filter((s) => ids.includes(s.id) || sessionProject(s, known) === path)
+      .sort((a, b) => rank(a) - rank(b) || b.at - a.at);
+  }, [sessions, ids, known, path]);
+  const inSub = (sub: string) => listed(sessions).filter((s) => within(sessionProject(s, known), sub)).length;
+  const requests = useMemo(() => sessionRequests(feed).filter((r) => rowWithin(r, path, known)), [feed, path, known]);
+  const waitingNow = requests.filter(waits).length;
+  const waitingIn = (sub: string) => (feed?.groups ?? []).flatMap((g) => g.rows).filter((r) => rowWaits(r) && rowWithin(r, sub, known)).length;
+
+  const questions = data?.sections.filter((s) => s.kind === "questions").flatMap((s) => s.items) ?? [];
+  const tasks = data?.sections.filter((s) => s.kind === "tasks").flatMap((s) => s.items) ?? [];
+  const other = data?.sections.filter((s) => s.kind === "other" && s.items.length) ?? [];
+  const records = data ? NATURES.reduce((n, k) => n + data.records[k].length, 0) : 0;
+  const files = (data?.files?.length ?? 0) + (data?.more_files ?? 0);
+
+  // a Space's collections: its first tab's views are the work under the passport on «Overview»; the tabs its views
+  // name stand between «Overview» and «Records». A tab of queues alone, all empty now, is not there until one has a row.
+  const tabs = views?.tabs ?? [];
+  const viewTabs = tabs.filter((t, i) => (i > 0 || placedCount(t.places) > 0) && !(i > 0 && idle(t.places)));
+  const work = viewTabs.find((t) => t.title === null);
+  const named = viewTabs.filter((t) => t.title !== null);
+  // an empty tab is not there (Records, Files); «Operator» always is: the way into the project's requests
+  const names = [OVERVIEW, ...named.map((t) => t.title as string), ...(records ? [RECORDS] : []), ...(files ? [FILES] : []), OPERATOR];
+  const tab = names.includes(picked) ? picked : OVERVIEW;
+  const pick = (name: string) => {
+    tabOf.set(path, name);
+    setPicked(name);
+  };
+  const counts: Record<string, number | undefined> = Object.fromEntries(
+    named.map((t) => [
+      t.title as string,
+      t.places.queues.reduce((n, p) => n + (p.view.error === undefined && p.view.kind === "queue" ? p.view.count : 0), 0) || undefined,
+    ]),
+  );
+  counts[OVERVIEW] = work ? actsOf(work.places) || undefined : undefined;
+  counts[RECORDS] = records || undefined;
+  counts[FILES] = files || undefined;
+  counts[OPERATOR] = waitingNow || undefined;
+  const current = named.find((t) => t.title === tab);
+  const waitingCount = mine.filter(sessionWaits).length;
+  const working = mine.filter((s) => s.state === "active" && !s.waiting).length;
+  const summary = [waitingCount && `${waitingCount} waiting`, working && `${working} working`].filter(Boolean).join(" · ");
+  const parent = data?.parent;
+  const back = "hit -ml-1 inline-flex size-8 shrink-0 items-center justify-center self-center rounded-md hover:bg-accent";
+  const revs = views?.shown?.collections.map((c) => c.rev).join() ?? "";
+  // the views take the list's width; a project of the Base alone reads in a column
+  const wideTab = current !== undefined || (tab === OVERVIEW && work !== undefined);
+
+  return (
+    <div className="flex flex-col">
+      <header className="sticky top-0 z-10 shrink-0 border-b bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur">
+        <div className="mx-auto flex min-h-12 w-full max-w-[90rem] items-stretch gap-1 overflow-x-auto px-3 [scrollbar-width:none] md:px-5">
+          {below ? (
+            <ToProject path={parent || top} className={back} label="To the project above">
+              <ArrowLeft className="size-4" />
+            </ToProject>
+          ) : (
+            <Link to="/spaces" aria-label="To the Spaces" title="To the Spaces" className={cn(back, "lg:hidden")}>
+              <ArrowLeft className="size-4" />
+            </Link>
+          )}
+          <div className="flex shrink-0 items-center gap-2 self-center pr-3">
+            {sphere?.icon ? <SphereMark icon={sphere.icon} className="size-4 shrink-0 text-muted-foreground" /> : <Layers className="size-4 shrink-0 text-muted-foreground" />}
+            <h1 className="max-w-[40vw] truncate text-[15px] font-medium md:max-w-[24rem]">{title}</h1>
+            <span className="text-xs whitespace-nowrap text-muted-foreground max-sm:hidden">
+              project{subs.length ? ` · ${subs.length} ${plural(subs.length, "sub-project", "sub-projects")}` : ""}
+            </span>
+          </div>
+          <div role="tablist" aria-label="The project" className="flex shrink-0 items-stretch">
+            {names.map((name) => (
+              <button
+                key={name}
+                type="button"
+                role="tab"
+                aria-selected={tab === name}
+                onClick={() => pick(name)}
+                className={cn(
+                  "-mb-px inline-flex items-center gap-1.5 border-b-2 px-2.5 text-[13px] whitespace-nowrap transition-colors",
+                  tab === name ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {name}
+                {counts[name] !== undefined && (
+                  <span className={cn("font-mono text-xs tabular-nums", name === OPERATOR ? "text-warning-foreground dark:text-warning" : "text-muted-foreground")}>
+                    {counts[name]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          <span className="ml-auto hidden shrink-0 self-center pl-3 text-xs text-muted-foreground md:inline">{summary}</span>
+        </div>
+      </header>
+      {tab === OPERATOR ? (
+        operatorView === "map" ? (
+          <MapView feed={feed} spheres={spheres} now={now} project={path} head={<OperatorSwitch view={operatorView} onView={pickOperatorView} />} />
+        ) : (
+          <Operator
+            feed={feed}
+            spheres={spheres}
+            now={now}
+            filter={(r) => rowWithin(r, path, known)}
+            empty="Nothing in this project is asking you for anything."
+            head={<OperatorSwitch view={operatorView} onView={pickOperatorView} />}
+          />
+        )
+      ) : (
+        <main
+          className={cn(
+            "mx-auto flex w-full flex-col gap-6 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]",
+            wideTab ? "max-w-[90rem] gap-4" : "max-w-4xl",
+            PAGE_X,
+            "md:px-6",
+          )}
+        >
+          {current && <ViewsTab places={current.places} />}
+          {tab === OVERVIEW && (
+            <>
+              {error && !data && <Empty>{error}</Empty>}
+              {!error && !data && <Empty>Loading the project…</Empty>}
+              {data && <PassportCard passport={data.passport} rules={data.rules} onEdit={() => setTopic({ passport: true })} />}
+              {data && <Yours questions={questions} tasks={tasks} onTopic={setTopic} />}
+              {views?.error && !views.shown && <Empty>{`The views did not load: ${views.error}`}</Empty>}
+              {views && <SpaceProposals space={path} api={proposals ?? proposalsApi} />}
+              {work && <FirstTab places={work.places} />}
+              <Section
+                title="Sessions"
+                count={mine.length}
+                action={
+                  <Button size="sm" variant="ghost" onClick={() => setTopic({})} aria-label="New session here">
+                    <Plus />
+                    <span>New</span>
+                  </Button>
+                }
+              >
+                {mine.length || subs.length ? (
+                  <ul className={LIST} aria-label="Sessions">
+                    {mine.map((s) => (
+                      <SessionRow key={s.id} s={s} />
+                    ))}
+                    {subs.map((row) => (
+                      <SubProjectRow key={row.name} row={row} waiting={waitingIn(row.name)} sessions={inSub(row.name)} />
+                    ))}
+                  </ul>
+                ) : (
+                  <Empty>No sessions here.</Empty>
+                )}
+              </Section>
+              {other.map((s) => (
+                <details key={s.heading} className="rounded-lg border px-3 py-2">
+                  <summary className="cursor-pointer text-sm font-medium">{s.heading || "Untitled"}</summary>
+                  <div className="pt-2">
+                    <Lines items={s.items} />
+                  </div>
+                </details>
+              ))}
+              {views && (views.shown?.collections.length ?? 0) > 0 && edit && <SpaceChanges space={path} api={edit} revs={revs} />}
+            </>
+          )}
+          {tab === RECORDS && data && <RecordsList space={top} below={below} view={data} />}
+          {tab === FILES && data && <ProjectFiles project={path} files={data.files ?? []} more={data.more_files} />}
+        </main>
+      )}
+      <Discuss key={JSON.stringify(topic)} space={top} project={path} title={title} topic={topic} onClose={() => setTopic(null)} />
+    </div>
+  );
+}
+
+function useNowS(everyMs = 30_000): number {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now() / 1000), everyMs);
+    return () => clearInterval(timer);
+  }, [everyMs]);
+  return now;
+}
 
 export function SpacePage({
   space,
@@ -519,159 +962,62 @@ export function SpacePage({
   edit?: EditApi;
   proposals?: ProposalsApi;
 }) {
-  const { sessions } = useLiveState();
   const shown = useSpaceViews(space, views);
   const tabs = useMemo(() => layout(shown.data), [shown.data]);
   const moves = useMemo(() => movesOf(shown.data), [shown.data]);
-  const spheres = useSpheres();
-  const sphere = sphereOf(spheres, space);
   const { data, error } = useRead(`space:${space}`, () => read(space));
-  const [topic, setTopic] = useState<Topic | null>(null);
-  const [picked, setPicked] = useState<string>(() => tabOf.get(space) ?? "");
-  const view = data?.space;
-  const mine = useMemo(() => sessionsOf(listed(sessions), space, Date.now() / 1000), [sessions, space]);
-  const waiting = mine.filter((s) => s.state === "waiting" || s.waiting > 0).length;
-  const working = mine.filter((s) => s.state === "active" && !s.waiting).length;
-  const questions = view?.sections.filter((s) => s.kind === "questions").flatMap((s) => s.items) ?? [];
-  const tasks = view?.sections.filter((s) => s.kind === "tasks").flatMap((s) => s.items) ?? [];
-  const other = view?.sections.filter((s) => s.kind === "other" && s.items.length) ?? [];
-  const count = (items: ShowcaseItem[]) => items.filter((i) => i.list).length;
-  const summary = [waiting && `${waiting} waiting`, working && `${working} working`].filter(Boolean);
-  const revs = shown.data?.collections.map((c) => c.rev).join() ?? "";
-  // A Space without collections has only its Base: it opens there, as it always did. A tab of queues alone, all empty
-  // now — drafts with none waiting — is not there until one has a row.
-  const viewTabs = tabs.filter((t, i) => (i > 0 || placedCount(t.places) > 0) && !(i > 0 && idle(t.places)));
-  const names = [...viewTabs.map((t) => t.title ?? "Now"), BASE_TAB];
-  const tab = names.includes(picked) ? picked : names[0]!;
-  const pick = (name: string) => {
-    tabOf.set(space, name);
-    setPicked(name);
-  };
-  const counts: Record<string, number | undefined> = Object.fromEntries(
-    viewTabs.map((t) => [t.title ?? "Now", t.title === null ? actsOf(t.places) || undefined : t.places.queues.reduce((n, p) => n + (p.view.error === undefined && p.view.kind === "queue" ? p.view.count : 0), 0) || undefined]),
-  );
-  counts[BASE_TAB] = count(questions) || undefined;
-  const current = viewTabs.find((t) => (t.title ?? "Now") === tab);
-  const title = spaceTitle(space, sphere, view?.title);
   return (
     <Editor api={edit} today={shown.data?.today ?? ""} refresh={shown.refresh} reload={() => void shown.reload()} moves={moves}>
-    <div className="flex flex-col">
-      <header className="sticky top-0 z-10 shrink-0 border-b bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur">
-        <div className="mx-auto flex min-h-12 w-full max-w-[90rem] items-stretch gap-1 overflow-x-auto px-3 [scrollbar-width:none] md:px-5">
-          <Link
-            to="/spaces"
-            aria-label="To the Spaces"
-            title="To the Spaces"
-            className="hit inline-flex size-8 shrink-0 items-center justify-center self-center rounded-md hover:bg-accent"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <h1 className="flex max-w-[40vw] shrink-0 items-center gap-2 self-center truncate pr-3 text-[15px] font-medium md:max-w-none">
-            <SphereMark icon={sphere?.icon} className="size-4 shrink-0 text-muted-foreground" />
-            <span className="truncate">{title}</span>
-          </h1>
-          <div role="tablist" aria-label="Views of the Space" className="flex shrink-0 items-stretch">
-            {names.map((name) => (
-              <button
-                key={name}
-                type="button"
-                role="tab"
-                aria-selected={tab === name}
-                onClick={() => pick(name)}
-                className={cn(
-                  "-mb-px inline-flex items-center gap-1.5 border-b-2 px-2.5 text-[13px] whitespace-nowrap transition-colors",
-                  tab === name ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {name}
-                {counts[name] !== undefined && <span className="font-mono text-xs text-muted-foreground tabular-nums">{counts[name]}</span>}
-              </button>
-            ))}
-          </div>
-          <span className="ml-auto hidden shrink-0 self-center pl-3 text-xs text-muted-foreground md:inline">{summary.join(" · ")}</span>
-        </div>
-      </header>
-      <main
-        className={cn(
-          "mx-auto flex w-full flex-col gap-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]",
-          tab === BASE_TAB ? "max-w-3xl" : "max-w-[90rem]",
-          PAGE_X,
-          "md:px-5",
-        )}
-      >
-        {shown.error && !shown.data && <Empty>{`The views did not load: ${shown.error}`}</Empty>}
-        {tab !== BASE_TAB && current && (
-          <>
-            {current.title === null && <SpaceProposals space={space} api={proposals} />}
-            {current.title === null ? (
-              <FirstTab places={current.places} />
-            ) : (
-              <ViewsTab places={current.places} />
-            )}
-          </>
-        )}
-        {tab === BASE_TAB && (
-          <>
-            {viewTabs.length === 0 && <SpaceProposals space={space} api={proposals} />}
-            {error && !view && <Empty>{error}</Empty>}
-            {!error && !view && <Empty>Loading the Showcase…</Empty>}
-            {view && (
-              <>
-                <Section title="Open questions" count={count(questions)}>
-                  {questions.length ? (
-                    <Lines items={questions} onDiscuss={(item) => setTopic({ question: item.text })} />
-                  ) : (
-                    <Empty>No Open questions.</Empty>
-                  )}
-                </Section>
-                <Section title="Tasks" count={count(tasks)}>
-                  {tasks.length ? <Lines items={tasks} /> : <Empty>No Tasks.</Empty>}
-                </Section>
-                <Records space={space} view={view} />
-                {other.map((s) => (
-                  <details key={s.heading} className="rounded-lg border px-3 py-2">
-                    <summary className="cursor-pointer text-sm font-medium">{s.heading || "Untitled"}</summary>
-                    <div className="pt-2">
-                      <Lines items={s.items} />
-                    </div>
-                  </details>
-                ))}
-                {view.rules && (
-                  <details className="rounded-lg border px-3 py-2">
-                    <summary className="cursor-pointer text-sm font-medium">Rules of the Space</summary>
-                    <BaseMarkdown text={view.rules} className="pt-2" />
-                  </details>
-                )}
-              </>
-            )}
-            <Section
-              title="Sessions"
-              count={mine.length}
-              action={
-                <Button size="sm" variant="ghost" onClick={() => setTopic({})} aria-label="New session here">
-                  <Plus />
-                  <span>New</span>
-                </Button>
-              }
-            >
-              {mine.length ? (
-                <ul className="flex flex-col">
-                  {mine.map((s) => (
-                    <SessionRow key={s.id} s={s} />
-                  ))}
-                </ul>
-              ) : (
-                <Empty>No sessions here.</Empty>
-              )}
-            </Section>
-            {(shown.data?.collections.length ?? 0) > 0 && <SpaceChanges space={space} api={edit} revs={revs} />}
-          </>
-        )}
-      </main>
-      <Discuss key={JSON.stringify(topic)} space={space} topic={topic} onClose={() => setTopic(null)} />
-    </div>
+      <ProjectScreen
+        path={space}
+        data={data?.space}
+        error={error}
+        ids={data?.sessions ?? []}
+        views={{ shown: shown.data, error: shown.error, tabs }}
+        edit={edit}
+        proposals={proposals}
+      />
     </Editor>
   );
+}
+
+// --- projects: a link to one, any project's files, a project below a Space ------------------------------------------
+
+/** A link to a project by its folder: `/spaces/<space>`, or `/spaces/<space>/p/<the rest>` below it. */
+function ToProject({ path, className, label, children }: { path: string; className?: string; label?: string; children: React.ReactNode }) {
+  const [space = "", ...below] = path.split("/");
+  return below.length ? (
+    <Link to="/spaces/$space/p/$" params={{ space, _splat: below.join("/") }} className={className} aria-label={label} title={label}>
+      {children}
+    </Link>
+  ) : (
+    <Link to="/spaces/$space" params={{ space }} className={className} aria-label={label} title={label}>
+      {children}
+    </Link>
+  );
+}
+
+/** Every file of a project, each in the row a session's files use: a picture, a recording, a film in place, a PDF or
+ * a text opened in place. */
+function ProjectFiles({ project, files, more = 0 }: { project: string; files: ProjectFile[]; more?: number }) {
+  return (
+    <Section title="Files" count={files.length + more}>
+      <ul className="flex flex-col gap-2" aria-label="Project files">
+        {files.map((f) => {
+          const at = project ? `${project}/${f.path}` : f.path;
+          const kind = f.big ? "other" : f.kind === "html" ? "text" : f.kind;
+          return <FileRow key={f.path} file={{ path: f.path, name: f.path.split("/").pop()!, size: f.size }} kind={kind} src={baseFile(at)} frame={baseView(at)} />;
+        })}
+      </ul>
+      {more > 0 && <Empty>{`and ${more} more — open them on a computer`}</Empty>}
+    </Section>
+  );
+}
+
+/** A project below a Space: the same screen, without the Space's collections. */
+export function ProjectPage({ path, read = spacesApi.project }: { path: string; read?: typeof spacesApi.project }) {
+  const { data, error } = useRead(`project:${path}`, () => read(path));
+  return <ProjectScreen path={path} data={data?.project} error={error} ids={data?.sessions ?? []} />;
 }
 
 // --- one Record --------------------------------------------------------------------------------------------------------
@@ -770,7 +1116,7 @@ export function RecordPage({ space, path, pane = false, read = spacesApi.record 
       <main className={cn("mx-auto w-full max-w-[68ch] pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]", PAGE_X)}>
         {record ? <RecordBody record={record} /> : <Empty>{error ?? "Loading the Record…"}</Empty>}
       </main>
-      <Discuss key={JSON.stringify(topic)} space={space} topic={topic} onClose={() => setTopic(null)} />
+      <Discuss key={JSON.stringify(topic)} space={space} project={record?.project ?? space} topic={topic} onClose={() => setTopic(null)} />
     </div>
   );
 }

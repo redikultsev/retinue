@@ -216,7 +216,9 @@ transcription uses [ElevenLabs](https://elevenlabs.io) Scribe and is optional.
   ([docs/base.md](docs/base.md#the-commit-after-a-turn)).
 - **Tied to Claude today.** See [Model access](#model-access).
 - **The Matrix channel** is still in the code and off by default ([docs/install.md](docs/install.md#matrix-optional)).
-- **No CI.** Run the tests locally before a pull request.
+- **CI.** GitHub runs the tests on every pull request and push to main
+  ([.github/workflows/ci.yml](.github/workflows/ci.yml)); a tag publishes the images
+  ([docs/install.md](docs/install.md#updating)).
 
 ## Contributing, security, license
 

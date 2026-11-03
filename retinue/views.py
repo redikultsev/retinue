@@ -27,6 +27,7 @@ changes, and the Space's newest (`GET /api/c/_changes`), are each taken back by 
 from __future__ import annotations
 
 import datetime as dt
+import decimal
 import json
 import re
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiohttp import web
 
+from . import pagesd
 from .collections import (CHANGE_COLUMNS, HISTORY, NAME, RECORD_COLUMNS, SPACE, ULID, Collections, Refused, Rejected,
                           Writer, _change, _json, _path, _record)
 
@@ -46,6 +48,8 @@ ROWS_MAX = VIEW_MAX - 16 * 2**10  # of them the rows' share; the rest is the vie
 RECORDS_MAX = 2000          # records one board or queue reads, the oldest first: more than its rows can ever hold
 AGENDA_DAYS = 7             # the days an agenda looks ahead by default, today among them
 CHART_WEEKS = 8             # the weeks a chart counts by default, this one among them
+MONTHS = 12                 # the months a `months` view sums by default, this one among them
+NO_FRAME = "'none'"         # who may frame a view in code when the app has no origin: no one
 RELATED_MAX = 30            # records of other collections that name a record, its sheet lists
 IDS_CHUNK = 500             # ids in one statement's IN (…)
 ZONE_KEY = "collections.zone"  # the platform's kv: the zone the Router last told
@@ -219,15 +223,29 @@ def _said(store: Collections, collection: str | None, ids) -> dict[str, str]:
     return said
 
 
+def _file_names(store: Collections, shas) -> dict[str, str]:
+    """The names the owner's device gave these uploaded files: a `file` field reads «acme-invoice.pdf»."""
+    shas = sorted({s for s in shas if isinstance(s, str)})
+    named: dict[str, str] = {}
+    for at in range(0, len(shas), IDS_CHUNK):
+        chunk = shas[at:at + IDS_CHUNK]
+        named.update(store._db.execute(f"SELECT sha256, name FROM files WHERE sha256 IN ({', '.join('?' * len(chunk))})",
+                                       chunk).fetchall())
+    return named
+
+
 def _refs(store: Collections, form: dict, records: list[dict], fields: list[str] | None) -> dict:
     """For each record, the `ref` fields a view shows by the words of what they name (`_said`); a deleted record, or
     one without such words: none, and the row shows the id."""
     words: dict = {}
     for name in fields or form["fields"]:
         spec = form["fields"][name]
-        if spec["type"] != "ref":
+        if spec["type"] == "file":  # an uploaded file by its name, never its sha256
+            said = _file_names(store, (r["fields"].get(name) for r in records))
+        elif spec["type"] != "ref":
             continue
-        said = _said(store, spec["to"], (r["fields"].get(name) for r in records))
+        else:
+            said = _said(store, spec["to"], (r["fields"].get(name) for r in records))
         for record in records:
             if record["fields"].get(name) in said:
                 words.setdefault(record["id"], {})[name] = said[record["fields"][name]]
@@ -421,7 +439,128 @@ def _chart(store: Collections, collection: str, form: dict, view: dict, when: Wh
     return {"date": date, "group": group, "values": values, "weeks": counted}
 
 
-KINDS = {"stat": _stat, "board": _board, "queue": _queue, "agenda": _agenda, "chart": _chart}
+def _summed(form: dict, view: dict) -> tuple[str | None, str | None]:
+    """What a `months` or a `year` view adds up: its `sum` — a whole number or an amount of money — and the unit it
+    is in (the money's currency); none, the records counted."""
+    name = view.get("sum")
+    if name is None:
+        return None, None
+    spec = _field(form, name, "int", "money")
+    return name, spec.get("currency")
+
+
+def _sums(store: Collections, collection: str, form: dict, conditions: list, date: str, total: str | None,
+          group: str | None, first: dt.date, last: dt.date) -> dict[tuple[str, str | None], decimal.Decimal]:
+    """The records the filter matches whose `date` falls from `first` to `last`, added up by their month
+    (`YYYY-MM`) and `group`'s value: their `total` field — exactly, an amount in cents — or one each."""
+    span = [{"field": date, "op": "between", "value": [first.isoformat(), last.isoformat()]}]
+    where, params = store._where(collection, form, conditions + span, False)
+    value = _path(total) if total else "1"
+    split = _path(group) if group else "NULL"
+    sums: dict[tuple[str, str | None], decimal.Decimal] = {}
+    for month, part, amount in store._db.execute(
+            f"SELECT substr({_path(date)}, 1, 7), {split}, {value} FROM records WHERE {where}", params):
+        if amount is not None:
+            sums[month, part] = sums.get((month, part), decimal.Decimal(0)) + decimal.Decimal(str(amount))
+    return sums
+
+
+def _said_sum(amount: decimal.Decimal, unit: str | None) -> str | int:
+    """A sum as the answer gives it: an amount of money as its exact string («1250.00»), a count or a whole number
+    as a number."""
+    return f"{amount:.2f}" if unit else int(amount)
+
+
+def _month(day: dt.date, back: int) -> dt.date:
+    """The first day of the month `back` months before the one `day` is in."""
+    n = day.year * 12 + day.month - 1 - back
+    return dt.date(n // 12, n % 12 + 1, 1)
+
+
+def _months(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+    """Sums by month: the records the filter matches added up by the month their `date` falls in — their `sum`
+    field, else one each — the last `months` months, this one last, each split by the enum `group` names."""
+    date, group = view["date"], view.get("group")
+    _field(form, date, "date")
+    total, unit = _summed(form, view)
+    values = _field(form, group, "enum")["values"] if group else []
+    count = view.get("months", MONTHS)
+    firsts = [_month(when.today, n) for n in range(count - 1, -1, -1)]
+    last = _month(when.today, -1) - DAY
+    sums = _sums(store, collection, form, _conditions(form, view), date, total, group, firsts[0], last)
+    months = []
+    for first in firsts:
+        key = first.isoformat()[:7]
+        parts = [(value, amount) for (month, value), amount in sums.items() if month == key]
+        months.append({"first": first.isoformat(), "totals": [
+            {"value": value, "total": _said_sum(amount, unit)}
+            for value, amount in sorted(parts, key=lambda p: (p[0] is None, values.index(p[0]) if p[0] in values
+                                                               else len(values), str(p[0])))]})
+    return {"date": date, "sum": total, "unit": unit, "group": group, "values": values, "months": months}
+
+
+def _year(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+    """A year's line: the records the filter matches added up month by month through this year — their `sum`, else
+    one each — each month with the running total to its end, beside the same line of the year before; `through`
+    the month that holds today."""
+    date = view["date"]
+    _field(form, date, "date")
+    total, unit = _summed(form, view)
+    conditions = _conditions(form, view)
+
+    def line(year: int) -> list[dict]:
+        sums = _sums(store, collection, form, conditions, date, total, None, dt.date(year, 1, 1), dt.date(year, 12, 31))
+        running, out = decimal.Decimal(0), []
+        for month in range(1, 13):
+            amount = sums.get((f"{year:04d}-{month:02d}", None), decimal.Decimal(0))
+            running += amount
+            out.append({"first": dt.date(year, month, 1).isoformat(), "total": _said_sum(amount, unit),
+                        "running": _said_sum(running, unit)})
+        return out
+    year = when.today.year
+    return {"date": date, "sum": total, "unit": unit, "year": year, "through": when.today.month, "months": line(year),
+            "previous": line(year - 1)}
+
+
+KINDS = {"stat": _stat, "board": _board, "queue": _queue, "agenda": _agenda, "chart": _chart, "months": _months,
+         "year": _year}
+
+
+# --- a project's own views, in code ----------------------------------------------------------------------------------
+
+def code_csp(face_origin: str) -> str:
+    """The policy a project's view in code is served under: the pages service's sandbox with scripts on
+    (`pagesd.SANDBOX`) — an opaque origin, so no cookie, no API and no storage of the app's — its own inline scripts
+    and styles and `data:` images and fonts, no network at all (`connect-src 'none'`), no frames, no forms sent, no
+    navigation of its own; framed by the app alone. Its data comes from the app, by message."""
+    return ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; "
+            "font-src data:; connect-src 'none'; worker-src 'none'; frame-src 'none'; manifest-src 'none'; "
+            "media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; "
+            f"frame-ancestors {face_origin or NO_FRAME}; sandbox {pagesd.SANDBOX[True]}")
+
+
+def _code_views(store: Collections, space: str) -> dict[str, list[dict]]:
+    """The views in code of the project `space` names, by their collection: as its description keeps them."""
+    found = store._project(space)
+    out: dict[str, list[dict]] = {}
+    for view in found["description"].get("views", []) if found else []:
+        out.setdefault(view["collection"], []).append(view)
+    return out
+
+
+def _code(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+    """A view in code: where its page is, and the data the app gives it by message — the collection's fields and
+    their words, and its records (the oldest RECORDS_MAX the answer can hold), each with its ref fields in words."""
+    records, total = _records(store, collection, form, [])
+    refs, rows, dropped = _refs(store, form, records, None), [], total - len(records)
+    for record in records:
+        row = _row(record, None, refs, None, None, when, None, budget)
+        if row is None:
+            dropped += 1
+        else:
+            rows.append(row)
+    return {"src": f"/api/c/{collection}/_code/{view['name']}", "sandbox": pagesd.SANDBOX[True],
+            "fields": _fields(form), "labels": _labels(form), "count": total, "rows": rows, "dropped": dropped}
 
 
 def _done(store: Collections, form: dict, view: dict) -> dict | None:
@@ -451,7 +590,7 @@ def _view(store: Collections, collection: str, form: dict, view: dict, when: Whe
     shown = {"name": view["name"], "kind": view["kind"], "title": view.get("title", view["name"]),
              **({"tab": view["tab"]} if "tab" in view else {})}
     try:
-        shown.update(KINDS[view["kind"]](store, collection, form, view, when, budget))
+        shown.update({**KINDS, "code": _code}[view["kind"]](store, collection, form, view, when, budget))
         if view["kind"] == "queue":
             shown["done"] = _done(store, form, view)
         if view["kind"] in ("board", "queue"):
@@ -469,11 +608,12 @@ def _schemas(store: Collections, space: str) -> list[tuple[str, dict, list]]:
 def space_views(store: Collections, space: str, when: When) -> dict:
     """A Space's collections, each with its rev and its views: `{space, tz, today, at, collections: [{name, rev,
     views}]}` — the stats of every collection first, then the rest, within one VIEW_MAX."""
-    schemas, budget, made = _schemas(store, space), [ROWS_MAX], {}
+    budget, made, code = [ROWS_MAX], {}, _code_views(store, space)
+    schemas = [(name, form, views + code.get(name, [])) for name, form, views in _schemas(store, space)]
     for first in (True, False):  # every number made before any rows: a long board never crowds a stat out
         for name, form, views in schemas:
             for n, view in enumerate(views):
-                if (view["kind"] == "stat") == first:
+                if (view["kind"] in ("stat", "months", "year")) == first:
                     made[name, n] = _view(store, name, form, view, when, budget)
     return {"space": space, **when.shown(), "collections": [
         {"name": name, "rev": store._rev(name), "labels": _labels(form),
@@ -489,8 +629,9 @@ def _labels(form: dict) -> dict[str, dict[str, str]]:
 
 def one_view(store: Collections, collection: str, name: str, when: When) -> dict | None:
     """One view of a collection: `{name, rev, tz, today, at, view}`, or None when there is no such view."""
-    row = store._db.execute("SELECT form, views FROM schemas WHERE collection = ?", (collection,)).fetchone()
-    view = next((v for v in json.loads(row[1]) if v["name"] == name), None) if row else None
+    row = store._db.execute("SELECT form, views, space FROM schemas WHERE collection = ?", (collection,)).fetchone()
+    views = json.loads(row[1]) + _code_views(store, row[2]).get(collection, []) if row else []
+    view = next((v for v in views if v["name"] == name), None)
     if view is None:
         return None
     return {"name": collection, "rev": store._rev(collection), **when.shown(),
@@ -515,9 +656,10 @@ def stats(store: Collections, named: list[tuple[str, str]], when: When) -> dict:
 
 
 def _fields(form: dict) -> dict:
-    """A form's fields as the screen asks for them: each one's type, and its values, labels, `to`, `required` and
-    `hide` — a field kept for the agents, which a record's sheet leaves out."""
-    return {name: {k: v for k, v in spec.items() if k in ("type", "values", "labels", "to", "required", "hide")}
+    """A form's fields as the screen asks for them: each one's type, and its values, labels, `to`, `currency`,
+    `required` and `hide` — a field kept for the agents, which a record's sheet leaves out."""
+    return {name: {k: v for k, v in spec.items()
+                   if k in ("type", "values", "labels", "to", "currency", "required", "hide")}
             for name, spec in form["fields"].items()}
 
 
@@ -630,6 +772,7 @@ class Views:
                 web.get(f"/api/c/{{collection:{COLLECTION}}}", self.view),
                 web.post(f"/api/c/{{collection:{COLLECTION}}}", self.write),
                 web.get(f"/api/c/{{collection:{COLLECTION}}}/_form", self.form),
+                web.get(f"/api/c/{{collection:{COLLECTION}}}/_code/{{view:{COLLECTION}}}", self.code),
                 web.get(f"/api/c/{{collection:{COLLECTION}}}/{{id:{RECORD_ID}}}", self.record)]
 
     def owner_routes(self) -> list:
@@ -665,6 +808,27 @@ class Views:
 
     async def form(self, request: web.Request) -> web.Response:
         return await self._answer(form_view, request.match_info["collection"])
+
+    async def code(self, request: web.Request) -> web.Response:
+        """A project's view in code, for the app's frame: its page, under the pages service's sandbox with scripts on
+        and no network (`code_csp`). It names no record: the app hands it the view's data by message."""
+        collection, name = request.match_info["collection"], request.match_info["view"]
+        store = self.platform.collections
+
+        def page() -> str | None:
+            row = store._db.execute("SELECT space FROM schemas WHERE collection = ?", (collection,)).fetchone()
+            found = _code_views(store, row[0]).get(collection, []) if row else []
+            return next((v["html"] for v in found if v["name"] == name), None)
+        try:
+            text = await store.read(page)
+        except Refused as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        if text is None:
+            return web.json_response({"error": "No such view."}, status=404)
+        return web.Response(text=text, content_type="text/html", charset="utf-8", headers={
+            "Content-Security-Policy": code_csp(self.platform.cfg.face_origin), "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+            "Cross-Origin-Resource-Policy": "same-origin"})
 
     async def changes(self, request: web.Request) -> web.Response:
         """A Space's newest changes, the owner's and every writer's, each to be taken back."""

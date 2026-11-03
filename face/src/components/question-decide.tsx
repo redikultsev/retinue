@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronRight } from "@/components/icons";
 import { questionsOf, RECOMMENDED, viewOf } from "@/components/question-card";
+import { DictateButton } from "@/components/talk";
 import { Markdown } from "@/components/transcript/item";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +16,7 @@ import { type Live, live as defaultLive } from "@/lib/live";
 import { toast } from "@/lib/toast";
 import type { Approval, QuestionReply } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { insertAt } from "@/lib/voice";
 
 export const BRIEF = /^\s*(?:[-*]\s+)?\*\*(Recommend|Why|Cost|Risk|Skip|Not checked)\s*[:.]?\s*\*\*\s*[:.]?\s*(.+)$/i;
 
@@ -60,12 +62,15 @@ export function QuestionDecide({
   live = defaultLive,
   answer = api.answer,
   onDecided,
+  keys: keyed = true,
 }: {
   approval: Approval;
   said?: string;
   live?: Live;
   answer?: typeof api.answer;
   onDecided?: (approval: Approval) => void;
+  /** 1–9 and Enter work it: off where several questions stand on one screen (the operator's), lest one key answer all. */
+  keys?: boolean;
 }) {
   const questions = questionsOf(approval.input);
   const view = viewOf(approval);
@@ -115,6 +120,7 @@ export function QuestionDecide({
   const keys = useRef({ pick, send });
   keys.current = { pick, send };
   useEffect(() => {
+    if (!keyed) return;
     const onKey = (e: KeyboardEvent) => {
       if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (/^[1-9]$/.test(e.key)) {
@@ -127,7 +133,7 @@ export function QuestionDecide({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [keyed]);
 
   if (!q) return null;
   const label = own ? "Send your answer" : chosen.length === 1 ? `Answer · ${chosen[0]!.replace(RECOMMENDED, "")}` : chosen.length ? `Answer · ${chosen.length} picked` : "Answer";
@@ -209,17 +215,21 @@ export function QuestionDecide({
             </label>
           );
         })}
-        <Textarea
-          aria-label="Your own answer"
-          placeholder="Or answer in your own words"
-          rows={1}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send();
-          }}
-          className="min-h-10 resize-none border-dashed"
-        />
+        <div className="flex items-start gap-2">
+          <Textarea
+            aria-label="Your own answer"
+            placeholder="Or answer in your own words"
+            rows={1}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send();
+            }}
+            className="min-h-10 min-w-0 flex-1 resize-none border-dashed"
+          />
+          {/* one's own answer by voice: dictated into the field */}
+          <DictateButton owner={`question:${approval.id}`} label="Dictate the answer" onText={(piece) => setText(insertAt(text, text.length, text.length, piece).text)} />
+        </div>
       </fieldset>
       <div>
         <Button size="lg" disabled={!ready} onClick={() => void send()}>

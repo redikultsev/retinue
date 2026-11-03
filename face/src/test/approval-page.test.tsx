@@ -42,7 +42,7 @@ describe("ApprovalPage", () => {
     const watch = vi.spyOn(live, "watch").mockResolvedValue();
     const load = vi.fn().mockResolvedValue({ approval: card });
     mount(load);
-    expect(await screen.findByText("Approval · retinue · session a1b2c3d4")).toBeTruthy();
+    expect(await screen.findByText("Approval")).toBeTruthy();
     expect(load).toHaveBeenCalledWith("5f3a9c21");
     expect(watch).toHaveBeenCalledWith("a1b2c3d4");
     expect(screen.getByRole("button", { name: "Allow" })).toBeTruthy();

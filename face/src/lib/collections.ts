@@ -34,7 +34,16 @@ export interface Places {
   charts: Placed[];
 }
 
-const KIND_PLACE = { stat: "stats", queue: "queues", board: "boards", agenda: "agendas", chart: "charts" } as const;
+const KIND_PLACE = {
+  stat: "stats",
+  queue: "queues",
+  board: "boards",
+  agenda: "agendas",
+  chart: "charts",
+  months: "charts",
+  year: "charts",
+  code: "charts",
+} as const;
 
 export const NO_PLACES: Places = { stats: [], queues: [], boards: [], agendas: [], charts: [] };
 

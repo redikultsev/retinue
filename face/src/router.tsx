@@ -24,12 +24,13 @@ import { NewPage } from "@/pages/new";
 import { ReadPage } from "@/pages/read";
 import { type SessionSearch, SessionPage } from "@/pages/session";
 import { SessionsPage } from "@/pages/sessions";
-import { RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
+import { ProjectPage, RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
 import { TodayPage, type TodayTab } from "@/pages/today";
 import { WeekPage } from "@/pages/week";
-import { visits } from "@/lib/today";
+import { todaySearch, visits } from "@/lib/today";
 
-const tabOf = (v: unknown) => (v === "changes" || v === "chat" || v === "files" ? v : undefined);
+// an old link to «Files» lands on «Results», where the files are now
+const tabOf = (v: unknown) => (v === "changes" || v === "chat" || v === "results" ? v : v === "files" ? "results" : undefined);
 const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
 /** `?turn=N` — a turn of the session, as a commit of the Base names it: a whole number, else none. */
 const turnOf = (v: unknown) => {
@@ -126,18 +127,20 @@ const shellRoute = createRoute({
   ),
 });
 
-const todayTab = (v: unknown): TodayTab | undefined => (v === "tasks" || v === "plan" ? v : undefined);
+// «Today» · «Tasks» · «Schedule» (lib/today.ts `todaySearch`: an old `?tab=day`, `?tab=week` or `?tab=plan` lands on
+// «Schedule», `?mode=operator` opens the operator's cards, an old `?mode=project` «By action»).
 const todayRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: "/today",
-  validateSearch: (s: Record<string, unknown>): { tab?: TodayTab } => ({ tab: todayTab(s.tab) }),
+  validateSearch: todaySearch,
   component: function Today() {
-    const { tab } = todayRoute.useSearch();
+    const { tab, mode } = todayRoute.useSearch();
     const navigate = todayRoute.useNavigate();
     return (
       <TodayPage
+        mode={mode}
         tab={tab ?? "waiting"}
-        onTab={(t) => void navigate({ search: t === "waiting" ? {} : { tab: t }, replace: true })}
+        onTab={(t: TodayTab) => void navigate({ search: t === "waiting" ? {} : { tab: t }, replace: true })}
       />
     );
   },
@@ -162,6 +165,15 @@ const spaceRoute = createRoute({
   component: function Space() {
     const { space } = spaceRoute.useParams();
     return <SpacePage key={space} space={space} />;
+  },
+});
+const projectRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: "/spaces/$space/p/$",
+  component: function Project() {
+    const { space, _splat } = projectRoute.useParams();
+    const path = `${space}/${_splat ?? ""}`.replace(/\/$/, "");
+    return <ProjectPage key={path} path={path} />;
   },
 });
 const recordRoute = createRoute({
@@ -241,7 +253,7 @@ const pushRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   homeRoute,
   loginRoute,
-  shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, spacesRoute, spaceRoute, recordRoute, sessionRoute]),
+  shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, spacesRoute, spaceRoute, projectRoute, recordRoute, sessionRoute]),
   approvalRoute,
   fileRoute,
   pushRoute,

@@ -13,7 +13,9 @@ that will not land.
 
 ## Before a pull request
 
-There is no CI: run the checks yourself and say in the pull request that they pass.
+GitHub runs these checks on every pull request and every push to main
+([.github/workflows/ci.yml](.github/workflows/ci.yml)): the same commands, on Linux, where the tests that need Docker
+run too. Run them yourself first.
 
 ```bash
 uv run --frozen --with pytest pytest -q

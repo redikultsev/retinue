@@ -1,0 +1,9 @@
+# A project's own hosts (docs/platform.md, «A project's own hosts»). One file per project in
+# /srv/retinue/egress/projects/ (a *.example.yaml like this one is not read). Each host goes into
+# /srv/retinue/egress/platform-hosts.txt too; then `docker compose restart platform platform-egress`.
+project: travel                     # its folder in the Base
+hosts: [booking.example.com]        # exact names, https only; GET and HEAD go at once, any other call waits for your button
+key:                                # optional: added to this project's calls only
+  header: Authorization
+  prefix: "Bearer "
+  env: RETINUE_PROJECT_KEY_TRAVEL   # its value in /srv/retinue/egress/project-keys.env

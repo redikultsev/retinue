@@ -287,15 +287,21 @@ def test_the_owners_memory_index_comes_first_in_every_run_asked_for_it_and_never
     (lane.work / "bare").mkdir()
 
     async def scenario(host, client, post, items, until, event):
+        # `event("exited")` is found by the first run's line too: the next run waits for the host to let the
+        # session go, or it is answered «running» on a slow machine.
+        async def gone():
+            await until(lambda: "0a1b2c3d" not in host.live)
+
         await post("/run", run_body(instructions=True))
         await event("exited")
+        await gone()
         await post("/run", run_body(run="r2", cwd="bare", instructions=True))
         await until(lambda: lane.call("r2"))
-        await event("exited")
+        await gone()
         (memory / "memory" / "notes.txt").write_text("x")
         await post("/run", run_body(run="r3", instructions=True))
         await until(lambda: lane.call("r3"))
-        await event("exited")
+        await gone()
         host.cfg.web = True
         (memory / "memory" / "notes.txt").unlink()
         await post("/run", run_body(run="r4", cwd="bare", instructions=True))

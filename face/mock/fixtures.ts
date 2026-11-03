@@ -17,6 +17,8 @@ export const spheres: Sphere[] = [
   { name: "work", title: "Work", icon: "🗂️", track: "notes" },
   { name: "health", title: "Health", icon: "🩺", track: "notes" },
   { name: "platform", title: "Platform", icon: "🛠️", track: "retinue" },
+  // the voice's sphere (`voice:` in platform.yaml): its main session is «Talk to Retinue»
+  { name: "voice", title: "Retinue", icon: "💬", track: "notes" },
 ];
 
 export const sessions: Session[] = [
@@ -24,17 +26,94 @@ export const sessions: Session[] = [
   { id: "d4c3b2a1", track: "retinue", lane: "code", kind: "code", state: "active", created: T0 - 500, at: T0 - 40, title: "Design review: the digest after a restart", waiting: 0, sphere: "platform", sub_of: "a1b2c3d4" },
   { id: "e1d2c3b4", track: "retinue", lane: "code", kind: "code", state: "active", created: T0 - 450, at: T0 - 35, title: "Run the full test suite", waiting: 0, sphere: "platform", sub_of: "a1b2c3d4", queued: true },
   { id: "aa11bb22", track: "retinue", lane: "code", kind: "code", state: "idle", created: T0 - 9000, at: T0 - 7000, title: "The «Today» feed: hub status chips", waiting: 0, sphere: "platform", push: 0, unread: true },
-  { id: "cc33dd44", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 20000, at: T0 - 15000, title: "Notes on a book I read", waiting: 0, sphere: "reading", main: true, unread: true },
-  { id: "ee55ff66", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 30000, at: T0 - 25000, title: "Reading plan for May", waiting: 0, sphere: "reading", base: 3 },
-  { id: "1a2b3c4d", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 40000, at: T0 - 36000, title: "To-do list for the weekend", waiting: 0, sphere: "work", pinned: true },
-  { id: "77889900", track: "notes", lane: "private", kind: "private", state: "waiting", created: T0 - 2000, at: T0 - 300, title: "Turn the call notes into a note", waiting: 1, sphere: "work", main: true, base: 1 },
-  { id: "e5f6a7b8", track: "notes", lane: "private", kind: "private", state: "active", created: T0 - 900, at: T0 - 20, title: "Sketch a plan for a trip to Lisbon", waiting: 0, sphere: "travel", main: true, unread: true, children: 2 },
-  { id: "b1c2d3e4", track: "notes", lane: "private", kind: "private", state: "active", created: T0 - 800, at: T0 - 30, title: "A place in Lisbon for 5 nights", waiting: 0, sphere: "travel", sub_of: "e5f6a7b8" },
-  { id: "f1e2d3c4", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 700, at: T0 - 200, title: "A route through Portugal", waiting: 0, sphere: "travel", sub_of: "e5f6a7b8" },
+  { id: "cc33dd44", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 20000, at: T0 - 15000, title: "Notes on a book I read", waiting: 0, sphere: "reading", main: true, unread: true, project: "reading" },
+  { id: "ee55ff66", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 30000, at: T0 - 25000, title: "Reading plan for May", waiting: 0, sphere: "reading", base: 3, project: "reading" },
+  { id: "1a2b3c4d", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 40000, at: T0 - 36000, title: "To-do list for the weekend", waiting: 0, sphere: "work", pinned: true, project: "work" },
+  { id: "77889900", track: "notes", lane: "private", kind: "private", state: "waiting", created: T0 - 2000, at: T0 - 300, title: "Turn the call notes into a note", waiting: 1, sphere: "work", main: true, base: 1, project: "work" },
+  { id: "e5f6a7b8", track: "notes", lane: "private", kind: "private", state: "active", created: T0 - 900, at: T0 - 20, title: "Sketch a plan for a trip to Lisbon", waiting: 0, sphere: "travel", main: true, unread: true, children: 2, project: "travel" },
+  { id: "b1c2d3e4", track: "notes", lane: "private", kind: "private", state: "active", created: T0 - 800, at: T0 - 30, title: "A place in Lisbon for 5 nights", waiting: 0, sphere: "travel", sub_of: "e5f6a7b8", project: "travel/lisbon" },
+  { id: "f1e2d3c4", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 700, at: T0 - 200, title: "A route through Portugal", waiting: 0, sphere: "travel", sub_of: "e5f6a7b8", project: "travel" },
+  { id: "0c0ffee1", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 90000, at: T0 - 600, title: "Retinue", waiting: 0, sphere: "voice", main: true },
   { id: "5566aabb", track: "kb", lane: "code", kind: "code", state: "active", created: T0 - 600, at: T0 - 10, title: "Check the Showcases for broken links", waiting: 0 },
   { id: "c9d0e1f2", track: "retinue", lane: "code", kind: "code", state: "closed", created: T0 - 86400, at: T0 - 80000, title: "Release 0.4.0: changelog and tag", waiting: 0, sphere: "platform" },
-  { id: "0a1b2c3d", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 7200, at: T0 - 5400, title: "How do the lane limits work?", waiting: 0, sphere: "travel", fork_of: "e5f6a7b8" },
+  { id: "0a1b2c3d", track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - 7200, at: T0 - 5400, title: "How do the lane limits work?", waiting: 0, sphere: "travel", fork_of: "e5f6a7b8", project: "travel" },
+  // sessions whose turn ended with a word on what they leave the owner — one of each kind (`endings` below)
+  ...([
+    ["e1e1a001", "A host for the Acme site", 1500],
+    ["e1e1a002", "The launch post", 2400],
+    ["e1e1a003", "The site's new header", 3300],
+    ["e1e1a004", "The brief for the designer", 4200],
+    ["e1e1a005", "Move the site to the new host", 5100],
+    ["e1e1a006", "Tidy the site's README", 6000],
+  ] as const).map(([id, title, ago]): Session => ({
+    id, track: "notes", lane: "private", kind: "private", state: "idle", created: T0 - ago - 600, at: T0 - ago, title, waiting: 0, sphere: "work", unread: true,
+    project: id === "e1e1a003" || id === "e1e1a004" ? "work/acme/site" : "work/acme",
+  })),
 ];
+
+/** The lowest place free in a session's project on the map, as retinue/sessions.py `take_slot` gives it: by its
+ * folder, else its sphere. */
+export function freeSlot(all: Iterable<Session>, s: Pick<Session, "project" | "sphere" | "id">): number {
+  const key = (x: Pick<Session, "project" | "sphere">) => x.project ?? x.sphere ?? "";
+  const taken = new Set([...all].filter((x) => x.id !== s.id && !x.archived && key(x) === key(s) && x.slot !== undefined).map((x) => x.slot));
+  let n = 0;
+  while (taken.has(n)) n++;
+  return n;
+}
+for (const s of [...sessions].sort((a, b) => a.created - b.created)) s.slot = freeSlot(sessions, s);
+
+/** How those sessions' turns ended (the platform's `turn_ending`, docs/platform.md «Turn endings»; `TurnEnding` in
+ * src/lib/feed.ts, which the mock's Node config can not import), each artifact as the feed serves it: `src`, where the
+ * app opens it in place, and `kind`. The picture and the PDF are the project's own files (mock/spaces.ts). */
+export const endings: Record<string, { kind: string; [field: string]: unknown }> = {
+  e1e1a001: {
+    kind: "ask",
+    request: "Find a host for the Acme site under €20 a month, so the launch is not held up",
+    why_owner: "money",
+    context: "Three hosts fit. The cheapest has no backups; the middle one has daily backups and a region close to the clients.",
+    options: [
+      { label: "Example Cloud, €12 a month", effect: "I order it on the card on file and move the site on Friday." },
+      { label: "Acme Host, €8 a month", effect: "Cheaper, no backups: I add a nightly copy to the Base myself." },
+      { label: "Wait for the third quote", effect: "Nothing is bought; I ask the third host and come back on Monday." },
+    ],
+    without: "nothing is ordered and the launch moves a week",
+  },
+  e1e1a002: {
+    kind: "approve",
+    request: "Write the launch post and publish it once it reads well",
+    why_owner: "external",
+    will: "Publish the post «We moved» on the Acme blog and send it to the newsletter list.",
+    items: ["blog.example.com/we-moved", "The newsletter: 214 subscribers"],
+    without: "the post stays a draft",
+  },
+  e1e1a003: {
+    kind: "look",
+    request: "Redo the header so the logo reads on a phone",
+    artifact: { path: "work/acme/site/mockup.png", title: "mockup.png", src: "/api/base/work/acme/site/mockup.png", kind: "image" },
+    checks: ["The logo at a phone's width", "The menu's contrast"],
+  },
+  e1e1a004: {
+    kind: "look",
+    request: "Put the brief into one PDF for the designer",
+    artifact: { path: "work/acme/site/brief.pdf", title: "brief.pdf", src: "/api/base-view/work/acme/site/brief.pdf", kind: "pdf" },
+  },
+  e1e1a005: {
+    kind: "step",
+    request: "Move the Acme site to the new host",
+    what: "Add the address record at the registrar — only you have its login.",
+    where: "The registrar's DNS page for example.com",
+    command: "example.com.  3600  IN  A  203.0.113.10",
+    expect: "a word once it is saved",
+    wait: false,
+  },
+  e1e1a006: {
+    kind: "done",
+    request: "Make the README say how to run the site",
+    what: "The README now says how to run, test and deploy the site; three stale sections are gone.",
+    next: "Read it and say if a section is missing.",
+    next_by: "you",
+  },
+};
 
 const LONG_COMMAND = `cd /work/retinue && uv run --locked --with pytest pytest -q tests/test_gate.py tests/test_platformd.py \\
   -k "press or pressable or restart or digest" \\
@@ -158,6 +237,19 @@ const call = (id: string, tool: string, input: Record<string, unknown>, result: 
 });
 
 const turns: Record<string, ItemData[][]> = {
+  // the voice's main session: «Talk to Retinue» in the app's header
+  "0c0ffee1": [
+    [
+      msg("user", "What is left before the Lisbon trip?"),
+      msg("assistant", "Two things: book the flat in the old town (the sub-session waits for your yes) and recheck the transfer rules before 1 May. The tickets are not bought yet."),
+      { kind: "result", data: { stop_reason: "end_turn", is_error: false, text: "", deferred: null } },
+    ],
+    [
+      msg("user", "Remind me about the tickets on Friday"),
+      msg("assistant", "Done: a task «Buy the Lisbon tickets» on Friday, in Travel."),
+      { kind: "result", data: { stop_reason: "end_turn", is_error: false, text: "", deferred: null } },
+    ],
+  ],
   a1b2c3d4: [
     [
       msg("assistant", "I'll look at the history of `retinue/gate.py`, the tests and the issues."),
@@ -419,6 +511,10 @@ export const files: { file: OutFile; body: Buffer }[] = [
   {
     file: { id: "f3a1b2c3d4e5f607", session: "a1b2c3d4", path: "gate-trace.md", name: "gate-trace.md", size: 0, mime: "text/markdown; charset=utf-8", at: T0 - 200 },
     body: Buffer.from("# The card's path\n\n1. `_show`\n2. `owner_press`\n3. `_pressable`\n"),
+  },
+  {
+    file: { id: "f4a1b2c3d4e5f607", session: "e5f6a7b8", path: "day-by-day.md", name: "day-by-day.md", size: 0, mime: "text/markdown; charset=utf-8", at: T0 - 15 },
+    body: Buffer.from("# Lisbon, 7–12 May\n\n| Day | What |\n|---|---|\n| 7 May | arrival, the river, dinner |\n| 8 May | the old town, the castle |\n| 9–10 May | north by train |\n| 11–12 May | Belém, home |\n"),
   },
   {
     file: { id: "f0a1b2c3d4e5f607", session: "c9d0e1f2", path: "report.md", name: "report.md", size: 0, mime: "text/markdown; charset=utf-8", at: T0 - 80000 },

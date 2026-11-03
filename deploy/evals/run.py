@@ -23,7 +23,6 @@ from pathlib import Path
 from retinue import cliengine, evals
 
 ROOT = Path(__file__).resolve().parents[2]
-IMAGE = "retinue-lane-private:latest"
 ENV_FILE = Path("/srv/retinue/stack.env")
 OUT = Path("/srv/retinue/evals")
 LANE_TOKEN = "eval-lane-token"
@@ -90,6 +89,13 @@ def docker(*args: str, check: bool = True, stdin: str | None = None) -> str:
     return done.stdout.strip()
 
 
+def lane_image() -> str:
+    """The room's image as deploy/compose.yml names it: the release in stack.env, or the one built here."""
+    env = dict(line.split("=", 1) for line in ENV_FILE.read_text().splitlines() if "=" in line)
+    name, version = (env.get(key, "").strip().strip("'\"") for key in ("RETINUE_IMAGE", "RETINUE_VERSION"))
+    return f"{name or 'retinue'}-lane-private:{version or 'local'}"
+
+
 def login() -> str:
     for line in ENV_FILE.read_text().splitlines():
         if line.startswith("CLAUDE_CODE_OAUTH_TOKEN="):
@@ -105,13 +111,13 @@ def call(url: str, method: str, path: str, body: dict | None = None) -> dict:
         return json.loads(response.read())
 
 
-def run_one(scenario: evals.Scenario, token: str, uid: str) -> evals.Run:
+def run_one(scenario: evals.Scenario, token: str, uid: str, image: str) -> evals.Run:
     tag = uuid.uuid4().hex[:8]
     net, hooks, name, volume = f"retinue-eval-{tag}", f"retinue-eval-hooks-{tag}", f"retinue-eval-{tag}", \
         f"retinue-eval-work-{tag}"
     try:
         docker("network", "create", net)
-        docker("run", "-d", "--rm", "--name", hooks, "--network", net, "--network-alias", "platform", IMAGE,
+        docker("run", "-d", "--rm", "--name", hooks, "--network", net, "--network-alias", "platform", image,
                "python", "-c", HOOKS)
         docker("run", "-d", "--rm", "--name", name, "--network", net, "-p", "127.0.0.1::9600",
                "--cap-drop", "ALL", "--read-only", *SECURITY,
@@ -119,7 +125,7 @@ def run_one(scenario: evals.Scenario, token: str, uid: str) -> evals.Run:
                "--mount", f"type=volume,src={volume},dst=/work", "--mount", "type=volume,dst=/lane/config",
                "--mount", "type=volume,dst=/lane/state",
                "-e", f"RETINUE_LANE_TOKEN={LANE_TOKEN}", "-e", "RETINUE_LANE_HOOK_URL=http://platform:9500/hook",
-               "-e", "NO_PROXY=platform", IMAGE)
+               "-e", "NO_PROXY=platform", image)
         docker("exec", "-i", name, "python3", "-c", SEED, stdin=json.dumps(scenario.files))
         url = "http://" + docker("port", name, "9600/tcp").splitlines()[0]
         for _ in range(120):
@@ -161,11 +167,12 @@ def main() -> None:
     chosen = [s for s in evals.SCENARIOS if not args.scenarios or s.name in args.scenarios]
     if not chosen:
         raise SystemExit("no such scenario; there are: " + ", ".join(s.name for s in evals.SCENARIOS))
-    token, uid = login(), docker("run", "--rm", "--entrypoint", "id", IMAGE, "-u")
+    image = lane_image()
+    token, uid = login(), docker("run", "--rm", "--entrypoint", "id", image, "-u")
     results = []
     for scenario in chosen:
         for n in range(args.repeat):
-            run = run_one(scenario, token, uid)
+            run = run_one(scenario, token, uid, image)
             scored = {**evals.score(scenario, run), "repeat": n, "summary": run.summary[:2000]}
             if token in json.dumps(run.lines):
                 scored["passed"], scored["leak"] = False, "the login appeared in the run's lines"

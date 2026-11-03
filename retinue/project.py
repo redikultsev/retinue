@@ -22,7 +22,7 @@ from typing import Any
 
 import yaml
 
-from .collections import (NAME, RIGHTS_ELSEWHERE, RIGHTS_KEYS, SPACE, Collections, Rejected, Writer, _plain,
+from .collections import (NAME, RIGHTS_ELSEWHERE, RIGHTS_KEYS, SPACE, Collections, Rejected, Writer, plain,
                           parse_form, parse_views)
 
 FILE = "project.yaml"
@@ -201,7 +201,7 @@ def _reaction(given: Any, n: int, project: str) -> dict:
     words = "brief" if kind == "session" else "text"
     if kind not in ("add", "task"):
         said = given.get(words)
-        if not isinstance(said, str) or not said.strip() or not _plain(said.replace("\n", " "), WORDS_MAX):
+        if not isinstance(said, str) or not said.strip() or not plain(said.replace("\n", " "), WORDS_MAX):
             raise Rejected(f"{where}: {words} is plain text of at most {WORDS_MAX} characters")
         kept[words] = said.strip()
     return kept
@@ -220,7 +220,7 @@ def _fields(given: Any, where: str) -> dict:
             if set(value) != {"from"} or not isinstance(value["from"], str) or not NAME.fullmatch(value["from"]):
                 raise Rejected(f"{where}.fields.{name}: {{from: <a field of the event's record, or id>}}")
         elif not (value is None or isinstance(value, (bool, int, float)) or isinstance(value, str)
-                  and _plain(value.replace("\n", " "), WORDS_MAX)):
+                  and plain(value.replace("\n", " "), WORDS_MAX)):
             raise Rejected(f"{where}.fields.{name}: a plain value, or {{from: <field>}}")
         kept[name] = value
     return kept
@@ -254,7 +254,7 @@ def _code_view(given: Any, n: int, page: Callable[[str], bytes | None] | None) -
         if not isinstance(given.get(key), str) or not NAME.fullmatch(given[key]):
             raise Rejected(f"{where}: {key} is lowercase letters, digits and _")
     for key, most in (("title", 80), ("tab", 24)):
-        if key in given and not _plain(given[key], most):
+        if key in given and not plain(given[key], most):
             raise Rejected(f"{where}: {key} is plain text of at most {most} characters")
     if ("file" in given) == ("html" in given):
         raise Rejected(f"{where}: its page is a file beside {FILE} (file: views/<name>.html), or given as html")

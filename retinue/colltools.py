@@ -40,9 +40,8 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from . import project as project_mod
-from .collections import (CHANGE_COLUMNS, LABEL, NAME, SPACE, ULID, Refused, Rejected, Writer, _change, _digest,
-                          _plain, writer_class)
-from .views import _body, _fields, _ref_words, _title
+from .collections import (LABEL, NAME, SPACE, ULID, Reader, Refused, Rejected, Writer, json_digest, plain,
+                          shown_fields, writer_class)
 
 if TYPE_CHECKING:
     from .platformd import Platform
@@ -114,8 +113,6 @@ ROUTER_VIA = ("assistant", "mail", "code")  # a Router's writer comes by her tur
 CHANGES_MAX = 200           # changes one `/owner/collections/changes` returns
 EXCLUDED_MAX = 8            # rules one call leaves out of them
 RULE = re.compile(r"code:[a-z][a-z0-9_-]{0,39}")
-# The machines' changes — the assistant's, the rules', the projects' reactions (`events.py`): what the evening list names.
-CHANGES_SQL = "(actor = 'assistant' OR actor LIKE 'code:%' OR actor LIKE 'project:%')"
 OWNER_PRESS = Writer("owner", "assistant")  # his press in Telegram under the evening list: through her channel
 NOT_FOUND = ("Change not found — nothing was taken back. The collections may have been restored from a backup "
              "since the list was made.")
@@ -207,7 +204,7 @@ class CollTools:
                 return await self.apply(writer, session, arguments, call_id, read, out)
             if name == PROPOSE:
                 why = arguments.get("why")
-                if not _plain(why, WHY_CHARS) or not why.strip():
+                if not plain(why, WHY_CHARS) or not why.strip():
                     return f"why: a line or two for the owner, at most {WHY_CHARS} characters", True
                 if "project" in arguments or "description" in arguments:
                     if "collection" in arguments or "ops" in arguments:
@@ -246,7 +243,7 @@ class CollTools:
         others = {name: {value: [c for c in who if c != "owner"] or ["owner"] for value, who in values.items()
                          if cls not in who} for name, values in rights.get("set_by", {}).items()}
         return _dump({"collection": collection, "space": schema["space"], "records": schema["records"],
-                      "fields": _fields(form), "key": form.get("key"), "unique": form.get("unique"),
+                      "fields": shown_fields(form), "key": form.get("key"), "unique": form.get("unique"),
                       "views": [v["name"] for v in schema["views"]],
                       "you": {"add": grant["add"], "set": grant["set"], "delete": grant["delete"],
                               "only_by_others": {k: v for k, v in others.items() if v}}})
@@ -262,18 +259,7 @@ class CollTools:
     async def writable(self, writer: Writer) -> list[dict]:
         """The collections a writer's rights let it write at all: `[{name, space, add, set}]`, `set` the fields it sets
         ("*" for all) — what the assistant's judgement of mail is told it may move."""
-        cls = writer_class(writer.actor)
-
-        def work() -> list[dict]:
-            rows = self.collections._db.execute("SELECT collection, space, rights FROM schemas ORDER BY collection")
-            out = []
-            for collection, space, rights in rows.fetchall():
-                grant = json.loads(rights).get("writers", {}).get(cls, {})
-                if grant.get("add") or grant.get("set"):
-                    out.append({"name": collection, "space": space, "add": bool(grant.get("add")),
-                                "set": grant.get("set") or []})
-            return out
-        return await self.collections.read(work)
+        return await self.collections.read(lambda reader: reader.writable(writer_class(writer.actor)))
 
     async def apply(self, writer: Writer, session: dict | None, arguments: dict, call_id: str,
                     read: list[str], out: dict | None = None) -> tuple[str, bool]:
@@ -305,7 +291,7 @@ class CollTools:
         db, now = self.store.db, self.platform.clock()
         if not isinstance(collection, str) or not NAME.fullmatch(collection):
             raise Rejected("collection: a collection's name")
-        digest = _digest([collection, ops])
+        digest = json_digest([collection, ops])
         pattern = _proposer(writer.actor)
         known = db.execute("SELECT id FROM collection_proposals WHERE call = ? OR (actor LIKE ? ESCAPE '\\' AND "
                            "digest = ? AND state = 'open' AND at > ?)", (call, pattern, digest,
@@ -321,7 +307,7 @@ class CollTools:
         trial = await self.collections.apply(OWNER, collection, ops, now, dry=True)
         if not any(trial["changes"]):
             return "Already so: there is nothing to propose.", False
-        space, shown = await self.collections.read(lambda: self._shown(collection, trial))
+        space, shown = await self.collections.read(lambda reader: _shown(reader, collection, trial))
         proposal = secrets.token_hex(6)
         # What the writer had read goes with its proposal: «Apply» writes the owner's change with these marks, so a
         # record a letter, a session's page or a Mac's session filled stays marked as such once he applies it.
@@ -336,20 +322,6 @@ class CollTools:
         return (f"{lead}Proposed to the owner (proposal {proposal}): he applies it or not. Go on with your work; "
                 f"{QUERY} shows it once applied."), False
 
-    def _shown(self, collection: str, trial: dict) -> tuple[str, dict]:
-        """On the collections' thread: the collection's Space, and what the trial would change — each change with its
-        record's title — with the form's fields and the words of the ids they name."""
-        store = self.collections
-        form = store._form(collection)
-        space = store._db.execute("SELECT space FROM schemas WHERE collection = ?", (collection,)).fetchone()[0]
-        changes = []
-        for change, record in zip(trial["changes"], trial["records"]):
-            if change is not None:
-                changes.append({"op": change["op"], "id": change["id"], "before": change["before"],
-                                "after": change["after"], "title": _title(store, form, record["fields"])})
-        values = [c[side] for c in changes for side in ("before", "after")]
-        return space, {"changes": changes, "fields": _fields(form), "words": _ref_words(store, form, values)}
-
     async def propose_project(self, writer: Writer, session: dict | None, call: str, name: object, given: object,
                               why: str) -> tuple[str, bool]:
         """A project's description put to the owner (docs/events.md#the-description): checked as the file is, tried
@@ -361,7 +333,7 @@ class CollTools:
             raise Rejected("project: a project's name")
         description = project_mod.parse(given, name)  # a view's page comes as `html`: no folder is read here
         await project_mod.apply(self.collections, name, description, now, dry=True)
-        digest = _digest([PROJECT, name, description])
+        digest = json_digest([PROJECT, name, description])
         pattern = _proposer(writer.actor)
         known = db.execute("SELECT id FROM collection_proposals WHERE call = ? OR (actor LIKE ? ESCAPE '\\' AND "
                            "digest = ? AND state = 'open' AND at > ?)", (call, pattern, digest,
@@ -426,7 +398,7 @@ class CollTools:
                    '"foreign", needs, digest, at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                    (proposal, call, actor, event["collection"] or PROJECT, actor.split(":", 1)[1], "[]",
                     _dump({"changes": [], "fields": {}, "words": {}}), f"{text} (on {about})",
-                    ",".join(event["foreign"]) or None, needs, _digest([call]), now))
+                    ",".join(event["foreign"]) or None, needs, json_digest([call]), now))
         self._event(proposal)
         db.commit()
         return proposal
@@ -562,12 +534,12 @@ class CollTools:
             return f"via is {' or '.join(ROUTER_VIA)}"
         if via == "code" and not (isinstance(actor, str) and actor.startswith("code:")):
             return "via code is a rule's own: actor code:<rule>"
-        if model is not None and not _plain(model, 100):
+        if model is not None and not plain(model, 100):
             return "model: a model's name"
         if not isinstance(foreign, list) or not all(isinstance(f, str) and LABEL.fullmatch(f) for f in foreign):
             return "foreign: the marks of foreign text the turn read"
         if actor != "assistant" and not (isinstance(actor, str) and actor in await self.collections.read(
-                lambda: _rules(self.collections))):
+                lambda reader: reader.rules())):
             return ("Only the assistant, or a rule a collection's rights name, writes through the Router: not "
                     f"{actor!r}.")
         return Writer(actor, via, model, tuple(foreign))
@@ -582,7 +554,7 @@ class CollTools:
         writer = await self._router_writer(body)
         if isinstance(writer, str):
             return web.json_response({"ok": False, "text": writer})
-        if not isinstance(arguments, dict) or not _plain(call, 100):
+        if not isinstance(arguments, dict) or not plain(call, 100):
             return web.json_response({"ok": False, "text": "arguments: the tool's object; call: the call's own id"})
         read: list[str] = []
         out: dict = {}
@@ -594,7 +566,7 @@ class CollTools:
             said["writable"] = await self.writable(writer)
         collection = arguments.get("collection")
         if read and isinstance(collection, str):  # every answer that shows a record: a query's, a write's, a refusal's
-            said["foreign"] = await self.collections.read(lambda: _foreign(self.collections, collection, read))
+            said["foreign"] = await self.collections.read(lambda reader: reader.foreign(collection, read))
         return web.json_response(said)
 
     async def owner_changes(self, request: web.Request) -> web.Response:
@@ -615,7 +587,7 @@ class CollTools:
                                                f"exclude_actors: up to {EXCLUDED_MAX} code:<rule>"}, status=400)
         try:
             return web.json_response(await self.collections.read(
-                lambda: machine_changes(self.collections, after, since, limit, tuple(exclude))))
+                lambda reader: reader.machine_changes(after, since, limit, tuple(exclude))))
         except Refused as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
@@ -626,11 +598,8 @@ class CollTools:
         since, until = body.get("since"), body.get("until")
         if type(since) not in (int, float) or type(until) not in (int, float) or until <= since:
             return web.json_response({"error": "since and until: two moments, the second later"}, status=400)
-        store = self.collections
-        found = await store.read(lambda: store._db.execute(
-            "SELECT 1 FROM changes WHERE ts >= ? AND ts < ? AND (actor = 'owner' OR actor LIKE 'mac:%') LIMIT 1",
-            (since, until)).fetchone())
-        return web.json_response({"present": found is not None})
+        present = await self.collections.read(lambda reader: reader.owner_changed(since, until))
+        return web.json_response({"present": present})
 
     async def owner_revert(self, request: web.Request) -> web.Response:
         """The owner's press under a change in the evening list: `{change_id}` → `{ok, text}`. Only a change the
@@ -640,7 +609,7 @@ class CollTools:
             return web.json_response({"ok": False, "text": NOT_FOUND})
         store = self.collections
         try:
-            change = await store.read(lambda: store._change_of(cid))
+            change = await store.read(lambda reader: reader.change(cid))
             if change is None or change["id"] is None:
                 return web.json_response({"ok": False, "text": NOT_FOUND})
             if change["actor"] != "assistant" and not change["actor"].startswith(("code:", "project:")):
@@ -657,62 +626,23 @@ class CollTools:
                                   "Already as it was: nothing to take back."})
 
 
-def _rules(store) -> set[str]:
-    """On the collections' thread: every `code:` rule some collection's rights name, as a writer or in `set_by`."""
-    named: set[str] = set()
-    for (rights,) in store._db.execute("SELECT rights FROM schemas").fetchall():
-        rights = json.loads(rights)
-        named.update(c for c in rights.get("writers", {}) if c.startswith("code:"))
-        named.update(c for values in rights.get("set_by", {}).values() for who in values.values() for c in who
-                     if c.startswith("code:"))
-    return named
+def _shown(reader: Reader, collection: str, trial: dict) -> tuple[str, dict]:
+    """The collection's Space, and what the trial would change — each change with its record's title — with the
+    form's fields and the words of the ids they name."""
+    schema = reader.schema(collection)
+    changes = []
+    for change, record in zip(trial["changes"], trial["records"]):
+        if change is not None:
+            changes.append({"op": change["op"], "id": change["id"], "before": change["before"],
+                            "after": change["after"], "title": reader.title(schema["form"], record["fields"])})
+    values = [c[side] for c in changes for side in ("before", "after")]
+    return schema["space"], {"changes": changes, "fields": shown_fields(schema["form"]),
+                             "words": reader.ref_words(schema["form"], values)}
 
 
-def _foreign(store, collection: str, ids: list[str]) -> bool:
-    """On the collections' thread: whether any of these records was written by a writer that had read someone else's
-    text, or by a session or the Mac — which carry no mark of their own: a session's page, a Mac's anything."""
-    if not ids:
-        return False
-    marks = ", ".join("?" * len(ids))
-    return store._db.execute(
-        f'SELECT 1 FROM changes WHERE collection = ? AND id IN ({marks}) AND ("foreign" IS NOT NULL OR actor LIKE '
-        "'session:%' OR actor LIKE 'mac:%') LIMIT 1", (collection, *ids)).fetchone() is not None
-
-
-def _taken(store, change_ids: list[str]) -> set[str]:
-    """On the collections' thread: which of these changes a revert took back."""
-    if not change_ids:
-        return set()
-    return {r[0] for r in store._db.execute(
-        f"SELECT reverts FROM changes WHERE reverts IN ({', '.join('?' * len(change_ids))})", change_ids)}
-
-
-def machine_changes(store, after: str | None, since: float | None, limit: int, exclude: tuple[str, ...] = ()) -> dict:
-    """On the collections' thread: the assistant's and the rules' changes to records after the change `after` (a
-    ULID: the cursor survives a restore, whose new changes are always later), or since the moment `since` — each
-    with whether a revert took it back, and, for a revert, whose change it took back (`reverts_actor`). The rules in
-    `exclude` are left out."""
-    sql, params = f"SELECT {CHANGE_COLUMNS} FROM changes WHERE {CHANGES_SQL} AND id IS NOT NULL", []
-    if exclude:
-        sql, params = sql + f" AND actor NOT IN ({', '.join('?' * len(exclude))})", [*exclude]
-    if after is not None:
-        sql, params = sql + " AND change_id > ?", [*params, after]
-    elif since is not None:
-        sql, params = sql + " AND ts > ?", [*params, since]
-    rows = [_change(r) for r in store._db.execute(sql + " ORDER BY change_id LIMIT ?", (*params, limit + 1))]
-    shown, words, forms = rows[:limit], {}, {}
-    taken = _taken(store, [c["change_id"] for c in shown])
-    targets = [c["reverts"] for c in shown if c["reverts"]]
-    actors = dict(store._db.execute(f"SELECT change_id, actor FROM changes WHERE change_id IN "
-                                    f"({', '.join('?' * len(targets))})", targets).fetchall()) if targets else {}
-    out = []
-    for change in shown:
-        if change["collection"] not in forms:
-            forms[change["collection"]] = store._db.execute("SELECT form, space FROM schemas WHERE collection = ?",
-                                                            (change["collection"],)).fetchone()
-        form, space = json.loads(forms[change["collection"]][0]), forms[change["collection"]][1]
-        record = store._record(change["collection"], change["id"])
-        words.update(_ref_words(store, form, [change["before"], change["after"]]))
-        out.append({**change, "space": space, "title": _title(store, form, record["fields"]) if record else None,
-                    "reverted": change["change_id"] in taken, "reverts_actor": actors.get(change["reverts"])})
-    return {"changes": out, "words": words, "next": shown[-1]["change_id"] if len(rows) > limit else None}
+async def _body(request: web.Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}

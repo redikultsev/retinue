@@ -2,10 +2,10 @@
 the platform's volume, and the files he uploads, kept by their SHA-256 in `attachments/` beside it.
 
 One thread, one connection. Every read and every write goes through a single dedicated thread that opened the file
-itself; the loop only awaits it. The platform's other databases live on the loop's thread, and SQLite's busy
-handler sleeps where it is called: a writer that waited on the loop would hold up the hooks, the gate and the face
-with it. Here a lock that does not come within 2 s (the night's backup copy, an import) is `Refused` at once, for
-the caller to say «try again», never waited out for 30 s.
+itself; the loop only awaits it, and the connection refuses any other thread (`_db`). The platform's other
+databases live on the loop's thread, and SQLite's busy handler sleeps where it is called: a writer that waited on the
+loop would hold up the hooks, the gate and the face with it. Here a lock that does not come within 2 s (the night's
+backup copy, an import) is `Refused` at once, for the caller to say «try again», never waited out for 30 s.
 
 The file uses a rollback journal, like every database the backup copies (deploy/backup/retinue-backup.py). It holds
 `files`, and the records: `schemas` (a collection's form, rights and views), `records` (each one's current state, a JSON document),
@@ -13,7 +13,8 @@ The file uses a rollback journal, like every database the backup copies (deploy/
 together), `idems` (the calls already made, so a repeat makes none) and `devices` (the owner's Macs that reach the
 collections at `/mcp/mac`, each by the SHA-256 of its token). Every write of a record is one `apply`,
 checked whole against the form and the collection's rights before anything is kept; every read is `get`, `query` or
-`count`, whose SQL only code assembles, from names the form declares.
+`count`, whose SQL only code assembles, from names the form declares — or a `Reader`'s, in one transaction: what the
+views, the agents' tools and the events read beside them. No other module names a table or a column of the file.
 """
 
 from __future__ import annotations
@@ -243,6 +244,12 @@ GROWS = ("a form only grows for now: removing or renaming a field, changing its 
 RECORD_COLUMNS = "id, data, version, created, updated, deleted"
 CHANGE_COLUMNS = ('change_id, ts, as_of, batch, collection, id, op, before, after, actor, model, via, src, "foreign", '
                   "reverts, idem")
+SCHEMA_COLUMNS = "collection, space, form, rights, views"
+EVENT_COLUMNS = "id, source, project, name, collection, record, depth, at, outcome"
+IDS_CHUNK = 500             # ids in one statement's IN (…)
+UPDATED = "_updated"        # `Reader.records` by when a record last changed: no field's name starts with _
+# The machines' changes — the assistant's, the rules', the projects' reactions (`events.py`): what the evening list names.
+MACHINES = "(actor = 'assistant' OR actor LIKE 'code:%' OR actor LIKE 'project:%')"
 
 
 class Refused(Exception):
@@ -319,7 +326,7 @@ def clean_text(text: str) -> str:
                    if c in "\n\t" or unicodedata.category(c) not in ("Cc", "Cf", "Cs", "Co", "Zl", "Zp"))
 
 
-def _plain(text: object, most: int) -> bool:
+def plain(text: object, most: int) -> bool:
     return (isinstance(text, str) and 0 < len(text) <= most
             and not any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Zl", "Zp") for c in text))
 
@@ -430,7 +437,7 @@ def parse_form(form: Any) -> dict:
                                "lowercase letters, digits and _, starting with a letter")
             labels = spec.get("labels", {})
             if (not isinstance(labels, dict) or not set(labels) <= set(values)
-                    or not all(_plain(v, LABEL_WORDS_MAX) for v in labels.values())):
+                    or not all(plain(v, LABEL_WORDS_MAX) for v in labels.values())):
                 raise Rejected(f"field {name!r}: \"labels\" gives some of its values words, plain text of at most "
                                f"{LABEL_WORDS_MAX} characters: {{\"pack_ready\": \"Ready to send\"}}")
         if spec["type"] == "ref" and not (isinstance(spec.get("to"), str) and NAME.fullmatch(spec["to"])):
@@ -485,9 +492,9 @@ def parse_views(views: Any) -> list[dict]:
             raise Rejected(f"{where}: \"name\" is lowercase letters, digits and _, starting with a letter, and "
                            "another view's in the collection")
         names.add(name)
-        if "title" in view and not _plain(view["title"], TITLE_MAX):
+        if "title" in view and not plain(view["title"], TITLE_MAX):
             raise Rejected(f"{where}: \"title\" is plain text of at most {TITLE_MAX} characters")
-        if "tab" in view and not _plain(view["tab"], TAB_MAX):
+        if "tab" in view and not plain(view["tab"], TAB_MAX):
             raise Rejected(f"{where}: \"tab\" is plain text of at most {TAB_MAX} characters: the tab it shows in")
         if "mark" in view and view["mark"] not in MARKS:
             raise Rejected(f"{where}: \"mark\" is one of {', '.join(MARKS)}")
@@ -532,13 +539,13 @@ def parse_views(views: Any) -> list[dict]:
 
 def _scalar(value: Any) -> bool:
     return (isinstance(value, bool) or type(value) is int and abs(value) <= INT_MAX
-            or isinstance(value, str) and _plain(value, TEXT_MAX))
+            or isinstance(value, str) and plain(value, TEXT_MAX))
 
 
 def _press(done: Any, where: str) -> None:
     """A queue's `done`: `{"field": "state", "value": "sent", "label": "Sent"}` — the button on each of its rows."""
     if (not isinstance(done, dict) or set(done) != DONE_KEYS or not isinstance(done["field"], str)
-            or not NAME.fullmatch(done["field"]) or not _scalar(done["value"]) or not _plain(done["label"], LABEL_MAX)):
+            or not NAME.fullmatch(done["field"]) or not _scalar(done["value"]) or not plain(done["label"], LABEL_MAX)):
         raise Rejected(f"{where}: \"done\" is {{\"field\": <a field>, \"value\": <what it becomes>, \"label\": <the "
                        f"button's words, at most {LABEL_MAX} characters>}}")
 
@@ -561,7 +568,7 @@ def _adding(add: Any, where: str) -> None:
     the fields its sheet asks for (the form's, without them) and the values they start as."""
     shape = (f"{where}: \"add\" is {{\"label\": <the button's words, at most {LABEL_MAX} characters>, \"fields\": "
              "[<fields it asks for>], \"values\": {<field>: <what it starts as>}}, the last two optional")
-    if not isinstance(add, dict) or "label" not in add or set(add) - ADD_KEYS or not _plain(add["label"], LABEL_MAX):
+    if not isinstance(add, dict) or "label" not in add or set(add) - ADD_KEYS or not plain(add["label"], LABEL_MAX):
         raise Rejected(shape)
     fields, values = add.get("fields", []), add.get("values", {})
     if (not isinstance(fields, list) or len(fields) > FIELDS_SHOWN or len(set(map(str, fields))) != len(fields)
@@ -693,7 +700,7 @@ def idem_scope(actor: str, derived: bool = False) -> str:
     return actor if cls == "import" or (not derived and cls == "session") else cls
 
 
-def _digest(value: Any) -> str:
+def json_digest(value: Any) -> str:
     """A JSON value's SHA-256, its keys sorted: the same for the same value however its keys were ordered."""
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
                           .encode()).hexdigest()
@@ -706,9 +713,9 @@ def _identity(form: dict, fields: dict, distinct: bool) -> str:
     fields."""
     key = form.get("key")
     if key and not distinct and all(k in fields for k in key):
-        return "key:" + _digest([fields[k].strip(" ").lower() if form["fields"][k]["type"] == "text" else fields[k]
-                                 for k in key])
-    return "fields:" + _digest(fields)
+        return "key:" + json_digest([fields[k].strip(" ").lower() if form["fields"][k]["type"] == "text" else fields[k]
+                                     for k in key])
+    return "fields:" + json_digest(fields)
 
 
 class Collections:
@@ -724,7 +731,7 @@ class Collections:
         else:
             self.blobs = Path(path).parent / BLOBS
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="collections")
-        self._db: sqlite3.Connection | None = None
+        self._conn: sqlite3.Connection | None = None  # the thread's alone: reached through `_db`
         self.thread: int | None = None  # the writer's thread, once it has opened the file
         self._ulids = Ulids()
         self._seen = 0  # the file's data_version this connection last looked at (`_fresh`)
@@ -748,7 +755,7 @@ class Collections:
         return await asyncio.get_running_loop().run_in_executor(self._pool, self._call, work, args)
 
     def _call(self, work: Callable[..., T], args: tuple) -> T:
-        if self._db is None:
+        if self._conn is None:
             self._connect()
         try:
             return work(*args)
@@ -769,7 +776,15 @@ class Collections:
         self.blobs.mkdir(parents=True, exist_ok=True)
         for part in self.blobs.glob(".*.part"):  # a blob a crash cut while it was written: never named by a row
             part.unlink(missing_ok=True)
-        self._db, self.thread = db, threading.get_ident()
+        self._conn, self.thread = db, threading.get_ident()
+
+    @property
+    def _db(self) -> sqlite3.Connection:
+        """The file's one connection, on the thread that opened it — anywhere else a RuntimeError, not a statement
+        that would make the loop wait on SQLite's lock."""
+        if self._conn is None or threading.get_ident() != self.thread:
+            raise RuntimeError("the collections' connection is their thread's alone: read through `read`")
+        return self._conn
 
     @contextmanager
     def _write(self):
@@ -797,9 +812,9 @@ class Collections:
             self._ulids.see(_newest(db))
 
     def _close(self) -> None:
-        if self._db is not None:
-            self._db.close()
-            self._db = None
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
 
     async def open(self) -> None:
         """The file and the folder made, if they are not there yet."""
@@ -825,10 +840,10 @@ class Collections:
         return [] if last is None else [(name, self._spaces[name], rev) for name, rev in sorted(revs.items())
                                         if last[1].get(name) != rev]
 
-    async def read(self, work: Callable[[], T]) -> T:
-        """`work()` on the thread, in one read transaction, so all it reads is of one moment — a view and the rev it
-        is of (`views.py`). Raises Refused."""
-        return await self._run(self._read, work)
+    async def read(self, work: Callable[[Reader], T]) -> T:
+        """`work(reader)` on the thread, in one read transaction, so all it reads is of one moment — a view and the
+        rev it is of (`views.py`), the changes the evening list names (`colltools.py`). Raises Refused."""
+        return await self._run(self._read, lambda: work(Reader(self)))
 
     def _read(self, work: Callable[[], T]) -> T:
         self._db.execute("BEGIN")
@@ -837,14 +852,14 @@ class Collections:
         finally:
             self._db.execute("COMMIT")
 
-    async def write(self, work: Callable[[sqlite3.Connection], T]) -> T:
-        """`work(db)` on the thread, in one transaction taken for writing: kept whole, or not at all — for the tables
-        beside the records that others keep here (`events.py`'s log). Raises Refused."""
+    async def write(self, work: Callable[[Logging], T]) -> T:
+        """`work(logging)` on the thread, in one transaction taken for writing: kept whole, or not at all — the
+        events' log beside the records (`events.py`), with what it reads to decide. Raises Refused."""
         return await self._run(self._write_with, work)
 
-    def _write_with(self, work: Callable[[sqlite3.Connection], T]) -> T:
-        with self._write() as db:
-            return work(db)
+    def _write_with(self, work: Callable[[Logging], T]) -> T:
+        with self._write():
+            return work(Logging(self))
 
     async def close(self) -> None:
         if self._closed:
@@ -941,7 +956,7 @@ class Collections:
 
     def _define(self, writer: Writer, collection: str, space: str, form: Any, now: float, dry: bool,
                 views: Any = None) -> dict:
-        _check_writer(writer)
+        check_writer(writer)
         if writer_class(writer.actor) not in ("owner", "define"):
             raise Rejected("a form is the owner's to apply, from the server's terminal")
         if not NAME.fullmatch(collection):
@@ -1043,7 +1058,7 @@ class Collections:
         return answer
 
     def _rights(self, writer: Writer, collection: str, rights: Any, now: float, dry: bool) -> dict:
-        _check_writer(writer)
+        check_writer(writer)
         if writer.actor != "owner":
             raise Rejected("rights are the owner's alone, set from the server's terminal")
         with self._write() as db:
@@ -1064,7 +1079,7 @@ class Collections:
         return await self._run(self._start_batch, kind, writer, now)
 
     def _start_batch(self, kind: str, writer: Writer, now: float) -> str:
-        _check_writer(writer)
+        check_writer(writer)
         with self._write() as db:
             batch = self._ulids.next(now)
             try:
@@ -1106,8 +1121,8 @@ class Collections:
 
     def _apply(self, writer: Writer, collection: str, ops: Any, now: float, batch: str | None,
                idem: str | None, dry: bool = False) -> dict:
-        _check_writer(writer)
-        if idem is not None and not _plain(idem, IDEM_MAX):
+        check_writer(writer)
+        if idem is not None and not plain(idem, IDEM_MAX):
             raise Rejected(f"idem is the call's own name, 1 to {IDEM_MAX} plain characters")
         if not isinstance(ops, list) or not 0 < len(ops) <= OPS_MAX:
             raise Rejected(f"ops is a list of 1 to {OPS_MAX} operations")
@@ -1115,7 +1130,7 @@ class Collections:
             raise Rejected("an import: or define: writer writes through import_ops or define, not apply")
         if dry and (idem is not None or batch is not None):
             raise Rejected("a trial is of a call alone: no idem, no batch")
-        scope, digest = idem_scope(writer.actor), _digest(ops)
+        scope, digest = idem_scope(writer.actor), json_digest(ops)
         try:
             return self._applying(writer, collection, ops, now, batch, idem, dry, scope, digest)
         except _Undo as undo:
@@ -1163,7 +1178,7 @@ class Collections:
         as_of, src, distinct = op.get("as_of"), op.get("src"), op.get("distinct", False)
         if as_of is not None and not _date(as_of):
             raise Rejected(f"as_of is the date the world became so, YYYY-MM-DD: not {as_of!r}")
-        if src is not None and not (SRC.fullmatch(src) if _plain(src, 1100) else False):
+        if src is not None and not (SRC.fullmatch(src) if plain(src, 1100) else False):
             raise Rejected("src is mail:<account>/<msgid>, tg:<chat>/<msg>, owner_words:<event>, "
                            "cal:<account>/<event>, file:<sha256>#row=<n>, record:<id> or web:<url>")
         if not isinstance(distinct, bool):
@@ -1560,7 +1575,7 @@ class Collections:
         return answer
 
     def _revert_batch(self, writer: Writer, batch: str, now: float, dry: bool) -> dict:
-        _check_writer(writer)
+        check_writer(writer)
         if writer.actor != "owner":
             raise Rejected("a batch is taken back by the owner, from the server's terminal")
         try:
@@ -1783,7 +1798,7 @@ class Collections:
         """A project's events, reactions and own views in place of the ones it had — its collections are defined
         apart (`project.apply`): `{project, rev, before, after, unchanged}`. The owner's alone: from the server's
         terminal, or his «Apply» of a proposal. Raises Rejected, Refused."""
-        _check_writer(writer)
+        check_writer(writer)
         if writer_class(writer.actor) not in ("owner", "define"):
             raise Rejected("a project's description is the owner's to apply: propose it to him")
         if not isinstance(name, str) or not SPACE.fullmatch(name):
@@ -1943,6 +1958,343 @@ class Collections:
         return f"{_path(name)} BETWEEN ? AND ?", list(value)
 
 
+class Reader:
+    """The collections as one `read` sees them, on the store's thread and in its one transaction: what the views, the
+    agents' tools and the events read beside `query` and `count` — forms and rights, records, changes, and the words a
+    screen shows them by — so that no table, column or statement of the file is named outside this module. Made for
+    one `work`; not kept past it."""
+
+    def __init__(self, store: Collections) -> None:
+        self._store = store
+
+    # --- forms, rights, projects ------------------------------------------------------------------------------------
+
+    def form(self, collection: str) -> dict | None:
+        return self._store._form(collection)
+
+    def schema(self, collection: str) -> dict | None:
+        """A collection's `{name, space, form, rights, views}`, or None."""
+        row = self._store._db.execute(f"SELECT {SCHEMA_COLUMNS} FROM schemas WHERE collection = ?",
+                                      (collection,)).fetchone()
+        return _schema(row) if row else None
+
+    def schemas(self, space: str | None = None) -> list[dict]:
+        """Every collection by its name — a Space's alone, when one is named — each as `schema` gives it."""
+        sql, params = f"SELECT {SCHEMA_COLUMNS} FROM schemas", ()
+        if space is not None:
+            sql, params = sql + " WHERE space = ?", (space,)
+        return [_schema(row) for row in self._store._db.execute(sql + " ORDER BY collection", params).fetchall()]
+
+    def rev(self, collection: str) -> str | None:
+        """The collection's newest change_id: what a view is of."""
+        return self._store._rev(collection)
+
+    def project(self, name: str) -> dict | None:
+        return self._store._project(name)
+
+    def projects(self) -> list[dict]:
+        return self._store._projects()
+
+    def rules(self) -> set[str]:
+        """Every `code:` rule some collection's rights name, as a writer or in `set_by`."""
+        named: set[str] = set()
+        for schema in self.schemas():
+            rights = schema["rights"]
+            named.update(c for c in rights.get("writers", {}) if c.startswith("code:"))
+            named.update(c for values in rights.get("set_by", {}).values() for who in values.values() for c in who
+                         if c.startswith("code:"))
+        return named
+
+    def writable(self, cls: str) -> list[dict]:
+        """The collections a writer's class may write at all: `[{name, space, add, set}]`, `set` the fields it sets
+        ("*" for all)."""
+        out = []
+        for schema in self.schemas():
+            grant = schema["rights"].get("writers", {}).get(cls, {})
+            if grant.get("add") or grant.get("set"):
+                out.append({"name": schema["name"], "space": schema["space"], "add": bool(grant.get("add")),
+                            "set": grant.get("set") or []})
+        return out
+
+    # --- records ----------------------------------------------------------------------------------------------------
+
+    def record(self, collection: str, rid: str) -> dict | None:
+        """One record, a deleted one included, or None."""
+        return self._store._record(collection, rid)
+
+    def records(self, collection: str, filter: Any = None, *, limit: int, by: str | None = None,
+                newest: bool = False) -> list[dict]:
+        """At most `limit` of the records that match `filter`, deleted ones aside: in the order of their ids — or of
+        the field `by` names, or of when they last changed (`UPDATED`), the id deciding a tie — the oldest first, or
+        the newest when `newest`. Raises Rejected."""
+        store = self._store
+        where, params = store._where(collection, store._reading(collection), filter, False)
+        way = " DESC" if newest else ""
+        order = [] if by is None else ["updated" + way] if by == UPDATED else [_path(by) + way]
+        return [_record(row) for row in store._db.execute(
+            f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} ORDER BY {', '.join([*order, 'id' + way])} LIMIT ?",
+            (*params, limit))]
+
+    def count(self, collection: str, filter: Any = None, group: str | None = None) -> int | list[dict]:
+        """As `Collections.count`, in this read. Raises Rejected."""
+        return self._store._count(collection, filter, group)
+
+    def probe(self, name: str, spec: dict, value: Any) -> Any:
+        """A value a filter or a press gives a field, checked against its type and as it is kept — a ref only an id
+        then, not one that has to exist. Raises Rejected."""
+        return self._store._value(name, spec, value, probe=True)
+
+    def latest(self, collection: str, ref: str, date: str, ids: list[str]) -> dict[str, dict]:
+        """For each of these ids, the fields of the newest record of `collection` whose `ref` names it, by its `date`
+        (the id deciding a tie); an id nothing names has none."""
+        store = self._store
+        form, out = store._reading(collection), {}
+        for rid in ids:
+            where, params = store._where(collection, form, [{"field": ref, "op": "ref_is", "value": rid}], False)
+            found = store._db.execute(f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} AND {_path(date)} IS NOT "
+                                      f"NULL ORDER BY {_path(date)} DESC, id DESC LIMIT 1", params).fetchone()
+            if found:
+                out[rid] = _record(found)["fields"]
+        return out
+
+    def sums(self, collection: str, filter: Any, date: str, total: str | None,
+             group: str | None) -> dict[tuple[str, str | None], decimal.Decimal]:
+        """The records that match `filter` added up by the month (`YYYY-MM`) their `date` falls in and by `group`'s
+        value: their `total` field — exactly, an amount in cents — or one each. Raises Rejected."""
+        store = self._store
+        where, params = store._where(collection, store._reading(collection), filter, False)
+        value = _path(total) if total else "1"
+        split = _path(group) if group else "NULL"
+        sums: dict[tuple[str, str | None], decimal.Decimal] = {}
+        for month, part, amount in store._db.execute(
+                f"SELECT substr({_path(date)}, 1, 7), {split}, {value} FROM records WHERE {where}", params):
+            if amount is not None:
+                sums[month, part] = sums.get((month, part), decimal.Decimal(0)) + decimal.Decimal(str(amount))
+        return sums
+
+    def words(self, collection: str, ids) -> dict[str, str]:
+        """The words of these records of `collection`: the first `text` field of its form, as each has it now — so a
+        ref reads «Acme», not an id. A deleted record, or one without that field, is not among them."""
+        ids = sorted({i for i in ids if isinstance(i, str)})
+        form = self._store._form(collection) if ids else None
+        text = next((k for k, s in form["fields"].items() if s["type"] == "text"), None) if form else None
+        said: dict[str, str] = {}
+        if text is None:
+            return said
+        for at in range(0, len(ids), IDS_CHUNK):
+            chunk = ids[at:at + IDS_CHUNK]
+            said.update(self._store._db.execute(
+                f"SELECT id, {_path(text)} FROM records WHERE collection = ? AND id IN ({', '.join('?' * len(chunk))})"
+                f" AND deleted IS NULL AND {_path(text)} IS NOT NULL", (collection, *chunk)).fetchall())
+        return said
+
+    def ref_words(self, form: dict, values) -> dict[str, str]:
+        """The words of every id among `values` (dicts of fields) that one of the form's ref fields names."""
+        words: dict[str, str] = {}
+        for name, spec in form["fields"].items():
+            if spec["type"] == "ref":
+                words.update(self.words(spec["to"], (v.get(name) for v in values if isinstance(v, dict))))
+        return words
+
+    def title(self, form: dict, fields: dict, parts: int = 2) -> str | None:
+        """A record in a few words, for a list of changes or a ref to pick: its first `parts` text or ref fields that
+        have a value, in the form's order, a ref by its record's words — «Acme · Backend». None when it has none."""
+        words = []
+        for name, spec in form["fields"].items():
+            value = fields.get(name)
+            if spec["type"] == "text" and isinstance(value, str):
+                words.append(value)
+            elif spec["type"] == "ref" and (said := self.words(spec["to"], [value]).get(value)):
+                words.append(said)
+            if len(words) == parts:
+                break
+        return " · ".join(words) or None
+
+    def file_names(self, shas) -> dict[str, str]:
+        """The names the owner's device gave these uploaded files: a `file` field reads «acme-invoice.pdf»."""
+        shas = sorted({s for s in shas if isinstance(s, str)})
+        named: dict[str, str] = {}
+        for at in range(0, len(shas), IDS_CHUNK):
+            chunk = shas[at:at + IDS_CHUNK]
+            named.update(self._store._db.execute(
+                f"SELECT sha256, name FROM files WHERE sha256 IN ({', '.join('?' * len(chunk))})", chunk).fetchall())
+        return named
+
+    # --- changes ----------------------------------------------------------------------------------------------------
+
+    def change(self, change_id: str) -> dict | None:
+        return self._store._change_of(change_id)
+
+    def history(self, collection: str, rid: str, limit: int = HISTORY) -> list[dict]:
+        """A record's changes, the newest first."""
+        return self._store._history(collection, rid, limit)
+
+    def marks(self, collection: str, ids: list[str],
+              field: str | None = None) -> tuple[dict[str, tuple[str | None, float]], dict[str, str]]:
+        """For each of these records: its last change — of `field`, when one is named — as `(as_of, ts)`, and the
+        `src` of its last change that had one. Only their own changes are read, by the index on a record's
+        changes."""
+        if field is not None and not NAME.fullmatch(field):
+            raise ValueError(field)
+        touched = f"json_type(after, '$.{field}') IS NOT NULL" if field is not None else "1"
+        last, srcs = {}, {}
+        for at in range(0, len(ids), IDS_CHUNK):
+            chunk = ids[at:at + IDS_CHUNK]
+            sql = (f"SELECT id, {{}} FROM changes WHERE seq IN (SELECT max(seq) FROM changes WHERE collection = ? AND id "
+                   f"IN ({', '.join('?' * len(chunk))}) AND {{}} GROUP BY id)")
+            for rid, as_of, ts in self._store._db.execute(sql.format("as_of, ts", touched), (collection, *chunk)):
+                last[rid] = (as_of, ts)
+            srcs.update(self._store._db.execute(sql.format("src", "src IS NOT NULL"), (collection, *chunk)).fetchall())
+        return last, srcs
+
+    def changed(self, collection: str, filter: Any, field: str, to: list,
+                span: tuple[str, str, float, float] | None = None) -> int:
+        """How many records the filter matches now whose `field` a change gave a value (one of `to`, when it names
+        some) — within `span`, `(first, last, start, end)`, when one is given: a change dated by its `as_of` from the
+        day `first` to `last`, else by the moment it was made, from `start` to before `end`. A change taken back, and
+        the revert that took it, move nothing: a drag and its «Undo» count none. Raises Rejected."""
+        store = self._store
+        if not NAME.fullmatch(field):
+            raise ValueError(field)
+        after = f"json_extract(after, '$.{field}')"  # as `_path`, of what a change made the field
+        where, params = store._where(collection, store._reading(collection), filter, False)
+        sql = [f"SELECT count(DISTINCT id) FROM changes WHERE collection = ? AND {after} IS NOT NULL",
+               "AND reverts IS NULL AND change_id NOT IN (SELECT reverts FROM changes WHERE collection = ? AND reverts IS "
+               f"NOT NULL) AND id IN (SELECT id FROM records WHERE {where})"]
+        values: list[Any] = [collection, collection, *params]
+        if to:
+            sql.append(f"AND {after} IN ({', '.join('?' * len(to))})")
+            values += to
+        if span is not None:
+            sql.append("AND (as_of BETWEEN ? AND ? OR as_of IS NULL AND ts >= ? AND ts < ?)")
+            values += list(span)
+        return store._db.execute(" ".join(sql), values).fetchone()[0]
+
+    def taken(self, change_ids: list[str]) -> set[str]:
+        """Which of these changes a revert took back."""
+        if not change_ids:
+            return set()
+        return {r[0] for r in self._store._db.execute(
+            f"SELECT reverts FROM changes WHERE reverts IN ({', '.join('?' * len(change_ids))})", change_ids)}
+
+    def space_changes(self, space: str, before: str | None, limit: int) -> dict:
+        """The newest `limit` changes to the records of a Space's collections — before the change `before`, when one
+        is named — each with its record's title, version and deleted state now, for its «Undo», and whether a revert
+        took it back already: `{changes, next, words}`, `next` the change to read on from."""
+        forms = {schema["name"]: schema["form"] for schema in self.schemas(space)}
+        if not forms:
+            return {"changes": [], "next": None, "words": {}}
+        sql = (f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection IN ({', '.join('?' * len(forms))}) "
+               "AND id IS NOT NULL")
+        params: list[Any] = list(forms)
+        if before is not None:
+            sql += " AND seq < coalesce((SELECT seq FROM changes WHERE change_id = ?), 0)"
+            params.append(before)
+        rows = [_change(r) for r in self._store._db.execute(sql + " ORDER BY seq DESC LIMIT ?", (*params, limit + 1))]
+        shown, words = [], {}
+        taken = self.taken([c["change_id"] for c in rows])
+        for change in rows[:limit]:
+            form, record = forms[change["collection"]], self.record(change["collection"], change["id"])
+            words.update(self.ref_words(form, [change["before"], change["after"]]))
+            shown.append({**change, "title": self.title(form, record["fields"]) if record else None,
+                          "version": record["version"] if record else None,
+                          "deleted": record["deleted"] if record else None, "reverted": change["change_id"] in taken})
+        return {"changes": shown, "words": words, "next": shown[-1]["change_id"] if len(rows) > limit else None}
+
+    def machine_changes(self, after: str | None, since: float | None, limit: int,
+                        exclude: tuple[str, ...] = ()) -> dict:
+        """The assistant's, the rules' and the projects' reactions' changes to records, oldest first: after the change
+        `after` (a ULID: the cursor survives a restore, whose new changes are always later), or since the moment
+        `since` — `{changes, next, words}`, each with its collection's Space, its record's title, whether a revert took
+        it back, and, for a revert, whose change it took back (`reverts_actor`); `next` set when more are left than
+        `limit`. The rules in `exclude` are left out."""
+        db = self._store._db
+        sql, params = f"SELECT {CHANGE_COLUMNS} FROM changes WHERE {MACHINES} AND id IS NOT NULL", []
+        if exclude:
+            sql, params = sql + f" AND actor NOT IN ({', '.join('?' * len(exclude))})", [*exclude]
+        if after is not None:
+            sql, params = sql + " AND change_id > ?", [*params, after]
+        elif since is not None:
+            sql, params = sql + " AND ts > ?", [*params, since]
+        rows = [_change(r) for r in db.execute(sql + " ORDER BY change_id LIMIT ?", (*params, limit + 1))]
+        shown, words, schemas = rows[:limit], {}, {}
+        taken = self.taken([c["change_id"] for c in shown])
+        targets = [c["reverts"] for c in shown if c["reverts"]]
+        actors = dict(db.execute(f"SELECT change_id, actor FROM changes WHERE change_id IN "
+                                 f"({', '.join('?' * len(targets))})", targets).fetchall()) if targets else {}
+        out = []
+        for change in shown:
+            if change["collection"] not in schemas:
+                schemas[change["collection"]] = self.schema(change["collection"])
+            schema = schemas[change["collection"]]
+            record = self.record(change["collection"], change["id"])
+            words.update(self.ref_words(schema["form"], [change["before"], change["after"]]))
+            out.append({**change, "space": schema["space"],
+                        "title": self.title(schema["form"], record["fields"]) if record else None,
+                        "reverted": change["change_id"] in taken, "reverts_actor": actors.get(change["reverts"])})
+        return {"changes": out, "words": words, "next": shown[-1]["change_id"] if len(rows) > limit else None}
+
+    def foreign(self, collection: str, ids: list[str]) -> bool:
+        """Whether any of these records was written by a writer that had read someone else's text, or by a session or
+        the Mac — which carry no mark of their own: a session's page, a Mac's anything."""
+        if not ids:
+            return False
+        marks = ", ".join("?" * len(ids))
+        return self._store._db.execute(
+            f'SELECT 1 FROM changes WHERE collection = ? AND id IN ({marks}) AND ("foreign" IS NOT NULL OR actor LIKE '
+            "'session:%' OR actor LIKE 'mac:%') LIMIT 1", (collection, *ids)).fetchone() is not None
+
+    def owner_changed(self, since: float, until: float) -> bool:
+        """Whether the owner changed any record from `since` to before `until` — on a screen of his, or from a Mac."""
+        return self._store._db.execute(
+            "SELECT 1 FROM changes WHERE ts >= ? AND ts < ? AND (actor = 'owner' OR actor LIKE 'mac:%') LIMIT 1",
+            (since, until)).fetchone() is not None
+
+    # --- the events' log --------------------------------------------------------------------------------------------
+
+    def events(self, project: str | None = None, limit: int = 50) -> list[dict]:
+        """The newest events, a project's alone when one is named: each `{id, source, project, name, collection,
+        record, depth, at, outcome}`."""
+        sql, args = f"SELECT {EVENT_COLUMNS} FROM events", []
+        if project is not None:
+            sql, args = sql + " WHERE project = ?", [project]
+        rows = self._store._db.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+        keys = ("id", "source", "project", "name", "collection", "record", "depth", "at", "outcome")
+        return [dict(zip(keys, row[:-1] + (json.loads(row[-1]),))) for row in rows]
+
+
+class Logging(Reader):
+    """A `Reader` in a transaction taken for writing (`Collections.write`), that also keeps the events' log: kept
+    whole, or not at all."""
+
+    def log_event(self, source: str, project: str, name: str, collection: str | None, record: str | None,
+                  depth: int, at: float) -> str | None:
+        """An event logged once by what fired it — `change:<change_id>`, or `call:<writer>/<idem>`: its new id, or None
+        when `source` fired it already."""
+        eid = self._store._ulids.next(at)
+        made = self._store._db.execute(
+            "INSERT OR IGNORE INTO events (id, source, project, name, collection, record, depth, at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (eid, source, project, name, collection, record, depth, at)).rowcount
+        return eid if made else None
+
+    def keep_outcome(self, event: str, outcome: dict) -> None:
+        """What an event's reactions did, kept with it: its log's `outcome` is `[outcome]`."""
+        self._store._db.execute("UPDATE events SET outcome = ? WHERE id = ?", (_json([outcome]), event))
+
+
+def _schema(row: tuple) -> dict:
+    return {"name": row[0], "space": row[1], "form": json.loads(row[2]), "rights": json.loads(row[3]),
+            "views": json.loads(row[4])}
+
+
+def shown_fields(form: dict) -> dict:
+    """A form's fields as a screen asks for them: each one's type, and its values, labels, `to`, `currency`,
+    `required` and `hide` — a field kept for the agents, which a record's sheet leaves out."""
+    return {name: {k: v for k, v in spec.items()
+                   if k in ("type", "values", "labels", "to", "currency", "required", "hide")}
+            for name, spec in form["fields"].items()}
+
+
 def _newest(db: sqlite3.Connection) -> str | None:
     """The newest id the file holds, a change's or a batch's: where the next must start above."""
     return db.execute("SELECT max(id) FROM (SELECT max(change_id) AS id FROM changes "
@@ -1973,12 +2325,12 @@ def _change(row: tuple) -> dict:
     return change
 
 
-def _check_writer(writer: Writer) -> None:
+def check_writer(writer: Writer) -> None:
     if not isinstance(writer, Writer) or not isinstance(writer.actor, str) or not ACTOR.fullmatch(writer.actor):
         raise Rejected("not a writer the store knows")
     if writer.via not in VIA:
         raise Rejected(f"via is one of {', '.join(VIA)}: not {writer.via!r}")
-    if writer.model is not None and not _plain(writer.model, 100):
+    if writer.model is not None and not plain(writer.model, 100):
         raise Rejected(f"not a model's name: {writer.model!r}")
     if not all(isinstance(label, str) and LABEL.fullmatch(label) for label in writer.foreign):
         raise Rejected(f"not a mark of foreign text: {writer.foreign!r}")

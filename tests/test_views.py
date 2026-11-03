@@ -82,7 +82,7 @@ async def stage(store: Collections, record: dict, value: str, now: float, **extr
 
 async def shown(store: Collections, tz: str = "UTC", now: float = NOW) -> dict:
     """The Space's views by collection and name, as its screen gets them."""
-    answer = await store.read(lambda: views.space_views(store, "work", When(tz, now)))
+    answer = await store.read(lambda reader: views.space_views(reader, "work", When(tz, now)))
     return {c["name"]: {v["name"]: v for v in c["views"]} for c in answer["collections"]}
 
 
@@ -253,10 +253,9 @@ def test_views_are_checked_strictly_in_their_shape(tmp_path):
         assert made["form_rev"] == 2 and made["views_before"] == [] and made["views_after"] == DEAL_VIEWS
         kept = await store.define(DEFINE, "deals", "work", DEALS, NOW)
         assert kept["unchanged"], "no views given: the ones it has stay"
-        changes = await store.read(lambda: store._db.execute(
-            "SELECT before, after FROM changes WHERE op = 'define' ORDER BY seq").fetchall())
-        assert json.loads(changes[-1][0]) == {"form": DEALS, "views": []}
-        assert json.loads(changes[-1][1]) == {"form": DEALS, "views": DEAL_VIEWS}
+        last = await store.read(lambda reader: reader.change(reader.rev("deals")))
+        assert last["op"] == "define" and last["before"] == {"form": DEALS, "views": []}
+        assert last["after"] == {"form": DEALS, "views": DEAL_VIEWS}
         await store.close()
 
     run(body)
@@ -270,14 +269,14 @@ def test_an_answer_stays_within_256_kb_its_numbers_first(tmp_path):
             await store.apply(OWNER, "deals", [{"op": "add", "fields": {
                 "company": f"Acme {n}", "product": "x" * 2000, "stage": "qualified", "origin": "inbound"}}
                 for n in range(start, start + 200)], NOW)
-        answer = await store.read(lambda: views.space_views(store, "work", When("UTC", NOW)))
+        answer = await store.read(lambda reader: views.space_views(reader, "work", When("UTC", NOW)))
         size = len(json.dumps(answer, ensure_ascii=False).encode())
         board = answer["collections"][0]["views"][1]
         assert size <= views.VIEW_MAX, size
         assert board["dropped"] > 0 and board["columns"][1]["count"] == 400
         assert len(board["columns"][1]["rows"]) + board["dropped"] == 400
         assert answer["collections"][0]["views"][0]["value"] == 400, "the numbers are whole"
-        one = await store.read(lambda: views.one_view(store, "deals", "funnel", When("UTC", NOW)))
+        one = await store.read(lambda reader: views.one_view(reader, "deals", "funnel", When("UTC", NOW)))
         assert len(json.dumps(one, ensure_ascii=False).encode()) <= views.VIEW_MAX
         await store.close()
 
@@ -395,7 +394,7 @@ def test_a_view_and_a_record_are_read_by_the_owner_alone(tmp_path):
         await world.login()
         got = await world.get("/api/c/deals?view=funnel")
         assert got["name"] == "deals" and got["view"]["kind"] == "board" and got["rev"] is not None
-        assert got["rev"] == (await store.read(lambda: store._rev("deals")))
+        assert got["rev"] == (await store.read(lambda reader: reader.rev("deals")))
         assert (await world.call("GET", "/api/c/deals?view=nothing"))[0] == 404
         assert (await world.call("GET", "/api/c/nothing?view=funnel"))[0] == 404
         assert (await world.call("GET", "/api/c/_space?space=..%2Fx"))[0] == 400
@@ -419,7 +418,7 @@ def test_every_write_reaches_the_open_apps_as_one_collection_event(tmp_path):
                                                    "fields": {"company": "Acme"}}], NOW)
         assert same["change_ids"] == [None]
         events = [(kind, json.loads(data)) for _, kind, data in world.store.events_after(before)]
-        rev = await store.read(lambda: store._rev("deals"))
+        rev = await store.read(lambda reader: reader.rev("deals"))
         assert [kind for kind, _ in events] == ["collection"] * 3, "two defines and the add; nothing for no change"
         assert events[-1][1] == {"name": "deals", "space": "work", "rev": rev} and rev == same["rev"]
 
@@ -428,7 +427,7 @@ def test_every_write_reaches_the_open_apps_as_one_collection_event(tmp_path):
         await other.import_ops("deals", [{"op": "add", "fields": {"company": f"Initech {n}"}} for n in range(3)], NOW)
         await other.close()
         moved = await store.moved()
-        assert moved == [("deals", "work", await store.read(lambda: store._rev("deals")))] and await store.moved() == []
+        assert moved == [("deals", "work", await store.read(lambda reader: reader.rev("deals")))] and await store.moved() == []
         for name, space, rev in moved:
             world.store.collection_event(name, space, rev)  # what the platform's watch does with them
         assert json.loads(world.store.events_after(before)[-1][2])["rev"] == moved[0][2]
@@ -677,7 +676,7 @@ def test_a_queue_goes_by_its_sort_field_says_its_mark_and_the_screen_has_the_for
              "fields": ["company"]}])
         for company, priority in (("Acme", 2), ("Globex", None), ("Initech", 1)):
             await add(store, "deals", {"company": company, **({"priority": priority} if priority else {})}, NOW)
-        answer = await store.read(lambda: views.space_views(store, "work", When("UTC", NOW)))
+        answer = await store.read(lambda reader: views.space_views(reader, "work", When("UTC", NOW)))
         assert answer["collections"][0]["labels"] == {"origin": {}, "stage": {"lead": "New lead"}}
         queue = answer["collections"][0]["views"][0]
         assert [r["fields"]["company"] for r in queue["rows"]] == ["Initech", "Acme", "Globex"], \
@@ -696,13 +695,13 @@ def test_a_records_sheet_lists_the_records_of_other_collections_that_name_it_the
         other = await add(store, "deals", {"company": "Globex"}, NOW)
         for date, deal in (("2026-09-10", acme), ("2026-09-14", acme), ("2026-09-12", other)):
             await add(store, "followups", {"deal": deal["id"], "date": date, "channel": "mail"}, NOW)
-        sheet = await store.read(lambda: views.record_view(store, "deals", acme["id"]))
+        sheet = await store.read(lambda reader: views.record_view(reader, "deals", acme["id"]))
         (followups,) = sheet["related"]
         assert (followups["name"], followups["ref"], followups["date"]) == ("followups", "deal", "date")
         assert [r["fields"]["date"] for r in followups["records"]] == ["2026-09-14", "2026-09-10"]
         assert followups["fields"]["direction"]["values"] == ["in", "out"]
         assert "hide" not in sheet["fields"]["company"]
-        lone = await store.read(lambda: views.record_view(store, "followups", followups["records"][0]["id"]))
+        lone = await store.read(lambda reader: views.record_view(reader, "followups", followups["records"][0]["id"]))
         assert lone["related"] == [], "nothing names a follow-up"
         await store.close()
 
@@ -761,7 +760,7 @@ def test_the_new_view_keys_and_an_enums_labels_are_checked_in_their_shape(tmp_pa
         with pytest.raises(Rejected, match=re.escape('"hide" is true or false')):
             await store.define(DEFINE, "deals", "work", {"fields": {"n": {"type": "int", "hide": "yes"}}}, NOW)
         await store.define(DEFINE, "deals", "work", {"fields": {"n": {"type": "int", "hide": True}}}, NOW)
-        sheet = await store.read(lambda: views.form_view(store, "deals"))
+        sheet = await store.read(lambda reader: views.form_view(reader, "deals"))
         assert sheet["fields"]["n"] == {"type": "int", "hide": True}, "the screen is told which fields to leave out"
         for labels, reason in (({"won": "Won"}, '"labels" gives some of its values words'),
                                ({"lead": ""}, '"labels" gives some of its values words'),
@@ -801,7 +800,7 @@ def test_sums_by_month_and_a_years_line_count_to_the_cent(tmp_path):
                                    ("900", "rent", "2026-09-01"), ("12.5", "food", "2026-08-31"),
                                    ("100", "rent", "2025-03-03"), ("7", "food", "2026-06-30")):
             await add(store, "ledger", {"amount": amount, "kind": kind, "date": date}, NOW)
-        answer = await store.read(lambda: views.space_views(store, "home", When("UTC", NOW)))
+        answer = await store.read(lambda reader: views.space_views(reader, "home", When("UTC", NOW)))
         got = {v["name"]: v for v in answer["collections"][0]["views"]}
         spent = got["spent"]
         assert (spent["unit"], spent["values"]) == ("EUR", ["rent", "food"])
@@ -826,7 +825,7 @@ def test_sums_by_month_and_a_years_line_count_to_the_cent(tmp_path):
         await store.define(DEFINE, "ledger", "home", LEDGER, NOW, views=[
             {"name": "all", "kind": "queue", "fields": ["what", "receipt"],
              "filter": {"field": "receipt", "op": "not_empty"}}])
-        (row,) = (await store.read(lambda: views.one_view(store, "ledger", "all", When("UTC", NOW))))["view"]["rows"]
+        (row,) = (await store.read(lambda reader: views.one_view(reader, "ledger", "all", When("UTC", NOW))))["view"]["rows"]
         assert row["refs"] == {"receipt": "acme-receipt.pdf"}, "a file by its name, never its sha256"
         with pytest.raises(Rejected, match="would become another type"):
             await store.define(DEFINE, "ledger", "home", {"fields": {**LEDGER["fields"], "amount": {
@@ -838,7 +837,7 @@ def test_sums_by_month_and_a_years_line_count_to_the_cent(tmp_path):
                 parse_views(given)
         await store.define(DEFINE, "ledger", "home", LEDGER, NOW, views=[
             {"name": "bad", "kind": "year", "date": "date", "sum": "what"}])
-        bad = (await store.read(lambda: views.one_view(store, "ledger", "bad", When("UTC", NOW))))["view"]
+        bad = (await store.read(lambda reader: views.one_view(reader, "ledger", "bad", When("UTC", NOW))))["view"]
         assert bad["error"] == "'what' is a text, not a int or money", "only a number or money adds up"
         await store.close()
 

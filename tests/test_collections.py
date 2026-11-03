@@ -36,6 +36,8 @@ def test_every_call_goes_through_one_thread_with_one_connection(tmp_path, monkey
 
     async def body():
         await store.open()
+        with pytest.raises(RuntimeError, match="their thread's alone"):
+            store._db.execute("SELECT 1")  # the loop never gets the connection: it would wait on SQLite's lock
         await asyncio.gather(*(store.put_file(f"file {n}".encode(), f"{n}.txt", "text/plain", n) for n in range(8)))
         await store.files()
         await store.file("0" * 64)

@@ -1,7 +1,7 @@
 // «Today»'s tasks and schedule in the mock: `GET /api/plan` as retinue/plan.py reads it, and the Router's Planner
 // (retinue/planner.py) behind `POST /api/plan/press`. `tasks` and `blocks` are collections of the mock's store
 // (mock/collections.ts): the owner writes them through the collections' route, as any screen does, and the Router's
-// writes are `code:plan`'s. Beside them a calendar of the next two weeks, the digest's asks and reminders
+// writes are `code:plan`'s. Beside them a calendar of the next two weeks, the digest's reminders
 // (mock/digest.ts), and the day plan's state — its plans, holds, window, activities and the places the meals keep. A
 // press is checked as plan.py checks it and done at once, as the Router does it a moment later — simpler: the free time
 // it finds is not the Router's layout. Invented names only.
@@ -203,7 +203,7 @@ function calendar(): Plan["calendar"] {
 // --- `GET /api/plan` -----------------------------------------------------------------------------------------------
 
 /** What the tabs show, put together as plan.py does on each read: the open tasks and every task with a block from two
- * days back to two weeks on, those blocks still planned or passed, the calendar, the digest's asks and reminders, and
+ * days back to two weeks on, those blocks still planned or passed, the calendar, the digest's reminders, and
  * the plan's state. */
 export function mockPlan(): Plan & { schema: number } {
   const t = now();
@@ -227,7 +227,6 @@ export function mockPlan(): Plan & { schema: number } {
       blocks: near.map(({ id, fields, version }) => ({ id, fields, version }) as Block),
     },
     calendar: calendar(),
-    asks: items.flatMap((i) => (i.kind === "letter" || i.kind === "chat" ? [{ id: i.id, kind: i.kind, who: i.who, title: i.title, since: i.since, ...(i.t ? { t: i.t } : {}) }] : [])),
     reminders: items.flatMap((i) => (i.kind === "reminder" ? [{ id: i.id, title: i.title, at: i.since, when: i.when ?? null, repeat: i.repeat ?? null }] : [])),
     plan: {
       at: t,

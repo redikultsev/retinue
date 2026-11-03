@@ -1,6 +1,6 @@
 // «Today»'s tasks, day and week (docs/face.md «Tasks, Day, Week»): one read of the platform (`GET /api/plan`) — the
 // open tasks, their blocks of time near, the calendar's busy window and the day plan's state as the Router last pushed
-// them, the digest's asks and reminders — and the words and the arithmetic of the three tabs. A day is a window of the
+// them, the digest's reminders — and the words and the arithmetic of the three tabs. A day is a window of the
 // plan's: its hours in its zone, as the owner set them on the plan's settings, shown in the owner's own. Plans are pressed (`/api/plan/press`) and
 // laid by the Router; the owner's own moves of a block go through the collections' route, as any screen's do.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -36,15 +36,6 @@ export interface CalEvent {
   title: string;
   all_day: boolean;
   busy: boolean;
-}
-
-export interface PlanAsk {
-  id: string;
-  kind: "letter" | "chat";
-  who: string;
-  title: string;
-  since: number;
-  t?: string;
 }
 
 export interface PlanReminder {
@@ -107,7 +98,6 @@ export interface Plan {
     blocks: Block[];
   };
   calendar: { events: CalEvent[]; at: number | null; failed: number; stale: boolean };
-  asks: PlanAsk[];
   reminders: PlanReminder[];
   plan: {
     at: number | null;
@@ -150,7 +140,8 @@ export const planApi = {
 
 const REFRESH_MS = 60_000;
 
-/** The plan, read now, again once a minute (the calendar moves every ten), and at once when `tasks` changes. */
+/** The plan, read now, again once a minute (the calendar moves every ten), at once when `tasks` or `blocks` changes,
+ * when the stream comes back after a gap, and when the tab is shown again. */
 export function usePlan(live: Live = theLive, api = planApi): { plan: Plan | null; error: string | null; reload: () => void } {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -171,10 +162,17 @@ export function usePlan(live: Live = theLive, api = planApi): { plan: Plan | nul
     const timer = setInterval(reload, REFRESH_MS);
     const off = live.onCollection((event) => (event.name === "tasks" || event.name === "blocks") && reload());
     const offPlan = live.onPlan(reload);
+    const offResync = live.onResync(reload);
+    const onVisible = () => {
+      if (!document.hidden) reload();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(timer);
       off();
       offPlan();
+      offResync();
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [live, reload]);
   return { plan, error, reload };

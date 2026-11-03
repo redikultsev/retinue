@@ -9,8 +9,8 @@ What the tabs show is put together here on each read, never kept beside its sour
   any screen's do;
 - **the calendar** — the occurrences of today and the next fourteen days as the Router last pushed them, with when
   that was: a busy window older than CALENDAR_STALE_S is shown as such, never as the day being free;
-- **the asks and the reminders** — the person's rows and the reminders of the assistant's digest on record (`feed`),
-  each with what «Plan» names it by.
+- **the reminders** — those of the assistant's digest on record (`feed`), each with what «Plan» names it by; the
+  people's asks the face takes from the feed's own rows.
 
 The Router pushes the window whole each time it reads the calendar (`tasks.Tasks.calendar`), replacing the one
 before; the platform never calls the Router. Its titles are the owner's calendar's words, for his screen alone: no
@@ -307,10 +307,8 @@ class Plan:
         except Rejected as exc:
             return web.json_response({"error": exc.reason}, status=400)
         items, _, _ = self.platform.feed.digest()
-        asks = [{"id": i["id"], "kind": i["kind"], "who": i["who"], "title": i["title"], "since": i["since"],
-                 **({"t": i["t"]} if i.get("t") else {})} for i in items if i["kind"] in ("letter", "chat")]
         reminders = [{"id": i["id"], "title": i["title"], "at": i["since"], "when": i.get("when"),
                       "repeat": i.get("repeat")} for i in items if i["kind"] == "reminder"]
         return web.json_response({"schema": SCHEMA, "now": self.platform.clock(), "tz": self.platform.views.zone(),
-                                  "tasks": tasks, "calendar": self.calendar(), "asks": asks,
+                                  "tasks": tasks, "calendar": self.calendar(),
                                   "reminders": reminders, "plan": self.plan_state()})

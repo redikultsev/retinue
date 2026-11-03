@@ -85,7 +85,6 @@ function plan(): Plan {
       rev: null, space: "home", goals: [], missing: false, blocks: [],
     },
     calendar: { events: [], at: NOW, failed: 0, stale: false },
-    asks: [],
     reminders: [],
     plan: { at: null, plans: {}, holds: [], said: {}, window: { zone: "UTC", opens: "09:00", closes: "23:00" } },
   };

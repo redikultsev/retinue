@@ -1,5 +1,7 @@
+import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { addDays, at, dayOf, dayWords, duration, hm, iso, type Plan, placed, planDay, windowDay, windowOf } from "@/lib/plan";
+import type { Live } from "@/lib/live";
+import { addDays, at, dayOf, dayWords, duration, hm, iso, type Plan, placed, planDay, usePlan, windowDay, windowOf } from "@/lib/plan";
 
 const TZ = "Europe/Berlin";
 const ZONE = "Asia/Dubai"; // the plan's own zone, three hours ahead of the owner's
@@ -12,7 +14,6 @@ function plan(over: Partial<Plan> = {}): Plan {
     tz: TZ,
     tasks: { rows: [], rev: null, space: "home", goals: [{ value: "work", label: "Work" }], missing: false, blocks: [] },
     calendar: { events: [], at: NOW, failed: 0, stale: false },
-    asks: [],
     reminders: [],
     plan: { at: null, plans: {}, holds: [], said: {}, window: W },
     ...over,
@@ -57,5 +58,35 @@ describe("the blocks on the grid", () => {
       },
     });
     expect(placed(p).map((x) => hm(x.start, ZONE))).toEqual(["10:00"]);
+  });
+});
+
+describe("usePlan", () => {
+  it("reads again when the stream comes back after a gap and when the tab is shown again", async () => {
+    const resynced = new Set<() => void>();
+    const live = {
+      onCollection: () => () => undefined,
+      onPlan: () => () => undefined,
+      onResync: (l: () => void) => {
+        resynced.add(l);
+        return () => resynced.delete(l);
+      },
+    } as unknown as Live;
+    let reads = 0;
+    const api = {
+      get: async () => {
+        reads += 1;
+        return plan();
+      },
+    } as unknown as Parameters<typeof usePlan>[1];
+    const { result, unmount } = renderHook(() => usePlan(live, api));
+    await waitFor(() => expect(result.current.plan).not.toBeNull());
+    expect(reads).toBe(1);
+    for (const l of resynced) l();
+    await waitFor(() => expect(reads).toBe(2));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => expect(reads).toBe(3));
+    unmount();
+    expect(resynced.size).toBe(0);
   });
 });

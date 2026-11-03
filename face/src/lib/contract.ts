@@ -5,7 +5,7 @@ import type { Press as PlanPress } from "./plan";
 
 export type { Feed, FeedGroup, FeedRow, Press as RowPress, TurnEnding, WaitingDetail } from "./feed";
 export type { Library, LibraryPage } from "./library";
-export type { Activity, Block, Plan, PlanAsk, PlanReminder, PlanWindow, Press, Task, TaskFields } from "./plan";
+export type { Activity, Block, Plan, PlanReminder, PlanWindow, Press, Task, TaskFields } from "./plan";
 
 const seg = (s: string) => encodeURIComponent(s);
 

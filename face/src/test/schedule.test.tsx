@@ -111,7 +111,6 @@ describe("the grid's controls", () => {
     tz: "Europe/Berlin",
     tasks: { rows: [TASK], rev: null, space: "home", goals: [], missing: false, blocks: [BLOCK] },
     calendar: { events: [], at: NOW, failed: 0, stale: false },
-    asks: [],
     reminders: [],
     plan: { at: NOW, plans: {}, recent: [{ id: "p0123456789", by: "owner", at: NOW, undone: false, failed: false }], holds: [], said: {}, window: { zone: "Europe/Berlin", opens: "09:00", closes: "23:00" } },
   };

@@ -12,7 +12,7 @@ from retinue.mail import MailStore, Unavailable
 from retinue.mailroom import Mailroom
 from retinue.protocol import Store
 
-from test_core import AGENT, FakeChannel, drain
+from test_core import AGENT, FakeChannel, drain, use
 
 NOW = 1_760_000_000.0
 ACCOUNT = "owner@example.org"
@@ -313,7 +313,7 @@ def test_found_mail_says_where_it_is_from(tmp_path):
         core = Core([AGENT.__class__(**{**AGENT.__dict__, "archive": True})], store, "owner", archive=archive)
         await core.start([FakeChannel("telegram", False)])
         turn = core.turns.open_root("assistant")
-        return await core.archive_search(core.agents["assistant"], turn.id, "Лиссабон")
+        return await use(core, core.agents["assistant"], turn.id, "search_archive", query="Лиссабон")
 
     ok, text = asyncio.run(run())
     assert ok and "· Letter · mail]" in text
@@ -636,7 +636,7 @@ def test_an_empty_search_names_every_source_and_its_gaps(tmp_path):
         await core.start([FakeChannel("telegram", False)])
         await room.collect(NOW)
         turn = core.turns.open_root("assistant")
-        return await core.archive_search(core.agents["assistant"], turn.id, "Лиссабон")
+        return await use(core, core.agents["assistant"], turn.id, "search_archive", query="Лиссабон")
 
     try:
         ok, text = asyncio.run(run())
@@ -1090,9 +1090,9 @@ def test_her_judgement_of_a_chat_searches_that_chat_and_fetches_only_its_files(t
         async def ask(url, text, context_id, *args, **kwargs):
             turn = args[1] if len(args) > 1 else kwargs.get("turn_id")
             if kwargs.get("control") == "oneshot":
-                found["search"] = await core.archive_search(assistant, turn, "Зурбаган")
-                found["theirs"] = await core.get_attachment(assistant, turn, 1)
-                found["ours"] = await core.get_attachment(assistant, turn, 2)
+                found["search"] = await use(core, assistant, turn, "search_archive", query="Зурбаган")
+                found["theirs"] = await use(core, assistant, turn, "get_attachment", id=1)
+                found["ours"] = await use(core, assistant, turn, "get_attachment", id=2)
             return await plain(url, text, context_id, *args, **kwargs)
 
         core.ask = ask

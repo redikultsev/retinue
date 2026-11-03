@@ -17,7 +17,7 @@ from retinue.protocol import Store
 from retinue.scheduler import SUMMARY, Job
 
 from test_attachments import picture
-from test_core import AGENT
+from test_core import AGENT, use
 from test_mailroom import NOW, FakeGateway, FakeMemory, said_in
 from test_outbox import CardChannel, FakeNeighbour
 
@@ -53,12 +53,12 @@ class Episode:
         return Reply("done", json.dumps({"items": await self.script(self, text, turn_id)}, ensure_ascii=False), [], {})
 
     async def search(self, turn, query, **narrow):
-        ok, text = await self.core.archive_search(ME, turn, query, **narrow)
+        ok, text = await use(self.core, ME, turn, "search_archive", query=query, **narrow)
         self.tools.append(text)
         return text
 
     async def draft(self, turn, reply_to, text):
-        ok, said = await self.core.draft_reply(ME, turn, {"reply_to": reply_to, "text": text})
+        ok, said = await use(self.core, ME, turn, "draft_reply", reply_to=reply_to, text=text)
         assert ok, said
         return self.outbox.store.get(said.split()[1])
 

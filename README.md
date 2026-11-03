@@ -60,8 +60,8 @@ flowchart LR
   an append-only SQLite archive with full-text search, runs reminders and the morning summary, and routes your
   message: plain text to the assistant, a reply to a session's message to that session.
 - **assistant** (`retinue/agent_host.py`, `retinue/engine.py`, `agents/assistant/`) is one long Claude Agent SDK
-  session on an internal network. Its tools are the router's (search the archive, set a reminder, fetch an
-  attachment, search trips); its config is mounted read-only.
+  session on an internal network. Its tools are the router's, each stated once in `retinue/tools.py` (search the
+  archive, set a reminder, fetch an attachment, search trips); its config is mounted read-only.
 - **platform** (`retinue/platformd.py`, `retinue/gate.py`, `retinue/approvals.py`) starts and drives Claude Code
   sessions, keeps every line of every run in its own SQLite, and answers the gate hook that the CLI calls before
   each tool call. A session can hand separable work to sub-sessions of its own through the platform's MCP server

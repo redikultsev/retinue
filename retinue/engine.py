@@ -21,7 +21,7 @@ from claude_agent_sdk import (ClaudeAgentOptions, HookMatcher, RateLimitEvent, R
                               ResultMessage, StreamEvent, SystemMessage, ToolAnnotations, create_sdk_mcp_server, query,
                               tool)
 
-from . import colltools, courier, kbcheck, pages, travel
+from . import kbcheck, tools, travel
 from .config import EngineConfig
 
 log = logging.getLogger("retinue.engine")
@@ -104,223 +104,31 @@ class Engine(Protocol):
     async def compact(self, session_id: str | None) -> EngineResult: ...
 
 
-BUS_PREFIX = "mcp__retinue__"  # how the model sees the tools below
-QUERY_CHARS = 70_000  # a query's answer (at most 60 KB of records) kept inline, never put in a file
-SEARCH_SCHEMA = {
-    "type": "object", "additionalProperties": False, "required": ["query"],
-    "properties": {
-        "query": {"type": "string", "maxLength": 200,
-                  "description": "one to three keywords, nouns are best: word endings are matched by themselves"},
-        "scope": {"type": "string", "enum": ["chat", "owner", "mail", "all"],
-                  "description": "where to look: chat — this conversation (the default when judging somebody "
-                                 "else's message), owner — conversations with the owner, mail — his letters and "
-                                 "calendar, all — everything"},
-        "since": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "from this day, 2026-10-09"},
-        "until": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "up to and including this day"},
-    },
-}
+BUS_PREFIX = "mcp__retinue__"  # how the model sees the router's bus tools (`tools.TOOLS`)
 
 
 def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
     """Everything an agent can do outside its container goes through the router's bus, bound to the current
-    turn and signed with the agent's own token. Which of these an agent gets is `engine.bus_tools`."""
+    turn and signed with the agent's own token: each tool of `tools.TOOLS`, by its very name, words and schema.
+    Which of these an agent gets is `engine.bus_tools`."""
     headers = {"Authorization": f"Bearer {bus_token}"}
 
-    def client(timeout: float) -> httpx.AsyncClient:
-        # trust_env=False: the router is a neighbour on the internal network, never reached through the proxy.
-        return httpx.AsyncClient(timeout=timeout, trust_env=False)
+    def bus_tool(spec: tools.Tool):
+        hints = ToolAnnotations(**spec.annotations) if spec.annotations else None
 
-    @tool("ask_agent",
-          "Ask another Retinue agent through the router and wait for the answer. The router decides whether it "
-          "is allowed; a refusal comes with the reason. agent — the agent's id, text — a self-contained question: "
-          "the agent does not see this conversation. The list of agents is the list_agents tool.",
-          {"agent": str, "text": str})
-    async def ask_agent(args):
-        async with client(900) as http:
-            response = await http.post(f"{bus_url}/call", headers=headers,
-                                       json={"turn": turn_id, "agent": args["agent"], "text": args["text"]})
-        data = response.json()
-        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
-
-    @tool("list_agents", "The Retinue agents you may ask: id, name, description.", {})
-    async def list_agents(args):
-        async with client(30) as http:
-            agents = (await http.get(f"{bus_url}/agents", headers=headers)).json()
-        return {"content": [{"type": "text", "text": json.dumps(agents, ensure_ascii=False)}]}
-
-    @tool("search_archive",
-          "Find in the archive what was said before: the owner's messages, your past answers, letters, the "
-          "calendar, Telegram chats and your captions of other people's photos. query — one to three keywords, "
-          "nouns are best: word endings are matched by themselves. scope — where to look; since and until — days. "
-          "Returns the finds with id, date, author and a note on where they come from. If nothing is found, it "
-          "names where it looked and what the archive covers; try other words or a wider search.",
-          SEARCH_SCHEMA)
-    async def search_archive(args):
-        async with client(30) as http:
-            response = await http.post(f"{bus_url}/archive/search", headers=headers,
-                                       json={"turn": turn_id, "query": args["query"], "scope": args.get("scope", ""),
-                                             "since": args.get("since", ""), "until": args.get("until", "")})
-        data = response.json()
-        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
-
-    async def reminders(action: str, body: dict) -> dict:
-        async with client(30) as http:
-            response = await http.post(f"{bus_url}/reminders/{action}", headers=headers, json={"turn": turn_id, **body})
-        data = response.json()
-        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
-
-    @tool("set_reminder",
-          "Set a reminder for the owner. When it is due, the router wakes you and you write it in your own words; "
-          "if you cannot, it sends text word for word. So write text the owner will understand in a few days: "
-          "what to do, for whom, why. when — the owner's local time, in his zone from the «Now» note, like "
-          "2026-10-09T18:00. weekday — the day of the week you mean («Friday»): the router checks it against the "
-          "date and refuses if it does not match or the time has passed. The same text at the same time returns "
-          "«Already set». repeat — empty (once), daily, weekdays, weekly or monthly; when is then the first time. "
-          "Tell the owner the day and time from the router's answer, not the id.",
-          {"text": str, "when": str, "weekday": str, "repeat": str})
-    async def set_reminder(args):
-        return await reminders("add", {"text": args["text"], "when": args["when"], "weekday": args["weekday"],
-                                       "repeat": args.get("repeat", "")})
-
-    @tool("list_reminders", "The owner's active reminders, nearest first: when, text, [id].", {})
-    async def list_reminders(args):
-        return await reminders("list", {})
-
-    @tool("cancel_reminder", "Cancel a reminder by its id from list_reminders.", {"id": int})
-    async def cancel_reminder(args):
-        return await reminders("cancel", {"id": args["id"]})
-
-    @tool("move_reminder",
-          "Move a reminder by its id from list_reminders to another time. when and weekday — as in set_reminder.",
-          {"id": int, "when": str, "weekday": str})
-    async def move_reminder(args):
-        return await reminders("move", {"id": args["id"], "when": args["when"], "weekday": args["weekday"]})
-
-    @tool("set_timezone",
-          "Change the owner's time zone when he says he is in another city or asks to change the zone («I'm in "
-          "Tokyo», «switch my zone to Manila», or in Russian «я в Токио»). zone — an IANA name (Asia/Tokyo) or a "
-          "city as IANA writes it (Tokyo). Repeating reminders and the summary follow the new zone, one-off ones "
-          "keep their moment. If the owner is only about to travel, do not change it: set a reminder for the day "
-          "he arrives.",
-          {"zone": str})
-    async def set_timezone(args):
-        async with client(30) as http:
-            response = await http.post(f"{bus_url}/zone", headers=headers, json={"turn": turn_id, "zone": args["zone"]})
-        data = response.json()
-        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
-
-    async def plan(action: str, body: dict) -> dict:
-        async with client(30) as http:
-            response = await http.post(f"{bus_url}/plan/{action}", headers=headers, json={"turn": turn_id, **body})
-        data = response.json()
-        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
-
-    @tool("plan_move",
-          "Move a task's time in the owner's plan when he asks in his own message («put the English homework on "
-          "Wednesday evening», «move the report to 15:00 tomorrow»). task — its id from collection_query on tasks. "
-          "day — the owner's local date, YYYY-MM-DD. part — morning (till 13:00), afternoon (13:00–18:00) or evening "
-          "(from 18:00): the code takes the first free time there; or at — HH:MM, only a time the owner named "
-          "himself. Its next piece moves, or a new one is laid when it has none. named — true only when the owner "
-          "named that very piece of time he had put there himself. Meetings never move. Done at once; after your "
-          "answer the code shows him one line of the turn's moves with «Undo» — do not repeat it.",
-          {"type": "object", "properties": {
-              "task": {"type": "string"}, "day": {"type": "string"},
-              "part": {"type": "string", "enum": ["morning", "afternoon", "evening"]},
-              "at": {"type": "string"}, "named": {"type": "boolean"}},
-           "required": ["task", "day"]})
-    async def plan_move(args):
-        return await plan("move", {k: args[k] for k in ("task", "day", "part", "at", "named") if k in args})
-
-    @tool("plan_estimate",
-          "Set how long a task takes (minutes), the day it is due by (due, YYYY-MM-DD) or the moment it must be done "
-          "by (by, his local time YYYY-MM-DDTHH:MM: «before the lesson at 19:00 on Thursday») when the owner says it "
-          "in his own message («the homework takes two hours», «the report is due Friday»). task — its id from "
-          "collection_query. No piece of it is then laid to end after by. The plan lays the time again by itself; "
-          "it goes under the turn's «Undo» with the moves.",
-          {"type": "object", "properties": {
-              "task": {"type": "string"}, "minutes": {"type": "integer"}, "due": {"type": "string"},
-              "by": {"type": "string"}},
-           "required": ["task"]})
-    async def plan_estimate(args):
-        return await plan("estimate", {k: args[k] for k in ("task", "minutes", "due", "by") if k in args})
-
-    @tool("plan_hold",
-          "Hold the owner's time when he says in his own message that he is doing something that is not a task: "
-          "eating, on the road, resting («having lunch», «lying down for an hour», «tomorrow at 19:00 to the "
-          "airport, an hour and a half»). label — what it is, short, in English («Lunch», «Rest», «Travel»; one of "
-          "his activities when it is one). minutes — how long, as he said or the activity's usual length. at — his "
-          "local time YYYY-MM-DDTHH:MM when it is not now (at most 14 days ahead, at the earliest 15 minutes ago). "
-          "The plan's tasks it crosses move after it; a hold of a meal's name frees that meal's place that day. "
-          "day_off — true when he says he is not working today («I'm off today», «no work today»): the rest of "
-          "today's window is held and its tasks move to the next days; label and minutes are then ignored. Done at "
-          "once; the code says it in the app.",
-          {"type": "object", "properties": {
-              "label": {"type": "string"}, "minutes": {"type": "integer"}, "at": {"type": "string"},
-              "day_off": {"type": "boolean"}}})
-    async def plan_hold(args):
-        return await plan("hold", {k: args[k] for k in ("label", "minutes", "at", "day_off") if k in args})
-
-    @tool("get_attachment",
-          "Get again what the owner sent, by the number from the mark [attachment #N: …]. After compaction the "
-          "pictures and PDFs are gone from the conversation — this tool returns the picture and the text: the "
-          "transcript, the document's text; for a PDF, only its text layer.",
-          {"id": int})
-    async def get_attachment(args):
-        async with client(60) as http:
-            response = await http.post(f"{bus_url}/attachments/get", headers=headers,
-                                       json={"turn": turn_id, "id": args["id"]})
-        data = response.json()
-        images = [{"type": "image", "data": image["data"], "mimeType": image["mimeType"]}
-                  for image in data.get("images", [])]
-        return {"content": [*images, {"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
-
-    @tool("publish_trip",
-          "Publish a trip page among the owner's pages: all the options you found, with prices, times, reviews and "
-          "photos. Name each option by its link (link.url) and search_id from travel-ops' answers: the router takes "
-          "prices, seller and times from travel-ops itself. The answer is the page's address; give it to the owner "
-          "at the end of your answer as a «details» link. A refusal names the field — fix it and try again.",
-          pages.TRIP_SCHEMA)
-    async def publish_trip(args):
-        async with client(120) as http:
-            response = await http.post(f"{bus_url}/trips/publish", headers=headers,
-                                       json={"turn": turn_id, "trip": args})
-        data = response.json()
-        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
-
-    @tool("draft_reply",
-          "Propose to the owner a reply to a person — to a letter or a Telegram message — when a reply is really "
-          "expected. reply_to — the id of the incoming item from the archive (mail:… or tgb:…): the router takes "
-          "the address, subject and thread from there. A new letter — to and subject, only to an address the owner "
-          "has already written with. text — the whole text as it will go out. The router shows the owner a card; "
-          "it goes out only if he presses «Send». A refusal names what to fix; an «edit» from the owner is a new "
-          "call with replaces.",
-          courier.DRAFT_SCHEMA)
-    async def draft_reply(args):
-        async with client(120) as http:
-            response = await http.post(f"{bus_url}/courier/draft", headers=headers,
-                                       json={"turn": turn_id, "draft": args})
-        data = response.json()
-        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
-
-    def collection_tool(spec: dict):
-        """One of the collections' tools: the very schema and words a session gets (`colltools.TOOLS`), sent to the
-        router's bus, which names her and her turn's marks to the platform; the platform checks the rights."""
-        action = spec["name"].removeprefix("collection_")
-        hints = {**spec["annotations"], **({"maxResultSizeChars": QUERY_CHARS} if action == "query" else {})}
-
-        @tool(spec["name"], spec["description"], spec["inputSchema"], ToolAnnotations(**hints))
+        @tool(spec.name, spec.description, spec.schema, hints)
         async def call(args):
-            async with client(60) as http:
-                response = await http.post(f"{bus_url}/collections/{action}", headers=headers,
+            # trust_env=False: the router is a neighbour on the internal network, never reached through the proxy.
+            async with httpx.AsyncClient(timeout=spec.timeout, trust_env=False) as http:
+                response = await http.post(f"{bus_url}/tools/{spec.name}", headers=headers,
                                            json={"turn": turn_id, "arguments": args})
             data = response.json()
-            return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
+            images = [{"type": "image", "data": image["data"], "mimeType": image["mimeType"]}
+                      for image in data.get("images", [])]
+            return {"content": [*images, {"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
         return call
 
-    return {t.name: t for t in (ask_agent, list_agents, search_archive, set_reminder, list_reminders,
-                                cancel_reminder, move_reminder, set_timezone, plan_move, plan_estimate, plan_hold,
-                                get_attachment, publish_trip,
-                                draft_reply, *map(collection_tool, colltools.TOOLS))}
+    return {name: bus_tool(spec) for name, spec in tools.TOOLS.items()}
 
 
 TRAVEL = "travel"  # the MCP server's name: its tools are mcp__travel__<tool>

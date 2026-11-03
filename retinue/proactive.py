@@ -26,6 +26,7 @@ from urllib.parse import unquote
 
 from . import clock
 from .pages import front_matter
+from .tools import Answer
 
 log = logging.getLogger("retinue.proactive")
 
@@ -350,14 +351,10 @@ class Proactive:
             text += f"; one-off ones ({kept}) stay at their moment, their time is given in the new zone"
         return text + "."
 
-    async def zone_tool(self, caller, turn_id: str, name: str) -> tuple[bool, str]:
-        """`set_timezone`: during her own turn and with the reminders' grant — the zone moves every reminder."""
+    async def zone_tool(self, turn, name: str) -> Answer:
+        """`set_timezone`: in her own turn and with the reminders' grant (`tools.run`) — the zone moves every
+        reminder."""
         core = self.core
-        turn = core.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
-            return False, "No active request: the zone changes only during an answer."
-        if not caller.reminders:
-            return False, "Denied: this agent has no reminders granted, and the zone moves them."
         before, tz = core.tz, clock.find_zone(name)
         if turn.tree.exchanges or turn.tree.foreign:
             # Someone else's words were on the run's input — a letter, a chat, a forward, a file, a search find: «I'm
@@ -371,9 +368,7 @@ class Proactive:
             ok, text = True, self.set_zone(tz, time.time())
             if tz != before:  # never silent: code says it, whatever she writes
                 await core.tell_owner(f"Zone: {before} → {tz}.")
-        core.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="zone", status=
-                       "done" if ok else "rejected", input_chars=len(name), output_chars=len(text), channel="bus")
-        return ok, text
+        return Answer(ok, text, chars=len(name))
 
     async def tell_zone(self) -> None:
         """The platform counts the screen's weeks and days in the router's zone (`POST /owner/zone`): told at the

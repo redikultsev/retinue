@@ -275,7 +275,8 @@ def test_a_link_to_the_owners_pages_is_clickable_in_telegram(tmp_path, monkeypat
 
 
 def test_the_router_reaches_the_gateway_and_the_sender_with_their_tokens(tmp_path, monkeypatch):
-    from retinue.config import BUS_TOOLS, RouterAgent
+    from retinue.config import RouterAgent
+    from retinue.tools import TOOLS
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     for name in ("RETINUE_GATEWAY_TOKEN", "RETINUE_SENDER_TOKEN"):
@@ -291,7 +292,7 @@ def test_the_router_reaches_the_gateway_and_the_sender_with_their_tokens(tmp_pat
                                  "sender_url: http://mail-send:9400\n")
     assert (cfg.gateway_token, cfg.sender_token) == ("x", "x")
     assert RouterAgent(id="a", name="A", url="u").drafts is False, "no agent drafts unless granted"
-    assert "draft_reply" in BUS_TOOLS
+    assert "draft_reply" in TOOLS
 
 
 def test_the_router_reaches_the_platform_with_its_token_and_only_through_telegram(tmp_path, monkeypatch):

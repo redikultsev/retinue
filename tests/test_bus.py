@@ -9,6 +9,7 @@ from retinue.bus import BusServer, bus_token
 from retinue.config import RouterAgent
 from retinue.core import Core
 from retinue.protocol import Store
+from retinue.tools import run
 
 from test_core import FakeChannel
 
@@ -37,41 +38,46 @@ def by_id(agent_id):
     return next(a for a in AGENTS if a.id == agent_id)
 
 
+async def ask(core, caller, turn_id, target, text):
+    said = await run(core, caller, turn_id, "ask_agent", {"agent": target, "text": text})
+    return said.ok, said.text
+
+
 def test_rules(tmp_path):
     core, matrix, asked = make(tmp_path)
 
     async def run():
         root = core.turns.open_root("concierge")
-        ok, text = await core.bus_call(by_id("concierge"), root.id, "travel", "AMS→LIS 10.05")
+        ok, text = await ask(core, by_id("concierge"), root.id, "travel", "AMS→LIS 10.05")
         assert ok and text == "t: ok"
         child_turn = asked[-1][3]
         assert asked[-1][2] == core.store.conversation("travel"), "the target answers in its own conversation"
         assert asked[-1][1].startswith("[Question from agent «Главная»]")
 
         # web agent's answer taints the tree: the chain can no longer reach an agent with the base
-        ok, text = await core.bus_call(by_id("concierge"), root.id, "work", "что с отпуском?")
+        ok, text = await ask(core, by_id("concierge"), root.id, "work", "что с отпуском?")
         assert not ok and "an agent with the web" in text
 
         # the callee's turn is only valid while it runs, and only for that agent
-        ok, text = await core.bus_call(by_id("travel"), child_turn, "study", "x")
+        ok, text = await ask(core, by_id("travel"), child_turn, "study", "x")
         assert not ok and "No active request" in text
-        ok, text = await core.bus_call(by_id("study"), root.id, "travel", "x")
+        ok, text = await ask(core, by_id("study"), root.id, "travel", "x")
         assert not ok and "No active request" in text
 
         # depth and loops
         t1 = core.turns.open_child(root, "travel")
         t2 = core.turns.open_child(t1, "study")
-        ok, text = await core.bus_call(by_id("study"), t2.id, "travel", "x")
+        ok, text = await ask(core, by_id("study"), t2.id, "travel", "x")
         assert not ok and "a loop" in text
-        ok, text = await core.bus_call(by_id("travel"), t1.id, "concierge", "x")
+        ok, text = await ask(core, by_id("travel"), t1.id, "concierge", "x")
         assert not ok and "may not call" in text
 
         # classes: web -> private and private -> web are refused as free text
         fresh = core.turns.open_root("travel")
-        ok, text = await core.bus_call(by_id("travel"), fresh.id, "work", "x")
+        ok, text = await ask(core, by_id("travel"), fresh.id, "work", "x")
         assert not ok and "with the web does not write" in text
         private = core.turns.open_root("work")
-        ok, text = await core.bus_call(by_id("work"), private.id, "travel", "x")
+        ok, text = await ask(core, by_id("work"), private.id, "travel", "x")
         assert not ok and "a typed skill" in text
 
     asyncio.run(run())
@@ -85,9 +91,9 @@ def test_private_answer_keeps_chain_off_the_web(tmp_path):
 
     async def run():
         root = core.turns.open_root("concierge")
-        ok, _ = await core.bus_call(by_id("concierge"), root.id, "work", "что с отпуском?")
+        ok, _ = await ask(core, by_id("concierge"), root.id, "work", "что с отпуском?")
         assert ok
-        ok, text = await core.bus_call(by_id("concierge"), root.id, "travel", "билеты на эти даты")
+        ok, text = await ask(core, by_id("concierge"), root.id, "travel", "билеты на эти даты")
         assert not ok and "an agent with the Base" in text
 
     asyncio.run(run())
@@ -100,7 +106,7 @@ def test_depth_limit(tmp_path):
         root = core.turns.open_root("concierge")
         t1 = core.turns.open_child(root, "study")
         t2 = core.turns.open_child(t1, "travel")
-        ok, text = await core.bus_call(by_id("travel"), t2.id, "work", "x")
+        ok, text = await ask(core, by_id("travel"), t2.id, "work", "x")
         assert not ok and "deeper than" in text
 
     asyncio.run(run())
@@ -121,7 +127,12 @@ def test_archive_search_through_the_bus(tmp_path):
         core.inbound[turn.tree.id] = question.id
         mine = {"Authorization": f"Bearer {bus_token('secret', 'assistant')}"}
         async with TestClient(TestServer(BusServer(core, "secret", 0).app)) as http:
-            found = await (await http.post("/archive/search", json={"turn": turn.id, "query": "Энск"}, headers=mine)).json()
+            async def search(turn_id, query, headers=mine):
+                body = {"turn": turn_id, "arguments": {"query": query}}
+                response = await http.post("/tools/search_archive", json=body, headers=headers)
+                return await response.json() if response.status == 200 else response.status
+
+            found = await search(turn.id, "Энск")
             assert found["ok"] and "площадь и музей" in found["text"] and "1970-01-01 00:01 UTC, Thursday · Assistant" in found["text"]
             assert "Что ты советовала" not in found["text"], "the question being answered is not a result"
             hits = found["text"].split("\n\n")[1:]
@@ -129,21 +140,19 @@ def test_archive_search_through_the_bus(tmp_path):
             assert where[(True, False)].endswith("· past conversation]") and where[(False, True)].endswith("· this conversation]"), \
                 "a hit says which conversation it is from: after /new the old one is not «this one»"
 
-            empty = await (await http.post("/archive/search", json={"turn": turn.id, "query": "зарплата"}, headers=mine)).json()
+            empty = await search(turn.id, "зарплата")
             assert empty["ok"] and "Nothing found" in empty["text"] and "3 events" in empty["text"]
             assert "this one and past ones" in empty["text"]
             assert "mail and calendar are not connected" in empty["text"] and "files on the Mac" in empty["text"], \
                 "an empty result names what is not collected"
 
-            nobody = await http.post("/archive/search", json={"turn": turn.id, "query": "Энск"},
-                                     headers={"Authorization": "Bearer wrong"})
-            assert nobody.status == 401
-            stale = await (await http.post("/archive/search", json={"turn": "closed", "query": "Энск"}, headers=mine)).json()
+            assert await search(turn.id, "Энск", {"Authorization": "Bearer wrong"}) == 401
+            stale = await search("closed", "Энск")
             assert not stale["ok"] and "No active request" in stale["text"]
 
             other = core.turns.open_root("travel")
             theirs = {"Authorization": f"Bearer {bus_token('secret', 'travel')}"}
-            denied = await (await http.post("/archive/search", json={"turn": other.id, "query": "Энск"}, headers=theirs)).json()
+            denied = await search(other.id, "Энск", theirs)
             assert not denied["ok"] and "not been granted" in denied["text"] and "площадь" not in denied["text"]
         return core
 
@@ -163,18 +172,19 @@ def test_reminders_through_the_bus(tmp_path):
         theirs = {"Authorization": f"Bearer {bus_token('secret', 'travel')}"}
         turn, other = core.turns.open_root("assistant"), core.turns.open_root("travel")
         async with TestClient(TestServer(BusServer(core, "secret", 0).app)) as http:
-            async def post(action, headers=mine, **body):
-                response = await http.post(f"/reminders/{action}", json=body, headers=headers)
+            async def post(name, turn_id, headers=mine, **arguments):
+                response = await http.post(f"/tools/{name}", json={"turn": turn_id, "arguments": arguments},
+                                           headers=headers)
                 return response.status, await response.json() if response.status == 200 else None
 
-            assert await post("list", turn=turn.id) == (200, {"ok": True, "text": "No active reminders."})
-            status, past = await post("add", turn=turn.id, text="позвонить", when="2020-01-01T10:00", weekday="")
+            assert await post("list_reminders", turn.id) == (200, {"ok": True, "text": "No active reminders."})
+            status, past = await post("set_reminder", turn.id, text="позвонить", when="2020-01-01T10:00",
+                                      weekday="")
             assert not past["ok"] and "has already passed" in past["text"]
-            status, denied = await post("add", theirs, turn=other.id, text="x", when="2030-01-01T10:00", weekday="")
+            status, denied = await post("set_reminder", other.id, theirs, text="x", when="2030-01-01T10:00", weekday="")
             assert not denied["ok"] and "not been granted" in denied["text"], "a grant, like the archive"
-            status, odd = await post("delete", turn=turn.id)
-            assert not odd["ok"] and "No such reminder action" in odd["text"]
-            assert (await post("list", {"Authorization": "Bearer wrong"}, turn=turn.id))[0] == 401
+            assert (await post("delete_reminder", turn.id))[0] == 404, "only the registry's tools"
+            assert (await post("list_reminders", turn.id, {"Authorization": "Bearer wrong"}))[0] == 401
         return core
 
     core = asyncio.run(run())
@@ -193,7 +203,8 @@ def test_the_zone_through_the_bus(tmp_path):
         mine = {"Authorization": f"Bearer {bus_token('secret', 'assistant')}"}
         turn = core.turns.open_root("assistant")
         async with TestClient(TestServer(BusServer(core, "secret", 0).app)) as http:
-            response = await http.post("/zone", json={"turn": turn.id, "zone": "Asia/Manila"}, headers=mine)
+            body = {"turn": turn.id, "arguments": {"zone": "Asia/Manila"}}
+            response = await http.post("/tools/set_timezone", json=body, headers=mine)
             said = await response.json()
         assert said["ok"] and said["text"].startswith("The zone is now Asia/Manila") and core.tz == "Asia/Manila"
         return core

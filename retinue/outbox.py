@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from . import clock, courier, pages
+from . import clock, courier, migrate, pages
 from .archive import CHAT, MAIL, exchange_of
 from .courier import MAIL as BY_MAIL, TELEGRAM as BY_TELEGRAM, CardView, Envelope, Refused
 from .mail import Unavailable, safe_label
@@ -92,6 +92,16 @@ class Neighbour:
         return base64.b64decode(data["data"])
 
 
+def _converge(db: sqlite3.Connection) -> None:
+    """Step 1: what the upgrade at open did before the steps were numbered — the columns no longer used dropped."""
+    for column in {"job", "private"} & migrate.columns(db, "drafts"):
+        db.execute(f"ALTER TABLE drafts DROP COLUMN {column}")  # a column no longer used
+
+
+# The store's numbered migrations (`migrate`, docs/migrations.md): append a step, never change one released.
+STEPS: tuple[migrate.Step, ...] = (_converge,)
+
+
 class OutboxStore:
     """The drafts, in the router's SQLite (never mounted into an agent): each card, its envelope and digest, how
     long it lives, and what became of it. A state moves only from the states named (`move`): two presses, a press
@@ -102,7 +112,7 @@ class OutboxStore:
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self.db = db
-        db.executescript(
+        migrate.run(db, "outbox", STEPS,
             """
             CREATE TABLE IF NOT EXISTS drafts (
                 id TEXT PRIMARY KEY,                -- 8 hex: the key a sender sends once
@@ -123,8 +133,6 @@ class OutboxStore:
             );
             CREATE INDEX IF NOT EXISTS drafts_state ON drafts (state);
             """)
-        for column in {"job", "private"} & {row[1] for row in db.execute("PRAGMA table_info(drafts)")}:
-            db.execute(f"ALTER TABLE drafts DROP COLUMN {column}")  # a column no longer used
         db.execute("UPDATE drafts SET state = 'expired' WHERE state = 'hidden'")  # a card never shown: nothing shows it
         db.commit()
 

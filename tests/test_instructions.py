@@ -60,23 +60,24 @@ def test_a_file_cannot_fake_the_end_of_its_fence_without_the_runs_nonce(work):
     assert one.index("<<<end repo-file guess>>>") < one.rindex(f"<<<end repo-file {nonce}>>>")
 
 
-# Probed with 2.1.304 and its default sources on the Mac (`cwd` is sub/): a CLAUDE file anywhere in the chain means
-# only CLAUDE files; with none, every AGENTS.md and .claude/AGENTS.md of the chain.
+# `cwd` is sub/. The CLAUDE files as 2.1.304 loads them with its default sources on the Mac (probed), in each folder
+# of the chain, top first; and every AGENTS.md and .claude/AGENTS.md of the chain after its folder's CLAUDE files —
+# which the CLI itself reads only when the chain has no CLAUDE file. Nothing below the cwd.
 @pytest.mark.parametrize("files, loaded", [
-    (["CLAUDE.md", "sub/AGENTS.md"], ["CLAUDE.md"]),
-    (["AGENTS.md", "sub/CLAUDE.md"], ["sub/CLAUDE.md"]),
+    (["CLAUDE.md", "sub/AGENTS.md"], ["CLAUDE.md", "sub/AGENTS.md"]),
+    (["AGENTS.md", "sub/CLAUDE.md"], ["AGENTS.md", "sub/CLAUDE.md"]),
     ([".claude/AGENTS.md"], [".claude/AGENTS.md"]),
-    (["CLAUDE.md", ".claude/AGENTS.md"], ["CLAUDE.md"]),
+    (["CLAUDE.md", ".claude/AGENTS.md"], ["CLAUDE.md", ".claude/AGENTS.md"]),
     (["AGENTS.md", ".claude/AGENTS.md"], ["AGENTS.md", ".claude/AGENTS.md"]),
-    (["CLAUDE.local.md", "AGENTS.md"], ["CLAUDE.local.md"]),
-    ([".claude/CLAUDE.md", "AGENTS.md"], [".claude/CLAUDE.md"]),
+    (["CLAUDE.local.md", "AGENTS.md"], ["CLAUDE.local.md", "AGENTS.md"]),
+    ([".claude/CLAUDE.md", "AGENTS.md"], [".claude/CLAUDE.md", "AGENTS.md"]),
     (["AGENTS.md", "sub/AGENTS.md"], ["AGENTS.md", "sub/AGENTS.md"]),
-    (["AGENTS.md", "sub/.claude/CLAUDE.md"], ["sub/.claude/CLAUDE.md"]),
+    (["AGENTS.md", "sub/.claude/CLAUDE.md"], ["AGENTS.md", "sub/.claude/CLAUDE.md"]),
     (["CLAUDE.md", "sub/deeper/AGENTS.md"], ["CLAUDE.md"]),
     (["CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md"], ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"]),
     ([".claude/CLAUDE.local.md", "AGENTS.md"], ["AGENTS.md"]),
 ])
-def test_which_files_load_is_what_the_cli_loads_on_the_mac(work, files, loaded):
+def test_which_files_load_the_clis_claude_files_and_every_agents_md_of_the_chain(work, files, loaded):
     repo = work / "kb"
     for rel in files:
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)

@@ -1,9 +1,25 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Feed } from "@/lib/feed";
+import type { Feed, FeedRow } from "@/lib/feed";
 import { live } from "@/lib/live";
-import { dayWords, elapsed, finished, lastLine, running, SEEN_KEY, tickMs, turnStart, Visits } from "@/lib/today";
+import type { Plan, Task } from "@/lib/plan";
+import {
+  dayWords,
+  elapsed,
+  finished,
+  keptMode,
+  lastLine,
+  MODE_KEY,
+  projectTitle,
+  running,
+  SEEN_KEY,
+  sessionRequests,
+  tickMs,
+  todaySearch,
+  turnStart,
+  Visits,
+} from "@/lib/today";
 import type { Item, Session } from "@/lib/types";
 import { TodayView } from "@/pages/today";
 
@@ -27,6 +43,7 @@ function mount(node: React.ReactNode) {
 afterEach(() => {
   vi.restoreAllMocks();
   live.stop();
+  localStorage.clear();
 });
 
 describe("what «Today» folds", () => {
@@ -196,5 +213,166 @@ describe("TodayView", () => {
     expect(await screen.findByText("Nothing is waiting for you.")).toBeTruthy();
     for (const name of ["Working", "Done since you looked", "Dates"]) expect(screen.queryByRole("region", { name })).toBeNull();
     expect(screen.queryByRole("list", { name: "Status" })).toBeNull();
+  });
+});
+
+// --- by project, and the operator ---------------------------------------------------------------------------------
+
+const row = (key: string, over: Partial<FeedRow>): FeedRow => ({
+  key,
+  action: "read",
+  source: "session",
+  session: null,
+  track: "notes",
+  sphere: null,
+  sphere_title: null,
+  sphere_icon: null,
+  title: key,
+  since: NOW - 600,
+  essence: "",
+  ref: key,
+  ...over,
+});
+
+const task = (id: string, fields: Task["fields"]): Task => ({ id, fields: { state: "open", ...fields }, version: 1, created: NOW - 9000, updated: NOW - 9000 });
+
+function plan(rows: Task[]): Plan {
+  return {
+    now: NOW,
+    tz: "UTC",
+    tasks: { rows, rev: null, space: "home", goals: [{ value: "work", label: "Work" }], missing: false, blocks: [] },
+    calendar: { events: [], at: NOW, failed: 0, stale: false },
+    asks: [],
+    reminders: [],
+    plan: { at: null, plans: {}, holds: [], said: {}, window: { zone: "UTC", opens: "09:00", closes: "23:00" } },
+  };
+}
+
+const SPHERES = [{ name: "travel", title: "Travel", icon: "", track: "notes" }];
+
+const BY_PROJECT: Feed = {
+  schema: 1,
+  count: 3,
+  bot: "retinue_bot",
+  assistant_at: NOW - 60,
+  deadlines: [],
+  chips: [],
+  groups: [
+    {
+      action: "read",
+      title: "Read",
+      rows: [
+        row("read:old", { session: "old", title: "Session old", project: "work/acme" }),
+        row("read:loose", { session: "loose", title: "Session loose", project: null }),
+        row("read:trip", { session: "trip", title: "Session trip", project: "travel/ensk" }),
+      ],
+    },
+    {
+      action: "assistant",
+      title: "From the assistant",
+      rows: [
+        row("assistant:chat:1", {
+          action: "assistant",
+          source: "chat",
+          track: null,
+          title: "Anna Petrova",
+          essence: "reply: is a transfer needed",
+          ref: "chat:1",
+          sphere: "travel",
+        }),
+      ],
+    },
+  ],
+};
+
+describe("«Today» by action", () => {
+  it("names a project in the owner's words", () => {
+    expect(projectTitle("travel/ensk", SPHERES)).toBe("Travel / ensk");
+    expect(projectTitle("/work/acme/", SPHERES)).toBe("work / acme");
+    expect(projectTitle("", SPHERES)).toBe("Other");
+  });
+
+  it("test_today_is_by_action_every_row_names_its_project_and_an_old_by_project_lands_on_by_action", async () => {
+    // «By project» duplicated the left panel's projects: a device that kept it opens by action
+    localStorage.setItem(MODE_KEY, "project");
+    const tasks = plan([
+      task("t1", { title: "Send Acme the draft", project: "work/acme", due: "1970-01-12" }),
+      task("t2", { title: "Book the dentist" }),
+    ]);
+    const view = () => (
+      <TodayView feed={BY_PROJECT} sessions={[]} spheres={SPHERES} since={NOW} now={NOW} plan={{ plan: tasks, error: null, reload: () => undefined }} />
+    );
+    const first = mount(view());
+
+    const show = await screen.findByRole("group", { name: "Show" });
+    expect(within(show).getAllByRole("button").map((b) => b.textContent)).toEqual(["By action", "Operator", "Map"]);
+    expect(within(show).getByRole("button", { name: "By action" }).getAttribute("aria-pressed")).toBe("true");
+    const flat = screen.getByRole("region", { name: "Waiting for you" });
+    expect(within(flat).queryAllByRole("region")).toEqual([]);
+    const rows = within(flat).getAllByTestId("inbox-row").map((r) => r.textContent);
+    expect(rows).toEqual([
+      expect.stringContaining("Session old"),
+      expect.stringContaining("Session loose"),
+      expect.stringContaining("Session trip"),
+      expect.stringContaining("Anna Petrova"),
+    ]);
+    // the second line says where each comes from: its project, or its sphere's; nothing for one of neither
+    expect(rows[0]).toMatch(/Session old.*work$/);
+    expect(rows[1]).not.toContain(" · ");
+    expect(rows[2]).toMatch(/Session trip.*Travel$/);
+    expect(rows[3]).toContain("Travel · is a transfer needed");
+    // the tasks are a tab of their own («Tasks»), never among what waits
+    for (const title of ["Send Acme the draft", "Book the dentist"]) expect(screen.queryByText(title)).toBeNull();
+
+    fireEvent.click(within(show).getByRole("button", { name: "Operator" }));
+    expect(localStorage.getItem(MODE_KEY)).toBe("operator");
+    first.unmount(); // kept on the device: the next visit opens as he left it
+    mount(view());
+    const again = await screen.findByRole("group", { name: "Show" });
+    expect(within(again).getByRole("button", { name: "Operator" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("takes the way from the address: `?mode=operator`, and an old `?mode=project` as «By action»", () => {
+    expect(todaySearch({ mode: "operator" })).toEqual({ mode: "operator" });
+    expect(todaySearch({ mode: "project" })).toEqual({ mode: "action" });
+    expect(todaySearch({ mode: "map" })).toEqual({ mode: "map" });
+    expect(todaySearch({ mode: "board" })).toEqual({});
+    expect(todaySearch({ tab: "tasks", mode: "operator" })).toEqual({ tab: "tasks" });
+    expect(keptMode({ getItem: () => "project" })).toBe("action");
+  });
+
+  it("test_operator_mode_shows_only_the_sessions_requests", async () => {
+    vi.spyOn(live, "watch").mockResolvedValue(undefined);
+    const feed: Feed = {
+      ...BY_PROJECT,
+      groups: [
+        {
+          action: "decide",
+          title: "Decide",
+          rows: [row("cproposal:p1", { action: "decide", source: "collection_proposal", track: null, title: "Assistant", essence: "tasks: 1 change proposed", ref: "p1" })],
+        },
+        {
+          action: "reply",
+          title: "Reply",
+          rows: [row("reply:r/1", { action: "reply", session: "r", title: "Pick a venue", essence: "Two venues hold the date", project: "work/acme" })],
+        },
+        { action: "read", title: "Read", rows: [row("read:old", { session: "old", title: "Session old", essence: "Done: three hotels" })] },
+        ...BY_PROJECT.groups.filter((g) => g.action === "assistant"),
+      ],
+    };
+    const sessions = [session("run", { state: "active", turn_started: NOW - 60, title: "Trip to Ensk" })];
+    const tasks = plan([task("t1", { title: "Send Acme the draft" })]);
+    mount(<TodayView feed={feed} sessions={sessions} spheres={SPHERES} since={NOW} now={NOW} plan={{ plan: tasks, error: null, reload: () => undefined }} />);
+    fireEvent.click(within(await screen.findByRole("group", { name: "Show" })).getByRole("button", { name: "Operator" }));
+
+    const cards = screen.getAllByTestId("operator-card");
+    expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual(["Pick a venue", "Session old"]); // one card each
+    expect(within(cards[0]!).getByText(/work \/ acme · Pick a venue · waits for your message/)).toBeTruthy();
+    expect(within(cards[0]!).getByText("Two venues hold the date")).toBeTruthy();
+    expect(within(cards[0]!).getByRole("textbox", { name: "Your message" })).toBeTruthy();
+    expect(within(cards[1]!).getByRole("link", { name: /Open the session/ }).getAttribute("href")).toBe("/s/old");
+    for (const gone of ["Anna Petrova", "Assistant", "Trip to Ensk", "Send Acme the draft"]) expect(screen.queryByText(gone)).toBeNull();
+    expect(screen.queryByRole("region", { name: "Working" })).toBeNull();
+    expect(sessionRequests(feed).map((r) => r.key)).toEqual(["reply:r/1", "read:old"]);
   });
 });

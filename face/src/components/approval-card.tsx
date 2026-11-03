@@ -36,16 +36,12 @@ export function ApprovalCard(props: Props) {
   return <DecisionCard {...props} />;
 }
 
-function DecisionCard({ approval, live = defaultLive, decide = api.decide, courierDone = api.courierDone, className, onDecided }: Props) {
-  const [busy, setBusy] = useState<"approve" | "reject" | "done" | null>(null);
-  const courier = approval.kind === "courier";
-  const pressable = !courier && approval.state === "shown";
-  const [title, ...head] = approval.view.head.length ? approval.view.head : [`Approval · ${approval.tool}`];
-  // The last header line names the input («Input, N characters:»); the face shows the input itself below it.
-  const body = markInput(inputText(approval));
-  const fields = extraFields(approval);
-  const link = approval.view.link && approval.view.link.length === 2 ? approval.view.link : null;
-
+/** «Allow» / «Deny», bound to the card's digest as a Telegram press: the card as it now reads goes to the store. */
+export function useDecision(
+  approval: Approval,
+  { live = defaultLive, decide = api.decide, onDecided }: Pick<Props, "live" | "decide" | "onDecided"> = {},
+) {
+  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   async function press(action: "approve" | "reject") {
     setBusy(action);
     try {
@@ -60,10 +56,31 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, couri
       setBusy(null);
     }
   }
+  return { busy, press };
+}
+
+/** A card's first header line without the platform's track and session («Approval · retinue · session a1b2c3d4» →
+ * «Approval»): which session it is, the screen around it says. */
+export const cardTitle = (line: string) => line.replace(/ · session \S+.*$/, "").replace(/^(Approval|Courier) · [^·]+$/, "$1");
+
+function DecisionCard({ approval, live = defaultLive, decide = api.decide, courierDone = api.courierDone, className, onDecided }: Props) {
+  const decision = useDecision(approval, { live, decide, onDecided });
+  const [closing, setClosing] = useState(false);
+  const busy = decision.busy ?? (closing ? "done" : null);
+  const courier = approval.kind === "courier";
+  const pressable = !courier && approval.state === "shown";
+  const [first, ...head] = approval.view.head.length ? approval.view.head : [`Approval · ${approval.tool}`];
+  const title = cardTitle(first!);
+  // The last header line names the input («Input, N characters:»); the face shows the input itself below it.
+  const body = markInput(inputText(approval));
+  const fields = extraFields(approval);
+  const link = approval.view.link && approval.view.link.length === 2 ? approval.view.link : null;
+
+  const press = decision.press;
 
   /** A courier card closed: done by hand, or not to be done. */
   async function close() {
-    setBusy("done");
+    setClosing(true);
     try {
       const res = await courierDone(approval.id);
       toast(res.toast);
@@ -72,7 +89,7 @@ function DecisionCard({ approval, live = defaultLive, decide = api.decide, couri
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
     } finally {
-      setBusy(null);
+      setClosing(false);
     }
   }
 

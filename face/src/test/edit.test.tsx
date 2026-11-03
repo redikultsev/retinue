@@ -179,7 +179,8 @@ describe("writing from the screen", () => {
     const asked = await screen.findByTestId("conflict");
     expect(asked.textContent).toContain("It may be the same as “Call back”");
     expect(api.write.mock.calls[0]![1]).toEqual([{ op: "add", fields: { deal: ids.acme, date: "2026-09-16", state: "draft" } }]);
-    await act(async () => fireEvent.click(within(asked).getByRole("button", { name: "Add anyway" })));
+    const anyway = await screen.findByRole("button", { name: "Add anyway" }); // drawn a tick after the card
+    await act(async () => fireEvent.click(anyway));
     await waitFor(() => expect(api.write).toHaveBeenCalledTimes(2));
     expect(api.write.mock.calls[1]![1]).toEqual([{ op: "add", fields: { deal: ids.acme, date: "2026-09-16", state: "draft" }, distinct: true }]);
     await waitFor(() => expect(screen.queryByTestId("add-sheet")).toBeNull());

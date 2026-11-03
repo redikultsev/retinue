@@ -10,6 +10,8 @@ import { live as theLive, type Live } from "./live";
 export interface TaskFields {
   title?: string;
   goal?: string;
+  /** The project it belongs to: its path in the Base (`work/acme`); absent: none. */
+  project?: string;
   state?: "open" | "done" | "dropped";
   due?: string;
   /** «No later than»: no piece of it is laid to end after this moment. */

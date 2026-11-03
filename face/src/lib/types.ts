@@ -31,6 +31,8 @@ export interface Meta {
   spheres?: Sphere[];
   /** The owner's voice works here: the platform has the key and a way out. Absent from a platform before it. */
   speech?: boolean;
+  /** The voice's sphere: its main session is «Talk to Retinue». Null: no voice; absent: a platform before it. */
+  voice?: string | null;
 }
 
 export interface Session {
@@ -73,6 +75,11 @@ export interface Session {
   queued?: boolean;
   /** The owner archived it: out of every list until a turn of it begins again (its link still opens it). */
   archived?: boolean;
+  /** The Base folder it runs in (`work/acme`); absent: none, or a platform before it. */
+  project?: string;
+  /** Its place on the map among its project's live sessions, kept for its whole life (retinue/sessions.py
+   * `take_slot`); absent: a session from before the map, or a platform before it. */
+  slot?: number;
 }
 
 /** What the face says of a session whose run waits for room. */

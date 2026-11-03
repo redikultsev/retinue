@@ -11,7 +11,7 @@ import math
 import pytest
 
 from retinue import feed
-from retinue.config import Sphere
+from retinue.config import BaseConfig, Sphere
 from test_face import FaceWorld, faced
 from test_platformd import DAY, HOUR, World, decision, deferred_session, scenario, short_wait  # noqa: F401
 from test_pings import turn
@@ -469,3 +469,38 @@ def test_a_call_held_by_a_router_that_restarted_takes_nothing_from_the_newer_one
         number = details.ask("draft:0000000c", None)
         assert await old == [] and [a["r"] for a in await new] == [number]
     asyncio.run(go())
+
+
+# --- by project -----------------------------------------------------------------------------------------------------
+
+def test_a_folder_of_the_base_is_its_projects_path_and_one_outside_is_none():
+    assert feed.project_of("base/work/acme/", "base") == "work/acme"
+    assert feed.project_of("/base/work", "base/") == "work"
+    assert feed.project_of("base", "base") is None, "the Base's root is no one project"
+    assert feed.project_of("notes", "base") is None and feed.project_of("basement/x", "base") is None
+    assert feed.project_of("base/../etc", "base") is None and feed.project_of(None, "base") is None
+    assert feed.project_of("base/.claude/x", "base") is None, "no dot-led folder is a project"
+
+
+def test_a_row_names_the_project_it_comes_from(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        world.cfg.base = BaseConfig(author="Anna Petrova <anna@example.com>")
+        acme = await turn(world, "The draft is ready.", input_id_="tg:60", took=60)
+        root = await turn(world, "Looked over the whole Base.", input_id_="tg:61", took=60)
+        outside = await turn(world, "Nothing to file.", input_id_="tg:62", took=60)
+        older = await turn(world, "Before the folder was kept.", input_id_="tg:63", took=60)
+        for session, cwd in ((acme, "base/work/acme"), (root, "base"), (outside, "notes"), (older, None)):
+            world.store.db.execute("UPDATE sessions SET cwd = ? WHERE id = ?", (cwd, session))
+        world.store.db.commit()
+        await world.owner("waiting", {"items": [item(1)]})
+
+        rows = {r["ref"]: r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]}
+        assert [rows[s]["project"] for s in (acme, root, outside, older)] == ["work/acme", None, None, None], \
+            "a session's by its folder in the Base; the track's folder for one older than the column"
+        assert rows[item(1)["id"]]["project"] is None, "hers come from no project: «Other»"
+        world.cfg.base = None
+        rows = {r["ref"]: r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]}
+        assert rows[acme]["project"] is None, "no Base, no projects"
+
+    faced(tmp_path, body)

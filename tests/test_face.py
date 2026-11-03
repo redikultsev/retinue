@@ -123,8 +123,21 @@ def test_a_code_from_app_logs_in_once_and_is_kept_only_as_its_hash(tmp_path):
                         "tracks": [{"name": "retinue", "lane": "code", "kind": "code"},
                                    {"name": "notes", "lane": "private", "kind": "private"}], "general": "notes",
                         "spheres": [],
-                        "speech": False}
+                        "speech": False, "voice": None}
         assert (await world.call("GET", "/api/meta", cookie="forged"))[0] == 401
+
+    faced(tmp_path, body)
+
+
+def test_the_meta_names_the_voices_sphere_for_the_apps_chat(tmp_path):
+    """With a voice (`voice.py`), the app's «Talk to Retinue» is its sphere's main session: the meta names that sphere;
+    without one it is null and the chat says the voice is not configured."""
+    async def body(world: FaceWorld):
+        await world.login()
+        assert (await world.get("/api/meta"))["voice"] is None
+        world.platform.voice = type("Voice", (), {"sphere": type("Sphere", (), {"name": "life"})()})()
+        assert (await world.get("/api/meta"))["voice"] == "life"
+        world.platform.voice = None
 
     faced(tmp_path, body)
 
@@ -318,7 +331,7 @@ def test_the_snapshot_has_the_shapes_the_face_reads(tmp_path):
                        "created": row["created"], "at": row["at"], "title": "почини", "waiting": 1,
                        "pinned": False, "parent": None, "sphere": None, "main": False, "fork_of": None,
                        "unread": row["unread"], "base": 0, "push": 0, "turn_started": row["created"],
-                       "side": False, "sub_of": None, "children": 0, "queued": False}
+                       "side": False, "sub_of": None, "children": 0, "queued": False, "slot": 0}
 
         snapshot = await world.get(f"/api/sessions/{session}")
         assert set(snapshot) == {"schema", "cursor", "session", "items", "approvals", "summaries", "inputs", "files",

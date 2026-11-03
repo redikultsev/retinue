@@ -12,7 +12,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as fx from "./fixtures.ts";
 import { mockCollections, mockProposals, mockWrite, moveDeal, seedProposals, waitingProposals } from "./collections.ts";
-import { mockSpaces } from "./spaces.ts";
+import { mockBase, mockSpaces } from "./spaces.ts";
 import type { Approval, Input, Item, Proposal, Session, Summary } from "../src/lib/types.ts";
 
 const PORT = Number(process.env.MOCK_PORT ?? 9601);
@@ -61,29 +61,49 @@ const DETAILS: Record<string, unknown> = {
 const pressed = new Set<string>();
 let closedToday = 1;
 
+/** A turn ending's one line, as the platform says it (retinue/feed.py `_ending_essence`). */
+function endingLine(e: Record<string, unknown>): string {
+  const first = (e.artifact ?? (e.artifacts as unknown[] | undefined)?.[0] ?? {}) as Record<string, string | undefined>;
+  const said = { ask: e.context ?? e.why, approve: e.will, look: first.title ?? first.path ?? first.url, step: e.what, done: e.what }[String(e.kind)];
+  return String(said ?? e.request ?? "");
+}
+
 function mockFeed() {
   const row = (s: Session, over: Record<string, unknown>) => ({
-    session: s.id, track: s.track, sphere: null, sphere_title: null, sphere_icon: null, title: s.title, ref: s.id, ...over,
+    session: s.id, track: s.track, sphere: null, sphere_title: null, sphere_icon: null, project: s.project ?? (s.sphere === "platform" ? "work/retinue" : (s.sphere ?? null)),
+    title: s.title, ref: s.id, ...over,
   });
   const cards = [...approvals.values()].filter((a) => (a.kind === "approval" || a.kind === "question") && a.state === "shown");
   const answer = cards.filter((a) => a.kind === "question" && sessions.get(a.session));
   const decide = cards.filter((a) => a.kind === "approval" && sessions.get(a.session));
-  const read = [...sessions.values()].filter((s) => s.state === "idle");
+  // a session whose turn ended with a word for the owner takes a row by its kind (retinue/feed.py, `ENDING_ACTIONS`);
+  // the mock keeps the word after an answer, so every width of the e2e run finds it
+  const ended = (kind: string) =>
+    [...sessions.values()].filter((s) => fx.endings[s.id]?.kind === kind).map((s) => row(s, { key: `ending:${s.id}`, source: "session", since: s.at, essence: endingLine(fx.endings[s.id]!), ending: fx.endings[s.id] }));
+  const read = [...sessions.values()].filter((s) => s.state === "idle" && !fx.endings[s.id]);
   const offered = [...proposals.values()].filter((p) => p.state === "open" && sessions.get(p.session));
   const writes = waitingProposals().filter((p) => p.session && sessions.get(p.session));
   const last = (id: string) => [...summaries.values()].filter((x) => x.session === id).at(-1);
   const groups = [
-    { action: "answer", title: "Answer the question", rows: answer.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "answer", source: "question", since: a.created, essence: "", approval: a, said: SAID })) },
+    { action: "answer", title: "Answer the question", rows: [
+      ...answer.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "answer", source: "question", since: a.created, essence: "", approval: a, said: SAID })),
+      ...ended("ask").map((r) => ({ ...r, action: "answer" })),
+    ] },
     { action: "decide", title: "Decide", rows: [
+      ...ended("approve").map((r) => ({ ...r, action: "decide" })),
       ...decide.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "decide", source: "approval", since: a.created, essence: "", approval: a })),
       ...offered.map((p) => row(sessions.get(p.session)!, { key: `proposal:${p.id}`, action: "decide", source: "proposal", since: p.created, essence: `Sub-session: ${p.title}`, proposal: p, hint: "Start it or set it aside in the app." })),
       ...writes.map((p) => row(sessions.get(p.session!)!, { key: `cproposal:${p.id}`, action: "decide", source: "collection_proposal", since: p.created, essence: `${p.collection}: ${p.changes.length} change${p.changes.length === 1 ? "" : "s"} proposed`, collection_proposal: p, hint: "Apply it or dismiss it in the app." })),
     ] },
-    { action: "read", title: "Read", rows: read.map((s) => row(s, { key: `read:${s.id}`, action: "read", source: "session", since: s.at, essence: last(s.id)?.text.split("\n")[0] ?? "" })) },
+    { action: "step", title: "Your step", rows: ended("step").map((r) => ({ ...r, action: "step" })) },
+    { action: "read", title: "Read", rows: [
+      ...[...ended("look"), ...ended("done")].map((r) => ({ ...r, action: "read" })),
+      ...read.map((s) => row(s, { key: `read:${s.id}`, action: "read", source: "session", since: s.at, essence: last(s.id)?.text.split("\n")[0] ?? "" })),
+    ] },
     { action: "assistant", title: "From the assistant", rows: [
-      ...ASKS.filter((a) => !pressed.has(a.t)).map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, ...a })),
-      ...OTHERS.map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, ...a })),
-      { key: "assistant:deadline:1", action: "assistant", source: "deadline", session: null, track: null, sphere: "home", sphere_title: "home", sphere_icon: null, title: "Base", since: now() - 86400, essence: "tomorrow: Pay for the internet — due", ref: "deadline:1" },
+      ...ASKS.filter((a) => !pressed.has(a.t)).map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, project: null, ...a })),
+      ...OTHERS.map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, project: null, ...a })),
+      { key: "assistant:deadline:1", action: "assistant", source: "deadline", session: null, track: null, sphere: "home", sphere_title: "home", sphere_icon: null, project: null, title: "Base", since: now() - 86400, essence: "tomorrow: Pay for the internet — due", ref: "deadline:1" },
     ] },
   ].filter((g) => g.rows.length);
   const day = (n: number) => new Date(Date.now() + n * 86400_000).toISOString().slice(0, 10);
@@ -337,7 +357,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
   if (!authed(req)) return json(res, 401, { error: "Log in first." });
 
-  if (path === "/api/meta") return json(res, 200, { schema: 1, owner_ok: true, tracks: fx.tracks, general: "notes", spheres: fx.spheres, face_origin: "http://127.0.0.1:5173", speech: true });
+  if (path === "/api/meta") return json(res, 200, { schema: 1, owner_ok: true, tracks: fx.tracks, general: "notes", spheres: fx.spheres, face_origin: "http://127.0.0.1:5173", speech: true, voice: "voice" });
 
   // The owner's voice: the recording is read and dropped; a canned transcript per mode (no ElevenLabs here).
   if (path === "/api/speech" && method === "POST") {
@@ -411,6 +431,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
   const space = method === "GET" ? mockSpaces(path) : null;
   if (space) return json(res, space.status, space.data);
+  const file = method === "GET" ? mockBase(path) : null;
+  if (file) {
+    res.writeHead(200, { "Content-Type": file.type, "Cache-Control": "no-store" });
+    return res.end(file.body);
+  }
   // «Pages»: synthetic pages on a made-up pages service; `open` and `done` kept in memory like the platform's table.
   if (path === "/api/library" && method === "GET") return json(res, 200, { schema: 1, origin: MOCK_PAGES, at: now() - 120, pages: [...library.values()] });
   const reading = /^\/api\/library\/([a-z0-9-]+)\/(open|done)$/.exec(path);
@@ -510,7 +535,8 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     if (!track || !String(b.text ?? "").trim()) return json(res, 400, { error: "A track and a text are needed." });
     const id = randomBytes(4).toString("hex");
     const text = String(b.text);
-    sessions.set(id, { id, track: track.name, lane: track.lane, kind: track.kind, state: "active", created: now(), at: now(), title: text.slice(0, 80), waiting: 0, sphere: sphere?.name ?? null, main: b.main === true });
+    const made: Session = { id, track: track.name, lane: track.lane, kind: track.kind, state: "active", created: now(), at: now(), title: text.slice(0, 80), waiting: 0, sphere: sphere?.name ?? null, main: b.main === true, ...(typeof b.project === "string" && b.project ? { project: b.project } : {}) };
+    sessions.set(id, { ...made, slot: fx.freeSlot(sessions.values(), made) }); // its place on the map (retinue/sessions.py `take_slot`)
     emit("session", id, sessions.get(id));
     const out = { session: id };
     seenInputs.set(key, out);

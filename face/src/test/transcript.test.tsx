@@ -222,7 +222,9 @@ describe("summaries", () => {
       />,
     );
     const [first, second] = screen.getAllByTestId("summary");
-    expect(first!.textContent).toBe("Result · code · session s1 #1");
+    // the platform's head without its track and session id: its first word and when
+    expect(first!.textContent).toMatch(/^Result · /);
+    expect(first!.textContent).not.toContain("session s1");
     expect(second!.textContent).toContain("The turn broke off with an error: overloaded");
     expect(screen.getAllByText("Done, the tests are green.")).toHaveLength(1);
   });

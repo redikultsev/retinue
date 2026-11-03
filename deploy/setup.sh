@@ -451,6 +451,11 @@ if [[ $PLATFORM_ON == 1 ]]; then
   chmod 600 "$ROOT/code/tokens.env"
   [[ -f $ROOT/egress/platform-hosts.txt ]] || \
     install -m 644 "$REPO/deploy/egress/platform-hosts.txt" "$ROOT/egress/platform-hosts.txt"
+  # A project's own hosts (docs/platform.md): the owner's lists, empty until he writes one (the example is
+  # deploy/egress/projects/travel.example.yaml), read-only in the platform alone; their keys, root's alone.
+  install -d -m 755 "$ROOT/egress/projects"
+  [[ -f $ROOT/egress/project-keys.env ]] || (umask 077; : > "$ROOT/egress/project-keys.env")
+  chmod 600 "$ROOT/egress/project-keys.env"
   # The owner's voice in the app (docs/face.md «Voice»): ElevenLabs' API added to a list written before it — once,
   # remembered by a marker, so a line the owner removes later stays removed. A last line without its newline gets one.
   HOSTS=$ROOT/egress/platform-hosts.txt
@@ -633,15 +638,25 @@ chmod 600 "$STACK"
 # Backup: restic on the host, not in the stack — it must outlive a broken deploy, and its keys stay out of Dokploy.
 BACKUP_ENV="$ROOT/backup.env"
 RESTIC_VERSION=0.19.1
-# restic_0.19.1_linux_amd64.bz2 in the release's SHA256SUMS, signed by CF8F18F2844575973F79D4E191A6868BD3F7A907
-RESTIC_SHA256=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
+# restic_0.19.1_linux_<arch>.bz2 in the release's SHA256SUMS, signed by CF8F18F2844575973F79D4E191A6868BD3F7A907:
+# amd64 for an x86 server, arm64 for an ARM one, chosen by `uname -m`.
+RESTIC_SHA256_AMD64=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
+RESTIC_SHA256_ARM64=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465
 install_restic() {
   [[ $(/usr/local/bin/restic version 2>/dev/null) == "restic $RESTIC_VERSION "* ]] && return 0
-  [[ $(uname -m) == x86_64 ]] || { echo "restic: only linux amd64 is pinned here; install restic $RESTIC_VERSION" >&2; return 1; }
-  local tmp; tmp=$(mktemp -d)
+  local arch sha tmp machine; machine=$(uname -m)
+  case $machine in
+    x86_64) arch=amd64 sha=$RESTIC_SHA256_AMD64 ;;
+    aarch64 | arm64) arch=arm64 sha=$RESTIC_SHA256_ARM64 ;;
+    *) echo "restic: only linux amd64 and arm64 are pinned here, not $machine; install restic $RESTIC_VERSION" >&2
+       return 1 ;;
+  esac
+  tmp=$(mktemp -d)
   curl -fsSL -o "$tmp/restic.bz2" \
-    "https://github.com/restic/restic/releases/download/v$RESTIC_VERSION/restic_${RESTIC_VERSION}_linux_amd64.bz2"
-  echo "$RESTIC_SHA256  $tmp/restic.bz2" | sha256sum -c --quiet -
+    "https://github.com/restic/restic/releases/download/v$RESTIC_VERSION/restic_${RESTIC_VERSION}_linux_$arch.bz2"
+  # Refused here, not by set -e alone: errexit is off inside a function called from an `if` or before `||`.
+  echo "$sha  $tmp/restic.bz2" | sha256sum -c --quiet - || {
+    echo "restic: restic_${RESTIC_VERSION}_linux_$arch.bz2 is not the pinned file" >&2; rm -rf "$tmp"; return 1; }
   python3 -c 'import bz2, sys; sys.stdout.buffer.write(bz2.open(sys.argv[1]).read())' "$tmp/restic.bz2" > "$tmp/restic"
   install -m 755 "$tmp/restic" /usr/local/bin/restic
   rm -rf "$tmp"

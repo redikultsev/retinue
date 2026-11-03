@@ -1,22 +1,39 @@
-// The sessions grouped by sphere (lib/spheres.ts), as Claude Code's sidebar has them: sphere → its main session first
-// → what hangs under it (sub-sessions, forks, side questions), indented; a sphere and a session with rows under it fold,
-// and the device remembers it. «Waiting» / «Working» / «Done» / «Pinned» are filters; «Archived», last, lists what
+// The projects and their sessions (lib/spheres.ts `projectGroups`): a project is a place — its row opens its page and
+// carries the amber count of what waits in it —, a sub-project indented inside it, under each its own sessions as
+// Claude Code's sidebar has them: its main session first → what hangs under it (sub-sessions, forks, side questions),
+// indented; a project and a session with rows under it fold, and the device remembers it. «Waiting» / «Working» / «Done» / «Pinned» are filters; «Archived», last, lists what
 // was archived, with «Restore» (components/archived-list.tsx), for this visit only. A waiting session shows
 // its cards under its row, with the full input and both buttons, when `cards` is set. A row opens inline (a peek):
 // the session's last words and a reply box, without leaving the list. A dot marks what came since the owner looked.
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { ArchivedList } from "@/components/archived-list";
 import { Composer } from "@/components/composer";
-import { Archive, ArrowUp, ChevronDown, Clock, Columns, Database, Fork, GitPullRequest, Pin, Plus, SphereMark, Star } from "@/components/icons";
+import {
+  Archive,
+  ArrowUp,
+  ChevronDown,
+  Clock,
+  Columns,
+  Database,
+  GitPullRequest,
+  Layers,
+  Pin,
+  Plus,
+  SphereMark,
+  Star,
+} from "@/components/icons";
 import { NewSession } from "@/components/new-session";
+import { RELATION_WORDS, RelationIcon, upOf } from "@/components/relation";
 import { SessionMenu } from "@/components/session-menu";
 import { Markdown } from "@/components/transcript/item";
 import { ApiError, api } from "@/lib/api";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
-import { FILTERS, type Filter, type FoldedRow, foldRows, isWaiting, sphereGroups } from "@/lib/spheres";
+import { useFeed } from "@/lib/feed";
+import { knownProjects, rowWaits, rowWithin, sessionProject, useProjects, within } from "@/lib/projects";
+import { FILTERS, type Filter, type FoldedRow, foldProjects, foldRows, isWaiting, type ProjectGroup, projectGroups } from "@/lib/spheres";
 import { approvalsOf, lastWords, listed, orderedItems, orderedSummaries, waitsOnOwner } from "@/lib/store";
 import { toast } from "@/lib/toast";
 import { QUEUED, type Session, type Sphere } from "@/lib/types";
@@ -48,6 +65,21 @@ function useFolded(): [ReadonlySet<string>, (key: string) => void] {
     }
   }
   return [folded, toggle];
+}
+
+/** The project whose page is on screen, by the address: `/spaces/travel` → `travel`, `/spaces/work/p/acme` →
+ * `work/acme`; "" elsewhere. */
+export function projectOfPath(pathname: string): string {
+  const m = /^\/spaces\/([^/]+)(?:\/p\/(.+?))?\/?$/.exec(pathname);
+  if (!m || m[1] === undefined) return "";
+  const dec = (s: string) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
+  return m[2] ? `${dec(m[1])}/${dec(m[2])}` : dec(m[1]);
 }
 
 function savedFilter(): Filter {
@@ -177,6 +209,7 @@ function Row({
     }
   }
   const on = current === s.id;
+  const up = upOf(s);
   const action =
     "hit inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3.5";
   return (
@@ -203,12 +236,17 @@ function Row({
           <span className={cn("min-w-0 flex-1 truncate text-[13px] pointer-coarse:text-[15px]", s.unread ? "font-medium text-foreground" : "text-foreground/85")}>
             {s.main && (
               <>
-                <Star className="mr-1 inline size-3 fill-current align-[-1px] text-primary" />
+                <Star className="mr-1 inline size-3 fill-current align-[-1px] text-muted-foreground" />
                 <span className="sr-only">main: </span>
               </>
             )}
-            {nested && <span className="text-muted-foreground">side question: </span>}
-            {s.fork_of && !nested && <span className="text-muted-foreground">fork: </span>}
+            {(nested || up) && (
+              // how it hangs under the row above: one icon per relation, the same as in its header and «Details»
+              <span title={RELATION_WORDS[nested ? "side question" : up!.how]} className="text-muted-foreground">
+                <RelationIcon how={nested ? "side question" : up!.how} className="mr-1 inline size-3 align-[-1px]" />
+                <span className="sr-only">{nested ? "side question" : up!.how}: </span>
+              </span>
+            )}
             {s.title || s.track}
           </span>
           <span className="flex shrink-0 items-center gap-1.5 pointer-fine:group-hover/row:hidden pointer-fine:group-focus-within/row:hidden">
@@ -261,9 +299,8 @@ function Row({
               folded ? "text-foreground" : "text-muted-foreground",
             )}
           >
-            <Fork className="size-3" />
-            {kids}
             <ChevronDown className={cn("size-3 transition-transform", folded && "-rotate-90")} />
+            {kids}
             {hiddenWaiting > 0 && (
               <span aria-hidden="true" className="ml-0.5 rounded-full bg-warning px-1 text-[11px] leading-4 font-medium text-warning-foreground">
                 {hiddenWaiting}
@@ -307,62 +344,105 @@ function Row({
   );
 }
 
-function Group({
-  title,
-  icon,
+/** A project in the list: a place — its row opens the project's page —, its mark, its name and the amber count of
+ * what waits for the owner in it (its sub-projects too); a chevron folds what is under it. «Other» is a heading only. */
+function ProjectHead({
+  group,
+  waiting,
   count,
   folded,
-  waiting,
   onFold,
   onNew,
-  children,
+  on,
 }: {
-  title: string;
-  /** Its sphere's mark. */
-  icon?: string;
+  group: ProjectGroup;
+  waiting: number;
+  /** Sessions under it, its sub-projects' too: said when it is folded. */
   count: number;
   folded: boolean;
-  /** What in it waits on the owner: said on the folded heading. */
-  waiting: number;
   onFold: () => void;
   onNew?: () => void;
-  children?: React.ReactNode;
+  /** Its page is the one on screen. */
+  on: boolean;
 }) {
+  const inner = (
+    <>
+      {group.key === "" ? null : group.icon ? (
+        <SphereMark icon={group.icon} className="size-3.5 shrink-0 text-muted-foreground" />
+      ) : (
+        <Layers className="size-3.5 shrink-0 text-muted-foreground" />
+      )}
+      <span className={cn("min-w-0 flex-1 truncate", group.key === "" ? "text-xs text-muted-foreground" : "font-medium text-foreground")}>{group.title}</span>
+      {waiting > 0 && (
+        <span title={`${waiting} waiting for you`} className="shrink-0 font-mono text-[11px] font-medium text-warning-foreground tabular-nums dark:text-warning">
+          {waiting}
+        </span>
+      )}
+    </>
+  );
+  const line = "flex h-[30px] min-w-0 flex-1 items-center gap-2 self-stretch pl-2 text-[13px] pointer-coarse:min-h-11 pointer-coarse:text-[15px]";
   return (
-    <section className="group/sphere flex flex-col">
-      <div className="flex items-center pt-2">
-        <h2 className="min-w-0 flex-1">
-          <button
-            type="button"
-            aria-expanded={!folded}
-            onClick={onFold}
-            className="flex h-7 w-full items-center gap-1 rounded-md px-2 text-left text-xs text-muted-foreground hover:text-foreground pointer-coarse:min-h-11"
+    <div
+      className={cn("group/sphere flex items-center gap-0.5 rounded-md pr-1", group.depth === 0 && "mt-2", on ? "bg-accent" : group.key && "hover:bg-accent/70")}
+      style={{ paddingLeft: group.depth ? `${group.depth * 0.875}rem` : undefined }}
+    >
+      {group.key === "" ? (
+        <h2 className={line}>{inner}</h2>
+      ) : (
+        <h2 className="flex min-w-0 flex-1">
+          <ProjectLink
+            path={group.key}
+            className={line}
+            label={`Open the project ${group.title}${waiting ? ` · ${waiting} waiting for you` : ""}`}
+            current={on}
           >
-            <SphereMark icon={icon} className="size-3.5 shrink-0" />
-            <span className="truncate">{title}</span>
-            <ChevronDown className={cn("size-3 shrink-0 transition-transform", folded && "-rotate-90")} />
-            <span className="text-[11px] text-muted-foreground/70 tabular-nums">{count}</span>
-            {folded && waiting > 0 && (
-              <span role="note" aria-label={`${waiting} waiting`} className="ml-1 rounded-sm bg-warning/20 px-1 text-[11px] leading-4 font-medium text-warning-foreground dark:text-warning">
-                {waiting} waiting
-              </span>
-            )}
-          </button>
+            {inner}
+          </ProjectLink>
         </h2>
-        {onNew && (
-          <button
-            type="button"
-            aria-label={`New session: ${title}`}
-            title="New session in this sphere"
-            onClick={onNew}
-            className="hit inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground pointer-fine:opacity-0 pointer-fine:group-hover/sphere:opacity-100 pointer-fine:focus-visible:opacity-100 [&_svg]:size-3.5"
-          >
-            <Plus />
-          </button>
-        )}
-      </div>
-      {!folded && children}
-    </section>
+      )}
+      {onNew && (
+        <button
+          type="button"
+          aria-label={`New session: ${group.title}`}
+          title="New session in this project"
+          onClick={onNew}
+          className="hit inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground pointer-fine:opacity-0 pointer-fine:group-hover/sphere:opacity-100 pointer-fine:focus-visible:opacity-100 [&_svg]:size-3.5"
+        >
+          <Plus />
+        </button>
+      )}
+      {(count > 0 || folded) && (
+        <button
+          type="button"
+          aria-expanded={!folded}
+          aria-label={folded ? `Expand: ${group.title} (${count})` : `Collapse: ${group.title}`}
+          title={folded ? `Show ${count}` : "Collapse"}
+          onClick={onFold}
+          className={cn(
+            "hit inline-flex h-6 shrink-0 items-center justify-center gap-0.5 rounded px-1 text-[11px] tabular-nums hover:bg-accent pointer-coarse:h-11 pointer-coarse:min-w-11",
+            folded ? "text-foreground" : "text-muted-foreground",
+          )}
+        >
+          {folded && count}
+          <ChevronDown className={cn("size-3 transition-transform", folded && "-rotate-90")} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** A project's page by its folder: `/spaces/<top>`, or `/spaces/<top>/p/<the rest>` below it. */
+export function ProjectLink({ path, className, label, current, children }: { path: string; className?: string; label?: string; current?: boolean; children: React.ReactNode }) {
+  const [space = "", ...below] = path.split("/");
+  const common = { className, "aria-label": label, title: label, "aria-current": current ? ("page" as const) : undefined };
+  return below.length ? (
+    <Link to="/spaces/$space/p/$" params={{ space, _splat: below.join("/") }} {...common}>
+      {children}
+    </Link>
+  ) : (
+    <Link to="/spaces/$space" params={{ space }} {...common}>
+      {children}
+    </Link>
   );
 }
 
@@ -374,10 +454,23 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
   const [archived, setArchived] = useState(false);
   const [starting, setStarting] = useState<string | null | undefined>(undefined); // a sphere's «＋»: its name
   const [folded, fold] = useFolded();
-  const { groups } = useMemo(
-    () => sphereGroups(listed(sessions), spheres, filter, Date.now() / 1000),
-    [sessions, spheres, filter],
+  const nodes = useProjects();
+  const feed = useFeed();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const known = useMemo(() => knownProjects(nodes, spheres), [nodes, spheres]);
+  const groups = useMemo(
+    () => projectGroups(listed(sessions), spheres, nodes ?? [], filter, Date.now() / 1000, (s) => sessionProject(s, known)),
+    [sessions, spheres, nodes, filter, known],
   );
+  // what waits for the owner in each project, its sub-projects' too: the feed's rows, as «Today» counts them; before
+  // the feed is in, the sessions that wait
+  const waitingIn = useMemo(() => {
+    const rows = (feed?.groups ?? []).flatMap((g) => g.rows).filter(rowWaits);
+    const all = listed(sessions).filter(isWaiting);
+    return (key: string) =>
+      !key ? 0 : feed ? rows.filter((r) => rowWithin(r, key, known)).length : all.filter((s) => within(sessionProject(s, known), key)).length;
+  }, [feed, known, sessions]);
+  const opened = projectOfPath(pathname);
   function pick(value: Filter) {
     setFilter(value);
     setArchived(false);
@@ -411,7 +504,9 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
     </div>
   );
   return (
-    <nav aria-label="Sessions" className={cn("flex flex-col gap-1", fill && "min-h-0 flex-1 px-2")}>
+    <nav aria-label="Projects" className={cn("flex flex-col gap-1", fill && "min-h-0 flex-1 px-2")}>
+      {/* what the list is: the projects, each with its sessions; the chips under it filter the sessions by state */}
+      <h2 className="mx-1 shrink-0 px-1 pt-1 text-xs font-normal text-muted-foreground">Projects</h2>
       <fieldset className="mx-1 flex shrink-0 rounded-md bg-muted p-0.5">
         <legend className="sr-only">Show</legend>
         {FILTERS.map((f) => (
@@ -458,21 +553,28 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
           {filter === "all" ? "No sessions. Start one with “+”." : "Nothing here right now."}
         </p>
       )}
-      {!archived && groups.map((g) => (
-        <Group
-          key={g.key}
-          title={g.title}
-          icon={g.sphere?.icon}
-          count={g.rows.length}
-          // the session on screen keeps its sphere open
-          folded={folds.has(`sphere:${g.key}`) && !g.rows.some((r) => r.session.id === current)}
-          waiting={g.rows.filter((r) => isWaiting(r.session)).length}
-          onFold={() => fold(`sphere:${g.key}`)}
-          onNew={g.sphere ? () => setStarting(g.key) : undefined}
-        >
-          <ul className="flex flex-col">{foldRows(g.rows, folds, current).map(row)}</ul>
-        </Group>
-      ))}
+      {!archived &&
+        foldProjects(groups, folds, current).map((g) => {
+          const under = groups.filter((x) => x.key === g.key || (g.key !== "" && x.key.startsWith(`${g.key}/`)));
+          return (
+            <section key={g.key || "-"} aria-label={g.title} className="flex flex-col">
+              <ProjectHead
+                group={g}
+                waiting={waitingIn(g.key)}
+                count={under.reduce((n, x) => n + x.rows.length, 0)}
+                folded={g.folded}
+                onFold={() => fold(`project:${g.key}`)}
+                onNew={spheres.some((s) => s.name === g.key) ? () => setStarting(g.key) : undefined}
+                on={opened === g.key}
+              />
+              {!g.folded && g.rows.length > 0 && (
+                <ul className="flex flex-col" style={{ marginLeft: g.depth ? `${g.depth * 0.875}rem` : undefined }}>
+                  {foldRows(g.rows, folds, current).map(row)}
+                </ul>
+              )}
+            </section>
+          );
+        })}
       </div>
       <NewSession
         key={starting ?? ""}

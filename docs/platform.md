@@ -130,7 +130,8 @@ What the router counts (`retinue/waiting.py`), each by a rule it already had:
   when the path is a plain one, the Record's path in the base (`path`) — never the Record's text.
 - **reminder** — your reminders of the next 14 days, at most 20, the nearest first: `id` `reminder:<n>`, the text masked as
   her words are, `since` the moment it fires, its day (`when`) and its `repeat`. No queue shows one — it fires in
-  Telegram — but the face's Day and Week show it at its time, with «Make it a task» (`{ref, action: "task"}`).
+  Telegram — but the face's Tasks list it under «From people», where «Plan» makes its task (a plan press `place` with
+  its `ref`).
 
 The digest is minimal: `{items: [{id, kind, who, title, since, sphere?, t?, when?, path?}], bot, chips?,
 closed_today?, expired_week?}` — an id made with an HMAC under the
@@ -223,6 +224,10 @@ bot's own commands (`new`, `app`, `wait`… — `config.BOT_COMMANDS`); the plat
   `main = 1`), so two `/travel` racing make one main session, and the other message goes into it or stays an ordinary
   session of the sphere. Archiving a session takes its main mark off: the next `/<sphere>` or «＋» starts a new one. A main session stays in the app's list however long ago it closed; a message opens it again
   (a `--resume`, which after an hour of silence re-reads the context uncached, as a card says).
+- **The voice.** With `voice:` in `platform.yaml`, one sphere — the root project, whose sessions run in the Base's
+  root — has the voice as its main session: the router writes into it by `/owner/voice` and holds the call until
+  the turn is over, and the turn's summaries go back to the router as its answer instead of as pings
+  ([proactive.md](proactive.md#the-voice)).
 - **Unread.** A session is unread when a summary or a new card came after you last looked at it: opened it in the app
   on a visible screen, wrote into it (in the app or in Telegram) or decided its card there. One `seen_at` per session:
   you are one person. The app marks it with a dot.
@@ -452,6 +457,28 @@ with it (`travel-platform`, two members). `retinue/lanetravel.py`:
 - **travel-ops down** costs a run its travel tools, not its turn: the platform asks it for 5 seconds, then the run
   starts without them and the session is told why; the next try is a minute later.
 
+## A project's own hosts
+
+Bash in the room still reaches only GitHub, PyPI and npm. A project that needs a site's API — a travel project
+booking through `booking.example.com` — gets it from a list of the install's, never of the project's: one YAML file
+per project in `/srv/retinue/egress/projects/` (`deploy/egress/projects/travel.example.yaml`), mounted read-only in the
+platform alone; its key, `RETINUE_PROJECT_KEY_<NAME>`, in `/srv/retinue/egress/project-keys.env` (root's, 600). A
+session made in exactly that project's folder (the platform's own record of the session's folder, not the hook's
+`cwd`) gets `project_request(method, url, headers?, body?)` on the platform's server (`retinue/projecthosts.py`); a
+session of any other folder gets nothing, as before.
+
+- **The gate checks it first.** A host off the list, an address that is not `https://<listed host>/…` (a login, a
+  port, an address literal), the key's header set by the model, a side question's call — refused.
+- **GET and HEAD go at once** (the classifier decides, as for any call). **Any other method — a booking, a payment —
+  waits for your button**: a card «Waits for your button: POST booking.example.com/api/bookings…» with the request whole
+  as its input. Granted, it runs once; a subagent's is denied.
+- **The platform makes the call** through `platform-egress` (so each host goes into `platform-hosts.txt` too: the
+  second lock) and adds the key; the session never sees it, and an answer that repeats it has it replaced. No redirect
+  is followed. A repeated `tools/call` of the same call gets the first answer and sends nothing.
+- **Out of every session's reach**: no lane mounts the lists or the keys, a file tool's path there is outside `/work`,
+  and a list inside a lane's work volume stops the platform at start. After an edit: `docker compose restart platform
+  platform-egress`.
+
 ## What a session gets from you
 
 A photo, a PDF or any other file sent **in reply** to a session's message (its caption is your text), or attached in
@@ -566,6 +593,53 @@ directory before:
   holding its name; named only by the other, it waits for the other's look; named by both or neither, it goes with
   this one and the message says «two sessions worked in the folder».
 - A session that never writes into `out/` hands nothing over: a file elsewhere stays where it is.
+
+## Turn endings
+
+A session says at the end of its turn what it leaves you — a question, a permission, a thing to look at, a step of
+your own, a result — so «Waiting for you» shows the right card and you answer from it without opening the session
+(`retinue/endings.py`). It calls `turn_ending` on the platform's own server (beside the [sub-session
+tools](#sub-sessions), through the gate like them), once, last, before its summary; the lanes' instructions say when
+and how (`deploy/lanes/instructions/common.md`). One object:
+
+| Field | Kinds | What |
+|---|---|---|
+| `kind` | all | `ask`, `approve`, `look`, `step`, `done` |
+| `request` | all but `step` (required) | what you asked and why, in your words — the card's «You asked: …» |
+| `why_owner` | `ask`, `approve` (required) | why the decision is yours: `goal`, `fact`, `money`, `secret`, `external` |
+| `options` `[{label, effect}]` · `context` | `ask` | your choices, the advice first, `effect` what changes; `context` (required with options) what was found and what the advice rests on |
+| `why` · `guesses` | `ask` without options | why it asks; short likely answers |
+| `without` | `ask`, `approve` | what happens with no answer |
+| `will` · `items` | `approve` | what it will do; what exactly, where |
+| `artifact` · `artifacts` `{path \| url, title}` | `look` (required), `ask`, `approve` | the thing to see |
+| `checks` | `look` | what to look at |
+| `what` · `where` · `command` · `copy` · `expect` · `wait` | `step` (`what`, `where` required) | your own step |
+| `what` · `next` · `next_by` (`me` \| `you`) | `done` (`what` required) | the result, what next, whose move |
+
+**Refused, with what to fix** (the session sees the refusal and calls again): an unknown kind or field; `ask` or
+`approve` without `request` or `why_owner`; `ask` with options and no `context`; `look` without an artifact; `step`
+without `what` and `where`; `done` without `what`; a field off its type or over its length (2,000 characters, 8,000
+for `command` and `copy`, ten in a list). Nothing refused is kept.
+
+**An artifact by `path`** must be a file in the session's own folder that the app can serve: under `out/` of the
+folder, of a type it hands over ([Files from a session](#files-from-a-session)) — or, for a session of the Base's
+lane, a file of the Base. Outside the folder (`..`, `/etc/…`, another track's folder), a link that leads out, a hidden
+file, a file not there, or one elsewhere in the folder is refused when declared, with what to do instead («save a
+copy as /work/repo/out/notes.md»). An artifact by `url` is an http(s) address, shown as a link.
+
+**Stored with the turn.** One per session, the last declared, kept with the run that declared it and the session's
+last input then. It stays current while no newer run and no newer input exist: your message, a button that resumes the
+run, a report or a follow-up is a new turn and clears it, with no write of its own.
+
+**In the feed** (`GET /api/feed`): a session whose turn ended with an ending and no card shown has its row placed by
+kind — `ask` under «Answer the question», `approve` under «Decide», `step` under «Your step» (a group of its own,
+between «Decide» and «Reply»), `look` and `done` under «Read» while unread, as any turn there. The row's key is
+`ending:<session>`, its line the ending's (`context` or `why`, `will`, the artifact's title, `what`), and it carries
+the ending whole as `ending`, each artifact with `src`, the URL the app opens it by in place — `/api/files/<id>` for an
+image or a text, `/api/files/<id>/view` for a PDF or an HTML page, `/api/base/<path>` or `/api/base-view/<path>` for
+the Base, the address itself for a page (`kind: link`) — and `kind` (`image`, `pdf`, `html`, `markdown`, `text`,
+`audio`, `video`, `other`, `link`). A file under `out/` is collected when the turn ends; until then `src` is null with
+`why`. A card shown (a question, an approval) is its own row and keeps the ending off the feed while it waits.
 
 ## The face: from your phone
 

@@ -50,7 +50,7 @@ import re
 import secrets
 from typing import TYPE_CHECKING
 
-from . import changes, episodes
+from . import changes, episodes, migrate
 from .kbcheck import OWNER
 from .spoken import unmarked
 from .courier import line
@@ -172,6 +172,16 @@ def why(summary: dict | None, limit: int = WHY_CHARS) -> str:
     return text[: cut if cut > limit // 2 else limit].rstrip() + "\n…"
 
 
+def _converge(db) -> None:
+    """Step 1: what the upgrade at open did before the steps were numbered — the column cards from before it lack."""
+    if "auto" not in migrate.columns(db, "base_cards"):
+        db.execute("ALTER TABLE base_cards ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
+
+
+# The store's numbered migrations (`migrate`, docs/migrations.md): append a step, never change one released.
+STEPS: tuple[migrate.Step, ...] = (_converge,)
+
+
 class ToBase:
     def __init__(self, platform: Platform) -> None:
         self.platform, self.store = platform, platform.store
@@ -179,7 +189,7 @@ class ToBase:
         self._pruned = 0.0
         self._commits: dict[str, asyncio.Task] = {}  # the commits running now, by card
         self._pending: set[str] = set()      # sessions whose run ended: their own commit waits for an idle lane
-        self.store.db.executescript(
+        migrate.run(self.store.db, "tobase", STEPS,
             """
             CREATE TABLE IF NOT EXISTS base_runs (
                 run TEXT PRIMARY KEY,             -- a run of a session on the Base's lane, watched
@@ -214,8 +224,6 @@ class ToBase:
             );
             DROP TABLE IF EXISTS base_pings;
             """)
-        if "auto" not in {r[1] for r in self.store.db.execute("PRAGMA table_info(base_cards)")}:
-            self.store.db.execute("ALTER TABLE base_cards ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
         # The owner's «To the Base» card is gone: one left open from before is closed, never pressed again.
         self.store.db.execute("UPDATE base_cards SET state = 'expired' WHERE state = 'shown'")
         self.store.db.commit()

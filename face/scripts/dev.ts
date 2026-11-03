@@ -6,7 +6,8 @@ const children: ChildProcess[] = [];
 if (!process.env.RETINUE_API) {
   children.push(spawn(process.execPath, ["mock/server.ts"], { stdio: "inherit" }));
 }
-children.push(spawn("pnpm", ["exec", "vite", ...process.argv.slice(2)], { stdio: "inherit" }));
+// On Windows pnpm is `pnpm.cmd`, which only a shell finds.
+children.push(spawn("pnpm", ["exec", "vite", ...process.argv.slice(2)], { stdio: "inherit", shell: process.platform === "win32" }));
 
 const stop = () => {
   for (const c of children) c.kill("SIGTERM");

@@ -12,6 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
+from . import migrate
 
 WINDOWS = ("five_hour", "seven_day")
 WINDOW_COLUMNS = [(f"{w}_{part}", kind) for w in WINDOWS for part, kind in (("utilization", "REAL"),
@@ -22,11 +23,30 @@ RESUMED = ("conversation", "retry", "reminder", "price", "compact")
 SESSION_DAYS = 30  # how far before the counted window a run's predecessor in its session is looked for
 
 
+def _converge(db: sqlite3.Connection) -> None:
+    """Step 1: what the upgrade at open did before the steps were numbered — the columns a database from before them
+    lacks."""
+    if "channel" not in migrate.columns(db, "protocol"):
+        db.execute("ALTER TABLE protocol ADD COLUMN channel TEXT")
+    # Both windows of the subscription limit, as the CLI reports them on every event (engine.rate_of).
+    runs = migrate.columns(db, "runs")
+    for column, kind in (*WINDOW_COLUMNS, ("session_id", "TEXT")):
+        if column not in runs:
+            db.execute(f"ALTER TABLE runs ADD COLUMN {column} {kind}")
+    if "alone" not in migrate.columns(db, "buttons"):
+        # 1: pressing it spends this button only, the card's others stay alive (the evening list's «Revert»)
+        db.execute("ALTER TABLE buttons ADD COLUMN alone INTEGER NOT NULL DEFAULT 0")
+
+
+# The store's numbered migrations (`migrate`, docs/migrations.md): append a step, never change one released.
+STEPS: tuple[migrate.Step, ...] = (_converge,)
+
+
 class Store:
     def __init__(self, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
-        self.db.executescript(
+        migrate.run(self.db, "protocol", STEPS,
             """
             CREATE TABLE IF NOT EXISTS protocol (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,19 +120,9 @@ class Store:
             );
             """
         )
-        if "channel" not in {row[1] for row in self.db.execute("PRAGMA table_info(protocol)")}:
-            self.db.execute("ALTER TABLE protocol ADD COLUMN channel TEXT")
-        # Both windows of the subscription limit, as the CLI reports them on every event (engine.rate_of).
-        runs = {row[1] for row in self.db.execute("PRAGMA table_info(runs)")}
-        for column, kind in (*WINDOW_COLUMNS, ("session_id", "TEXT")):
-            if column not in runs:
-                self.db.execute(f"ALTER TABLE runs ADD COLUMN {column} {kind}")
         # tokens() finds each run's predecessor in its session (or, for old rows, its conversation): a seek each.
         self.db.execute("CREATE INDEX IF NOT EXISTS runs_session ON runs (session_id, id)")
         self.db.execute("CREATE INDEX IF NOT EXISTS runs_conversation ON runs (conversation_id, id)")
-        if "alone" not in {row[1] for row in self.db.execute("PRAGMA table_info(buttons)")}:
-            # 1: pressing it spends this button only, the card's others stay alive (the evening list's «Revert»)
-            self.db.execute("ALTER TABLE buttons ADD COLUMN alone INTEGER NOT NULL DEFAULT 0")
         # Rooms used to own the conversation; keep those conversations when upgrading.
         self.db.execute("INSERT OR IGNORE INTO conversations SELECT agent_id, context_id FROM rooms"
                         " WHERE agent_id != '_protocol' AND context_id != ''")

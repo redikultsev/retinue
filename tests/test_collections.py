@@ -540,7 +540,7 @@ def test_a_form_is_checked_strictly(tmp_path):
             ({"fields": {"a": {"type": "enum", "values": ["x"], "set_by": {}}}}, "rights are the owner's alone"),
             ({"fields": {}}, "at least one field"),
             ({"fields": {"A": {"type": "text"}}}, "a field's name"),
-            ({"fields": {"a": {"type": "money"}}}, '"type" is one of text, int, enum, date, instant, bool, ref'),
+            ({"fields": {"a": {"type": "decimal"}}}, '"type" is one of text, int, enum, date, instant, bool, ref, money, file'),
             ({"fields": {"a": {"type": "text", "values": ["x"]}}}, "a text takes no 'values'"),
             ({"fields": {"a": {"type": "text", "required": "yes"}}}, '"required" is true or false'),
             ({"fields": {"a": {"type": "enum", "values": ["x", "x"]}}}, '"values" is a list'),
@@ -797,6 +797,28 @@ def test_rights_are_the_owners_alone_and_checked_strictly(tmp_path):
         assert json.loads(change[2])["rights"]["set_by"] == FOLLOWUP_RIGHTS["set_by"]
         with pytest.raises(Rejected, match="would be gone: a form only grows"):  # so the rights always fit it
             await store.define(OWNER, "followups", "work", {"fields": {"note": {"type": "text"}}}, 5)
+        await store.close()
+
+    run(body)
+
+
+def test_a_writers_fields_may_be_more_than_a_keys_and_are_still_the_forms_each_once(tmp_path):
+    """A writer may be given every field of a wide form — more than the eight of a key — but never a field the form
+    lacks, nor one twice."""
+    async def body():
+        store = Collections(str(tmp_path / "collections.sqlite"))
+        wide = {"fields": {f"f{n}": {"type": "text"} for n in range(10)}}
+        await store.define(OWNER, "wide", "work", wide, 1)
+        every = [f"f{n}" for n in range(10)]
+        await store.rights(OWNER, "wide", {"writers": {"assistant": {"add": True, "set": every}}}, 2)
+        assert json.loads((await sql(store, "SELECT rights FROM schemas WHERE collection = 'wide'"))[0][0])[
+            "writers"]["assistant"]["set"] == every
+        with pytest.raises(Rejected, match="distinct fields of the form"):
+            await store.rights(OWNER, "wide", {"writers": {"assistant": {"set": [*every, "f0"]}}}, 3)
+        with pytest.raises(Rejected, match="the form has no field 'salary'"):
+            await store.rights(OWNER, "wide", {"writers": {"assistant": {"set": [*every[:9], "salary"]}}}, 3)
+        with pytest.raises(Rejected, match="distinct fields of the form"):
+            await store.rights(OWNER, "wide", {"writers": {"assistant": {"set": ["f0", "f0"]}}}, 3)
         await store.close()
 
     run(body)

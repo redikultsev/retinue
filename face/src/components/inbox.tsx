@@ -4,17 +4,20 @@
 // with what it asks and «Done», a session with its last words and a reply. Nothing opens a dialog; on a narrow screen
 // the pane takes the screen and «All» comes back. J / K (or the arrows) go down and up the list, E marks her row done.
 // The rows are what the app already reads — the feed (`/api/feed`), the sessions — folded here, kept nowhere.
+// The list is the feed's order, by action; each row's second line names its project first (the projects themselves
+// are the left panel's). The tasks are a tab of their own («Tasks»), never among what waits.
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { CollectionProposalCard } from "@/components/collection-proposal-card";
-import { ArrowLeft, ArrowUpRight, Check, Stop } from "@/components/icons";
+import { EndingCard } from "@/components/ending-card";
+import { ArrowLeft, Check, Stop } from "@/components/icons";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
+import { Crumb, Reply } from "@/components/reply";
 import { QuestionDecide, typing } from "@/components/question-decide";
 import { Markdown } from "@/components/transcript/item";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { pressRow, WaitingPane } from "@/components/waiting-sheet";
 import { RecordPage } from "@/pages/spaces";
 import { ApiError, api } from "@/lib/api";
@@ -24,7 +27,9 @@ import { live, useLiveState } from "@/lib/live";
 import { useWide } from "@/lib/media";
 import { splitRecord } from "@/lib/pane";
 import { day } from "@/lib/spaces";
+import { endingOf } from "@/lib/operator";
 import { orderedItems, orderedSummaries } from "@/lib/store";
+import { knownProjects, projectLabel, rowProject, sessionProject, useProjects } from "@/lib/projects";
 import { dayWords, elapsed, lastLine, turnStart } from "@/lib/today";
 import { toast } from "@/lib/toast";
 import type { Session, Sphere } from "@/lib/types";
@@ -40,6 +45,8 @@ export type InboxItem =
   | { key: string; kind: "date"; deadline: Deadline; label: string; title: string; line: string; at: number };
 
 const DECIDE: Record<string, string> = { approval: "Allow", courier: "Run", push: "Push", proposal: "Start", collection_proposal: "Apply" };
+/** What to do about a session's request, by how its turn ended. */
+const ENDED: Record<string, string> = { ask: "Answer", approve: "Allow", look: "Look", step: "Step", done: "Read" };
 function feedItem(row: FeedRow): InboxItem {
   if (row.action === "assistant") {
     if (row.source === "deadline") return { key: row.key, kind: "feed", row, label: "Date", title: row.essence.replace(/^[^:]{1,24}:\s*/, ""), line: row.sphere_title ?? "", due: "", at: row.since, mark: "none" };
@@ -47,7 +54,16 @@ function feedItem(row: FeedRow): InboxItem {
     const { verb, text, due } = herLine(row.essence);
     return { key: row.key, kind: "feed", row, label: verb || "Look", title: row.title, line: text, due, at: row.since, mark: "person" };
   }
-  const label = row.action === "answer" ? "Answer" : row.action === "decide" ? (DECIDE[row.source] ?? "Decide") : row.action === "reply" ? "Reply" : "Read";
+  const ended = endingOf(row);
+  const label = ended
+    ? ENDED[ended.kind]!
+    : row.action === "answer"
+      ? "Answer"
+      : row.action === "decide"
+        ? (DECIDE[row.source] ?? "Decide")
+        : row.action === "reply"
+          ? "Reply"
+          : "Read";
   return { key: row.key, kind: "feed", row, label, title: row.title, line: row.essence, due: "", at: row.since, mark: row.action === "read" ? "none" : "agent" };
 }
 
@@ -59,17 +75,20 @@ export interface InboxLists {
 }
 
 /** The list's four parts, each thing once: a finished turn under «Done» and a base's date under «Dates», not again among
- * what waits; a person's row is Tasks' («From people»), not here. */
+ * what waits — unless its turn ended with a word for the owner (`ending`): then it waits, with that word; a person's
+ * row is Tasks' («From people»), not here. */
 export function inboxLists(feed: Feed | null, running: Session[], done: Session[], deadlines: Deadline[], lines: (s: Session) => string): InboxLists {
-  const doneIds = new Set(done.map((s) => s.id));
-  const dateIds = new Set(deadlines.map((d) => d.id));
   const rows = (feed?.groups ?? []).flatMap((g) => g.rows);
+  const ended = new Set(rows.filter((r) => r.session && endingOf(r)).map((r) => r.session));
+  const finished = done.filter((s) => !ended.has(s.id));
+  const doneIds = new Set(finished.map((s) => s.id));
+  const dateIds = new Set(deadlines.map((d) => d.id));
   return {
     waiting: rows
       .filter((r) => !personRow(r) && !(r.action === "read" && r.session && doneIds.has(r.session)) && !(r.source === "deadline" && dateIds.has(r.ref)))
       .map(feedItem),
     running: running.map((s) => ({ key: `run:${s.id}`, kind: "running", session: s, label: "Runs", title: s.title || s.track, line: lines(s), at: turnStart(s) })),
-    done: done.map((s) => ({ key: `done:${s.id}`, kind: "done", session: s, label: "Done", title: s.title || s.track, line: "", at: s.at })),
+    done: finished.map((s) => ({ key: `done:${s.id}`, kind: "done", session: s, label: "Done", title: s.title || s.track, line: "", at: s.at })),
     dates: deadlines.map((d) => ({ key: `date:${d.id}`, kind: "date", deadline: d, label: "", title: d.title.replace(/^[^:]{1,24}:\s*/, ""), line: "", at: 0 })),
   };
 }
@@ -98,7 +117,15 @@ function Row({ item, on, now, today, onPick }: { item: InboxItem; on: boolean; n
     );
   const date = item.kind === "date" ? dayWords(item.deadline.when, today) : null;
   const time =
-    item.kind === "feed" ? (item.row.source === "deadline" ? "" : waited(item.at, now)) : item.kind === "running" ? elapsed(item.at, now) : item.kind === "done" ? when(item.at, now) : "";
+    item.kind === "feed"
+      ? item.row.source === "deadline"
+        ? ""
+        : waited(item.at, now)
+      : item.kind === "running"
+        ? elapsed(item.at, now)
+        : item.kind === "done"
+          ? when(item.at, now)
+          : "";
   return (
     <li>
       <button
@@ -116,7 +143,9 @@ function Row({ item, on, now, today, onPick }: { item: InboxItem; on: boolean; n
           {date ? (date.rel === "today" || date.rel === "tomorrow" ? date.rel : day(item.kind === "date" ? item.deadline.when : "", today)) : item.label}
         </span>
         <span className={cn("truncate", item.kind === "feed" && "font-medium")}>{item.title}</span>
-        <span className="font-mono text-xs text-muted-foreground tabular-nums">{time || (item.kind === "feed" ? item.due : "")}</span>
+        <span className="font-mono text-xs text-muted-foreground tabular-nums">
+          {time || (item.kind === "feed" ? item.due : "")}
+        </span>
         {item.line && (
           <span className="col-span-2 col-start-3 truncate text-[13px] text-muted-foreground">
             {item.line}
@@ -151,65 +180,8 @@ function Part({ title, items, ...rest }: { title?: string; items: InboxItem[]; s
 
 // --- the pane -------------------------------------------------------------------------------------------------------
 
-const OPEN_LINK = "inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground [&_svg]:size-3.5";
-
-/** The pane's top line: where it is from and how long, and the way to its session. */
-function Crumb({ children, session }: { children: React.ReactNode; session?: string | null }) {
-  return (
-    <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-      <span className="min-w-0 truncate">{children}</span>
-      {session && (
-        <Link to="/s/$id" params={{ id: session }} className={cn(OPEN_LINK, "ml-auto")}>
-          Open the session
-          <ArrowUpRight />
-        </Link>
-      )}
-    </div>
-  );
-}
-
 function where(sphere: string | null | undefined, spheres: Sphere[], fallback = ""): string {
   return spheres.find((x) => x.name === sphere)?.title ?? sphere ?? fallback;
-}
-
-/** A session's text box: what the owner writes goes into it as his next message. */
-function Reply({ session, placeholder }: { session: string; placeholder: string }) {
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function send() {
-    const words = text.trim();
-    if (!words || busy) return;
-    setBusy(true);
-    try {
-      await api.input(session, words);
-      setText("");
-      toast("Sent");
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <div className="flex flex-col gap-2">
-      <Textarea
-        aria-label="Your message"
-        placeholder={placeholder}
-        rows={2}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send();
-        }}
-        className="resize-none"
-      />
-      <div>
-        <Button disabled={busy || !text.trim()} onClick={() => void send()}>
-          {busy ? "Sending…" : "Send"}
-        </Button>
-      </div>
-    </div>
-  );
 }
 
 /** A session's last summary — the snapshot is read once when its row opens, then the stream keeps it. */
@@ -328,6 +300,16 @@ function DatePane({ deadline, today }: { deadline: Deadline; today: Date }) {
 function FeedPane({ row, feed, now, today }: { row: FeedRow; feed: Feed; now: number; today: Date }) {
   const refresh = () => void feedSource.refresh();
   const crumb = `${row.sphere_title || row.track || ""}${row.sphere_title || row.track ? " · " : ""}waits ${waited(row.since, now)}`;
+  const ended = endingOf(row);
+  if (ended)
+    return (
+      <section aria-label={row.title} className="flex flex-col gap-4">
+        <Crumb session={row.session}>
+          {row.title} · {crumb}
+        </Crumb>
+        <EndingCard row={row} e={ended} />
+      </section>
+    );
   if (row.approval?.kind === "question")
     return (
       <section aria-label={row.title} className="flex flex-col gap-4">
@@ -398,27 +380,54 @@ function Pane({ item, feed, spheres, now, today }: { item: InboxItem; feed: Feed
 
 // --- the inbox ------------------------------------------------------------------------------------------------------
 
+/** Each row's second line begins with its project («Work · …», a sub-project «Work / Site · …»): the list is by
+ * action, the projects are the left panel's — the row still says where it is from. */
+export function withProjects(lists: InboxLists, label: (item: InboxItem) => string): InboxLists {
+  const one = (item: InboxItem): InboxItem => {
+    const where = label(item);
+    return where ? { ...item, line: item.line ? `${where} · ${item.line}` : where } : item;
+  };
+  return { waiting: lists.waiting.map(one), running: lists.running.map(one), done: lists.done.map(one), dates: lists.dates.map(one) };
+}
+
 export function Inbox({
   feed,
   running,
   done,
   spheres,
   now,
+  head,
 }: {
   feed: Feed | null;
   running: Session[];
   done: Session[];
   spheres: Sphere[];
   now: number;
+  /** Above the list: the way it is shown. */
+  head?: React.ReactNode;
 }) {
   const state = useLiveState();
   const today = new Date(now * 1000);
-  const lists = useMemo(
-    () =>
+  const nodes = useProjects();
+  const lists = useMemo(() => {
+    const known = knownProjects(nodes, spheres);
+    const where = (item: InboxItem) =>
+      projectLabel(
+        item.kind === "feed"
+          ? rowProject(item.row, known)
+          : item.kind === "date"
+            ? (item.deadline.sphere ?? "")
+            : sessionProject(item.session, known),
+        nodes,
+        spheres,
+      );
+    return withProjects(
       inboxLists(feed, running, done, feed?.deadlines ?? [], (s) => lastLine(orderedItems(state.items[s.id]), state.deltas[s.id])),
-    [feed, running, done, state.items, state.deltas],
-  );
-  const all = [...lists.waiting, ...lists.running, ...lists.done, ...lists.dates];
+      where,
+    );
+  }, [feed, running, done, state.items, state.deltas, nodes, spheres]);
+  const waitingNow = lists.waiting;
+  const all = [...waitingNow, ...lists.running, ...lists.done, ...lists.dates];
   const wide = useWide();
   const [sel, setSel] = useState<string | null>(null);
   const [opened, setOpened] = useState(false); // a narrow screen: the pane over the list
@@ -456,12 +465,13 @@ export function Inbox({
   const stale = feed?.assistant_at != null && now - feed.assistant_at > STALE_DIGEST_S;
   const list = (
     <nav aria-label="Today" className="min-h-0 overflow-y-auto p-2 pb-16">
+      {head && <div className="px-0.5 pt-1 pb-2">{head}</div>}
       {!feed ? (
         <p className="px-2.5 py-2 text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
           {lists.waiting.length === 0 && <p className="px-2.5 py-2 text-sm text-muted-foreground">Nothing is waiting for you.</p>}
-          <Part items={lists.waiting} sel={key} now={now} today={today} onPick={pick} />
+          <Part items={waitingNow} sel={key} now={now} today={today} onPick={pick} />
           <Part title="Working" items={lists.running} sel={key} now={now} today={today} onPick={pick} />
           <Part title="Done since you looked" items={lists.done} sel={key} now={now} today={today} onPick={pick} />
           <Part title="Dates" items={lists.dates} sel={key} now={now} today={today} onPick={pick} />

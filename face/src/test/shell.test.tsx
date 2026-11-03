@@ -174,11 +174,11 @@ describe("the right pane", () => {
       removeEventListener: () => undefined,
     }));
     live.dispatch({ type: "list", snapshot: { schema: 1, cursor: 1, sessions: [
-      { id: "a1b2c3d4", track: "retinue", lane: "code", kind: "code", state: "idle", created: 1, at: 1, title: "Code", waiting: 0 },
+      { id: "a1b2c3d4", track: "retinue", lane: "code", kind: "code", state: "idle", created: 1, at: 1, title: "Code", waiting: 0, push: 1 },
     ] } });
     const router = await open("/s/a1b2c3d4?pane=r:travel/a.md");
-    fireEvent.click(await screen.findByRole("tab", { name: "Changes" }));
-    await waitFor(() => expect(router.state.location.search).toMatchObject({ tab: "changes", pane: "r:travel/a.md" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Chat" }));
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ tab: "chat", pane: "r:travel/a.md" }));
     expect(screen.getByRole("complementary", { name: "Record" })).toBeTruthy();
   });
 

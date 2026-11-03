@@ -41,7 +41,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from . import approvals, citecheck, colltools, episodes, exfil, finish, followups, questions, reach, signals, subs
+from . import (approvals, citecheck, colltools, episodes, exfil, finish, followups, projecthosts, questions, reach,
+               signals, subs)
 from .approvals import Mark, Unbindable
 from .config import LaneRef
 from .sessions import PlatformStore
@@ -105,6 +106,7 @@ class Run:
     read_only: bool = False  # a side question's run: it never leaves anything to the classifier
     subs: bool = False       # it may start sub-sessions (`subs.may_start`)
     turn_by: str = ""        # whose doing its session's turn is: owner | parent | report (`subs`)
+    folder: str = ""         # where the platform made its session, under /work: its project (`projecthosts`)
 
 
 @dataclass(frozen=True)
@@ -175,6 +177,7 @@ class Gate:
         self.skills_mount = skills_mount  # the owner's skills as the platform reads them (approvals.SKILLS)
         self.memory_mount = memory_mount  # and his memory snapshot (approvals.OWNER_MEMORY)
         self.push_lanes: frozenset[str] = frozenset()  # lanes whose `git push` is the owner's «Push» (topush)
+        self.projects = projecthosts.Projects()  # the install's lists of a project's own hosts: none, the room as it was
         self.closing = False
         self._briefed: set[str] = set()  # runs whose question was sent back once for its brief: never twice
         self._calls: dict[str, _Call] = {}
@@ -202,7 +205,7 @@ class Gate:
             return None
         return Run(row["id"], row["session"], session["track"], session["lane"],
                    tuple(Mark(**mark) for mark in row["marks"]), row.get("mode"), bool(session.get("parent")),
-                   subs.may_start(session), session.get("turn_by") or "")
+                   subs.may_start(session), session.get("turn_by") or "", projecthosts.folder_of(session))
 
     def close(self) -> None:
         """Shutting down: every PreToolUse still waiting, and every one after, defers."""
@@ -370,6 +373,9 @@ class Gate:
             refused = UNCHECKED
         if refused:
             return _decision("deny", refused)  # first: no rule, card or courier ever holds such an input
+        if self.projects.has(_call_of(body)[0]) and (refused := self.projects.refusal(
+                run.folder, _call_of(body)[1], run.read_only)):
+            return _decision("deny", refused)  # a host off its project's list, or a session of no project's folder
         if run.read_only and (cited := citecheck.allowed(self.store, run.session)) is not None:
             # A source check's run (`citecheck`): a fetch of an address it was given, past the exfil guard and the
             # site's budget — never a card, it has no owner watching — and nothing else.
@@ -433,6 +439,12 @@ class Gate:
             if digest is None:
                 return _decision("deny", UNBINDABLE)
             return self._to_owner(run, call_id, body, file_hash, digest, approvals.never_why(label))
+        if self.projects.has(tool) and (why := self.projects.button(run.folder, tool_input)):
+            # A project's call that is not a read — a booking, a payment: the owner's button, the request whole on the
+            # card, before any allow rule or the classifier (`projecthosts`). A subagent's is denied there.
+            if digest is None:
+                return _decision("deny", UNBINDABLE)
+            return self._to_owner(run, call_id, body, file_hash, digest, why)
         if tool == READ_PAGE and (ruled := self._web_rule(run, tool_input)) is not None:
             # The CLI's WebFetch rules match its own tool's name only: the reader's address is held to them here.
             kind, rule = ruled

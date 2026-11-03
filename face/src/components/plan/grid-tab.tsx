@@ -1,4 +1,4 @@
-// «Plan»: the week as an hourly grid (FullCalendar v7; a day on a phone) — meetings grey, the plan's blocks in their
+// «Schedule»: the week as an hourly grid (FullCalendar v7; a day on a phone) — meetings grey, the plan's blocks in their
 // goal's colour, the plan's window in the owner's zone as the lit hours — under the bar of presses: «Plan my day»,
 // «Plan my week», «Undo» of the last plan, «Busy now», and what the last press came to. A block dragged or stretched
 // is the owner's write of `blocks`, locked: a stretched one is the task's length from then on (the Router's layout

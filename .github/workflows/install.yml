@@ -1,0 +1,80 @@
+# A clean install rehearsed on a fresh host, as docs/install.md tells a person to do it on a new Debian 13 server,
+# with test values only (tests/e2e/install/host.sh): the packages and Docker, deploy/setup.sh, the images built, the
+# stack started and every service waited on until deploy/health calls it healthy.
+#   x86_64: a Debian 13 cloud VM booted with KVM on the runner (tests/e2e/install/vm.sh) — Debian's kernel, systemd
+#           and AppArmor, not the runner's Ubuntu.
+#   arm64:  GitHub's arm64 runner; in a Debian 13 VM when it has KVM, else on the runner itself (Ubuntu 24.04 arm64).
+# Actions are pinned by commit, each at least two weeks old when pinned (as ci.yml).
+name: Install
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "deploy/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "face/package.json"
+      - "face/pnpm-lock.yaml"
+      - "tests/e2e/install/**"
+      - ".github/workflows/install.yml"
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "face/package.json"
+      - "face/pnpm-lock.yaml"
+      - "tests/e2e/install/**"
+      - ".github/workflows/install.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  x86_64:
+    name: Install — Debian 13 VM, x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: runner
+        run: uname -m; nproc; free -m; df -h / "$RUNNER_TEMP"; ls -l /dev/kvm || true
+      - name: rehearse in a Debian 13 VM
+        run: bash tests/e2e/install/vm.sh "$RUNNER_TEMP/vm"
+      - name: the VM's console
+        if: failure()
+        run: tail -n 100 "$RUNNER_TEMP/vm/serial.log" || true
+
+  arm64:
+    name: Install — arm64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: runner
+        run: uname -m; nproc; free -m; df -h / "$RUNNER_TEMP"; ls -l /dev/kvm || true
+      - name: rehearse (a Debian 13 VM with KVM, else the runner itself)
+        run: |
+          if [[ -e /dev/kvm ]]; then
+            echo "::notice::arm64: a Debian 13 VM with KVM"
+            bash tests/e2e/install/vm.sh "$RUNNER_TEMP/vm"
+          else
+            echo "::notice::arm64: no KVM on this runner, so on the runner itself ($(. /etc/os-release; echo "$PRETTY_NAME"))"
+            sudo bash tests/e2e/install/host.sh "$GITHUB_WORKSPACE"
+          fi
+      - name: the VM's console
+        if: failure()
+        run: tail -n 100 "$RUNNER_TEMP/vm/serial.log" || true

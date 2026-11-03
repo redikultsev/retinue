@@ -136,3 +136,108 @@ export function foldRows(rows: ListedRow[], folded: ReadonlySet<string>, current
 }
 
 export const sphereLabel = (s: Pick<Sphere, "title">) => s.title;
+
+// --- by project: the left panel's places -------------------------------------------------------------------------
+
+export interface ProjectGroup {
+  /** The project's folder (`work/acme`), a sphere's name for one with no folder, or "" for «Other». */
+  key: string;
+  title: string;
+  /** A top project's sphere mark. */
+  icon?: string;
+  /** 0 for a top project; one more per project it is in. */
+  depth: number;
+  /** The project it is in, among the groups; null for a top one. */
+  parent: string | null;
+  /** Its own sessions, each with what hangs under it. */
+  rows: ListedRow[];
+}
+
+/** A project node as `projectGroups` needs it. */
+export interface ProjectRef {
+  name: string;
+  title: string;
+  parent: string | null;
+}
+
+/** The sessions the list shows (as `sphereGroups`), under the projects they run in — the nearest project of a
+ * session's folder, else its sphere —, a sub-project inside its project, «Other» last for a session of neither. A
+ * session that hangs under another (a sub-session, a fork, a side question) stays under it, in that one's project.
+ * With no filter every top project is there, as a place to open; with one, only those with a session that passes it.
+ * The order: the spheres as the platform lists them, then the other projects A–Z; in a project its own sessions,
+ * then its sub-projects. `where(s)`: the project a session belongs to (lib/projects.ts `sessionProject`). */
+export function projectGroups(
+  sessions: Session[],
+  spheres: Sphere[],
+  nodes: ProjectRef[],
+  filter: Filter,
+  now: number,
+  where: (s: Session) => string,
+): ProjectGroup[] {
+  const recent = (s: Session) => s.state !== "closed" || now - s.at < RECENT_S;
+  const shown = sessions.filter((s) => (isWaiting(s) || s.pinned || s.main || recent(s)) && matches(s, filter));
+  const ids = new Set(shown.map((s) => s.id));
+  const children = new Map<string, Session[]>();
+  const tops: Session[] = [];
+  for (const s of shown) {
+    const parent = parentOf(s);
+    if (parent && ids.has(parent)) children.set(parent, [...(children.get(parent) ?? []), s]);
+    else tops.push(s);
+  }
+  tops.sort((a, b) => Number(!!b.main) - Number(!!a.main) || newestFirst(a, b));
+  const byKey = new Map<string, Session[]>();
+  for (const s of tops) byKey.set(where(s), [...(byKey.get(where(s)) ?? []), s]);
+
+  const node = new Map(nodes.map((n) => [n.name, n]));
+  const sphere = new Map(spheres.map((s) => [s.name, s]));
+  const up = (key: string): string | null => {
+    const p = node.get(key)?.parent;
+    return p && node.has(p) ? p : null;
+  };
+  // the projects to show: those with sessions and every project above them; with no filter, every top one too
+  const keys = new Set<string>();
+  for (const key of byKey.keys()) for (let k: string | null = key; k !== null && !keys.has(k); k = k ? up(k) : null) keys.add(k);
+  if (filter === "all") {
+    for (const s of spheres) keys.add(s.name);
+    for (const n of nodes) if (up(n.name) === null) keys.add(n.name);
+  }
+  const order = (a: string, b: string) => {
+    const at = (k: string) => (k === "" ? Number.MAX_SAFE_INTEGER : (spheres.findIndex((s) => s.name === k) + 1 || spheres.length + 1));
+    return at(a) - at(b) || a.localeCompare(b);
+  };
+  const out: ProjectGroup[] = [];
+  const walk = (key: string, depth: number) => {
+    const rows: ListedRow[] = [];
+    const add = (s: Session, d: number) => {
+      rows.push({ session: s, depth: Math.min(d, MAX_DEPTH), side: isSide(s) });
+      for (const child of (children.get(s.id) ?? []).sort(newestFirst)) add(child, d + 1);
+    };
+    for (const s of byKey.get(key) ?? []) add(s, 0);
+    const known = sphere.get(key);
+    const title = key === "" ? OTHER : known ? sphereLabel(known) : (node.get(key)?.title ?? key.split("/").pop() ?? key);
+    out.push({ key, title, icon: depth === 0 ? known?.icon : undefined, depth, parent: key ? up(key) : null, rows });
+    for (const k of [...keys].filter((k) => k && up(k) === key).sort((a, b) => a.localeCompare(b))) walk(k, depth + 1);
+  };
+  for (const key of [...keys].filter((k) => k === "" || up(k) === null).sort(order)) walk(key, 0);
+  return out;
+}
+
+export const OTHER = "Other";
+
+/** The groups as the list shows them: a folded project (`project:<key>` in `folded`) keeps its heading and hides its
+ * sessions and its sub-projects — never the session on screen. */
+export function foldProjects(groups: ProjectGroup[], folded: ReadonlySet<string>, current?: string): (ProjectGroup & { folded: boolean })[] {
+  const parentOf = new Map(groups.map((g) => [g.key, g.parent]));
+  const inside = (g: ProjectGroup, key: string) => {
+    for (let k: string | null = g.key; k !== null && k !== undefined; k = parentOf.get(k) ?? null) if (k === key) return true;
+    return false;
+  };
+  const holds = (key: string) => !!current && groups.some((g) => inside(g, key) && g.rows.some((r) => r.session.id === current));
+  const shut = new Set(groups.filter((g) => folded.has(`project:${g.key}`) && !holds(g.key)).map((g) => g.key));
+  return groups
+    .filter((g) => {
+      for (let p = g.parent; p !== null; p = parentOf.get(p) ?? null) if (shut.has(p)) return false;
+      return true;
+    })
+    .map((g) => ({ ...g, folded: shut.has(g.key) }));
+}

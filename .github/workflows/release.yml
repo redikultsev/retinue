@@ -1,0 +1,86 @@
+# A tag vX.Y.Z publishes Retinue's own images to the owner's registry (ghcr.io) as <owner>/retinue*:vX.Y.Z, each built
+# as deploy/compose.yml builds it (tests/test_update.py); deploy/update.sh pulls them (docs/install.md, «Updating»).
+# Each image is built for linux/amd64 and linux/arm64, each on a runner of its own architecture (no emulation), pushed
+# as vX.Y.Z-amd64 and vX.Y.Z-arm64, and vX.Y.Z names both: a server pulls the one for its own architecture.
+# Actions are pinned by commit, each at least two weeks old when pinned (as ci.yml).
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    name: Image — ${{ matrix.image }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        image: [retinue, retinue-face, retinue-pages-build, retinue-lane-private]
+        include:
+          - image: retinue
+            context: .
+            dockerfile: Dockerfile
+          - image: retinue-face
+            context: .
+            dockerfile: deploy/face/Dockerfile
+          - image: retinue-pages-build
+            context: deploy/pages
+            dockerfile: deploy/pages/Dockerfile
+          - image: retinue-lane-private
+            context: .
+            dockerfile: deploy/lanes/Dockerfile
+            args: LANE=private LANE_UID=10005
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: build and push
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          IMAGE: ${{ matrix.image }}
+          ARCH: ${{ matrix.arch }}
+          CONTEXT: ${{ matrix.context }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          ARGS: ${{ matrix.args }}
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ github.token }}
+        run: |
+          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$TAG is not vX.Y.Z"; exit 1; }
+          [[ $(docker version --format '{{.Server.Arch}}') == "$ARCH" ]] || { echo "::error::not an $ARCH runner"; exit 1; }
+          ref="ghcr.io/${OWNER,,}/$IMAGE:$TAG-$ARCH"   # the registry takes lower case only
+          build_args=()
+          for arg in $ARGS; do build_args+=(--build-arg "$arg"); done
+          docker build --pull -f "$DOCKERFILE" "${build_args[@]}" \
+            --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" -t "$ref" "$CONTEXT"
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker push "$ref"
+
+  tags:
+    name: Tag — ${{ matrix.image }} (amd64 and arm64)
+    needs: images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        image: [retinue, retinue-face, retinue-pages-build, retinue-lane-private]
+    steps:
+      - name: one tag for both architectures
+        env:
+          OWNER: ${{ github.repository_owner }}
+          TAG: ${{ github.ref_name }}
+          IMAGE: ${{ matrix.image }}
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ github.token }}
+        run: |
+          ref="ghcr.io/${OWNER,,}/$IMAGE:$TAG"
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker buildx imagetools create -t "$ref" "$ref-amd64" "$ref-arm64"
+          docker buildx imagetools inspect "$ref"

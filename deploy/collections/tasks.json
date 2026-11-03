@@ -21,6 +21,10 @@
           "study": "Study"
         }
       },
+      "project": {
+        "type": "text",
+        "index": true
+      },
       "state": {
         "type": "enum",
         "values": [

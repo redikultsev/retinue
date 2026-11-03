@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from . import project as project_mod
 from .collections import RIGHTS_ELSEWHERE, RIGHTS_KEYS, SCOPES, Collections, Refused, Rejected, Writer
 
 OWNER = Writer("owner", "define")
@@ -38,6 +39,10 @@ def add_parser(commands: argparse._SubParsersAction) -> None:
                                                '{"writers": {…}, "set_by": {…}}')
     rights.add_argument("collection")
     rights.add_argument("file", type=Path)
+    described = actions.add_parser("project", help="apply a project's description: <folder>/project.yaml and the "
+                                                   "pages its views name (docs/events.md)")
+    described.add_argument("project")
+    described.add_argument("folder", type=Path)
     imports = actions.add_parser("import", help="apply a JSONL file of operations, one batch")
     imports.add_argument("collection")
     imports.add_argument("file", type=Path)
@@ -151,6 +156,40 @@ async def _rights(store: Collections, args, ask, say, clock) -> int:
     return 0
 
 
+async def _project(store: Collections, args, ask, say, clock) -> int:
+    """A project's description, read from its folder: each collection's form and views, then its events, reactions
+    and views in code — each part's diff shown, every collection tried on its records, kept only on «y»."""
+    folder = args.folder.resolve()
+
+    def page(path: str) -> bytes | None:
+        found = (folder / path).resolve()
+        return found.read_bytes() if found.is_relative_to(folder) and found.is_file() else None
+    try:
+        text = (folder / project_mod.FILE).read_bytes()
+    except OSError as exc:
+        raise Rejected(f"cannot read {folder / project_mod.FILE}: {exc}") from None
+    description = project_mod.read(text, args.project, page)
+    trial = await project_mod.apply(store, args.project, description, clock(), dry=True)
+    shown = False
+    for name, answer in trial["collections"].items():
+        for part, before, after in (("form", answer["before"], answer["after"]),
+                                    ("views", answer["views_before"], answer["views_after"])):
+            if before != after:
+                say(_diff(before, after, f"{name} {part}"))
+                shown = True
+    if not trial["project_answer"]["unchanged"]:
+        say(_diff(trial["project_answer"]["before"], trial["project_answer"]["after"], f"{args.project} events"))
+        shown = True
+    if not shown:
+        say(f"{args.project} is described so already: nothing to apply.")
+        return 0
+    if not _yes(ask, say):
+        return 1
+    await project_mod.apply(store, args.project, description, clock())
+    say(f"Applied: the description of {args.project}.")
+    return 0
+
+
 async def _import(store: Collections, args, ask, say, clock) -> int:
     ops = []
     try:
@@ -229,7 +268,7 @@ def _utc(moment: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.gmtime(moment)) + " UTC"
 
 
-COMMANDS = {"list": _list, "show": _show, "define": _define, "rights": _rights, "import": _import,
+COMMANDS = {"list": _list, "show": _show, "define": _define, "rights": _rights, "project": _project, "import": _import,
             "revert-batch": _revert_batch, "export": _export,
             "device": _device}
 

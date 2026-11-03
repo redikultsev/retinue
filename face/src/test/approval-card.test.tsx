@@ -39,7 +39,9 @@ const fakeLive = () =>
 describe("ApprovalCard", () => {
   it("shows the header code built and the FULL input, never cut", () => {
     render(<ApprovalCard approval={approval()} live={fakeLive()} />);
-    expect(screen.getByText("Approval · retinue · session a1b2c3d4")).toBeTruthy();
+    // the card's head without the platform's track and session id: the screen around it says which session
+    expect(screen.getByText("Approval")).toBeTruthy();
+    expect(screen.queryByText(/session a1b2c3d4/)).toBeNull();
     expect(screen.getByText("Folder: /work/retinue")).toBeTruthy();
     expect(screen.getByTestId("approval-input").textContent).toBe(longCommand);
     expect(screen.getByRole("button", { name: "Allow" })).toBeTruthy();

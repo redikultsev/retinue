@@ -1,0 +1,80 @@
+# The checks CONTRIBUTING.md lists, on every pull request and every push to main. Each step is the command a
+# contributor runs by hand, so a red step here is the same red on a laptop.
+# Actions are pinned by commit, each at least two weeks old when pinned (as face/pnpm-workspace.yaml holds packages).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python — pytest, ruff
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45   # the whole suite, Docker builds included, took 23 min on a 2-core Linux box
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.6.12"        # the image's uv (Dockerfile)
+          python-version: "3.12"   # the image's Python
+          enable-cache: true
+      # The runner has Docker, so the tests that need it run here too (the code path across two users, the open
+      # proxy, the face's nginx config); the ones that need the owner's token or the pinned lane CLI stay skipped.
+      - name: pytest
+        run: uv run --frozen --with pytest pytest -q
+      - name: ruff
+        run: uv run --with ruff ruff check .
+
+  face:
+    name: Face — typecheck, lint, test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: face/package.json   # its packageManager pins pnpm
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: face/pnpm-lock.yaml
+      - run: pnpm -C face install --frozen-lockfile
+      - run: pnpm -C face typecheck
+      - run: pnpm -C face lint
+      - run: pnpm -C face test
+
+  face-e2e:
+    name: Face — in a browser (Playwright)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: face/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: face/pnpm-lock.yaml
+      - run: pnpm -C face install --frozen-lockfile
+      - run: pnpm -C face exec playwright install --with-deps chromium
+      - run: pnpm -C face e2e
+

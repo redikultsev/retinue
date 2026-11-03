@@ -174,7 +174,8 @@ day propose, and rights it could widen with one press would be no rights. They a
 ```
 
 - **`writers`**, for each class of writer — `assistant`, `session`, `mac`, `code:<rule>` — whether it adds records,
-  which fields it gives a value (`"*"` all of them; an `add`'s fields too) and whether it deletes and restores:
+  which fields it gives a value (a list of the form's fields, each once and as many as the form has; `"*"` all of
+  them; an `add`'s fields too) and whether it deletes and restores:
   `true`, `false`, or `"propose"`, a proposal the owner applies. What a class is not given it does not do: the
   refusal names the field and the class (`'text' is not open to assistant in followups: propose the change to the owner
   instead`). A revert needs the rights of what it does: setting the fields back, or deleting the record an add made.
@@ -249,7 +250,7 @@ held to the form there: a view whose field the form lacks shows “field not fou
 ```
 
 Every view has a `name` (unique in its collection), a `kind`, an optional `title`, plain text of at most 80
-characters, and an optional `tab`, at most 24: the tab of the Space's screen it shows in — none, the first, where the
+characters, and an optional `tab`, at most 24: the tab of the Space's screen it shows in — none, the first: on «Overview» under the project's passport, where the
 boards are strips of their columns over the queues, and the agendas and numbers stand in a column beside them; a tab a
 view names shows its numbers as tiles, its boards whole. A `filter` is the one [Reading](#reading) takes.
 
@@ -453,8 +454,8 @@ until the owner gives her some.
 
 ### Tasks
 
-`tasks` is the owner's one list of things to do — what the face's «Today» shows as Tasks, Day and Week
-([face.md](face.md#tasks-day-week)) — a collection like any other, defined and given its rights from the terminal
+`tasks` is the owner's one list of things to do — what the face's «Today» shows as Tasks and Schedule
+([face.md](face.md#tasks-and-schedule)) — a collection like any other, defined and given its rights from the terminal
 (the files beside the deploy, `deploy/collections/tasks.json` and `tasks.rights.json`, with the goals made the
 owner's spheres):
 
@@ -462,6 +463,7 @@ owner's spheres):
 |---|---|---|
 | `title` | text, required | what to do |
 | `goal` | enum | the sphere it serves: its swatch and the split of the day's time |
+| `project` | text, indexed | the project it belongs to: the project's path in the Base, `work/acme`; none: «Other» |
 | `state` | enum `open`, `done`, `dropped`, indexed | |
 | `due` | date | the day it is due by |
 | `by` | instant | «no later than»: no piece of it is laid to end after this moment |
@@ -469,11 +471,15 @@ owner's spheres):
 | `ask` | text, indexed, hidden | the row of «Waiting for you» it came from — `letter:<id>`, `chat:<id>` (the digest's ids), `reminder:<id>` |
 | `notes` | text | |
 
-The rights the files give: the assistant adds and sets the title, goal, due, by, minutes, notes, state and ask — and
-closes a task only in a turn that read no one else's text (the router refuses it otherwise: a letter that says «done»
-is not the owner saying it); sessions and the Mac add and set the same but `ask`; `code:waiting` adds and sets the
-title, state, ask and due; nobody but the owner deletes. A task has no time of its own: its pieces of time are
-[blocks](#blocks).
+The rights the files give: the assistant adds and sets the title, goal, project, due, by, minutes, notes, state and
+ask — and closes a task only in a turn that read no one else's text (the router refuses it otherwise: a letter that
+says «done» is not the owner saying it); sessions and the Mac add and set the same but `by` and `ask`; `code:waiting`
+adds and sets the title, state, ask and due; nobody but the owner deletes. A task has no time of its own: its pieces of
+time are [blocks](#blocks).
+
+A task is filed under a project, and moved, by setting its `project` — the owner in its record, the assistant, a
+session, the Mac; never the Router. An install made before the field takes it with `collections define` and
+`collections rights` of the two files again: the tasks there keep their fields, `goal` too, and have no project.
 
 **«Plan»** on a person's row in Tasks' «From people», or on a reminder, is one press in the app — a plan press `place`
 with the row's `t` or the reminder's `ref`: the router adds the task as `code:waiting`, titled with the row's own masked

@@ -40,7 +40,7 @@ export function FilePage({ id, load = api.file }: { id: string; load?: typeof ap
             <ul>
               <FileRow file={file} opened />
             </ul>
-            <Link to="/s/$id" params={{ id: file.session }} search={{ tab: "files" }} className="text-sm text-primary underline">
+            <Link to="/s/$id" params={{ id: file.session }} search={{ tab: "results" }} className="text-sm text-primary underline">
               Open session
             </Link>
           </>

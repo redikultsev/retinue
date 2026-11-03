@@ -103,7 +103,7 @@ export function Chart({ collection, view }: { collection: CollectionViews; view:
 }
 
 /** An element's width in pixels, kept as it changes: the chart drawn at its own size, its text never scaled. */
-function useWidth(el: Element | null): number {
+export function useWidth(el: Element | null): number {
   const [width, setWidth] = useState(0);
   useEffect(() => {
     if (!el) return;

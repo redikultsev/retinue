@@ -15,7 +15,8 @@ carries every session. A stream reads the rows itself at its own pace, so a slow
 only wakes it. Each event's `data` is the bare object, never wrapped. A stream ends with its login (a logout, or the
 login's 30 days, checked at every ping); when 16 are open, a new one closes the oldest — a phone that went away
 without closing its connection never locks the owner out. The text of a message while it is written comes on the same stream as `delta`, without a number: it
-is never stored, and the message's own item replaces it.
+is never stored, and the message's own item replaces it; what the assistant is writing in the app's chat comes as
+`chat-draft`, the whole text so far (`chat.py`).
 
 The owner's voice (`/api/speech`): what he dictated, as text for him to edit and send himself — or, in English, word
 for word and sent at once by the app. One recording at a time, held in memory only; the transcript is deleted at
@@ -202,6 +203,16 @@ class Hub:
             stream.deltas.append((after, session, text))
             stream.wake.set()
 
+    def chat_draft(self, draft: dict) -> None:
+        """What the assistant is writing in the app's chat (`chat.py`): the whole text so far — a stream that has not
+        sent the one before sends only the newest."""
+        if not self.streams:
+            return
+        after, text = self.store.cursor(), json.dumps(draft, ensure_ascii=False)
+        for stream in self.streams:
+            stream.deltas.append((after, None, text))
+            stream.wake.set()
+
     def close(self) -> None:
         self.closing = True
         self.wake()
@@ -222,11 +233,12 @@ def frames(rows: list[tuple[int, str, str]], deltas: deque, cursor: int) -> tupl
     def take(upto: int) -> None:
         while deltas and deltas[0][0] <= upto:
             _, session, text = deltas.popleft()
-            if pieces and pieces[-1][0] == session:
-                pieces[-1][1] += text
+            if pieces and pieces[-1][0] == session:  # the chat's draft (no session) is whole: the newest replaces
+                pieces[-1][1] = text if session is None else pieces[-1][1] + text
             else:
                 pieces.append([session, text])
-        out.extend(_frame({"session": session, "text": text}, "delta") for session, text in pieces)
+        out.extend(_frame(text, "chat-draft") if session is None else _frame({"session": session, "text": text}, "delta")
+                   for session, text in pieces)
         pieces.clear()
 
     for number, kind, data in rows:
@@ -269,6 +281,7 @@ class Face:
         self.hub = Hub(self.store)
         self.store.listener = self.hub.wake
         platform.on_delta = self.hub.delta
+        platform.chat.on_draft = self.hub.chat_draft
         self.spaces = spaces.Spaces(platform)   # the Base read in the app: `/api/spaces…`, behind the same guard
         # The owner's voice: through the platform's own proxy; transcripts still to delete in the platform's store.
         self.scribe = Scribe(self.cfg.stt_key, store=self.store, proxy=self.cfg.speech.proxy)
@@ -337,7 +350,8 @@ class Face:
             web.get("/api/c/_files/{sha}", self.uploaded),
             *self.platform.colltools.routes(),  # the agents' proposals of writes to them (`colltools.py`)
             *self.platform.views.routes(),  # a Space's collections, their views and records (`views.py`)
-            *self.platform.plan.routes()])  # «Today»'s tasks, day and week (`plan.py`)
+            *self.platform.plan.routes(),  # «Today»'s tasks, day and week (`plan.py`)
+            *self.platform.chat.routes()])  # «Talk to Retinue»: the assistant's conversation (`chat.py`)
         # The agents on the owner's Mac (`mac.py`): their own app, their own check — a device's token, not the cookie.
         self.mac_app = mac.Mac(self.platform).app()
         app.add_subapp(mac.PATH, self.mac_app)
@@ -413,9 +427,7 @@ class Face:
                                   "tracks": [{"name": t.name, "lane": t.lane, "kind": t.kind}
                                              for t in self.cfg.tracks],
                                   "general": general_track(self.cfg),
-                                  "spheres": self.platform.spheres.listed(), "speech": self._speech_off() is None,
-                                  # the voice's sphere (`voice.py`): its main session is the app's chat with Retinue
-                                  "voice": voice.sphere.name if (voice := self.platform.voice) is not None else None})
+                                  "spheres": self.platform.spheres.listed(), "speech": self._speech_off() is None})
 
     async def sessions(self, request: web.Request) -> web.Response:
         return web.json_response({"schema": SCHEMA, "cursor": self.store.cursor(),

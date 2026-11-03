@@ -13,16 +13,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from retinue import endings, feed, migrate, outbox, protocol, sessions, subs, tobase
+from retinue import chat, endings, feed, migrate, outbox, protocol, sessions, subs, tobase
 
 FIXTURES = Path(__file__).parent / "fixtures" / "migrate"
 # The stores of each database file, in the order the services open them, with the module that holds their steps.
 STORES = {"platform": (("sessions", sessions), ("feed", feed), ("subs", subs), ("endings", endings),
-                       ("tobase", tobase)),
+                       ("tobase", tobase), ("chat", chat)),
           "router": (("protocol", protocol), ("outbox", outbox))}
 # A table of each store, gone in the newer database of the refusal test: an older store must not make it again.
 OWN_TABLE = {"sessions": "kv", "feed": "assistant_digest", "subs": "sub_starts", "endings": "turn_endings",
-             "tobase": "base_dirty",
+             "tobase": "base_dirty", "chat": "chat",
              "protocol": "sent", "outbox": "drafts"}
 # Main writes a room without its conversation (`Store.save_room`): the legacy copy into `conversations` has nothing to take.
 AS_MAIN_WRITES = {("rooms", "context_id"): ""}
@@ -35,6 +35,7 @@ def _open(database: str, path: Path) -> sqlite3.Connection:
         feed.Feed(store)
         subs.Subs(SimpleNamespace(store=store))  # and its turn endings (`endings`)
         tobase.ToBase(SimpleNamespace(store=store))
+        chat.Chat(SimpleNamespace(store=store))
         return store.db
     store = protocol.Store(str(path))
     outbox.OutboxStore(store.db)

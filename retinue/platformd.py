@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, citecheck, cliengine, collections_admin, colltools, courier, episodes, events, face, feed, finish,
+from . import (approvals, attachments, chat, citecheck, cliengine, collections_admin, colltools, courier, episodes, events, face, feed, finish,
                followups, inbox, lanetravel, lifecycle, outfiles, pings, plan, projecthosts, questions, signals, spaces, subs,
                tobase, topush, transcript, views)
 from .base import BaseRepo, under
@@ -127,6 +127,7 @@ class Platform:
         self.colltools = colltools.CollTools(self)  # the agents' tools for the collections, and their proposals
         self.events = events.wire(self)  # the projects' events and their reactions (`events.py`)
         self.plan = plan.Plan(self)  # «Today»'s tasks, day and week, and the busy window the Router pushes
+        self.chat = chat.Chat(self)  # the app's chat with the assistant: the router's rows, his words for it
         self._stopped_runs: set[str] = set()  # runs the owner's «Stop» ended: not errors (`episodes`)
         # travel-ops' tools on the same server, for every session (`lanetravel.py`); None: no travel-ops in this stack.
         self.travel = lanetravel.LaneTravel(cfg.travel_url) if cfg.travel_url else None
@@ -171,6 +172,7 @@ class Platform:
                         web.post("/owner/waiting/detail", self.owner_waiting_detail),
                         web.post("/owner/library", self.owner_library), web.post("/owner/stats", self.owner_stats),
                         *self.views.owner_routes(), *self.colltools.owner_routes(), *self.plan.owner_routes(),
+                        *self.chat.owner_routes(),
                         *events.Routes(self).owner_routes(),
                         web.post("/items", self.items),
                         web.post("/items/confirm", self.confirm)])

@@ -19,7 +19,7 @@ import pytest
 from aiohttp import DummyCookieJar
 from aiohttp.test_utils import TestClient, TestServer
 
-from retinue import face, platformd, sessions
+from retinue import chat, face, platformd, sessions
 from retinue.face import COOKIE, Face, frames, init_data_ok, normal_code
 from test_platformd import (CALL, DAY, HOUR, World, decision, deferred_session, fixture, pre_tool_use,
                             short_wait)  # noqa: F401 — the fixture is autouse
@@ -123,21 +123,8 @@ def test_a_code_from_app_logs_in_once_and_is_kept_only_as_its_hash(tmp_path):
                         "tracks": [{"name": "retinue", "lane": "code", "kind": "code"},
                                    {"name": "notes", "lane": "private", "kind": "private"}], "general": "notes",
                         "spheres": [],
-                        "speech": False, "voice": None}
+                        "speech": False}
         assert (await world.call("GET", "/api/meta", cookie="forged"))[0] == 401
-
-    faced(tmp_path, body)
-
-
-def test_the_meta_names_the_voices_sphere_for_the_apps_chat(tmp_path):
-    """With a voice (`voice.py`), the app's «Talk to Retinue» is its sphere's main session: the meta names that sphere;
-    without one it is null and the chat says the voice is not configured."""
-    async def body(world: FaceWorld):
-        await world.login()
-        assert (await world.get("/api/meta"))["voice"] is None
-        world.platform.voice = type("Voice", (), {"sphere": type("Sphere", (), {"name": "life"})()})()
-        assert (await world.get("/api/meta"))["voice"] == "life"
-        world.platform.voice = None
 
     faced(tmp_path, body)
 
@@ -839,7 +826,8 @@ def test_the_face_starts_a_session_once_per_input_id_writes_into_it_and_stops_it
     faced(tmp_path, body)
 
 
-@pytest.mark.parametrize("path", ["/api/meta", "/api/sessions", "/api/sessions/x", "/api/sessions/x/diff"])
+@pytest.mark.parametrize("path", ["/api/meta", "/api/sessions", "/api/sessions/x", "/api/sessions/x/diff", "/api/chat",
+                                  f"/api/chat/files/{'a' * 32}"])
 def test_every_read_needs_a_login(tmp_path, path):
     async def body(world: FaceWorld):
         status, data, response = await world.call("GET", path)
@@ -1102,3 +1090,135 @@ def test_an_upload_that_would_fill_the_disk_is_refused_and_nothing_is_kept(tmp_p
         assert not [p for p in (tmp_path / "attachments").iterdir()], "no blob, no .part"
 
     faced(tmp_path, body)
+
+
+# --- «Talk to Retinue»: the assistant's conversation, through the router's app channel ---------------------------------
+
+def test_his_message_in_the_app_is_his_row_at_once_and_one_note_for_the_router_however_often_sent(tmp_path):
+    """`POST /api/chat`: his row under the id the archive will give it, `pending` until the router has it, and a `chat`
+    note — the same input id again is the same message; files are refused with a line pointing to Telegram."""
+    async def body(world: FaceWorld):
+        await world.login()
+        said = input_id()
+        status, data, _ = await world.call("POST", "/api/chat", {"input_id": said, "text": "What is left for Friday?"})
+        assert status == 200 and data["row"] == {"id": f"app:{said}", "at": world.clock.now, "by": "owner",
+                                                 "text": "What is left for Friday?", "pending": True}
+        again = await world.call("POST", "/api/chat", {"input_id": said, "text": "What is left for Friday?"})
+        assert again[0] == 200 and again[1]["row"]["id"] == f"app:{said}"
+        notes = [n for n in world.store.look() if n["kind"] == "chat"]
+        assert [n["data"] for n in notes] == [{"text": "What is left for Friday?", "input_id": said}], "one note"
+        [(kind, event)] = [(k, json.loads(d)) for _, k, d in world.store.events_after(0) if k == "chat"]
+        assert event["id"] == f"app:{said}" and event["pending"] is True and event["rev"] == 1
+
+        refused = await world.call("POST", "/api/chat", {"input_id": input_id(), "text": "x",
+                                                         "attachments": [{"name": "a.pdf"}]})
+        assert refused[0] == 400 and refused[1]["error"] == chat.NO_FILES
+        for bad in ({"input_id": "tg:1", "text": "x"}, {"input_id": input_id(), "text": "  "},
+                    {"input_id": input_id(), "text": "x" * (chat.OWNER_CHARS + 1)}):
+            assert (await world.call("POST", "/api/chat", bad))[0] == 400, bad
+        assert (await world.call("POST", "/api/chat", {"input_id": input_id(), "text": "x"},
+                                 headers={"Origin": ORIGIN}))[0] == 403, "a POST without the app's header"
+        assert (await world.call("POST", "/api/chat", {"input_id": input_id(), "text": "x"}, cookie="forged"))[0] == 401
+        assert len([n for n in world.store.look() if n["kind"] == "chat"]) == 1
+
+    faced(tmp_path, body)
+
+
+def test_the_routers_rows_merge_by_their_id_and_the_face_reads_the_newest_in_order(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        said = input_id()
+        await world.call("POST", "/api/chat", {"input_id": said, "text": "Book the table"})
+        rows = [{"id": f"app:{said}", "at": 10.0, "by": "owner", "text": "Book the table"},
+                {"id": "telegram:7", "at": 5.0, "by": "owner", "text": "Hi", "via": "telegram"},
+                {"id": "app-row:x", "at": 11.0, "by": "notice", "text": "Which time?",
+                 "buttons": [["19:00", "b" * 16], ["20:00", "c" * 16]]},
+                {"id": "nope"}, {"id": "bad id!", "at": 1, "by": "her", "text": "x"}]
+        answer = await world.owner("chat", {"rows": rows})
+        assert answer["rows"] == 3 and [d["id"] for d in answer["dropped"]] == ["nope", "bad id!"]
+        read = (await world.get("/api/chat"))["rows"]
+        assert [r["id"] for r in read] == ["telegram:7", f"app:{said}", "app-row:x"], "by the archive's time"
+        assert read[1]["pending"] is False and read[1]["at"] == 10.0, "the router has it"
+        before = world.store.cursor()
+        assert (await world.owner("chat", {"rows": rows[:3]}))["rows"] == 0, "the same rows again: no news"
+        assert world.store.cursor() == before
+
+        files = [{"id": "f" * 32, "name": "plan.pdf", "size": 3, "mime": "application/pdf"}]
+        await world.owner("chat", {"rows": [{"id": "her:1", "at": 12.0, "by": "her", "text": "Here", "files": files}]})
+        await world.owner("chat", {"rows": [{"id": "her:1", "at": 12.0, "by": "her", "text": "Here, booked"}]})
+        await world.owner("chat", {"rows": [{"id": "app-row:x", "buttons": [], "toast": "Chosen."}]})
+        read = {r["id"]: r for r in (await world.get("/api/chat"))["rows"]}
+        assert read["her:1"]["files"] == files and read["her:1"]["text"] == "Here, booked", "a push keeps her files"
+        assert read["app-row:x"]["text"] == "Which time?" and read["app-row:x"]["buttons"] == []
+        assert read["app-row:x"]["rev"] > read["her:1"]["rev"]
+        assert (await world.post("/owner/chat", {"rows": []}, {}))[0] == 401, "only the router pushes rows"
+
+    faced(tmp_path, body)
+
+
+def test_a_press_in_the_app_goes_to_the_router_only_for_a_button_its_row_carries(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        await world.owner("chat", {"rows": [{"id": "sys:1", "at": 1.0, "by": "notice", "text": "Check",
+                                             "buttons": [["I see it", "b" * 16]]}]})
+        assert (await world.call("POST", "/api/chat/press", {"id": "b" * 16, "row": "sys:1"}))[1] == {"ok": True}
+        assert [n["data"] for n in world.store.look() if n["kind"] == "chat-press"] == [{"id": "b" * 16, "row": "sys:1"}]
+        for bad, code in (({"id": "c" * 16, "row": "sys:1"}, 410), ({"id": "b" * 16, "row": "sys:2"}, 410),
+                          ({"id": "x", "row": "sys:1"}, 400), ({"id": "b" * 16}, 400)):
+            assert (await world.call("POST", "/api/chat/press", bad))[0] == code, bad
+        assert len([n for n in world.store.look() if n["kind"] == "chat-press"]) == 1
+
+    faced(tmp_path, body)
+
+
+def test_her_file_is_kept_for_the_app_and_served_only_as_a_sandboxed_download(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        page = base64.b64encode(b"<script>alert(1)</script>").decode()
+        kept = (await world.owner("chat/file", {"row": "her:1", "name": "trip.html", "mime": "text/html",
+                                                "data": page}))["file"]
+        assert kept["name"] == "trip.html" and kept["size"] == 25
+        response = await world.api.get(f"/api/chat/files/{kept['id']}",
+                                       headers={"Cookie": f"{COOKIE}={world.cookie}"})
+        assert response.status == 200 and await response.read() == b"<script>alert(1)</script>"
+        assert response.headers["Content-Type"].startswith("application/octet-stream"), "never served as a page"
+        assert response.headers["Content-Security-Policy"] == face.FILE_CSP
+        assert response.headers["Content-Disposition"].startswith("attachment;")
+        assert (await world.post("/owner/chat/file", {"row": "her:1", "name": "x", "mime": "x", "data": "%%"}))[0] == 400
+        missing = await world.api.get(f"/api/chat/files/{'0' * 32}", headers={"Cookie": f"{COOKIE}={world.cookie}"})
+        assert missing.status == 404
+
+    faced(tmp_path, body)
+
+
+def test_what_she_is_writing_reaches_the_stream_whole_is_never_stored_and_her_row_ends_it(tmp_path):
+    async def body(world: FaceWorld):
+        await world.login()
+        status, reader = await stream(world)
+        assert status == 200
+        await world.owner("chat/draft", {"text": "Looking"})
+        await world.owner("chat/draft", {})  # she still works: the text as it was
+        frames_ = [await reader.frame(), await reader.frame()]
+        assert [(f["event"], json.loads(f["data"])["text"]) for f in frames_] == [("chat-draft", "Looking")] * 2
+        assert "id" not in frames_[0], "never replayed"
+        assert (await world.get("/api/chat"))["draft"]["text"] == "Looking"
+        assert not [k for _, k, _ in world.store.events_after(0) if k != "chat"], "nothing of it is stored"
+        await world.owner("chat", {"rows": [{"id": "her:1", "at": 1.0, "by": "her", "text": "Done"}]})
+        assert (await world.get("/api/chat"))["draft"] is None
+        await world.owner("chat/draft", {"text": "Again"})
+        world.clock.now += chat.DRAFT_S
+        assert (await world.get("/api/chat"))["draft"] is None, "a draft nobody refreshed is over"
+        reader.response.close()
+
+    faced(tmp_path, body)
+
+
+def test_frames_send_only_the_newest_draft_of_the_chat_between_two_events():
+    from collections import deque
+
+    deltas = deque([(4, None, '{"text": "A"}'), (4, None, '{"text": "AB"}'), (4, "s1", "x"), (5, None, '{"text": "C"}')])
+    text, _ = frames([(5, "chat", '{"id": "r"}')], deltas, 4)
+    assert text == ('event: chat-draft\ndata: {"text": "AB"}\n\n'
+                    'event: delta\ndata: {"session": "s1", "text": "x"}\n\n'
+                    'id: 5\nevent: chat\ndata: {"id": "r"}\n\n'
+                    'event: chat-draft\ndata: {"text": "C"}\n\n')

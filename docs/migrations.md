@@ -5,7 +5,7 @@ A store's SQLite tables change by numbered steps (`retinue/migrate.py`). A store
 version it brings. A start after the first runs none.
 
 The version is a row per store in the file's `migrations` table, not `PRAGMA user_version`: `platform.sqlite`
-holds five stores (`sessions`, `feed`, `subs`, `endings`, `tobase`) and `router.sqlite` two (`protocol`, `outbox`), each opened
+holds six stores (`sessions`, `feed`, `subs`, `endings`, `tobase`, `chat`) and `router.sqlite` two (`protocol`, `outbox`), each opened
 on its own.
 
 **Upgrade from a release before the steps.** No version is recorded. Step 1 of every store is the upgrade its open

@@ -7,13 +7,13 @@ import ipaddress
 import json
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
+from dockerup import docker_up
 from retinue import cliengine, lane_host, pagesd, reach
 from retinue.bus import bus_token
 from retinue.config import AgentConfig, PlatformConfig, RouterConfig
@@ -1738,8 +1738,7 @@ def test_every_image_is_pinned_by_digest_or_built_here():
     assert yaml.safe_load(files[2].read_text())["services"]["tuwunel"]["image"] == SERVICES["tuwunel"]["image"]
 
 
-@pytest.mark.skipif(not shutil.which("docker") or subprocess.run(["docker", "info"], capture_output=True).returncode != 0,
-                    reason="needs Docker")
+@pytest.mark.skipif(not docker_up(), reason="needs Docker")
 def test_the_faces_nginx_config_loads_in_its_own_image(tmp_path):
     """Text tests of the config miss what only nginx sees: an unquoted `{8}` in a location regex took the face down."""
     image = re.search(r"^FROM (nginxinc/nginx-unprivileged\S+)", (ROOT / "deploy" / "face" / "Dockerfile").read_text(), re.M)[1]

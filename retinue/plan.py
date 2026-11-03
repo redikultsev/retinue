@@ -50,7 +50,7 @@ class Refusal(ValueError):
 
 PLAN_KEY = "plan.state"      # the platform's kv: the Router's last push of the day plan
 PLAN_BYTES = 64 * 1024
-PRESSES = ("plan", "place", "undo", "busy", "free", "remove", "hours", "now", "activities")
+PRESSES = ("plan", "place", "undo", "busy", "free", "remove", "hours", "now", "activities", "off")
 DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 ID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 PLAN_ID = re.compile(r"p[0-9a-f]{10}")
@@ -68,7 +68,8 @@ def clean_press(body: object) -> dict:
     shapes = {"day": DAY, "task": ID, "block": ID, "plan": PLAN_ID, "t": TOKEN, "ref": REMINDER, "opens": HM, "closes": HM,
               "zone": ZONE}
     takes = {"plan": ("day", "days"), "place": ("day", "task"), "undo": ("plan",), "remove": ("block",), "busy": ("minutes",),
-             "free": (), "hours": ("opens", "closes", "zone"), "now": ("activity",), "activities": ("activities",)}[action]
+             "free": (), "hours": ("opens", "closes", "zone"), "now": ("activity",), "activities": ("activities",),
+             "off": ()}[action]
     if action == "place" and body.get("task") is None:
         # «Plan» on a person's row or a reminder: the Router makes its task and lays it — one press, no «make» first.
         takes = ("day", "t") if body.get("t") is not None else ("day", "ref")

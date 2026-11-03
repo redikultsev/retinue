@@ -536,7 +536,11 @@ back each of its blocks still at the version it wrote — taken off when the pla
 moved since. No plan is laid on a calendar the Router has not read in the last half hour (just after a restart, before
 the first read): the press says so. «Now» — an activity (a hold of its name and length) or «Busy» — is a hold from the
 moment of the press; it ends a hold running then (two never run at once) and lays again the plan's blocks it crosses —
-a piece already begun stays. × ends the hold running now; the holds ahead stay. At each look (30 s) a block whose time is over is counted once the next window
+a piece already begun stays. × ends the hold running now; the holds ahead stay. «Not working today» (the last item of
+«Now», or `plan_hold` with `day_off`) is a plan of its own: a hold «Not working» to the end of today's window, and the
+plans' blocks in it that are not his — the one running cut at the press, those ahead moved to the first free time of the
+next seven windows (none free: `skipped`, said; one now past its deadline named) — his own blocks and holds stay; its
+«Undo» puts every block back and takes the hold off; a second press while it holds is the first. At each look (30 s) a block whose time is over is counted once the next window
 has opened: `passed` — its minutes off its task — if the owner was seen in its window (from its opening to the next
 one's: a message of his, a press in the app or in Telegram, a record he changed on his screen or from a Mac), else
 `skipped` with «no sign of you that day», said in Telegram, and its time goes back to the task; one he put or stretched

@@ -1722,6 +1722,9 @@ class Core:
             ok, text = await self.planner.move(turn.id, str(args.get("task") or ""), str(args.get("day") or ""),
                                                str(args.get("part") or ""), str(args.get("at") or ""),
                                                args.get("named") is True, time.time())
+        elif action == "hold" and args.get("day_off") is True:
+            text = await self.planner.off_today(time.time())
+            ok = not text.startswith("Not done")
         elif action == "hold":
             ok, text = await self.planner.hold_said(str(args.get("label") or ""), args.get("minutes"),
                                                     str(args.get("at") or ""), time.time())

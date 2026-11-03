@@ -135,7 +135,9 @@ export type Press =
   | ({ action: "hours" } & PlanWindow)
   /** An activity from now: a hold of its name and length. */
   | { action: "now"; activity: string }
-  | { action: "activities"; activities: Activity[] };
+  | { action: "activities"; activities: Activity[] }
+  /** «Not working today»: the rest of today's window held, its blocks moved to the next days — one «Undo». */
+  | { action: "off" };
 
 export const planApi = {
   get: () => request<Plan>("/api/plan"),

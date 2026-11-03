@@ -409,24 +409,24 @@ function PlanBar({ plan, first, today, unplanned, nav }: {
 }
 
 /** «Now»: an activity of his from now — a hold of its name and length — or plain «Busy»; the plan's blocks it crosses
- * are laid again after it. While one runs: its name and end, and × ends it. */
+ * are laid again after it. «Not working today» holds the rest of the day and moves its blocks on, under «Undo plan». While one runs: its name and end, and × ends it. */
 function BusyMenu({ plan }: { plan: Plan }) {
   const held = plan.plan.holds.find((h) => h.from <= plan.now && h.to > plan.now);
-  if (held)
-    return (
-      <button
-        type="button"
-        onClick={() => void press({ action: "free" }, "Freeing the time…")}
-        className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] transition-colors hover:bg-accent max-md:h-10"
-      >
-        {held.label || "Busy"} till {hm(held.to, plan.tz)}
-        <Close className="size-3.5" />
-      </button>
-    );
   const item = "flex h-8 items-center justify-between gap-4 rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10";
   const activities = plan.plan.activities ?? [];
   return (
-    <Popover label="Now" button="Now">
+    <>
+      {held && (
+        <button
+          type="button"
+          onClick={() => void press({ action: "free" }, "Freeing the time…")}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] transition-colors hover:bg-accent max-md:h-10"
+        >
+          {held.label || "Busy"} till {hm(held.to, plan.tz)}
+          <Close className="size-3.5" />
+        </button>
+      )}
+      <Popover label="Now" button="Now">
       {(close) => (
         <div className="flex min-w-44 flex-col text-[13px]">
           {activities.map((a) => (
@@ -460,8 +460,21 @@ function BusyMenu({ plan }: { plan: Plan }) {
               <span className="font-mono text-xs text-muted-foreground tabular-nums">{duration(m)}</span>
             </button>
           ))}
+          <div className="my-1 border-t" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              close();
+              void press({ action: "off" }, "Not working today: moving the day's tasks on…");
+            }}
+            className={item}
+          >
+            Not working today
+          </button>
         </div>
       )}
-    </Popover>
+      </Popover>
+    </>
   );
 }

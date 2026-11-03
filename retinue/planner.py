@@ -29,6 +29,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import secrets
 from datetime import date, datetime, timedelta, timezone
 
@@ -54,6 +55,7 @@ CALENDAR_FRESH_S = 30 * 60  # a busy window older than this lays no plan
 HOLD_MAX_S = 24 * 3600      # a hold from a button is at most this long
 HOLD_AHEAD_S = 14 * 86400   # a hold she sets on his word starts at most this far ahead
 HOLD_BACK_S = 15 * 60       # and at the earliest this long ago («I went for lunch ten minutes ago»)
+OFF_DAYS = 7                # «Not working today» moves the day's blocks into the next this many windows
 HELD_S = 36 * 3600          # an ended hold is kept this long: longer than any window, so its meal stays eaten
 CALL_S = 15
 PAGE = 200
@@ -453,14 +455,15 @@ class Planner:
             if not isinstance(entry, dict) or entry.get("undone"):
                 return "That plan is not known any more: nothing taken back."
             written = entry.get("blocks") or {}
-            rows = await self._rows(BLOCKS, [{"field": "state", "op": "eq", "value": "planned"}])
+            rows = await self._rows(BLOCKS, [{"field": "state", "op": "in", "value": ["planned", "skipped"]}])
             if rows is None:
                 return "Not taken back: the blocks could not be read. Try again."
             ops, kept = [], 0
             for b in rows:
                 known = written.get(b["id"])
-                if known is None:
-                    continue
+                if known is None or (b["fields"].get("state") == "skipped"
+                                     and (b["version"] != known.get("version") or not known.get("before"))):
+                    continue  # one this plan took off is put back; one taken off since is not his to keep
                 if b["version"] != known.get("version"):
                     kept += 1
                     continue
@@ -477,6 +480,8 @@ class Planner:
                     self._keep(plans, record)  # someone else's block put back: its own plan knows the version
             plans[plan_id] = {**plans.get(plan_id, entry), "undone": now, "blocks": {}}
             self._keep_plans(plans, now)
+            if entry.get("off"):  # «Not working today» taken back: its hold too, the time is his again
+                self.core.store.set(HOLDS_KEY, json.dumps([h for h in self.held(now) if h.get("plan") != plan_id]))
             estimates = await self._unestimate(entry.get("estimates") or [])
         await self.push(now)
         said = f"Taken back: {len(ops)} {'block' if len(ops) == 1 else 'blocks'}"
@@ -527,6 +532,100 @@ class Planner:
             f"{_day_hm(start, self.hours.zone)}–{_hm(end, self.hours.zone)}"
         gone = f" Taken off: {', '.join(str(h.get('label') or 'Busy') for h in dropped)}." if dropped else ""
         return f"{label} {when}.{gone}" + (f" {moved}" if moved else "")
+
+    async def off_today(self, now: float) -> str:
+        """«Not working today»: a hold «Not working» from now to the end of today's window, and the plan's blocks in
+        it that are not his — the one running cut at now, those ahead moved to the first free time of the next OFF_DAYS
+        windows, none free: skipped — as a plan of its own: one «Undo» puts every block back and takes the hold off.
+        His own blocks and his other holds stay. A second press while it holds is the first one."""
+        from zoneinfo import ZoneInfo
+        window = self._window_of(now)
+        if now >= window.end:  # before today's window opens: the whole of it
+            window = L.window_of(datetime.fromtimestamp(now, ZoneInfo(self.hours.zone)).date(), self.hours)
+        start = max(now, window.start)
+        if any(h.get("plan") and h.get("label") == "Not working" and float(h["to"]) >= window.end
+               for h in self.holds(now)):
+            return f"Not working till {_hm(window.end, self.hours.zone)} already."
+        async with self.lock:
+            if self._stale(now):
+                return "Not done: the calendar has not been read in the last half hour. Try again in a minute."
+            world = await self._world(window, now)
+            if world is None:
+                return "Not done: the plan could not be read. Try again."
+            tasks, standing, counted = world
+            by_id = {t["id"]: t for t in tasks}
+            titles = {t["id"]: str(t["fields"].get("title") or "") for t in tasks}
+            ahead = sorted((b for b in standing if self._span(b)[1] > start), key=self._span)
+            mine = [b for b in ahead if not b["fields"].get("locked")]
+            his = [b for b in ahead if b["fields"].get("locked")]
+            running = [b for b in mine if self._span(b)[0] < start]
+            plan_id = f"p{secrets.token_hex(5)}"
+            plans = self.plans()
+            plans[plan_id] = {"id": plan_id, "by": "owner", "at": now, "windows": [window.day.isoformat()],
+                              "blocks": {}, "left": {}, "off": window.day.isoformat()}
+            self._keep_plans(plans, now)
+            ops = [{"op": "set", "id": b["id"], "version": b["version"],
+                    "fields": {"minutes": max(5, math.ceil((start - self._span(b)[0]) / 60)), "plan": plan_id}}
+                   for b in running]
+            where, left, late = [], [b for b in mine if b not in running], []
+            for n in range(1, OFF_DAYS + 1):
+                if not left:
+                    break
+                later = L.window_of(window.day + timedelta(days=n), self.hours)
+                there = await self._world(later, now)
+                if there is None:
+                    break
+                pieces = [self._span(b) for b in there[1]] + [(a, z) for _, a, z in where if later.start <= a < later.end]
+                busy = self._busy(later, now)
+                for b in list(left):
+                    length = int(b["fields"].get("minutes") or 0) * 60
+                    spot = L.first_free(max(later.start, now), later.end, length, busy + pieces, pieces)
+                    if spot is None:
+                        continue
+                    pieces.append((spot, spot + length))
+                    where.append((b, spot, spot + length))
+                    left.remove(b)
+                    ops.append({"op": "set", "id": b["id"], "version": b["version"],
+                                "fields": {"start": iso(spot), "plan": plan_id}})
+                    task = self._task(by_id[b["fields"]["task"]], counted) if b["fields"].get("task") in by_id else None
+                    if task and ((task.due and task.due < later.day) or (task.by and task.by < spot + length)):
+                        late.append(b)
+            ops += [{"op": "set", "id": b["id"], "version": b["version"],
+                     "fields": {"state": "skipped", "why": "not working that day", "plan": plan_id}} for b in left]
+            answer = await self._apply(ops, f"off:{plan_id}") if ops else {"records": []}
+            if answer is None:
+                self._drop_plan(plan_id, now)
+                return "Not done: the blocks could not be written. Try again."
+            held = self.held(now) + [{"from": start, "to": window.end, "label": "Not working", "plan": plan_id}]
+            self.core.store.set(HOLDS_KEY, json.dumps(sorted(held, key=lambda h: h["from"])))
+            plans = self.plans()
+            before = {b["id"]: {k: b["fields"].get(k) for k in ("start", "minutes", "state", "plan")} for b in mine}
+            for record in answer.get("records") or []:
+                if isinstance(record, dict) and record.get("id") in before:
+                    self._keep(plans, record, before[record["id"]])
+                    if (s := moment((record.get("fields") or {}).get("start"))) is not None:
+                        day = self._window_of(s).day.isoformat()
+                        plans[plan_id]["blocks"][record["id"]]["day"] = day
+                        if day not in plans[plan_id]["windows"]:
+                            plans[plan_id]["windows"].append(day)
+            self._keep_plans(plans, now)
+        await self.push(now)
+        name = lambda bs: ", ".join(line(titles.get(b["fields"].get("task"), ""), 40) for b in bs)  # noqa: E731
+        days: dict[str, int] = {}
+        for _, a, _ in where:
+            key = f"{self._window_of(a).day:%a}"
+            days[key] = days.get(key, 0) + 1
+        said = f"Not working till {_hm(window.end, self.hours.zone)}."
+        if where:
+            said += f" Moved {len(where)} {'block' if len(where) == 1 else 'blocks'}: " + \
+                ", ".join(f"{d} {k}" for d, k in days.items()) + "."
+        if late:
+            said += f" Past its deadline now: {name(late)}."
+        if left:
+            said += f" No room in a week for: {name(left)}."
+        if his:
+            said += f" Yours stay: {name(his)}."
+        return said
 
     async def hold_said(self, label: str, minutes: object, at: str, now: float) -> tuple[bool, str]:
         """`plan_hold` — her hold on the owner's word: «having lunch», «lying down for an hour», «tomorrow at 19:00 to
@@ -1010,6 +1109,8 @@ class Planner:
             return await self.undo(str(data.get("plan") or ""), now)
         if action == "busy":
             return await self.busy(int(data.get("minutes") or 60), at)
+        if action == "off":
+            return await self.off_today(at)
         if action == "now":
             name = str(data.get("activity") or "").casefold()
             activity = next((a for a in self.activities if a.title.casefold() == name), None)

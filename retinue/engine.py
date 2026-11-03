@@ -250,13 +250,15 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
           "airport, an hour and a half»). label — what it is, short, in English («Lunch», «Rest», «Travel»; one of "
           "his activities when it is one). minutes — how long, as he said or the activity's usual length. at — his "
           "local time YYYY-MM-DDTHH:MM when it is not now (at most 14 days ahead, at the earliest 15 minutes ago). "
-          "The plan's tasks it crosses move after it; a hold of a meal's name frees that meal's place that day. Done "
-          "at once; the code says it in the app.",
+          "The plan's tasks it crosses move after it; a hold of a meal's name frees that meal's place that day. "
+          "day_off — true when he says he is not working today («I'm off today», «no work today»): the rest of "
+          "today's window is held and its tasks move to the next days; label and minutes are then ignored. Done at "
+          "once; the code says it in the app.",
           {"type": "object", "properties": {
-              "label": {"type": "string"}, "minutes": {"type": "integer"}, "at": {"type": "string"}},
-           "required": ["label", "minutes"]})
+              "label": {"type": "string"}, "minutes": {"type": "integer"}, "at": {"type": "string"},
+              "day_off": {"type": "boolean"}}})
     async def plan_hold(args):
-        return await plan("hold", {k: args[k] for k in ("label", "minutes", "at") if k in args})
+        return await plan("hold", {k: args[k] for k in ("label", "minutes", "at", "day_off") if k in args})
 
     @tool("get_attachment",
           "Get again what the owner sent, by the number from the mark [attachment #N: …]. After compaction the "

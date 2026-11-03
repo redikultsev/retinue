@@ -7,7 +7,6 @@ a refusal, or an address Squid lets through and then cannot reach. Skipped witho
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import time
 import uuid
@@ -16,16 +15,14 @@ from pathlib import Path
 import pytest
 import yaml
 
+from dockerup import docker_up
+
 ROOT = Path(__file__).resolve().parents[1]
 EGRESS = ROOT / "deploy" / "egress"
 IMAGE = yaml.safe_load((ROOT / "deploy" / "compose.yml").read_text())["services"]["lane-private-egress"]["image"]
 
 
-def _docker() -> bool:
-    return bool(shutil.which("docker")) and subprocess.run(["docker", "info"], capture_output=True).returncode == 0
-
-
-pytestmark = pytest.mark.skipif(not _docker(), reason="needs Docker")
+pytestmark = pytest.mark.skipif(not docker_up(), reason="needs Docker")
 
 # One CONNECT per target over bash's /dev/tcp: the proxy's status line, or `none` when Squid let it through and is
 # still trying to reach it (an address nobody answers on); `unreachable-proxy` when the client never got to Squid.

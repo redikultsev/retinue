@@ -143,7 +143,6 @@ class Platform:
             self.base.busy = self._base_busy
         # The Base: who changed what, and the platform's own commit after each turn (`tobase.py`).
         self.tobase = tobase.ToBase(self)
-        self.feed.tobase = self.tobase
         # The owner's repositories in the room (`code.py`) and «Push», their push by his button (`topush.py`).
         self.code = CodeRepos(cfg.code, cfg.lanes[cfg.code.lane].work_mount) if cfg.code is not None else None
         self.topush = topush.ToPush(self)

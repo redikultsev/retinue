@@ -161,6 +161,60 @@ def test_a_row_s_task_names_its_row_and_a_second_plan_makes_none_more(tmp_path):
     faced(tmp_path, run)
 
 
+def test_a_row_s_task_carries_the_letter_s_deadline_a_day_as_due_a_time_as_no_later_than(tmp_path):
+    from datetime import datetime, timezone
+
+    async def run(world):
+        now = world.clock.now = time.time()
+        await define(world)
+        core = router(world, tmp_path)
+        ahead = datetime.fromtimestamp(now + 5 * 86400, timezone.utc)
+        day, moment = ahead.strftime("%Y-%m-%d"), ahead.strftime("%Y-%m-%dT18:00")
+        letters = [("<d1@example.org>", "anna@example.org", day), ("<d2@example.org>", "boris@example.org", moment),
+                   ("<d3@example.org>", "vera@example.org", "next Friday")]
+        for message_id, sender, due in letters:
+            item = asking("pay", sender=sender, message_id=message_id, ts=now - 3600, at=now - 3600)
+            item["fields"]["card"] = {**item["fields"]["card"], "due_now": due}
+            put(core.mail.store, item)
+        side = Tasks(core)
+        for row in waiting.digest(core, now):
+            assert await side.make(row["t"], "", now)
+        fields = sorted((t["fields"] for t in await tasks_of(world)), key=lambda f: (f.get("due") or "~", f.get("by") or ""))
+        assert len(fields) == 3
+        assert fields[0]["due"] == day and "by" not in fields[0], "a day: due"
+        assert fields[1]["due"] == day and fields[1]["by"] == f"{day}T18:00:00Z", "a time too: by, in his zone (UTC here)"
+        assert "due" not in fields[2] and "by" not in fields[2], "a deadline she could not date stays words"
+    faced(tmp_path, run)
+
+
+def test_a_deadline_s_time_is_his_zone_s_and_the_task_made_before_it_was_dated_takes_it(tmp_path):
+    async def run(world):
+        now = world.clock.now = time.time()
+        await define(world)
+        core = router(world, tmp_path)
+        core.tz = "Asia/Bangkok"  # seven hours ahead of UTC
+        put(core.mail.store, asking("pay", ts=now - 3600, at=now - 3600))
+        [row] = waiting.digest(core, now)
+        side = Tasks(core)
+        made = await side.make(row["t"], "", now)  # «Plan» before she dated the letter
+        [item] = core.mail.store.asks(now)
+        core.mail.store.set(item["seq"], now, card={**item["card"], "due_now": "2030-11-15T18:00"})
+        assert await side.make(row["t"], "", now + 60) == made, "the same task"
+        [task] = await tasks_of(world)
+        assert (task["fields"]["due"], task["fields"]["by"]) == ("2030-11-15", "2030-11-15T11:00:00Z")
+    faced(tmp_path, run)
+
+
+def test_her_due_is_a_real_date_or_nothing():
+    from retinue.mail import decisions, due_of
+    assert due_of("2026-11-15") == "2026-11-15" and due_of(" 2026-11-15T09:30 ") == "2026-11-15T09:30"
+    for off in ("2026-02-30", "15 Nov", "2026-11-15T25:00", "", None, "2026-11-15T09:30:00"):
+        assert due_of(off) == "", off
+    [one] = decisions(json.dumps({"items": [{"n": 1, "needs": "pay", "deadline": "by Friday", "due": "2026-11-13",
+                                            "cost": "high", "new": True, "to_assistant": False, "text": "Pay"}]})).values()
+    assert one.due == "2026-11-13"
+
+
 def test_closing_either_closes_the_other_and_undo_on_either_stands(tmp_path):
     async def run(world):
         now = world.clock.now = time.time()

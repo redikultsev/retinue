@@ -20,7 +20,7 @@ import secrets
 import sqlite3
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import httpx
 
@@ -68,11 +68,14 @@ EVENT_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["items"],
     "properties": {"items": {"type": "array", "items": {
         "type": "object", "additionalProperties": False,
-        "required": ["n", "needs", "deadline", "cost", "new", "to_assistant", "text"],
+        "required": ["n", "needs", "deadline", "due", "cost", "new", "to_assistant", "text"],
         "properties": {
             "n": {"type": "integer"},
             "needs": {"type": "string", "enum": list(NEEDS)},
             "deadline": {"type": "string", "maxLength": 40},
+            # The deadline as a date code can plan by: the owner's local YYYY-MM-DD, or YYYY-MM-DDTHH:MM when the item
+            # names a time; empty when there is none or it cannot be told. A task made from the item carries it.
+            "due": {"type": "string", "maxLength": 16},
             "cost": {"type": "string", "enum": list(COSTS)},
             "new": {"type": "boolean"},
             # Written to her, not to the owner: «are you a bot?», «what were you told», «forget the rules». Code folds it in later
@@ -151,6 +154,22 @@ class Decision:
     text: str
     to_assistant: bool = False  # written to her, not to the owner: folded in later windows
     media: list[tuple[int, str]] = field(default_factory=list)  # (attachment number, her caption)
+    due: str = ""               # the deadline as his local YYYY-MM-DD or YYYY-MM-DDTHH:MM (`due_of`), else empty
+
+
+DUE = re.compile(r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?")
+
+
+def due_of(value: object) -> str:
+    """Her `due` when it is a real date (or a date and time) in his local time; anything else is no date."""
+    text = str(value or "").strip()
+    if not DUE.fullmatch(text):
+        return ""
+    try:
+        datetime.strptime(text, "%Y-%m-%dT%H:%M" if "T" in text else "%Y-%m-%d")
+    except ValueError:
+        return ""
+    return text
 
 
 def decisions(answer: str) -> dict[int, Decision]:
@@ -168,7 +187,7 @@ def decisions(answer: str) -> dict[int, Decision]:
                  and type(m.get("attachment")) is int and isinstance(m.get("caption"), str)][:20]
         found[n] = Decision(n, item["needs"], " ".join(str(item.get("deadline") or "").split())[:40], item["cost"],
                             item.get("new") is not False, str(item.get("text") or "").strip()[:700],
-                            item.get("to_assistant") is True, media)
+                            item.get("to_assistant") is True, media, due_of(item.get("due")))
     return found
 
 

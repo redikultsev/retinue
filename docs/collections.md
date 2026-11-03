@@ -474,8 +474,8 @@ owner's spheres):
 The rights the files give: the assistant adds and sets the title, goal, project, due, by, minutes, notes, state and
 ask — and closes a task only in a turn that read no one else's text (the router refuses it otherwise: a letter that
 says «done» is not the owner saying it); sessions and the Mac add and set the same but `by` and `ask`; `code:waiting`
-adds and sets the title, state, ask and due; nobody but the owner deletes. A task has no time of its own: its pieces of
-time are [blocks](#blocks).
+adds and sets the title, state, ask, due and by; nobody but the owner deletes. A task has no time of its own: its
+pieces of time are [blocks](#blocks).
 
 A task is filed under a project, and moved, by setting its `project` — the owner in its record, the assistant, a
 session, the Mac; never the Router. An install made before the field takes it with `collections define` and
@@ -483,8 +483,9 @@ session, the Mac; never the Router. An install made before the field takes it wi
 
 **«Plan»** on a person's row in Tasks' «From people», or on a reminder, is one press in the app — a plan press `place`
 with the row's `t` or the reminder's `ref`: the router adds the task as `code:waiting`, titled with the row's own masked
-words, its `ask` the row's id (a reminder's: its day as `due`) — or takes the open one that row has already — and lays it
-on that day. The reminder stays and fires as set.
+words, its `ask` the row's id, its `due` the earliest deadline the assistant dated on the row's items still asking (her
+`due` when she judged them; with a time of day, `by` as well), a reminder's its day — or takes the open one that row has
+already — and lays it on that day. The reminder stays and fires as set.
 
 **A task and its row are kept in step by state** (`retinue/tasks.py`): at each look at the digest (every 30 s) the
 router reads the tasks that name a person's row and compares each pair with how it last left them (its kv

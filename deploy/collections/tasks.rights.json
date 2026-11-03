@@ -47,7 +47,8 @@
         "title",
         "state",
         "ask",
-        "due"
+        "due",
+        "by"
       ],
       "delete": false
     }

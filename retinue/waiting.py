@@ -47,7 +47,7 @@ from . import clock
 from .courier import INVISIBLE, line
 from .feed import CHIP_CHARS, DIGEST_BYTES, DIGEST_ITEMS, EMAIL, RECORD, SPHERE
 from .pages import NEEDS, midnight, named, plural
-from .mail import ASKS, MARKS, ask_row, later_until
+from .mail import ASKS, MARKS, ask_row, due_of, later_until
 from .outbox import LIVE
 from .proactive import FIELDS, PUSH_DAYS
 from .scheduler import REPEATS
@@ -125,7 +125,7 @@ def digest(core, now: float) -> list[dict]:
 
 
 def rows(core, now: float) -> dict[str, dict]:
-    """Every person's row the last ASKS_LOOK_DAYS knew, by its digest id: `{state, seqs, title, kind, how}` — `open`
+    """Every person's row the last ASKS_LOOK_DAYS knew, by its digest id: `{state, seqs, title, kind, how, due?}` — `open`
     while an item under it still asks, `later` while one waits out his «Tomorrow», `closed` once every one was closed
     by his press or by what code saw him do, `expired` when they ran out; `how` a closed row's — `dismissed` when every
     item closed by a press was «Not a task» and none by «Done» or an answer, else `done`. The ids are the digest's own (`_people`), so a task
@@ -140,6 +140,9 @@ def rows(core, now: float) -> dict[str, dict]:
         row = out.setdefault(row_id, {"state": state, "seqs": [], "kind": "chat" if chat else "letter",
                                       "title": f"{NEEDS[card.get('needs_now') or 'reply']}: {said(_judged(item))}"})
         row["seqs"].append(item["seq"])
+        due = due_of(card.get("due_now"))
+        if due and state in ("open", "later") and (not row.get("due") or due < row["due"]):
+            row["due"] = due  # the earliest deadline still asking: the task made from the row carries it
         if rank[state] < rank[row["state"]]:
             row["state"] = state
         if state == "closed":

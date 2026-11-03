@@ -55,6 +55,7 @@ class Tasks:
     def __init__(self, core) -> None:
         self.core = core
         self._calendar_at = 0.0
+        self.events_at: float | None = None  # when the busy window was last read; none yet — a plan would land on meetings
         self.events: list[dict] = []  # the busy window as last read: what the plan lays around (`planner`)
         self.planner = None           # the day plan's look rides on this one (`planner.Planner.cycle`)
         self._missing = False  # the collection or the rule's rights are not there: said once, then quiet
@@ -188,8 +189,10 @@ class Tasks:
     async def calendar(self, now: float) -> bool:
         """The calendar of today and the next CALENDAR_DAYS to the platform, every CALENDAR_S. True when pushed; an
         unread calendar is not pushed, and the platform shows the last one with its age."""
-        if self.core.platform is None or not self.core.mail or self.core.mail.collector is None or \
-                now - self._calendar_at < CALENDAR_S:
+        if self.core.platform is None or not self.core.mail or self.core.mail.collector is None:
+            self.events_at = now  # no calendar to read: none keeps him busy, and that is known
+            return False
+        if now - self._calendar_at < CALENDAR_S:
             return False
         self._calendar_at = now
         start = clock.local(now, self.core.tz).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -200,7 +203,7 @@ class Tasks:
             log.warning("the calendar not read for the busy window: %s", exc)
             return False
         shown = [e for e in (occurrence(event, self.core.tz) for event in events) if e][:CALENDAR_EVENTS]
-        self.events = shown
+        self.events, self.events_at = shown, now
         answer = await self.core.platform("calendar", {"events": shown, "at": now, "failed": len(failed)}, CALL_S)
         if answer.get("error"):
             log.warning("the platform refused the busy window: %s", answer["error"])

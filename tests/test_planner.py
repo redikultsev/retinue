@@ -48,7 +48,7 @@ async def setup(world, tmp_path):
     router = Store(str(tmp_path / "router.sqlite"))
     core = SimpleNamespace(platform=platform_of(world), store=router, tz=H.zone, tell_owner=tell_owner)
     events = [{"start": msk(10, "19:00"), "end": msk(10, "20:00"), "title": "Lesson", "all_day": False, "busy": True}]
-    return Planner(core, SimpleNamespace(events=events), H), told
+    return Planner(core, SimpleNamespace(events=events, events_at=1e12), H), told  # a busy window always fresh
 
 
 async def add(world, **fields) -> dict:
@@ -146,4 +146,75 @@ def test_a_press_from_the_app_older_than_ten_minutes_is_dropped_and_said(tmp_pat
         said = await planner.press({"action": "busy", "minutes": 60, "at": msk(10, "18:00")}, msk(10, "18:30"))
         assert "too late" in said and planner.holds(msk(10, "18:30")) == []
         assert world.platform.plan.plan_state()["said"]["text"] == said
+    faced(tmp_path, run)
+
+
+def test_a_second_plan_of_the_same_day_keeps_the_first_one_s_blocks_its_own(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        bill = await add(world, title="Pay the bill", minutes=30)
+        await planner.plan(msk(10, "18:00"))
+        first = (await blocks(world))[0]["fields"]["plan"]
+        later = await add(world, title="Call the school", minutes=30)
+        await planner.press({"action": "place", "day": "2026-11-10", "task": later["id"], "at": msk(10, "18:01")},
+                            msk(10, "18:01"))
+        assert {b["fields"]["task"] for b in await blocks(world)} == {bill["id"], later["id"]}
+        assert "Taken back: 1 block." == await planner.undo(first, msk(10, "18:02")), "the first plan is still known"
+        assert [b["fields"]["task"] for b in await blocks(world)] == [later["id"]], "the second stands"
+        day = world.platform.plan.plan_state()["plans"]["2026-11-10"]
+        assert day["id"] != first and not day["undone"], "the day shows its latest plan not taken back"
+    faced(tmp_path, run)
+
+
+def test_a_block_the_owner_lays_over_the_plan_moves_the_plan_s_piece_at_the_next_look(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        read = await add(world, title="Read the contract", minutes=60)
+        mine = await add(world, title="Walk", minutes=60)
+        await planner.plan(msk(10, "17:55"))
+        [laid] = [b for b in await blocks(world) if b["fields"]["task"] == read["id"]]
+        assert hm(laid["fields"]["start"]) == "18:00"
+        await world.platform.collections.apply(SCREEN, "blocks", [{"op": "add", "fields": {
+            "task": mine["id"], "start": iso(msk(10, "18:00")), "minutes": 60, "state": "planned", "locked": True}}],
+            world.clock.now)
+        await planner.cycle(msk(10, "17:56"))
+        [moved] = [b for b in await blocks(world) if b["fields"]["task"] == read["id"]]
+        assert moved["id"] == laid["id"] and hm(moved["fields"]["start"]) == "20:15", \
+            "moved, not taken off and added again: after his walk and the lesson with its ten minutes"
+        assert "Taken back: 1 block." == await planner.undo(laid["fields"]["plan"], msk(10, "17:57")), \
+            "the move kept the version its plan knows"
+    faced(tmp_path, run)
+
+
+def test_a_task_whose_time_the_owner_laid_himself_loses_the_plan_s_extra_piece(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        essay = await add(world, title="Write the essay", minutes=120)
+        await planner.plan(msk(10, "09:00"))
+        assert [b["fields"]["minutes"] for b in await blocks(world)] == [90]
+        await world.platform.collections.apply(SCREEN, "blocks", [{"op": "add", "fields": {
+            "task": essay["id"], "start": iso(msk(10, "21:00")), "minutes": 120, "state": "planned", "locked": True}}],
+            world.clock.now)
+        await planner.cycle(msk(10, "09:01"))
+        assert [(b["fields"]["minutes"], bool(b["fields"].get("locked"))) for b in await blocks(world)] == [(120, True)], \
+            "his two hours are all of it: the plan's ninety minutes go"
+    faced(tmp_path, run)
+
+
+def test_no_plan_on_a_calendar_not_read_lately_and_old_plans_by_day_are_moved_over(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        await add(world, title="Pay the bill", minutes=30)
+        planner.tasks.events_at = msk(10, "17:00")
+        said = await planner.plan(msk(10, "18:00"))
+        assert said.startswith("Not planned: the calendar") and await blocks(world) == []
+        planner.core.store.set("plan.plans", json.dumps({"2026-11-10": {"id": "p0123456789", "at": 1.0,
+                                                                         "blocks": {"01ABC": 3}, "left": []}}))
+        planner._migrate()
+        moved = planner.plans()["p0123456789"]
+        assert moved["windows"] == ["2026-11-10"] and moved["blocks"]["01ABC"]["version"] == 3
     faced(tmp_path, run)

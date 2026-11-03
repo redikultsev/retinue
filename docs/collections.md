@@ -509,14 +509,20 @@ due today). Only `code:plan` writes them besides the owner, and it never deletes
 - what its passed pieces counted comes off what a task needs — for one with a due date never more than half, until it is
   done; a task whose time is all counted and not done goes on in half hours, with no question.
 
-One plan is one apply, all or none, kept in the Router's kv by window with what it left out; «Undo» skips its blocks
-still at the version it wrote, and names the ones the owner moved since. «Busy» (a hold from the moment of the press)
-lays again the plan's blocks it crosses — a piece already begun stays. At each look (30 s) a block whose time is over is
-`passed`, a closed task's blocks ahead are `skipped`, and a calendar or a hold that now crosses today's plan lays again
-only what it crosses; a task due today that no longer fits is said in Telegram. The Router pushes the plans and holds
-to the platform after each change (`POST /owner/plan`); the app reads them with the blocks (`GET /api/plan`) and
-presses through `POST /api/plan/press` (a `plan-press` note; one older than ten minutes when the Router takes it is
-dropped and said).
+One plan is one apply, all or none, kept in the Router's kv by its id — the windows it laid, its blocks with the version
+it last wrote and what each was before, what it left out — so a second press, «Plan» on one task or a plan of several
+days never loses the blocks of the one before; the app's Day shows each day's latest plan not taken back. «Undo» puts
+back each of its blocks still at the version it wrote — taken off when the plan added it — and names the ones the owner
+moved since. No plan is laid on a calendar the Router has not read in the last half hour (just after a restart, before
+the first read): the press says so. «Busy» (a hold from the moment of the press) lays again the plan's blocks it
+crosses — a piece already begun stays. At each look (30 s) a block whose time is over is `passed` and a closed task's
+blocks ahead are `skipped`; then, whenever the calendar, the holds, the blocks or the tasks changed since the last look —
+the owner's own moves included — the plans' blocks are laid again where something crosses them, in every window from
+today's on that a plan holds a block in: moved (`start`), not taken off and added again, and a task's plan pieces beyond
+what it needs (he laid its time himself) taken off. A look whose write was refused is tried again at the next one. A
+task due today that no longer fits is said in Telegram. The Router pushes the plans and holds to the platform after each
+change (`POST /owner/plan`); the app reads them with the blocks (`GET /api/plan`) and presses through
+`POST /api/plan/press` (a `plan-press` note; one older than ten minutes when the Router takes it is dropped and said).
 
 ### The evening list
 

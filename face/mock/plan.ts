@@ -197,6 +197,26 @@ export function mockBlocksWrite(path: string, body: Record<string, unknown>) {
   return { status: 200, data: { name: "blocks", rev: bump(), change_ids: records.map(() => rev), records }, moved: { name: "blocks", space: "home", rev } };
 }
 
+const befores = new Map<string, Map<string, Fields>>();
+
+/** The assistant's ask done, as the Router's Planner does it: the report's block to tomorrow evening and two hours long,
+ * one plan with its «before» — `POST /api/_mock/assistant`. Its «Undo» is the plan's, as a press of the owner's. */
+export function mockAssistantMove(): string {
+  const t = now();
+  const b = [...blocks.values()].find((x) => x.fields.task === report.id && x.fields.state === "planned");
+  if (!b) return "";
+  const pid = `a${Math.random().toString(16).slice(2, 12).padEnd(10, "0")}`;
+  befores.set(pid, new Map([[b.id, { start: b.fields.start, minutes: b.fields.minutes, plan: b.fields.plan ?? null }]]));
+  const from = String(b.fields.start);
+  Object.assign(b.fields, { start: iso(wall(1, 20, 0)), minutes: 120, plan: pid });
+  b.version += 1;
+  const d = day(1);
+  plans[`${d}:${pid}`] = { id: pid, by: "assistant", at: t, blocks: [b.id], left: [], undone: false, failed: false,
+    moves: [{ block: b.id, title: report.fields.title, from, to: b.fields.start, minutes: 120 }] };
+  bump();
+  return pid;
+}
+
 /** A press on the plan, done at once here as the Router does it a moment later: open tasks in a row from 19:00. */
 export function mockPlanPress(body: Record<string, unknown>): string {
   const t = now();
@@ -216,7 +236,15 @@ export function mockPlanPress(body: Record<string, unknown>): string {
     plans[d] = { id: pid, at: t, blocks: made, left: [], undone: false, failed: false };
     said = { at: t, text: `Plan for ${d}: ${made.length} tasks.`, day: d };
   } else if (body.action === "undo") {
-    for (const b of blocks.values()) if (b.fields.plan === body.plan && b.fields.state === "planned") b.fields.state = "skipped";
+    const was = befores.get(String(body.plan));
+    for (const b of blocks.values()) {
+      if (b.fields.plan !== body.plan || b.fields.state !== "planned") continue;
+      const back = was?.get(b.id);
+      if (back) {
+        Object.assign(b.fields, back);
+        b.version += 1;
+      } else b.fields.state = "skipped";
+    }
     for (const v of Object.values(plans)) if ((v as { id: string }).id === body.plan) (v as { undone: boolean }).undone = true;
     said = { at: t, text: "Taken back." };
   } else if (body.action === "busy") {

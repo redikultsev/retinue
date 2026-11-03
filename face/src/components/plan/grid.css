@@ -1,0 +1,60 @@
+/* FullCalendar's classic theme on the face's tokens: the palette's variables are ours, so light and dark follow
+   prefers-color-scheme with the rest of the app. Blocks are a tint of their goal's colour with its edge; meetings grey. */
+.rt-grid {
+  --fc-classic-button: var(--secondary);
+  --fc-classic-button-border: var(--border);
+  --fc-classic-button-strong: var(--accent);
+  --fc-classic-button-strong-border: var(--input);
+  --fc-classic-button-outline: var(--ring);
+  --fc-classic-button-foreground: var(--foreground);
+  --fc-classic-primary: var(--primary);
+  --fc-classic-primary-foreground: var(--primary-foreground);
+  --fc-classic-event: var(--muted-foreground);
+  --fc-classic-event-contrast: var(--foreground);
+  --fc-classic-background-event: var(--muted-foreground);
+  --fc-classic-background-event-opacity: 14%;
+  --fc-classic-highlight: color-mix(in oklch, var(--primary) 14%, transparent);
+  --fc-classic-today: transparent;
+  --fc-classic-now: var(--destructive);
+  --fc-classic-background: var(--background);
+  --fc-classic-faint: color-mix(in oklch, var(--foreground) 3%, transparent);
+  --fc-classic-muted: color-mix(in oklch, var(--foreground) 6%, transparent);
+  --fc-classic-strong: color-mix(in oklch, var(--foreground) 12%, transparent);
+  --fc-classic-foreground: var(--foreground);
+  --fc-classic-faint-foreground: var(--muted-foreground);
+  --fc-classic-muted-foreground: var(--muted-foreground);
+  --fc-classic-border: var(--border);
+  --fc-classic-strong-border: var(--input);
+  font-size: 13px;
+}
+
+/* Hours outside the plan's window are shaded; inside, the page's own background. */
+.rt-grid .fc-non-business,
+.rt-grid [class*="non-business"] {
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+}
+
+.rt-grid .rt-block {
+  background: color-mix(in oklab, var(--fc-event-color) 28%, var(--background)) !important;
+  border: 0 !important;
+  border-left: 3px solid var(--fc-event-color) !important;
+  color: var(--foreground) !important;
+  border-radius: 4px;
+}
+.rt-grid .rt-block.rt-passed {
+  opacity: 0.55;
+}
+.rt-grid .rt-block.rt-lit {
+  outline: 2px dashed var(--fc-event-color);
+  outline-offset: 1px;
+}
+.rt-grid .rt-meeting {
+  background: var(--muted) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--muted-foreground) !important;
+  border-radius: 4px;
+}
+.rt-grid .rt-meeting.rt-free {
+  background: transparent !important;
+  border-style: dashed !important;
+}

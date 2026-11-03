@@ -7,7 +7,7 @@
 //   POST /api/_mock/prune                old events are pruned and streams cut: clients get 410 and resync
 //   POST /api/_mock/collection[?quiet=1] a deal of the «work» Space moves a column on (a `collection` event; quiet:
 //                                        none, so the app's next write of that deal meets a conflict)
-import { mockBlocksWrite, mockMakeTask, mockPlan, mockPlanPress, mockTasksRead, mockTasksWrite } from "./plan.ts";
+import { mockAssistantMove, mockBlocksWrite, mockMakeTask, mockPlan, mockPlanPress, mockTasksRead, mockTasksWrite } from "./plan.ts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as fx from "./fixtures.ts";
@@ -361,6 +361,12 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     emit("plan", "plan", { at: now() });
     emit("collection", "blocks", { name: "blocks", space: "home", rev: "01K" });
     return json(res, 200, { ok: true });
+  }
+  if (path === "/api/_mock/assistant" && method === "POST") {
+    const pid = mockAssistantMove();
+    emit("plan", "plan", { at: now() });
+    emit("collection", "blocks", { name: "blocks", space: "home", rev: "01K" });
+    return json(res, 200, { plan: pid });
   }
   if (path === "/api/c/blocks" && method === "POST") {
     const wrote = mockBlocksWrite(path, await body(req));

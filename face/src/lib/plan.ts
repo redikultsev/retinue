@@ -58,7 +58,11 @@ export interface Block {
 
 export interface DayPlan {
   id: string;
+  /** Who asked for it: the owner's press, or the assistant on his word — her plans are lit on the grid. */
+  by?: "owner" | "assistant";
   at: number;
+  /** What her plan moved, for the line «was → now». */
+  moves?: { block: string; title?: string; from: string; to: string; minutes: number }[];
   left: { task: string; title: string; why: string }[];
   blocks: string[];
   undone: boolean;

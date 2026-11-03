@@ -48,10 +48,10 @@ def test_a_due_follow_up_waits_while_the_session_works_or_waits_on_a_card(tmp_pa
         await tick(world)
         assert len(runs_of(world, session)) == 1, "its own turn is still running"
         await world.turn(session, "Готово.")
-        world.platform.set_state(session, "waiting", world.clock.now)
+        world.store.update_session(session, world.clock.now, state="waiting")
         await tick(world)
         assert len(runs_of(world, session)) == 1, "a card waits for the owner"
-        world.platform.set_state(session, "idle", world.clock.now)
+        world.store.update_session(session, world.clock.now, state="idle", idle_since=world.clock.now)
         await tick(world)
         assert len(runs_of(world, session)) == 2
     subs_scenario(tmp_path, body)

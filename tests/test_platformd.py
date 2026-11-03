@@ -415,23 +415,6 @@ def test_a_lane_that_says_busy_keeps_the_run_queued(tmp_path):
     scenario(tmp_path, body)
 
 
-def test_an_idle_session_closes_after_seven_days(tmp_path):
-    async def body(world: World):
-        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "x"}))["session"]
-        [run] = world.lanes["private"].runs()
-        world.lanes["private"].add(session, run["run"], *fixture("reads"))
-        await world.poll()
-        assert world.store.session(session)["state"] == "idle", "a private session goes idle on its summary"
-        world.clock.now += 7 * DAY - 1
-        world.platform.tick()
-        assert world.store.session(session)["state"] == "idle"
-        world.clock.now += 2
-        world.platform.tick()
-        assert world.store.session(session)["state"] == "closed"
-
-    scenario(tmp_path, body)
-
-
 def test_an_unpressed_card_expires_after_seven_days(tmp_path):
     async def body(world: World):
         session, _, card = await deferred_session(world)
@@ -903,18 +886,6 @@ def test_a_failed_turn_is_told_as_a_failure_and_the_code_session_stays_open(tmp_
         [summary] = world.notes("summary")
         assert summary["data"]["text"] == "Turn ended with an error: error_max_turns"
         assert world.store.session(session)["state"] == "idle"
-
-    scenario(tmp_path, body)
-
-
-def test_a_code_session_closes_on_its_summary(tmp_path):
-    async def body(world: World):
-        session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
-        [run] = world.lanes["code"].runs()
-        world.lanes["code"].add(session, run["run"], *fixture("reads"))
-        await world.poll()
-        assert world.store.session(session)["state"] == "closed"
-        assert [n["data"]["text"] for n in world.notes("summary")] == ["done"]
 
     scenario(tmp_path, body)
 

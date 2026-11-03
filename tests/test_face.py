@@ -302,7 +302,7 @@ def replayed(store: sessions.PlatformStore, since: int = 0) -> dict:
 
 def test_a_turn_counts_from_its_start_not_from_the_last_card_it_waited_on(tmp_path):
     """«Working» on «Today»: `turn_started` is set when a turn begins and stays through a card's resume, which moves
-    `at`; a new turn after idle sets it again."""
+    `at` (a new turn after idle: `test_lifecycle`)."""
     async def body(world: FaceWorld):
         await world.login()
         session, _, card = await deferred_session(world)
@@ -312,10 +312,6 @@ def test_a_turn_counts_from_its_start_not_from_the_last_card_it_waited_on(tmp_pa
         row = world.store.face_session(session)
         assert row["state"] == "active" and row["at"] == world.clock.now
         assert row["turn_started"] == started, "a resume after a card is the same turn"
-        world.platform._set_state(session, "idle", world.clock.now)
-        world.clock.now += 60
-        world.platform._set_state(session, "active", world.clock.now)
-        assert world.store.face_session(session)["turn_started"] == world.clock.now, "a new turn"
 
     faced(tmp_path, body)
 

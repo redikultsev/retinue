@@ -146,7 +146,7 @@ class FollowUps:
                 self.store.enqueue(session_id, text, now, by="follow_up", commit=False)
             self.store.add_input(f"follow:{follow}", session_id, text, now, by="follow_up")
             pings.unattended(self.store, session_id)  # nobody watched it start: its end rings
-            self.platform.set_state(session_id, "active", now)
+            self.platform.life.queued(session_id, now)
             given.append(session_id)
         return given
 

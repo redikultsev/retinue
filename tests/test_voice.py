@@ -18,7 +18,8 @@ from retinue.bridge import PlatformClient
 from retinue.config import (LaneRef, PlatformConfig, RouterConfig, Sphere, TelegramConfig, Track, VoiceConfig,
                             VoiceSessionConfig)
 from retinue.core import Core, Reply
-from retinue.platformd import IDLE_CLOSE_S, Platform
+from retinue.lifecycle import IDLE_CLOSE_S
+from retinue.platformd import Platform
 from retinue.protocol import Store
 from retinue.sessions import PlatformStore
 from test_core import AGENT, FakeChannel

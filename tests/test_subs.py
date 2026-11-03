@@ -297,10 +297,10 @@ def test_a_report_never_goes_in_while_the_parent_waits_on_a_card_and_the_owner_s
         parent = await world.parent()
         child = await world.start_child(parent, "а", "toolu_a")
         await world.turn(parent, "Запустил.")
-        world.platform.set_state(parent, "waiting", world.clock.now)  # its card asks the owner
+        world.store.update_session(parent, world.clock.now, state="waiting")  # its card asks the owner
         await world.turn(child, "Готово.")
         assert len([r for r in world.lanes["private"].runs() if r["session"] == parent]) == 1
-        world.platform.set_state(parent, "idle", world.clock.now)
+        world.store.update_session(parent, world.clock.now, state="idle", idle_since=world.clock.now)
         await world.poll()
         assert len([r for r in world.lanes["private"].runs() if r["session"] == parent]) == 2
         await world.turn(parent, "Ок.")

@@ -165,6 +165,7 @@ which needs a WireGuard VPN.
 | [instructions.md](docs/instructions.md) | what a session follows: lane rules, the repository's `CLAUDE.md`, your skills, the owner-memory snapshot |
 | [memory.md](docs/memory.md) | the knowledge base the assistant writes, and its hub |
 | [mail.md](docs/mail.md) | Gmail and Google Calendar, read-only, and their triage |
+| [calendar.md](docs/calendar.md) | the plan's blocks in Google Calendar «Retinue», both ways |
 | [courier.md](docs/courier.md) | your chosen Telegram chats and replies to people, sent only by your button |
 | [proactive.md](docs/proactive.md) | the time zone, deadlines, the week's numbers of your collections, the heartbeat |
 | [pages.md](docs/pages.md) | your HTML pages for your devices, keeping what you do in them; public sites of the ones you share |

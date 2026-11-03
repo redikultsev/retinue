@@ -54,9 +54,12 @@ nightly backup: after a restore you log in again.
 
 ```bash
 export RETINUE_SSH_HOST=<your server's ssh host>
-uv run deploy/mail/login.py --account you@gmail.com --kind gmail
-uv run deploy/mail/login.py --account you@gmail.com --kind calendar
+uv run deploy/mail/login.py --account you@gmail.com --kind gmail,calendar
 ```
+
+`--kind all` signs in every kind in one run — these two, `send` ([courier.md](courier.md)) and `calwrite`
+([calendar.md](calendar.md)) — the browser asking once per kind, one after another; each token still goes to its own
+folder.
 
 A browser opens on Google's consent screen; sign in to exactly that account (the script passes it as a hint and
 then checks which account the token reads — another one is refused and nothing is written). Gmail and Calendar are

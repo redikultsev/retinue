@@ -94,7 +94,7 @@ def test_one_assistant_and_nothing_else():
     pages = (ROOT / "docs" / "pages.md").read_text()
     assert "PAGES=1" in pages and "DEVICES=" in pages and "10.8.0.1" in pages and "dig" in pages
     assert "PAGES=1" in (ROOT / "docs" / "install.md").read_text() and "pages.md" in (ROOT / "docs" / "install.md").read_text()
-    assert sorted(SERVICES) == ["assistant", "collector", "egress", "face", "lane-code", "lane-code-egress",
+    assert sorted(SERVICES) == ["assistant", "calwrite", "collector", "egress", "face", "lane-code", "lane-code-egress",
                                 "lane-private", "lane-private-egress", "lane-private-sni", "lane-web",
                                 "lane-web-egress", "mail-egress", "mail-send", "pages", "pages-build", "pages-public",
                                 "platform", "platform-egress", "reach", "router", "tg-business",
@@ -523,7 +523,8 @@ def test_the_collector_shares_a_network_with_the_router_alone_and_goes_out_to_go
                                         "HTTPS_PROXY": "http://mail-egress:3128"}, "no model token, no other key"
     assert collector["cap_drop"] == ["ALL"] and collector["security_opt"] == ["no-new-privileges:true"]
     assert collector["read_only"] is True and "ports" not in collector and collector["profiles"] == ["mail"]
-    assert proxy["profiles"] == ["mail"] and set(proxy["networks"]) == {"mail-out", "send-out", "outside"} and \
+    assert proxy["profiles"] == ["mail"] and set(proxy["networks"]) == {"mail-out", "send-out", "calwrite-out",
+                                                                         "outside"} and \
         "ports" not in proxy
     assert proxy["volumes"] == ["/srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro",
                                 "/srv/retinue/egress/mail-hosts.txt:/etc/squid/allowed-hosts.txt:ro"]
@@ -775,6 +776,46 @@ def test_setup_with_telegram_business_and_mail_sending(tmp_path, monkeypatch):
     assert not (plain / "send").exists() and not (plain / "telegram").exists()
 
 
+def test_the_calendar_writer_holds_its_key_alone_and_reaches_google_through_the_mail_proxy(tmp_path, monkeypatch):
+    """The key that writes the owner's calendar «Retinue» lives in a process that does nothing else: its own user and
+    folder, an internal network with the router alone, out through the mail proxy only. The collector, which reads
+    strangers' invitations, holds no key that writes; neither does the assistant."""
+    members = {net: sorted(name for name, service in SERVICES.items() if net in service.get("networks", []))
+               for net in COMPOSE["networks"]}
+    assert members["calwrite-router"] == ["calwrite", "router"]
+    assert members["calwrite-out"] == ["calwrite", "mail-egress"]
+    for net in ("calwrite-router", "calwrite-out"):
+        assert COMPOSE["networks"][net] == {"internal": True}, f"{net}: no route out"
+    writer = SERVICES["calwrite"]
+    assert writer["command"] == ["retinue-calwrite"] and writer["user"] == "10023:10023"
+    assert writer["volumes"] == ["/srv/retinue/calwrite/keys:/keys:ro", "/srv/retinue/calwrite/state:/state"]
+    assert writer["environment"] == {"RETINUE_CALWRITE_TOKEN": "${RETINUE_CALWRITE_TOKEN:-}",
+                                     "HTTPS_PROXY": "http://mail-egress:3128"}, "no model token, no other key"
+    assert writer["cap_drop"] == ["ALL"] and writer["read_only"] is True and "ports" not in writer
+    assert writer["profiles"] == ["calwrite"], "off until the owner turns it on"
+    assert "calwrite" not in str(SERVICES["collector"]) and "calwrite" not in str(SERVICES["router"]["volumes"])
+    assert "calwrite-router" not in SERVICES["assistant"]["networks"]
+    used = [s.get("user") for n, s in SERVICES.items() if n != "calwrite"]
+    assert "10023:10023" not in used, "a user of its own"
+
+    def run(target, **env):
+        return subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(target), "RETINUE_HOST_SETUP": "0",
+                                   **env})
+
+    refused = run(tmp_path / "a", TELEGRAM_OWNER_ID="42", CALWRITE="1")
+    assert refused.returncode == 1 and "CALWRITE=1 needs MAIL=1" in refused.stderr
+    target, printed = setup(tmp_path, TELEGRAM_OWNER_ID="42", MAIL="1", CALWRITE="1")
+    for folder in ("calwrite", "calwrite/keys", "calwrite/state"):
+        assert oct((target / folder).stat().st_mode & 0o777) == "0o700", folder
+    assert printed["COMPOSE_PROFILES"] == "mail,calwrite" and len(printed["RETINUE_CALWRITE_TOKEN"]) == 64
+    for name in ("TELEGRAM_BOT_TOKEN", "RETINUE_COLLECTOR_TOKEN", "RETINUE_CALWRITE_TOKEN"):
+        monkeypatch.setenv(name, printed.get(name) or "t")
+    assert RouterConfig.load(target / "router.yaml").calwrite_url == "http://calwrite:9450"
+    again, reprinted = setup(tmp_path, TELEGRAM_OWNER_ID="42")
+    assert reprinted["RETINUE_CALWRITE_TOKEN"] == printed["RETINUE_CALWRITE_TOKEN"], "on for good, the same token"
+
+
 def test_her_rules_for_the_memory_of_an_exchange():
     """What the router now gives her and expects of her about the past of a chat: search before «I don't know»,
     this chat first and wider when needed, what the card will say about other sources, captions and messages written
@@ -969,10 +1010,11 @@ def test_no_lane_mounts_another_lanes_or_the_routers_volumes():
 
 
 def test_every_retinue_service_that_listens_reports_its_health_by_its_own_port():
-    from retinue.config import CollectorConfig, GatewayConfig, LaneHostConfig, SenderConfig
+    from retinue.config import CalwriteConfig, CollectorConfig, GatewayConfig, LaneHostConfig, SenderConfig
 
     ports = {"router": RouterConfig.bus_listen_port, "assistant": AgentConfig.listen_port,
              "collector": CollectorConfig.listen_port, "mail-send": SenderConfig.listen_port,
+             "calwrite": CalwriteConfig.listen_port,
              "tg-business": GatewayConfig.listen_port, "platform": PlatformConfig.listen_port,
              **{f"lane-{lane}": LaneHostConfig.listen_port for lane in LANES}, "lane-private-sni": 3128,
              "pages": pagesd.Config.port, "reach": reach.PORT}

@@ -146,6 +146,8 @@ class RouterConfig:
     gateway_token: str = ""             # from RETINUE_GATEWAY_TOKEN
     sender_url: str = ""                # the mail sender: replies and letters the owner confirmed; empty = none
     sender_token: str = ""              # from RETINUE_SENDER_TOKEN
+    calwrite_url: str = ""              # the calendar writer: the plan's blocks in his calendar «Retinue»; empty = none
+    calwrite_token: str = ""            # from RETINUE_CALWRITE_TOKEN
     platform_url: str = ""              # the platform (`retinue-platform`): sessions in the lanes; empty = none
     platform_token: str = ""            # from RETINUE_PLATFORM_TOKEN
     face_url: str = ""                  # the platform's face, https://<host>: a card's «Open in the app», /app
@@ -182,6 +184,8 @@ class RouterConfig:
             cfg.gateway_token = _env("RETINUE_GATEWAY_TOKEN")
         if cfg.sender_url:
             cfg.sender_token = _env("RETINUE_SENDER_TOKEN")
+        if cfg.calwrite_url:
+            cfg.calwrite_token = _env("RETINUE_CALWRITE_TOKEN")
         if cfg.platform_url:
             if not cfg.telegram:
                 raise SystemExit("router config: the platform talks to the owner through Telegram — add `telegram:`")
@@ -241,6 +245,21 @@ class SenderConfig:
     def load(cls) -> SenderConfig:
         return cls(keys=os.environ.get("RETINUE_SEND_KEYS", cls.keys),
                    state=os.environ.get("RETINUE_SEND_STATE", cls.state), token=_env("RETINUE_SENDER_TOKEN"))
+
+
+@dataclass
+class CalwriteConfig:
+    """The calendar writer (`retinue-calwrite`): the owner's `calendar.app.created` token, the id of the calendar it
+    made, the router's token. From the environment, like the sender's."""
+    keys: str = "/keys"                     # client.json and <account>.calwrite.json, read-only
+    state: str = "/state/calendar.json"     # its calendar's id; nobody else mounts it
+    listen_port: int = 9450
+    token: str = ""                         # from RETINUE_CALWRITE_TOKEN
+
+    @classmethod
+    def load(cls) -> CalwriteConfig:
+        return cls(keys=os.environ.get("RETINUE_CALWRITE_KEYS", cls.keys),
+                   state=os.environ.get("RETINUE_CALWRITE_STATE", cls.state), token=_env("RETINUE_CALWRITE_TOKEN"))
 
 
 @dataclass

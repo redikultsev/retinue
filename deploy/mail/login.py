@@ -3,19 +3,22 @@
 # requires-python = ">=3.12"
 # dependencies = ["google-auth-oauthlib>=1.2,<2"]
 # ///
-"""One consent of the owner, on his Mac: a refresh token for one account and one kind — `gmail` (read mail),
-`calendar` (read calendars) or `send` (send mail, nothing else) — checked to be that very account, and put on the
-server: the read kinds for the mail collector, `send` for the mail sender, each in its own folder as its own user.
-Prints names, never values: a terminal ends up in logs and transcripts.
+"""The owner's consents, on his Mac: a refresh token for one account and each kind asked — `gmail` (read mail),
+`calendar` (read calendars), `send` (send mail, nothing else), `calwrite` (the calendar «Retinue» it makes itself,
+nothing else of his calendars) — each checked to be that very account, and put on the server: the read kinds for the
+mail collector, `send` for the mail sender, `calwrite` for the calendar writer, each in its own folder as its own
+user. One run, one sign-in: the browser asks once per kind, one after another. Prints names, never values: a
+terminal ends up in logs and transcripts.
 
-    uv run deploy/mail/login.py --account you@gmail.com --kind gmail
-    uv run deploy/mail/login.py --account you@gmail.com --kind calendar
-    uv run deploy/mail/login.py --account you@gmail.com --kind send
+    uv run deploy/mail/login.py --account you@gmail.com --kind all
+    uv run deploy/mail/login.py --account you@gmail.com --kind calwrite
+    uv run deploy/mail/login.py --account you@gmail.com --kind gmail,send
 
 A browser opens on Google's consent screen (the unverified-app warning is expected: the app is yours — docs/mail.md).
 The Desktop client's JSON from Google Cloud console is read from ~/.config/retinue/google-client.json (or --client);
-the server is an ssh host (--host, or RETINUE_SSH_HOST). Gmail and Calendar are two tokens on purpose: a password
-change kills every token that holds a Gmail scope, and the calendar should outlive it.
+the server is an ssh host (--host, or RETINUE_SSH_HOST). The kinds are separate tokens on purpose: a password change
+kills every token that holds a Gmail scope, and the calendar should outlive it; and the collector, which reads
+strangers' letters, holds no key that sends or writes.
 """
 
 from __future__ import annotations
@@ -30,17 +33,24 @@ import sys
 import urllib.request
 from pathlib import Path
 
-# The same as retinue.google.SCOPES (a test keeps them equal): the read kinds change nothing; `send` reads nothing.
+# The same as retinue.google.SCOPES (a test keeps them equal): the read kinds change nothing; `send` reads nothing;
+# `calwrite` reaches the one calendar it made.
 SCOPES = {"gmail": ["https://www.googleapis.com/auth/gmail.readonly"],
           "calendar": ["https://www.googleapis.com/auth/calendar.events.readonly",
                        "https://www.googleapis.com/auth/calendar.calendarlist.readonly"],
           "send": ["https://www.googleapis.com/auth/gmail.send", "openid",
-                   "https://www.googleapis.com/auth/userinfo.email"]}
+                   "https://www.googleapis.com/auth/userinfo.email"],
+          "calwrite": ["https://www.googleapis.com/auth/calendar.app.created", "openid",
+                       "https://www.googleapis.com/auth/userinfo.email"]}
+KINDS = ("gmail", "calendar", "send", "calwrite")  # `all`, in this order
+BY_ID_TOKEN = ("send", "calwrite")  # they read no profile: whose they are is the ID token's email
 WHO = {"gmail": ("https://gmail.googleapis.com/gmail/v1/users/me/profile", "emailAddress"),
        "calendar": ("https://www.googleapis.com/calendar/v3/users/me/calendarList/primary", "id")}
-# Where each kind's token goes, and whose it is there (setup.sh MAIL=1, SEND=1; deploy/compose.yml).
+# Where each kind's token goes, and whose it is there (setup.sh MAIL=1, SEND=1, CALWRITE=1; deploy/compose.yml).
 FOLDERS = {"gmail": ("/srv/retinue/mail/keys", 10002), "calendar": ("/srv/retinue/mail/keys", 10002),
-           "send": ("/srv/retinue/send/keys", 10004)}
+           "send": ("/srv/retinue/send/keys", 10004), "calwrite": ("/srv/retinue/calwrite/keys", 10023)}
+DONE = {"send": "The sender picks up the key with the next letter.",
+        "calwrite": "The calendar writer picks up the key at the next sync (within a minute)."}
 KEYS, COLLECTOR_UID = FOLDERS["gmail"]
 CLIENT = Path("~/.config/retinue/google-client.json").expanduser()
 ACCOUNT = re.compile(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}")
@@ -76,8 +86,17 @@ def key_of(account: str, kind: str, refresh_token: str) -> tuple[str, bytes]:
                                                  "refresh_token": refresh_token}).encode()
 
 
+def kinds_of(text: str) -> list[str]:
+    """`all`, or kinds by commas, each once, in KINDS' order."""
+    asked = list(KINDS) if text.strip() == "all" else [k.strip() for k in text.split(",") if k.strip()]
+    wrong = [k for k in asked if k not in SCOPES]
+    if wrong or not asked:
+        raise Refused(f"--kind: {', '.join(wrong) or 'none'} — one of {', '.join(KINDS)}, by commas, or all")
+    return [k for k in KINDS if k in asked]
+
+
 def email_of(id_token: str) -> str:
-    """Whose a `send` token is — it can read neither the profile nor a calendar: the verified `email` of the ID token
+    """Whose a `send` or `calwrite` token is — it can read neither the profile nor a calendar: the verified `email` of the ID token
     Google returned with it. That token came straight from Google's token endpoint over TLS, so its payload is read
     without checking the signature (Google's OpenID Connect guide)."""
     try:
@@ -134,9 +153,10 @@ def consent(config: dict, kind: str, account: str):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="A Google token for the mail collector or the sender, put on the server.")
+    parser = argparse.ArgumentParser(description="Google tokens for the collector, the sender and the calendar writer, "
+                                                 "put on the server.")
     parser.add_argument("--account", required=True)
-    parser.add_argument("--kind", required=True, choices=sorted(SCOPES))
+    parser.add_argument("--kind", required=True, help=f"{', '.join(KINDS)}, by commas, or all")
     parser.add_argument("--client", type=Path, default=CLIENT)
     parser.add_argument("--host", default=os.environ.get("RETINUE_SSH_HOST", ""))
     args = parser.parse_args(argv)
@@ -144,19 +164,23 @@ def main(argv: list[str] | None = None) -> int:
         if not args.host:
             raise Refused("no server named: --host or RETINUE_SSH_HOST")
         account = account_of(args.account)
+        kinds = kinds_of(args.kind)
         config, client = client_of(args.client)
-        credentials = consent(config, args.kind, account)
-        seen = email_of(getattr(credentials, "id_token", "")) if args.kind == "send" else who(args.kind, credentials.token)
-        if seen != account:
-            raise Refused(f"signed in to {seen or 'an unknown account'}, not to {account}: the token was not written. "
-                          "Try again and pick the right account")
-        put(args.host, "client.json", client, kind=args.kind)
-        put(args.host, *key_of(account, args.kind, credentials.refresh_token), kind=args.kind)
+        for kind in kinds:
+            if len(kinds) > 1:
+                print(f"{kind}: the browser asks for this one now")
+            credentials = consent(config, kind, account)
+            seen = email_of(getattr(credentials, "id_token", "")) if kind in BY_ID_TOKEN else who(kind, credentials.token)
+            if seen != account:
+                raise Refused(f"signed in to {seen or 'an unknown account'}, not to {account}: the {kind} token was not "
+                              "written. Try again and pick the right account")
+            put(args.host, "client.json", client, kind=kind)
+            put(args.host, *key_of(account, kind, credentials.refresh_token), kind=kind)
+            print(f"Done: {account}, {kind}. " + DONE.get(kind, "The collector picks up the key at its next poll "
+                                                                 "(within 10 minutes)."))
     except Refused as exc:
         print(f"Not done: {exc}", file=sys.stderr)
         return 1
-    print(f"Done: {account}, {args.kind}. " + ("The sender picks up the key with the next letter." if args.kind == "send"
-                                              else "The collector picks up the key at its next poll (within 10 minutes)."))
     return 0
 
 

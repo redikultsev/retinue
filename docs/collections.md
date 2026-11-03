@@ -496,7 +496,8 @@ from-reminders <id>… [--title <id>=<words>]`.
 `blocks` is when a task is done: one record a piece of time (`deploy/collections/blocks.json`) — its `task` (a ref),
 `start` (instant), `minutes`, `state` (`planned`, `passed` once its time is over and counted, `skipped` when taken
 off), `locked` (the owner put it there himself: no plan moves it), `plan` (the plan that laid it) and `why` (overdue,
-due today). Only `code:plan` writes them besides the owner, and it never deletes: taking a block off is `skipped`.
+due today). Only `code:plan` writes them besides the owner — and `code:calsync`, which carries his moves and
+deletions in Google onto them ([calendar.md](calendar.md)) — and neither deletes: taking a block off is `skipped`.
 
 **The day plan** (`retinue/planner.py`, `retinue/plan_layout.py`) is laid by a press — «Plan my day» in the app,
 `/plan` in Telegram, «Plan» on a task — never by itself:

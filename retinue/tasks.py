@@ -59,6 +59,7 @@ class Tasks:
         self.events_at: float | None = None  # when the busy window was last read; none yet — a plan would land on meetings
         self.events: list[dict] = []  # the busy window as last read: what the plan lays around (`planner`)
         self.planner = None           # the day plan's look rides on this one (`planner.Planner.cycle`)
+        self.gcal = None              # and the calendar «Retinue» after it (`gcal.Gcal.cycle`)
         self._missing = False  # the collection or the rule's rights are not there: said once, then quiet
 
     # --- the platform ---------------------------------------------------------------------------------------------
@@ -235,6 +236,8 @@ class Tasks:
             log.exception("the busy window was not pushed")
         if self.planner is not None:
             await self.planner.cycle(now)
+        if self.gcal is not None:
+            self.gcal.cycle(now)  # in a task of its own: a slow Google holds neither the digest nor a press
 
 
 def _side(row: dict) -> str | None:

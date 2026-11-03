@@ -1,5 +1,6 @@
 {
   "writers": {
-    "code:plan": {"add": true, "set": ["task", "start", "minutes", "state", "plan", "why"], "delete": false}
+    "code:plan": {"add": true, "set": ["task", "start", "minutes", "state", "plan", "why"], "delete": false},
+    "code:calsync": {"add": false, "set": ["start", "minutes", "locked", "state", "why"], "delete": false}
   }
 }

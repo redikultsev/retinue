@@ -79,6 +79,12 @@ SEND_ON=0
 [[ $SEND == 1 || -d $SEND_DIR ]] && SEND_ON=1
 SEND_UID=10004                          # the sender's own user: the gmail.send tokens are its alone
 SENDER_URL=http://mail-send:9400
+CALWRITE=${CALWRITE:-0}                 # 1: the calendar writer; on for good once its folder exists
+CALWRITE_DIR=$ROOT/calwrite
+CALWRITE_ON=0
+[[ $CALWRITE == 1 || -d $CALWRITE_DIR ]] && CALWRITE_ON=1
+CALWRITE_UID=10023                      # the writer's own user: the calendar.app.created token is its alone
+CALWRITE_URL=http://calwrite:9450
 PLATFORM=${PLATFORM:-0}                 # 1: the platform and its lanes; on for good once its folder exists
 PLATFORM_DIR=$ROOT/platform
 PLATFORM_ON=0
@@ -104,6 +110,10 @@ if [[ $TG_ON == 1 && -z $TELEGRAM_OWNER_ID ]]; then
 fi
 if [[ $SEND_ON == 1 && $MAIL_ON == 0 ]]; then
   echo "SEND=1 needs MAIL=1: a reply's address and thread come from the letters the collector kept" >&2
+  exit 1
+fi
+if [[ $CALWRITE_ON == 1 && $MAIL_ON == 0 ]]; then
+  echo "CALWRITE=1 needs MAIL=1: its way out is the mail proxy" >&2
   exit 1
 fi
 COLLECTOR_URL=http://collector:9200
@@ -213,6 +223,7 @@ secret RETINUE_BUS_SECRET
 [[ $PAGES_ON == 1 ]] && secret PAGES_KEY   # Traefik adds it to the pages' requests; the service refuses any without it
 [[ $TG_ON == 1 ]] && secret RETINUE_GATEWAY_TOKEN   # the router signs its calls to the Telegram Business gateway
 [[ $SEND_ON == 1 ]] && secret RETINUE_SENDER_TOKEN  # the router signs its calls to the mail sender
+[[ $CALWRITE_ON == 1 ]] && secret RETINUE_CALWRITE_TOKEN  # the router signs its calls to the calendar writer
 if [[ $PLATFORM_ON == 1 ]]; then
   secret RETINUE_PLATFORM_TOKEN         # the router signs its calls to the platform
   for lane in "${LANES[@]}"; do secret "RETINUE_LANE_TOKEN_$(upper "$lane")"; done   # the platform's, to each lane
@@ -263,6 +274,9 @@ YAML
   fi
   if [[ $SEND_ON == 1 ]]; then
     printf 'sender_url: %s\n' "$SENDER_URL"        # letters sent by your card
+  fi
+  if [[ $CALWRITE_ON == 1 ]]; then
+    printf 'calwrite_url: %s\n' "$CALWRITE_URL"    # the plan's blocks in your calendar «Retinue», both ways
   fi
   if [[ $PLATFORM_ON == 1 ]]; then
     printf 'platform_url: %s\n' "$PLATFORM_URL"    # the lanes' sessions: their cards, your replies and presses
@@ -392,6 +406,12 @@ if [[ $SEND_ON == 1 ]]; then
   # The owner's gmail.send tokens (deploy/mail/login.py --kind send puts them here) and the sender's ledger.
   install -d -m 700 "$SEND_DIR" "$SEND_DIR/keys" "$SEND_DIR/state"
   [[ $HOST_SETUP == 1 ]] && chown -R "$SEND_UID:$SEND_UID" "$SEND_DIR"
+fi
+if [[ $CALWRITE_ON == 1 ]]; then
+  # The owner's calendar.app.created token (deploy/mail/login.py --kind calwrite puts it here) and the id of the
+  # calendar the writer made.
+  install -d -m 700 "$CALWRITE_DIR" "$CALWRITE_DIR/keys" "$CALWRITE_DIR/state"
+  [[ $HOST_SETUP == 1 ]] && chown -R "$CALWRITE_UID:$CALWRITE_UID" "$CALWRITE_DIR"
 fi
 if [[ $TG_ON == 1 ]]; then
   install -d -m 700 "$TG_DIR" "$TG_DIR/state"   # the gateway's state: its user's alone
@@ -534,6 +554,7 @@ PROFILES=()
 [[ $PAGES_ON == 1 ]] && PROFILES+=(pages)
 [[ $TG_ON == 1 ]] && PROFILES+=(tgbusiness)
 [[ $SEND_ON == 1 ]] && PROFILES+=(send)
+[[ $CALWRITE_ON == 1 ]] && PROFILES+=(calwrite)
 [[ $PLATFORM_ON == 1 ]] && PROFILES+=(platform)
 [[ $FACE_ON == 1 ]] && PROFILES+=(face)
 if (( ${#PROFILES[@]} )); then
@@ -568,6 +589,8 @@ else
   drop RETINUE_GATEWAY_TOKEN "$STACK"
 fi
 if [[ $SEND_ON == 1 ]]; then put RETINUE_SENDER_TOKEN "$RETINUE_SENDER_TOKEN"; else drop RETINUE_SENDER_TOKEN "$STACK"; fi
+if [[ $CALWRITE_ON == 1 ]]; then put RETINUE_CALWRITE_TOKEN "$RETINUE_CALWRITE_TOKEN"
+else drop RETINUE_CALWRITE_TOKEN "$STACK"; fi
 PLATFORM_SECRETS=(RETINUE_PLATFORM_TOKEN RETINUE_HOOK_SECRET)
 for lane in "${LANES[@]}"; do PLATFORM_SECRETS+=("RETINUE_LANE_TOKEN_$(upper "$lane")"); done
 for name in "${PLATFORM_SECRETS[@]}"; do
@@ -699,6 +722,10 @@ fi
 if [[ $SEND_ON == 1 ]]; then
   echo "Send: on — keys: $(find "$SEND_DIR/keys" -name '*.send.json' 2>/dev/null | wc -l | tr -d ' ') in $SEND_DIR/keys" \
        "(deploy/mail/login.py --kind send on your Mac; docs/courier.md)"
+fi
+if [[ $CALWRITE_ON == 1 ]]; then
+  echo "Calendar writer: on — keys: $(find "$CALWRITE_DIR/keys" -name '*.calwrite.json' 2>/dev/null | wc -l | tr -d ' ')" \
+       "in $CALWRITE_DIR/keys (deploy/mail/login.py --kind calwrite on your Mac; docs/calendar.md)"
 fi
 [[ $PLATFORM_ON == 1 ]] && echo "Platform: on — lanes and tracks in $PLATFORM_DIR/platform.yaml; before the first" \
   "session run the container probe (docs/platform.md)"

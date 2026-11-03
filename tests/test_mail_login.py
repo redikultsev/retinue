@@ -84,7 +84,7 @@ def test_a_token_goes_to_the_server_through_stdin_and_only_names_are_printed(cap
     assert login.main(["--account", "owner@example.org", "--kind", "gmail", "--client", str(client),
                        "--host", "server"]) == 1
     out = capsys.readouterr()
-    assert "signed in to someone@else.org, not to owner@example.org: the token was not written" in out.err
+    assert "signed in to someone@else.org, not to owner@example.org: the gmail token was not written" in out.err
     assert len(ran) == 1, "the wrong account: nothing is put on the server"
     monkeypatch.setattr(login, "who", lambda kind, token: "owner@example.org")
     assert login.main(["--account", "owner@example.org", "--kind", "gmail", "--client", str(client),
@@ -129,3 +129,41 @@ def test_a_send_token_is_checked_by_its_id_token_and_kept_apart_from_the_collect
             login.key_of("owner@example.org", kind, f"rt-{kind}")[1])
     assert [k.kind for k in google.keys(keys)] == ["gmail"], "the collector never takes a send key"
     assert [k.kind for k in google.keys(keys, ("send",))] == ["send"]
+
+
+def test_one_run_signs_in_every_kind_each_to_its_own_folder(capsys, monkeypatch, tmp_path):
+    """`--kind all`: one command, a consent per kind one after another, and each token where its own user reads it —
+    the calendar writer's in its own folder, which neither the collector nor the sender reads."""
+    assert login.kinds_of("all") == ["gmail", "calendar", "send", "calwrite"]
+    assert login.kinds_of("calwrite, gmail") == ["gmail", "calwrite"]
+    for wrong in ("", "drive", "gmail,drive"):
+        with pytest.raises(login.Refused):
+            login.kinds_of(wrong)
+    assert login.SCOPES["calwrite"][0] == "https://www.googleapis.com/auth/calendar.app.created"
+    command = login.remote("owner@example.org.calwrite.json", "calwrite")
+    assert "-o 10023 -g 10023 /srv/retinue/calwrite/keys" in command and "/srv/retinue/mail" not in command
+    client = tmp_path / "client.json"
+    client.write_text(json.dumps({"installed": {"client_id": "cid", "client_secret": "cs"}}))
+    asked, put = [], []
+
+    def consent(config, kind, account):
+        asked.append(kind)
+        return SimpleNamespace(token="at", refresh_token=f"rt-{kind}",
+                               id_token=id_token(email="owner@example.org", email_verified=True))
+
+    monkeypatch.setattr(login, "consent", consent)
+    monkeypatch.setattr(login, "who", lambda kind, token: "owner@example.org")
+    monkeypatch.setattr(login, "put", lambda host, name, data, **kw: put.append((name, kw["kind"])))
+    assert login.main(["--account", "owner@example.org", "--kind", "all", "--client", str(client),
+                       "--host", "server"]) == 0
+    assert asked == ["gmail", "calendar", "send", "calwrite"]
+    assert ("owner@example.org.calwrite.json", "calwrite") in put and len(put) == 8
+    out = capsys.readouterr().out
+    assert "rt-" not in out and out.endswith("The calendar writer picks up the key at the next sync (within a minute).\n")
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    (keys / "client.json").write_text(json.dumps({"client_id": "cid", "client_secret": "cs"}))
+    for kind in login.KINDS:
+        (keys / login.key_of("owner@example.org", kind, "rt")[0]).write_bytes(login.key_of("owner@example.org", kind, "rt")[1])
+    assert sorted(k.kind for k in google.keys(keys)) == ["calendar", "gmail"], "the collector takes no key that writes"
+    assert [k.kind for k in google.keys(keys, ("calwrite",))] == ["calwrite"]

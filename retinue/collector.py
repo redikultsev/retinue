@@ -197,6 +197,16 @@ def brief(event: dict) -> dict:
     return kept
 
 
+def ours(event: dict) -> bool:
+    """A block of the owner's plan that the calendar writer put in «Retinue»: the plan's own, not a meeting — it keeps
+    no time busy for the plan, is no news for the archive and no meeting for the summary. The router has it from the
+    writer itself. Its id says so and its mark agrees: a copy the owner made elsewhere has another id, and stays his.
+    """
+    from .calwrite import block_of
+    block = block_of(event.get("id"))
+    return block is not None and event.get("private", {}).get("retinue_block") == block
+
+
 def changed(before: dict | None, after: dict) -> str:
     """What a person would call the change: new, cancelled, time, place, title. Empty: nothing worth saying."""
     if after["status"] == "cancelled":
@@ -232,6 +242,8 @@ async def sync_calendar(state: State, account: google.Google, now: float) -> int
             if not event.get("id"):
                 continue
             after = brief(event)
+            if ours(after):
+                continue
             change = changed(state.event(name, calendar_id, after["id"]), after)
             state.put_event(name, calendar_id, after)
             if change:
@@ -254,6 +266,8 @@ async def agenda(accounts: list[google.Google], start: float, end: float) -> tup
         try:
             for calendar in await account.calendars():
                 for event in await account.agenda(str(calendar.get("id", "")), start, end):
+                    if ours(brief(event)):
+                        continue
                     found.append({**brief(event), "account": account.key.account,
                                   "calendar": str(calendar.get("id", "")),
                                   "calendar_name": str(calendar.get("summary") or "")[:100]})

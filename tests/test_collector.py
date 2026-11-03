@@ -142,6 +142,28 @@ def test_the_agenda_is_read_live_from_every_calendar():
     assert failed == ["x@example.org: needs a new sign-in"]
 
 
+def test_the_plans_own_blocks_in_its_calendar_are_neither_news_nor_meetings():
+    """The calendar writer's events in «Retinue» carry the block in their private properties: the collector hands
+    none of them on — the busy window would lay the plan around itself, the archive and the summary would call a
+    plan a meeting."""
+    fake, state = FakeGoogle(), collector.State(":memory:")
+    fake.calendars.append({"id": "retinue", "summary": "Retinue"})
+    block = {**EVENT, "id": "rt" + "01ABC".encode().hex(), "summary": "Pay the bill", "start": {"dateTime": "2025-10-10T15:00:00Z"},
+             "extendedProperties": {"private": {"retinue_block": "01ABC"}}}
+    fake.put(block, "retinue")
+    fake.put({**EVENT, "start": {"dateTime": "2025-10-10T16:00:00Z"}})
+    # His copy of it into another calendar has another id: his own event, a meeting like any other.
+    fake.put({**block, "id": "copy1", "start": {"dateTime": "2025-10-10T17:00:00Z"}})
+
+    async def run():
+        await collector.poll(state, [account(fake, "calendar")], NOW)
+        return state.look(100), await collector.agenda([account(fake, "calendar")], NOW, NOW + DAY + 30000)
+
+    items, (events, _) = asyncio.run(run())
+    assert [i["data"]["event"]["id"] for i in items] == ["e1", "copy1"]
+    assert [e["id"] for e in events] == ["e1", "copy1"]
+
+
 def test_the_router_reads_through_the_collector_with_its_token_and_nothing_more():
     """The service on the internal network: unsigned — nothing; signed — the items, a letter parsed here, an
     attachment by number, the agenda, the status with key names and no values."""

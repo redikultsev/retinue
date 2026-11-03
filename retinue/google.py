@@ -2,7 +2,9 @@
 client library. The collector's scopes are read-only: `gmail.readonly` for a mailbox, `calendar.events.readonly` with
 `calendar.calendarlist.readonly` for its calendars — two refresh tokens per account from the same Desktop client,
 because a password change kills every token that holds a Gmail scope. The sender's token is a third
-one, `gmail.send` alone (with `openid email` to know whose it is): it sends and reads nothing.
+one, `gmail.send` alone (with `openid email` to know whose it is): it sends and reads nothing. The calendar writer's is a
+fourth, `calendar.app.created` (with `openid email`): the calendar it made itself and that one's events, nothing else
+of his calendars.
 
 Three hosts and nothing else; the proxy lets through exactly these (`HOSTS`).
 """
@@ -31,8 +33,10 @@ SCOPES = {"gmail": ["https://www.googleapis.com/auth/gmail.readonly"],
           "calendar": ["https://www.googleapis.com/auth/calendar.events.readonly",
                        "https://www.googleapis.com/auth/calendar.calendarlist.readonly"],
           "send": ["https://www.googleapis.com/auth/gmail.send", "openid",
-                   "https://www.googleapis.com/auth/userinfo.email"]}
-READ = ("gmail", "calendar")  # the collector's kinds; `send` lives in the sender's own folder
+                   "https://www.googleapis.com/auth/userinfo.email"],
+          "calwrite": ["https://www.googleapis.com/auth/calendar.app.created", "openid",
+                       "https://www.googleapis.com/auth/userinfo.email"]}
+READ = ("gmail", "calendar")  # the collector's kinds; `send` and `calwrite` live in their own folders
 PAGE = 500          # history.list and messages.list: the most Gmail gives in one page
 EVENTS_PAGE = 250   # events.list: the default; the same in the first request and every one after (syncToken)
 MAX_PAGES = 200     # a listing longer than this is cut: the next poll continues from the cursor
@@ -55,6 +59,14 @@ class Expired(GoogleError):
 
 class Gone(GoogleError):
     """The message is no longer in the mailbox (404)."""
+
+
+class Conflict(GoogleError):
+    """The event changed in Google since the etag the change was made against (412): the owner's edit stands."""
+
+
+class Exists(GoogleError):
+    """An insert with an id the calendar already holds (409): a retry of one that went, or a deleted event's id."""
 
 
 class Ambiguous(GoogleError):
@@ -145,6 +157,35 @@ class Google:
         if response.status_code == 410:
             raise Expired("syncToken")
         raise GoogleError(f"{httpx.URL(url).host}: HTTP {response.status_code}")
+
+    async def write(self, method: str, url: str, body: dict | None = None, params: dict | None = None,
+                    etag: str = "") -> dict:
+        """A change to a calendar: 200 its new resource, 204 an empty dict. 404 and 410 — Gone, 409 — Exists,
+        412 — Conflict. A write is the same whether it went once or twice (an id, an etag), so a 5xx is tried
+        again by the next sync, not here."""
+        headers = {"If-Match": etag} if etag else {}
+        for attempt in (1, 2):
+            token = await self._token()
+            try:
+                response = await self.http.request(method, url, json=body, params=params, timeout=TIMEOUT,
+                                                   headers={"Authorization": f"Bearer {token}", **headers})
+            except httpx.HTTPError as exc:
+                raise GoogleError(f"network: {type(exc).__name__}") from None
+            if response.status_code == 401 and attempt == 1:
+                self.access = ""
+                continue
+            break
+        if response.status_code == 200:
+            return response.json()
+        if response.status_code == 204:
+            return {}
+        if response.status_code in (404, 410):
+            raise Gone(url.rsplit("/", 1)[-1])
+        if response.status_code == 409:
+            raise Exists(url.rsplit("/", 1)[-1])
+        if response.status_code == 412:
+            raise Conflict(url.rsplit("/", 1)[-1])
+        raise GoogleError(f"Calendar: HTTP {response.status_code}")
 
     async def _pages(self, url: str, params: dict, key: str) -> tuple[list[dict], dict]:
         """Every page of a listing: the items under `key`, and the last page (its historyId, nextSyncToken)."""
@@ -243,3 +284,34 @@ class Google:
                                      {"singleEvents": "true", "orderBy": "startTime", "timeMin": rfc3339(start),
                                       "timeMax": rfc3339(end), "maxResults": EVENTS_PAGE}, "items")
         return found
+
+    # --- the calendar the writer made (calendar.app.created) ----------------------------------------------------
+
+    async def make_calendar(self, summary: str, zone: str) -> dict:
+        """calendars.insert: a secondary calendar of the account's, {id, summary, timeZone}."""
+        return await self.write("POST", f"{CALENDAR}/calendars", {"summary": summary, "timeZone": zone})
+
+    async def calendar(self, calendar_id: str) -> dict:
+        """calendars.get: the calendar as it is; Gone when the owner deleted it."""
+        return await self.get(f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}")
+
+    async def event(self, calendar_id: str, event_id: str) -> dict:
+        return await self.get(f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events/{event_id}")
+
+    async def insert(self, calendar_id: str, event: dict) -> dict:
+        """events.insert with the event's own id, notifying no one."""
+        return await self.write("POST", f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events", event,
+                                {"sendUpdates": "none"})
+
+    async def update(self, calendar_id: str, event_id: str, event: dict, etag: str) -> dict:
+        """events.update against `etag`: Conflict when the owner changed it since."""
+        return await self.write("PUT", f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events/{event_id}",
+                                event, {"sendUpdates": "none"}, etag)
+
+    async def delete(self, calendar_id: str, event_id: str) -> None:
+        """events.delete; an event already gone is gone."""
+        try:
+            await self.write("DELETE", f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events/{event_id}",
+                             params={"sendUpdates": "none"})
+        except Gone:
+            pass

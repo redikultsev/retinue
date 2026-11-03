@@ -95,7 +95,8 @@ services:
     # `outside`: Telegram; `travel-router`: price alerts; `mail-router`: what the mail collector found;
     # `tg-router`: the owner's chosen Telegram chats and replies in them; `send-router`: letters he confirmed;
     # `platform-router`: the lanes' sessions — their cards and summaries, his replies and presses
-    networks: [agents, outside, matrix, travel-router, mail-router, tg-router, send-router, platform-router]
+    networks: [agents, outside, matrix, travel-router, mail-router, tg-router, send-router, calwrite-router,
+               platform-router]
 
   assistant:
     image: retinue:local
@@ -213,7 +214,7 @@ services:
     volumes:
       - /srv/retinue/egress/squid.conf:/etc/squid/squid.conf:ro
       - /srv/retinue/egress/mail-hosts.txt:/etc/squid/allowed-hosts.txt:ro
-    networks: [mail-out, send-out, outside]
+    networks: [mail-out, send-out, calwrite-out, outside]
 
   # The mail sender: code, no model, the only holder of the owner's `gmail.send` tokens. It sends one letter when
   # the router asks with the key, the envelope and the digest of a card the owner pressed «Send» under — each
@@ -238,9 +239,38 @@ services:
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: ["/tmp:size=16m"]
-    mem_limit: 256m
+    mem_limit: 224m                 # ~35 MiB in use (docker stats, 2026-11-03)
     pids_limit: 64
     networks: [send-router, send-out]           # both internal: the router, and the proxy
+    depends_on: [mail-egress]
+
+  # The calendar writer: code, no model, the only holder of the owner's `calendar.app.created` token. It keeps one
+  # calendar of his, «Retinue», made by itself, and in it one event per block of his plan as the router asks — no
+  # guests, no notifications — and tells the router what he moved or deleted there. The token reaches no other
+  # calendar of his. Off until the owner turns it on (setup.sh CALWRITE=1, which needs MAIL=1: its way out is the
+  # mail proxy); the key comes from his Mac (deploy/mail/login.py --kind calwrite).
+  calwrite:
+    profiles: ["calwrite"]
+    image: retinue:local
+    restart: unless-stopped
+    user: "10023:10023"
+    command: ["retinue-calwrite"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9450), 3).close()"]
+    volumes:
+      - /srv/retinue/calwrite/keys:/keys:ro     # client.json and one calendar.app.created token: the owner's
+      - /srv/retinue/calwrite/state:/state      # the id of the calendar it made; nobody else mounts it
+    environment:
+      RETINUE_CALWRITE_TOKEN: ${RETINUE_CALWRITE_TOKEN:-}
+      HTTPS_PROXY: http://mail-egress:3128      # Google, through the proxy only
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    mem_limit: 96m                  # the sender's size: ~35 MiB
+    pids_limit: 64
+    networks: [calwrite-router, calwrite-out]   # both internal: the router, and the proxy
     depends_on: [mail-egress]
 
   # The Telegram Business gateway: code, no model, the only holder of the Business bot's token — which both reads
@@ -743,6 +773,10 @@ networks:
   send-router:  # router <-> mail sender only. Internal: no route out
     internal: true
   send-out:     # mail sender <-> the mail proxy only. Internal: the proxy is its only way out
+    internal: true
+  calwrite-router:  # router <-> calendar writer only. Internal: no route out
+    internal: true
+  calwrite-out:     # calendar writer <-> the mail proxy only. Internal: the proxy is its only way out
     internal: true
   tg-router:    # router <-> Telegram Business gateway only. Internal: no route out
     internal: true

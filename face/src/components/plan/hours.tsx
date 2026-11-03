@@ -1,11 +1,11 @@
-// The plan's settings: its window — the hours a plan lays tasks into, on one zone's clock wherever the owner is — as a
-// quiet button with those hours over the grid, opening a sheet where he sets them; a save is a press (`hours`) the
-// Router keeps.
+// The plan's settings: its window — the hours a plan lays tasks into, on one zone's clock wherever the owner is — and
+// his activities (meals with a range of starts, the rest for «Now»), as a quiet button with the hours over the grid,
+// opening a sheet where he sets them; each save is a press (`hours`, `activities`) the Router keeps.
 import { useState } from "react";
 import { Clock } from "@/components/icons";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import type { PlanWindow } from "@/lib/plan";
+import type { Activity, PlanWindow } from "@/lib/plan";
 import { press } from "./shared";
 
 /** A zone the browser knows: the list has canonical names only (no «UTC» in Chrome, no old aliases), so any name it
@@ -34,7 +34,7 @@ const ZONES: string[] = (() => {
 })();
 
 /** The plan's window, as a quiet button with its hours: it opens the settings, where the owner sets them. */
-export function HoursButton({ window: w }: { window: PlanWindow }) {
+export function HoursButton({ window: w, activities = [] }: { window: PlanWindow; activities?: Activity[] }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -49,7 +49,12 @@ export function HoursButton({ window: w }: { window: PlanWindow }) {
         {w.opens}–{w.closes}
       </button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Plan settings" sheet side>
-        {open && <HoursForm window={w} done={() => setOpen(false)} />}
+        {open && (
+          <>
+            <HoursForm window={w} done={() => setOpen(false)} />
+            <ActivitiesForm activities={activities} done={() => setOpen(false)} />
+          </>
+        )}
       </Dialog>
     </>
   );
@@ -106,6 +111,104 @@ export function HoursForm({ window: w, done }: { window: PlanWindow; done: () =>
           className="h-9 rounded-md bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 max-md:h-11"
         >
           Save
+        </button>
+      </div>
+    </form>
+  );
+}
+
+interface Row extends Activity {
+  key: number;
+}
+
+const HM = /^\d\d:\d\d$/;
+
+/** His activities: a name and minutes each; a range of starts makes it a meal whose place the plan keeps. */
+export function ActivitiesForm({ activities, done }: { activities: Activity[]; done: () => void }) {
+  const [rows, setRows] = useState<Row[]>(() => activities.map((a, key) => ({ ...a, key })));
+  const [next, setNext] = useState(activities.length);
+  const set = (key: number, change: Partial<Activity>) => setRows((r) => r.map((x) => (x.key === key ? { ...x, ...change } : x)));
+  const name = (t: string) => t.trim().replace(/\s+/g, " ");
+  const names = rows.map((r) => name(r.title).toLowerCase());
+  const wrong = (r: Row) =>
+    !r.title.trim() ||
+    r.title.trim().length > 40 ||
+    !Number.isInteger(r.minutes) ||
+    r.minutes < 5 ||
+    r.minutes > 720 ||
+    !!r.from !== !!r.to ||
+    (!!r.from && !(HM.test(r.from) && HM.test(r.to ?? "")));
+  const twice = new Set(names.filter((n, i) => names.indexOf(n) !== i));
+  const ok = rows.length <= 12 && !rows.some(wrong) && twice.size === 0;
+  const shaped = (): Activity[] =>
+    rows.map((r) => ({ title: name(r.title), minutes: r.minutes, ...(r.from && r.to ? { from: r.from, to: r.to } : {}) }));
+  const same = JSON.stringify(shaped()) === JSON.stringify(activities.map((a) => ({ title: a.title, minutes: a.minutes, ...(a.from && a.to ? { from: a.from, to: a.to } : {}) })));
+  return (
+    <form
+      className="flex flex-col gap-3 border-t p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ok && !same) void press({ action: "activities", activities: shaped() }, "Activities saved").then((sent) => sent && done());
+      }}
+    >
+      <h3 className="text-[13px] font-medium">Activities</h3>
+      <p className="text-[13px] text-muted-foreground">
+        What takes your time and is not a task. «Now» holds it from the moment you press. With a range of starts it is a meal: each day the
+        plan keeps its minutes free somewhere in that range.
+      </p>
+      <ul className="flex flex-col gap-2">
+        {rows.map((r) => (
+          <li key={r.key} className="grid grid-cols-[1fr_4.5rem_auto] items-center gap-2 rounded-md border p-2 max-sm:grid-cols-[1fr_4.5rem]">
+            <Input aria-label="Name" value={r.title} maxLength={40} onChange={(e) => set(r.key, { title: e.target.value })} />
+            <Input
+              aria-label="Minutes"
+              type="number"
+              min={5}
+              max={720}
+              value={Number.isNaN(r.minutes) ? "" : r.minutes}
+              onChange={(e) => set(r.key, { minutes: e.target.valueAsNumber })}
+            />
+            <button
+              type="button"
+              aria-label={`Remove ${r.title || "activity"}`}
+              onClick={() => setRows((x) => x.filter((y) => y.key !== r.key))}
+              className="h-9 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-accent max-sm:col-span-2 max-sm:justify-self-end max-md:h-11"
+            >
+              Remove
+            </button>
+            <div className="col-span-3 flex items-center gap-2 text-xs text-muted-foreground max-sm:col-span-2">
+              <span className="shrink-0">Starts between</span>
+              <Input aria-label="Starts from" type="time" value={r.from ?? ""} onChange={(e) => set(r.key, { from: e.target.value || undefined })} className="w-28" />
+              <span>and</span>
+              <Input aria-label="Starts by" type="time" value={r.to ?? ""} onChange={(e) => set(r.key, { to: e.target.value || undefined })} className="w-28" />
+            </div>
+            {wrong(r) && (
+              <span className="col-span-3 text-xs text-destructive max-sm:col-span-2">
+                A name, 5 min to 12 h{r.from || r.to ? ", and both ends of the range" : ""}.
+              </span>
+            )}
+            {twice.has(name(r.title).toLowerCase()) && <span className="col-span-3 text-xs text-destructive">Named twice.</span>}
+          </li>
+        ))}
+      </ul>
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          disabled={rows.length >= 12}
+          onClick={() => {
+            setRows((r) => [...r, { key: next, title: "", minutes: 30 }]);
+            setNext((n) => n + 1);
+          }}
+          className="h-9 rounded-md border px-3 text-[13px] transition-colors hover:bg-accent disabled:opacity-50 max-md:h-11"
+        >
+          Add an activity
+        </button>
+        <button
+          type="submit"
+          disabled={!ok || same}
+          className="h-9 rounded-md bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 max-md:h-11"
+        >
+          Save activities
         </button>
       </div>
     </form>

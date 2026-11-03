@@ -142,3 +142,26 @@ def test_no_piece_ends_after_its_no_later_than_and_a_passed_one_lays_it_anywhere
     assert late.placed == [] and late.left == [("homework", "no free 60 min before its deadline")]
     missed = lay(window, at(TUE, "18:30"), lesson, [], [homework])
     assert shown(missed) == [("homework", "19:00", 60)], "its moment passed: laid anyway, not lost"
+
+
+def test_a_meal_takes_the_first_free_quarter_of_its_range_unless_a_hold_of_its_name_is_in_the_window():
+    from retinue.plan_layout import Activity, meal_places
+    w = _of(TUE, H)
+    lunch, rest = Activity("Lunch", 45, time(13, 0), time(16, 0)), Activity("Rest", 60)
+    one = at(TUE, "13:00")
+    assert meal_places(w, H, [lunch, rest], [], []) == [("Lunch", one, one + 2700)]
+    meeting = [(one, at(TUE, "14:10"))]
+    assert meal_places(w, H, [lunch], meeting, []) == [("Lunch", at(TUE, "14:15"), at(TUE, "15:00"))]
+    assert meal_places(w, H, [lunch], [(one, at(TUE, "17:00"))], []) == [], "no room in the range: no place"
+    eating = [{"from": at(TUE, "12:20"), "to": at(TUE, "13:05"), "label": "lunch"}]
+    assert meal_places(w, H, [lunch], [], eating) == [], "he said he is eating: the place is let go"
+    late = Activity("Snack", 15, time(0, 15), time(0, 30))  # past midnight, in a window that runs to 01:00
+    assert meal_places(w, H, [late], [], []) == [("Snack", at(TUE, "00:15") + 86400, at(TUE, "00:30") + 86400)]
+    early = Activity("Breakfast", 20, time(9, 0), time(11, 30))  # the range opens before the window: from its opening
+    assert meal_places(w, H, [early], [], []) == [("Breakfast", w.start, w.start + 1200)]
+    assert meal_places(w, H, [Activity("Dawn", 20, time(6, 0), time(8, 0))], [], []) == [], "all before the window"
+    assert Activity.of({"title": " Lunch ", "minutes": 45, "from": "13:00", "to": "16:00"}) == lunch
+    assert Activity.of({"title": "Rest", "minutes": 60}) == rest and rest.shape() == {"title": "Rest", "minutes": 60}
+    for off in ({"title": "", "minutes": 45}, {"title": "Lunch", "minutes": 4}, {"title": "Lunch", "minutes": "45"},
+                {"title": "Lunch", "minutes": 45, "from": "13:00"}, {"title": "x" * 41, "minutes": 45}):
+        assert Activity.of(off) is None, off

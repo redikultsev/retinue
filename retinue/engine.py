@@ -244,6 +244,20 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
     async def plan_estimate(args):
         return await plan("estimate", {k: args[k] for k in ("task", "minutes", "due", "by") if k in args})
 
+    @tool("plan_hold",
+          "Hold the owner's time when he says in his own message that he is doing something that is not a task: "
+          "eating, on the road, resting («having lunch», «lying down for an hour», «tomorrow at 19:00 to the "
+          "airport, an hour and a half»). label — what it is, short, in English («Lunch», «Rest», «Travel»; one of "
+          "his activities when it is one). minutes — how long, as he said or the activity's usual length. at — his "
+          "local time YYYY-MM-DDTHH:MM when it is not now (at most 14 days ahead, at the earliest 15 minutes ago). "
+          "The plan's tasks it crosses move after it; a hold of a meal's name frees that meal's place that day. Done "
+          "at once; the code says it in the app.",
+          {"type": "object", "properties": {
+              "label": {"type": "string"}, "minutes": {"type": "integer"}, "at": {"type": "string"}},
+           "required": ["label", "minutes"]})
+    async def plan_hold(args):
+        return await plan("hold", {k: args[k] for k in ("label", "minutes", "at") if k in args})
+
     @tool("get_attachment",
           "Get again what the owner sent, by the number from the mark [attachment #N: …]. After compaction the "
           "pictures and PDFs are gone from the conversation — this tool returns the picture and the text: the "
@@ -302,7 +316,7 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return call
 
     return {t.name: t for t in (ask_agent, list_agents, search_archive, set_reminder, list_reminders,
-                                cancel_reminder, move_reminder, set_timezone, plan_move, plan_estimate,
+                                cancel_reminder, move_reminder, set_timezone, plan_move, plan_estimate, plan_hold,
                                 get_attachment, publish_trip,
                                 draft_reply, *map(collection_tool, colltools.TOOLS))}
 

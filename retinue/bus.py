@@ -134,7 +134,7 @@ class BusServer:
                              web.post("/archive/search", self.archive_search),
                              web.post("/reminders/{action}", self.reminders),
                              web.post("/zone", self.zone),
-                             web.post("/plan/{action:move|estimate}", self.plan),
+                             web.post("/plan/{action:move|estimate|hold}", self.plan),
                              web.post("/attachments/get", self.attachment),
                              web.post("/travel/log", self.travel_log),
                              web.post("/kb/log", self.kb_log),

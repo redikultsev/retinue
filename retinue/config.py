@@ -734,8 +734,8 @@ BRANCH = re.compile(r"(?!.*\.\.)(?!.*//)(?!.*/\.)(?!.*@\{)(?!.*\.lock(?:/|$))[A-
 
 # What an agent can be given through the router.
 BUS_TOOLS = ("ask_agent", "list_agents", "search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-             "move_reminder", "set_timezone", "plan_move", "plan_estimate", "get_attachment", "publish_trip", "draft_reply",
-             "collection_describe", "collection_query", "collection_apply", "collection_propose")
+             "move_reminder", "set_timezone", "plan_move", "plan_estimate", "plan_hold", "get_attachment", "publish_trip",
+             "draft_reply", "collection_describe", "collection_query", "collection_apply", "collection_propose")
 
 
 @dataclass

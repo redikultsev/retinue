@@ -1707,7 +1707,7 @@ class Core:
                 log.exception("the turn's plan line not told")
 
     async def plan_tool(self, caller: RouterAgent, turn_id: str, action: str, args: dict) -> tuple[bool, str]:
-        """`plan_move` and `plan_estimate`: the plan moved on the owner's word only — his own message, nobody else's
+        """`plan_move`, `plan_estimate` and `plan_hold`: the plan changed on the owner's word only — his own message, nobody else's
         text in the turn (`_owner_word`). Code moves it (`Planner`), never her write to `blocks`."""
         turn = self.turns.turns.get(turn_id)
         if turn is None or turn.agent_id != caller.id:
@@ -1722,6 +1722,9 @@ class Core:
             ok, text = await self.planner.move(turn.id, str(args.get("task") or ""), str(args.get("day") or ""),
                                                str(args.get("part") or ""), str(args.get("at") or ""),
                                                args.get("named") is True, time.time())
+        elif action == "hold":
+            ok, text = await self.planner.hold_said(str(args.get("label") or ""), args.get("minutes"),
+                                                    str(args.get("at") or ""), time.time())
         else:
             minutes = args.get("minutes")
             ok, text = await self.planner.estimate(turn.id, str(args.get("task") or ""),

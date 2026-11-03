@@ -2,7 +2,7 @@
 // face when the zone is not one.
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HoursButton } from "@/components/plan/hours";
+import { ActivitiesForm, HoursButton } from "@/components/plan/hours";
 import { planApi } from "@/lib/plan";
 
 const W = { zone: "Europe/Berlin", opens: "10:00", closes: "01:00" };
@@ -42,5 +42,35 @@ describe("plan settings", () => {
     expect(screen.getByText("Not a zone: pick one from the list.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(sent).not.toHaveBeenCalled();
+  });
+});
+
+const nth = (label: string, n: number): HTMLElement => screen.getAllByLabelText(label)[n] as HTMLElement;
+
+describe("activities", () => {
+  const LUNCH = { title: "Lunch", minutes: 45, from: "13:00", to: "16:00" };
+
+  it("adds one and saves the list as one press, a range only with both ends", async () => {
+    const sent = vi.spyOn(planApi, "press").mockResolvedValue({ ok: true });
+    render(<ActivitiesForm activities={[LUNCH]} done={() => {}} />);
+    const save = screen.getByRole("button", { name: "Save activities" });
+    expect(save).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Add an activity" }));
+    fireEvent.change(nth("Name", 1), { target: { value: "Rest" } });
+    fireEvent.change(nth("Starts from", 1), { target: { value: "15:00" } });
+    expect(save).toHaveProperty("disabled", true);
+    fireEvent.change(nth("Starts from", 1), { target: { value: "" } });
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(sent).toHaveBeenCalledWith({ action: "activities", activities: [LUNCH, { title: "Rest", minutes: 30 }] }),
+    );
+  });
+
+  it("refuses a name used twice", () => {
+    render(<ActivitiesForm activities={[LUNCH]} done={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add an activity" }));
+    fireEvent.change(nth("Name", 1), { target: { value: "lunch" } });
+    expect(screen.getAllByText("Named twice.").length).toBe(2);
+    expect(screen.getByRole("button", { name: "Save activities" })).toHaveProperty("disabled", true);
   });
 });

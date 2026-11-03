@@ -54,6 +54,12 @@
   color: var(--muted-foreground) !important;
   border-radius: 4px;
 }
+/* A meal's place: kept free of tasks, faint and hatched — nothing is laid there, nothing is due there either. */
+.rt-grid .rt-meal {
+  background: repeating-linear-gradient(135deg, color-mix(in oklch, var(--foreground) 7%, transparent) 0 2px, transparent 2px 7px) !important;
+  opacity: 1 !important;
+  color: var(--muted-foreground);
+}
 .rt-grid .rt-meeting.rt-free {
   background: transparent !important;
   border-style: dashed !important;

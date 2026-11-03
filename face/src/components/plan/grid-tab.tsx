@@ -1,6 +1,7 @@
 // «Plan»: the week as an hourly grid (FullCalendar v7; a day on a phone) — meetings grey, the plan's blocks in their
 // goal's colour, the plan's window in the owner's zone as the lit hours — under the bar of presses: «Plan my day»,
-// «Plan my week», «Undo» of the last plan, «Busy now», the window's hours (its settings), and what the last press came to. A block dragged or stretched
+// «Plan my week», «Undo» of the last plan, «Now» (an activity or «Busy»), the window's hours (its settings), and what
+// the last press came to. The places the meals keep are hatched. A block dragged or stretched
 // is the owner's write of `blocks`, locked: a stretched one is the task's length from then on (the Router's layout
 // counts it). Tasks get their time on «Tasks» («Plan») or from «Plan my day/week»; the bar counts the open ones with
 // nothing ahead and opens «Tasks». The assistant's plans of the last quarter-hour are lit, and a new one is said once
@@ -145,6 +146,14 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
       start: new Date(h.from * 1000),
       end: new Date(h.to * 1000),
       display: "background",
+    })),
+    ...(plan.plan.meals ?? []).map((m, n) => ({
+      id: `m${n}`,
+      title: m.title,
+      start: new Date(m.from * 1000),
+      end: new Date(m.to * 1000),
+      display: "background",
+      className: "rt-meal",
     })),
     ...all.map((p) => {
       const n = goals.findIndex((g) => g.value === p.task?.fields.goal);
@@ -376,7 +385,7 @@ function PlanBar({ plan, first, today, unplanned, nav }: {
           </span>
         )}
         <div className="ml-auto flex items-center gap-1">
-          <HoursButton window={plan.plan.window} />
+          <HoursButton window={plan.plan.window} activities={plan.plan.activities ?? []} />
           <span className="mr-1 text-[13px] font-medium tabular-nums">{nav.title}</span>
           <button type="button" aria-label="Back" onClick={() => nav.go("prev")} className="h-8 w-8 rounded-md border text-[13px] hover:bg-accent max-md:h-10 max-md:w-10">
             ‹
@@ -399,7 +408,8 @@ function PlanBar({ plan, first, today, unplanned, nav }: {
   );
 }
 
-/** «Busy now»: the time from now held, and the plan's blocks it crosses laid again after it. */
+/** «Now»: an activity of his from now — a hold of its name and length — or plain «Busy»; the plan's blocks it crosses
+ * are laid again after it. While one runs: its name and end, and × ends it. */
 function BusyMenu({ plan }: { plan: Plan }) {
   const held = plan.plan.holds.find((h) => h.from <= plan.now && h.to > plan.now);
   if (held)
@@ -409,14 +419,32 @@ function BusyMenu({ plan }: { plan: Plan }) {
         onClick={() => void press({ action: "free" }, "Freeing the time…")}
         className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] transition-colors hover:bg-accent max-md:h-10"
       >
-        Busy till {hm(held.to, plan.tz)}
+        {held.label || "Busy"} till {hm(held.to, plan.tz)}
         <Close className="size-3.5" />
       </button>
     );
+  const item = "flex h-8 items-center justify-between gap-4 rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10";
+  const activities = plan.plan.activities ?? [];
   return (
-    <Popover label="Busy now" button="Busy now">
+    <Popover label="Now" button="Now">
       {(close) => (
-        <div className="flex flex-col text-[13px]">
+        <div className="flex min-w-44 flex-col text-[13px]">
+          {activities.map((a) => (
+            <button
+              key={a.title}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                close();
+                void press({ action: "now", activity: a.title }, `${a.title} for ${duration(a.minutes)}: moving what it crosses…`);
+              }}
+              className={item}
+            >
+              <span className="truncate">{a.title}</span>
+              <span className="font-mono text-xs text-muted-foreground tabular-nums">{duration(a.minutes)}</span>
+            </button>
+          ))}
+          {activities.length > 0 && <div className="my-1 border-t" />}
           {([30, 60, 120] as const).map((m) => (
             <button
               key={m}
@@ -426,9 +454,10 @@ function BusyMenu({ plan }: { plan: Plan }) {
                 close();
                 void press({ action: "busy", minutes: m }, `Busy for ${duration(m)}: moving what it crosses…`);
               }}
-              className="flex h-8 items-center rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10"
+              className={item}
             >
-              {duration(m)}
+              <span>Busy</span>
+              <span className="font-mono text-xs text-muted-foreground tabular-nums">{duration(m)}</span>
             </button>
           ))}
         </div>
@@ -436,4 +465,3 @@ function BusyMenu({ plan }: { plan: Plan }) {
     </Popover>
   );
 }
-

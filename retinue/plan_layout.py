@@ -16,6 +16,10 @@ and the tests all run the same code.
   less what its passed pieces counted — for a task with a due date never less than half of it until it is done, so
   time counted for pieces he did not work cannot quietly empty it — and less what its pieces planned in other windows
   hold, so a task planned on Monday is not laid again on Tuesday.
+- **A meal keeps its place**: an `Activity` with a range of starts (`from`–`to`, wall times in the window's zone)
+  holds its minutes free at the first quarter hour of the range clear of meetings and holds — fixed, not following
+  the clock, so the plan does not move under it every look — unless a hold named as it is falls in the window (he
+  said he is eating). Every path that lays a task counts it busy.
 - **Pauses** keep themselves: a piece may not make a run of tasks longer than RUN_S, the run counted by time — pieces
   less than GAP_S apart are one run, those already standing among them — so after 90 minutes the next piece starts 15
   later, and a short task cannot slip into the pause.
@@ -68,6 +72,44 @@ class Hours:
 
 
 HOURS = Hours()
+
+
+@dataclass(frozen=True)
+class Activity:
+    """What takes the owner's time and is not a task — a meal, the road, rest: a hold of its name and length on «Now»;
+    with a range of starts (`starts`, `ends`) a meal, whose place the plan keeps free each day."""
+    title: str
+    minutes: int
+    starts: time | None = None
+    ends: time | None = None
+
+    @classmethod
+    def of(cls, value: object) -> Activity | None:
+        """`{title, minutes, from?, to?}`; None when it is not of that shape."""
+        if not isinstance(value, dict):
+            return None
+        title = " ".join(str(value.get("title") or "").split())
+        minutes = value.get("minutes")
+        if not 0 < len(title) <= TITLE_MAX or type(minutes) is not int or not 5 <= minutes <= ACTIVITY_MAX_M:
+            return None
+        if value.get("from") in (None, "") and value.get("to") in (None, ""):
+            return cls(title, minutes)
+        try:
+            starts, ends = (time.fromisoformat(str(value[k])) for k in ("from", "to"))
+        except (KeyError, ValueError, TypeError):
+            return None
+        return None if starts.second or ends.second else cls(title, minutes, starts, ends)
+
+    def shape(self) -> dict:
+        return {"title": self.title, "minutes": self.minutes,
+                **({"from": self.starts.strftime("%H:%M"), "to": self.ends.strftime("%H:%M")} if self.starts else {})}
+
+
+TITLE_MAX = 40
+ACTIVITY_MAX_M = 12 * 60
+ACTIVITIES_MAX = 12
+ACTIVITIES = (Activity("Breakfast", 20, time(10, 0), time(11, 30)), Activity("Lunch", 45, time(13, 0), time(16, 0)),
+              Activity("Dinner", 45, time(19, 0), time(22, 0)), Activity("Rest", 60), Activity("Travel", 30))
 
 
 @dataclass(frozen=True)
@@ -205,6 +247,38 @@ def lay(window: Window, now: float, busy: list[tuple[float, float]], pieces: lis
         out.placed.append((task.id, at, length // 60))
         taken.append((at, at + length))
         standing.append((at, at + length))
+    return out
+
+
+def meal_places(window: Window, hours: Hours, meals: list[Activity] | tuple[Activity, ...],
+                busy: list[tuple[float, float]], holds: list[dict]) -> list[tuple[str, float, float]]:
+    """Where each meal with a range keeps its place in the window: `(title, start, end)` at the first quarter hour of
+    its range whose minutes cross nothing in `busy` (meetings, holds) and end inside the window. None for a meal a
+    hold of its name in the window took over, or whose range has no room."""
+    z = ZoneInfo(hours.zone)
+    out: list[tuple[str, float, float]] = []
+    for meal in meals:
+        if meal.starts is None or meal.ends is None:
+            continue
+        name = meal.title.casefold()
+        if any(str(h.get("label") or "").casefold() == name and float(h["to"]) > window.start
+               and float(h["from"]) < window.end for h in holds):
+            continue
+        on = window.day
+        first = datetime.combine(on, meal.starts, z).timestamp()
+        last = datetime.combine(on + timedelta(days=meal.ends < meal.starts), meal.ends, z).timestamp()
+        if last < window.start:  # a range past midnight, in a window that runs past it
+            on += timedelta(days=1)
+            first = datetime.combine(on, meal.starts, z).timestamp()
+            last = datetime.combine(on + timedelta(days=meal.ends < meal.starts), meal.ends, z).timestamp()
+        first = max(first, window.start)  # a range that begins before the window opens: from its opening
+        length = meal.minutes * 60
+        at = math.ceil(first / STEP_S) * STEP_S
+        while at <= last and at + length <= window.end:
+            if _free(at, length, busy):
+                out.append((meal.title, at, at + length))
+                break
+            at += STEP_S
     return out
 
 

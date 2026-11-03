@@ -77,6 +77,15 @@ export interface RecentPlan {
   failed: boolean;
 }
 
+/** Something of the owner's that is not a task — a meal, the road, rest: a hold of its name on «Now»; with a range of
+ * starts (`from`–`to`, wall times in the plan's zone) a meal, whose place the plan keeps free each day. */
+export interface Activity {
+  title: string;
+  minutes: number;
+  from?: string;
+  to?: string;
+}
+
 export interface PlanWindow {
   zone: string;
   opens: string;
@@ -103,6 +112,10 @@ export interface Plan {
     /** The plans of the last day, newest first: who asked for each — her plans' blocks are lit on the grid. */
     recent?: RecentPlan[];
     holds: { from: number; to: number; label: string }[];
+    /** His activities, in his order: the «Now» menu, and the meals. */
+    activities?: Activity[];
+    /** The places the meals keep, from yesterday's window a week on. */
+    meals?: { title: string; from: number; to: number }[];
     said: { at?: number; text?: string; day?: string };
     window: PlanWindow;
   };
@@ -119,7 +132,10 @@ export type Press =
   | { action: "free" }
   | { action: "remove"; block: string }
   /** The plan's window, set on its settings: two wall times in a zone, a close before the open after midnight. */
-  | ({ action: "hours" } & PlanWindow);
+  | ({ action: "hours" } & PlanWindow)
+  /** An activity from now: a hold of its name and length. */
+  | { action: "now"; activity: string }
+  | { action: "activities"; activities: Activity[] };
 
 export const planApi = {
   get: () => request<Plan>("/api/plan"),

@@ -50,7 +50,50 @@ export const paths = {
   changes: (space: string, before?: string) => `/api/c/_changes?space=${seg(space)}${before ? `&before=${seg(before)}` : ""}`,
   proposals: (space?: string) => `/api/c/_proposals${space ? `?space=${seg(space)}` : ""}`,
   collectionProposal: (id: string, action: "apply" | "dismiss") => `/api/c/_proposals/${seg(id)}/${action}`,
+  /** «Talk to Retinue»: the assistant's conversation (retinue/chat.py) — its rows (GET), his message (POST). */
+  chat: "/api/chat",
+  chatPress: "/api/chat/press",
+  chatFile: (id: string) => `/api/chat/files/${seg(id)}`,
 } as const;
+
+/** One of her files on a row of the chat: kept for the app (`id`), or only named, with why. */
+export interface ChatFile {
+  id: string | null;
+  name: string;
+  size: number;
+  mime: string;
+  why?: string;
+}
+
+/** A row of the assistant's conversation (retinue/chat.py): his message — written here, or in Telegram (`via`) —,
+ * her answer, or the system's word with its buttons. `id` is the router's archive id; `rev` grows with each change. */
+export interface ChatRow {
+  id: string;
+  at: number;
+  by: "owner" | "her" | "notice";
+  text: string;
+  rev: number;
+  via?: string;
+  /** His message from the app, not taken by the router yet. */
+  pending?: boolean;
+  /** [label, button id] still alive. */
+  buttons?: [string, string][];
+  files?: ChatFile[];
+  /** What the last press on it said. */
+  toast?: string;
+}
+
+/** What she is writing: the whole text so far (the stream's `chat-draft`, never stored). */
+export interface ChatDraft {
+  text: string;
+  at: number;
+}
+
+export interface ChatSnapshot {
+  schema: number;
+  rows: ChatRow[];
+  draft: ChatDraft | null;
+}
 
 /** A press on the plan (`POST /api/plan/press`) by its action, and the fields that action takes — retinue/plan.py's
  * `PRESSES` and `clean_press`, kept equal to them by tests/test_planner.py. «Place» takes a task, or a person's row

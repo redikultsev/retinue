@@ -18,7 +18,7 @@ export const spheres: Sphere[] = [
   { name: "work", title: "Work", icon: "🗂️", track: "notes" },
   { name: "health", title: "Health", icon: "🩺", track: "notes" },
   { name: "platform", title: "Platform", icon: "🛠️", track: "retinue" },
-  // the voice's sphere (`voice:` in platform.yaml): its main session is «Talk to Retinue»
+  // the voice's sphere (`voice:` in platform.yaml): its main session, a session voice the router may speak through
   { name: "voice", title: "Retinue", icon: "💬", track: "notes" },
 ];
 
@@ -238,7 +238,7 @@ const call = (id: string, tool: string, input: Record<string, unknown>, result: 
 });
 
 const turns: Record<string, ItemData[][]> = {
-  // the voice's main session: «Talk to Retinue» in the app's header
+  // the voice's main session: an ordinary session in the app
   "0c0ffee1": [
     [
       msg("user", "What is left before the Lisbon trip?"),

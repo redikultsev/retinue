@@ -164,6 +164,8 @@ in the snapshot, never wrapped in an envelope. The kinds and their keys:
 | `collection` | the collection's name | `{name, space, rev}`: a collection changed — its records, form, views or rights; `space` its Space, `rev` its newest change ([collections.md](collections.md#views)) |
 | `collection_proposal` | the proposal's id | a write to a collection a session proposed, as `GET /api/c/_proposals` lists it: made, applied, dismissed or expired ([collections.md](collections.md#proposals)) |
 | `delta` | none, no `id` | `{session, text}`: text being written, never replayed |
+| `chat` | the row's id | a row of «Talk to Retinue», as in `GET /api/chat`: written or rewritten; the app keeps the one with the higher `rev` |
+| `chat-draft` | none, no `id` | `{text, at}`: what the assistant is writing in «Talk to Retinue», the whole text so far — only the newest goes out; never replayed, over after 30 s without a new one or when her row comes |
 
 An approval is `{id, session, tool_use_id, kind, state, tool, input, cwd, digest, view, created, at}`; `kind` is
 `approval`, `courier` or `question`, and a question's `view` is `{answers: {<n>: {value, other}}, picks, status}`
@@ -180,7 +182,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | Call | Answer |
 |---|---|
 | `POST /api/auth/code {code}` · `POST /api/auth/telegram {init_data}` · `POST /api/auth/logout` | `{ok}` and the cookie |
-| `GET /api/meta` | `{schema, owner_ok, tracks: [{name, lane, kind}], general, spheres: [{name, title, icon, track}], face_origin, speech, voice}` — `general`: the track «＋» starts a session on (the root of the Base, below); `voice`: the voice's sphere, whose main session is «Talk to Retinue» ([above](#talk-to-retinue)), null with no voice |
+| `GET /api/meta` | `{schema, owner_ok, tracks: [{name, lane, kind}], general, spheres: [{name, title, icon, track}], face_origin, speech}` — `general`: the track «＋» starts a session on (the root of the Base, below) |
 | `GET /api/sessions` | `{schema, cursor, sessions}` — every open session, those closed in the last 30 days and every sphere's main session, latest first; a session row carries `sphere`, `main`, `fork_of`, `unread`, `base` (its Base files not committed yet) `turn_started` (when its running turn began: idle, closed or new → active; a resume after a card keeps it), `side` (a side question: its `parent`), `sub_of` (a sub-session: the session that started it), `children` (its open sub-sessions), `queued` (waiting for room in the lane: the row and the session's header say “waiting for room on the lane”), `project` (the Base folder it runs in, on the Base's lane: the left panel's project) and `slot` (its place on [the map](#the-map) among its project's live sessions) — [platform.md](platform.md#sub-sessions); an input carries `by` (`parent`, `report`, `platform` — the platform's own word to the session, shown as a note “From the platform”, never his bubble) when the owner did not write it |
 | `GET /api/sessions/{id}` | `{schema, cursor, session, items, approvals, summaries, inputs, files, base_cards, push_cards, proposals, about}` — `proposals`: every sub-session it proposed, oldest first, whatever became of it; `about`: `{cwd, context_tokens, model, cli_version, permission_mode, mcp: [{name, status}]}` for “Details” ([below](#details)), from the session's row and its newest top-level `init` line; null (or `[]`) where nothing said it |
 | `GET /api/events?since=<cursor>` | the stream; `Last-Event-ID` wins over `since` |
@@ -211,6 +213,10 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/plan` | `{schema, now, tz, zone, tasks: {rows, rev, space, goals, missing, blocks}, calendar: {events, at, failed, stale}, reminders, plan: {at, plans, recent, holds, said, window, activities, meals}}` — what [Tasks and Schedule](#tasks-and-schedule) show: the open tasks, the blocks planned or passed from yesterday to two weeks on (and the closed tasks they name), the busy window and the day plan's state the Router last pushed, the digest's reminders (the people's asks are the feed's rows, `lib/asks.ts`) |
 | `POST /api/plan/press {action, day?, task?, plan?, block?, minutes?, opens?, closes?, zone?, activity?, activities?}` | `{ok}`: «Plan my day» (`plan`), «Plan» to a day (`place`), «Undo» (`undo`), «Now» (`now`: an activity by its name; `busy`, 30/60/120; `off`: not working today), its × (`free`), × on a block (`remove`), the plan's settings (`hours`: two `HH:MM` and a zone; `activities`: up to 12 of `{title, minutes, from?, to?}`) — a `plan-press` note for the Router ([collections.md](collections.md#blocks)) |
 | `POST /api/waiting/detail {ref, t?}` | `{detail}`: [a row's pane](#her-rows-pane) of “From the assistant” — a person's row by its id and token, a draft by its id — asked of the router and relayed, never kept; 410 when the row is not in the digest any more or the router no longer knows it, 504 when the router said nothing within 12 s, 502 when what it said was off the contract, 429 while 8 already wait |
+| `GET /api/chat` | `{schema, rows, draft}` — «Talk to Retinue» ([below](#talk-to-retinue)): the assistant's conversation, its newest 200 rows oldest first, each `{id, at, by: owner\|her\|notice, text, rev, via?, pending?, buttons?: [[label, id]], files?: [{id, name, size, mime, why?}], toast?}` (`id` the router's archive id; `rev` grows with each change); `draft`: what she is writing now, `{text, at}`, or null |
+| `POST /api/chat {input_id, text}` | `{ok, row}`: your message, kept as your row (`pending` until the router has it) and journaled for the router; the same `input_id` (`face:<uuid4>`) again is the same message; 400 for files («send files to the bot in Telegram») or a text over 20,000 characters |
+| `POST /api/chat/press {id, row}` | `{ok}`: a button of that row, for the router to decide; 410 when the row no longer carries it |
+| `GET /api/chat/files/{id}` | one of her files, as a download under the sandbox policy (`/api/files/{id}`'s), never served as a page; 404 for anything else |
 | `GET /api/stats` | `{schema, now, weeks: [tally…]}` — the platform's tally (`signals.tally`) of the last eight seven-day spans, the newest first, for “Numbers” ([below](#numbers)) |
 | `GET /api/base/{id}` | `{card}` — the platform's own commit to the Base after a turn ([base.md](base.md#the-commit-after-a-turn)): its line (`said`), files, sha, whether “Undo” can be pressed |
 | `GET /api/base/{id}/diff` | `{diff, truncated}`: what the commit changed, at most 1 MB |
@@ -686,11 +692,19 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
   question, an approval, a proposal, a push) is decided by its buttons and is only named. Any other phrase opens the
   chat with it in the box, to read and send.
 - **«Talk to Retinue»**: a chat beside every screen — a column at the right on a wide screen (380 px, resized as the
-  others), a sheet on a phone — with the voice's main session ([proactive.md](proactive.md), `meta.voice`: the voice's
-  sphere): its conversation, its box with the microphone, «↗» to the session itself. Its first message starts that
-  session when there is none (`POST /api/sessions` with `main: true`). Open or closed as the device left it
-  (`localStorage`, `retinue-chat-open`). With no voice on the platform (`meta.voice` null) it says «The voice is not
-  configured» and how to turn it on.
+  others), a sheet on a phone — with the assistant: one more channel of the router's, the same conversation and memory
+  as the bot in Telegram ([platform.md](platform.md#the-routers-mirror), `retinue/chat.py`). It shows the
+  conversation's newest 200 rows: your messages — written here, or in Telegram (marked «In Telegram» under them) —,
+  her answers as Markdown with her files as downloads (up to 20 MB each; a bigger one is named with why), and the
+  system's words — a reminder, a refusal, a card — quieter, in a dashed frame, their buttons under them. A press goes
+  to the router, which decides as for a Telegram press; the card comes back rewritten (its choice under it, the
+  buttons it keeps) with what the press said as a toast, and a press in Telegram rewrites it here too. What she is
+  writing shows below as she writes it, the whole text so far, until her answer comes. Your message is your row at
+  once, «Sending…» until the router has it; the same message sent twice (a retry) is one. The box takes text and
+  dictation — files go to the bot for now — and `/new`, `/help` and the bot's other commands as in Telegram. Her
+  answer to a message from here comes here (and in Telegram only when you also wrote there meanwhile); what she says
+  unasked — reminders, the morning summary — comes in both. Open or closed as the device left it (`localStorage`,
+  `retinue-chat-open`).
 
 ## In the app
 

@@ -19,7 +19,7 @@ import type {
 } from "./types";
 import type { Encoded } from "./attach";
 import type { Press, WaitingDetail } from "./feed";
-import { paths } from "./contract";
+import { type ChatRow, type ChatSnapshot, paths } from "./contract";
 import { inputId } from "./utils";
 
 export class ApiError extends Error {
@@ -196,6 +196,12 @@ export const api = {
   /** A row of hers opened: what it is about and where it is, asked of the router — a few seconds at most. */
   waitingDetail: (ref: string, t?: string) =>
     request<{ detail: WaitingDetail }>(paths.waitingDetail, t ? { ref, t } : { ref }),
+  /** «Talk to Retinue»: the assistant's conversation, its newest rows. */
+  chat: () => request<ChatSnapshot>(paths.chat),
+  /** His message into it: his row back at once, `pending` until the router has it; the same id is the same message. */
+  chatSay: (text: string, id = inputId()) => request<{ ok: boolean; row: ChatRow }>(paths.chat, { input_id: id, text }),
+  /** A button of a row of hers: the router decides, and the row comes back rewritten. */
+  chatPress: (id: string, row: string) => request<{ ok: boolean }>(paths.chatPress, { id, row }),
   loginCode: (code: string) => request<{ ok?: boolean }>(paths.auth("code"), { code }),
   loginTelegram: (initData: string) => request<{ ok?: boolean }>(paths.auth("telegram"), { init_data: initData }),
   logout: () => request<{ ok?: boolean }>(paths.auth("logout"), {}),

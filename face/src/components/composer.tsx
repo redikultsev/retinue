@@ -250,6 +250,8 @@ export interface ComposerBoxProps {
   onDraft?: (text: string) => void;
   /** Why nothing can be sent here now (no track for a new session yet): the arrow is off and says it. */
   blocked?: string | null;
+  /** Why this box takes no files (the chat with Retinue): no «＋», and a pasted file is refused with it. */
+  noFiles?: string;
 }
 
 export function ComposerBox({
@@ -265,6 +267,7 @@ export function ComposerBox({
   initial = "",
   onDraft,
   blocked = null,
+  noFiles,
 }: ComposerBoxProps) {
   const [text, setTextState] = useState(initial);
   const [files, setFiles] = useState<File[]>([]);
@@ -366,6 +369,10 @@ export function ComposerBox({
 
   function attach(added: File[]) {
     if (added.length === 0) return;
+    if (noFiles) {
+      toast(noFiles, "error");
+      return;
+    }
     const next = [...files, ...added];
     const why = overLimits(next);
     if (why) {
@@ -435,7 +442,7 @@ export function ComposerBox({
             <RecordingBar voice={voice} />
           ) : (
             <>
-              <AttachMenu onFiles={attach} disabled={busy} camera={coarse} />
+              {!noFiles && <AttachMenu onFiles={attach} disabled={busy} camera={coarse} />}
               <span className="flex-1" />
               <MicButtons voice={voice} disabled={busy} compact />
             </>

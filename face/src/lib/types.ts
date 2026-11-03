@@ -31,8 +31,6 @@ export interface Meta {
   spheres?: Sphere[];
   /** The owner's voice works here: the platform has the key and a way out. Absent from a platform before it. */
   speech?: boolean;
-  /** The voice's sphere: its main session is «Talk to Retinue». Null: no voice; absent: a platform before it. */
-  voice?: string | null;
 }
 
 export interface Session {

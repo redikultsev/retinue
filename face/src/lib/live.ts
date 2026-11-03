@@ -8,7 +8,7 @@
 
 import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
-import { paths } from "./contract";
+import { type ChatDraft, type ChatRow, paths } from "./contract";
 import { type Action, initialState, reduce, type State, waitsOnOwner } from "./store";
 import { type Approval, type CollectionEvent, EVENT_KINDS, type Meta, SCHEMA, type StreamEvent } from "./types";
 import type { CollectionProposal } from "./view-types";
@@ -47,6 +47,8 @@ export class Live {
   private planListeners = new Set<() => void>();
   private proposalListeners = new Set<(proposal: CollectionProposal) => void>();
   private resyncListeners = new Set<() => void>();
+  private chatListeners = new Set<(row: ChatRow) => void>();
+  private draftListeners = new Set<(draft: ChatDraft) => void>();
   private source: EventSource | null = null;
   private watched = new Set<string>();
   private hiddenAt: number | null = null;
@@ -202,6 +204,15 @@ export class Live {
       const proposal = JSON.parse((e as MessageEvent<string>).data) as CollectionProposal;
       for (const l of this.proposalListeners) l(proposal);
     });
+    // «Talk to Retinue» (retinue/chat.py): a row of the assistant's conversation, and what she is writing, whole.
+    source.addEventListener("chat", (e) => {
+      const row = JSON.parse((e as MessageEvent<string>).data) as ChatRow;
+      for (const l of this.chatListeners) l(row);
+    });
+    source.addEventListener("chat-draft", (e) => {
+      const draft = JSON.parse((e as MessageEvent<string>).data) as ChatDraft;
+      for (const l of this.draftListeners) l(draft);
+    });
     source.addEventListener("delta", (e) => {
       const data = JSON.parse((e as MessageEvent<string>).data) as { session: string; text: string };
       this.dispatch({ type: "delta", session: data.session, text: data.text });
@@ -255,6 +266,18 @@ export class Live {
   onCollectionProposal(listener: (proposal: CollectionProposal) => void): () => void {
     this.proposalListeners.add(listener);
     return () => this.proposalListeners.delete(listener);
+  }
+
+  /** Told of each row of the assistant's conversation as it is written or rewritten while the app is open. */
+  onChat(listener: (row: ChatRow) => void): () => void {
+    this.chatListeners.add(listener);
+    return () => this.chatListeners.delete(listener);
+  }
+
+  /** Told of what she is writing in it, the whole text each time. */
+  onChatDraft(listener: (draft: ChatDraft) => void): () => void {
+    this.draftListeners.add(listener);
+    return () => this.draftListeners.delete(listener);
   }
 
   isWatched(id: string): boolean {

@@ -13,6 +13,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { type Feed, type FeedRow, paths, type TurnEnding, type WaitingDetail } from "../src/lib/contract.ts";
 import type { Approval, Input, Item, Proposal, Session, Summary } from "../src/lib/types.ts";
 import { type Moved, mockCollections, mockProposals, mockWrite, moveDeal, seedProposals, waitingProposals } from "./collections.ts";
+import { mockChat } from "./chat.ts";
 import { closed, digest, pressRow } from "./digest.ts";
 import * as fx from "./fixtures.ts";
 import { cleanPress, mockAssistantMove, mockPlan, mockPlanPress } from "./plan.ts";
@@ -186,6 +187,11 @@ function delta(session: string, text: string) {
   for (const res of streams) send(res, "delta", { session, text });
 }
 
+// «Talk to Retinue»: the assistant's conversation; what she is writing goes out as `chat-draft`, never kept
+const chat = mockChat(emit, (draft) => {
+  for (const res of streams) send(res, "chat-draft", draft);
+});
+
 function setSession(id: string, patch: Partial<Session>) {
   const s = sessions.get(id);
   if (!s) return;
@@ -353,7 +359,24 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
   if (!authed(req)) return json(res, 401, { error: "Log in first." });
 
-  if (path === paths.meta) return json(res, 200, { schema: 1, owner_ok: true, tracks: fx.tracks, general: "notes", spheres: fx.spheres, face_origin: "http://127.0.0.1:5173", speech: true, voice: "voice" });
+  if (path === paths.meta) return json(res, 200, { schema: 1, owner_ok: true, tracks: fx.tracks, general: "notes", spheres: fx.spheres, face_origin: "http://127.0.0.1:5173", speech: true });
+
+  if (path === paths.chat && method === "GET") return json(res, 200, chat.snapshot());
+  if (path === paths.chat && method === "POST") {
+    const b = await body(req);
+    if (b.attachments) return json(res, 400, { error: "The app's chat takes text for now: send files to the bot in Telegram." });
+    const said = chat.say(String(b.input_id ?? ""), String(b.text ?? ""));
+    return json(res, said.status, said.body);
+  }
+  if (path === paths.chatPress && method === "POST") {
+    const b = await body(req);
+    const pressed = chat.press(String(b.id ?? ""), String(b.row ?? ""));
+    return json(res, pressed.status, pressed.body);
+  }
+  if (path.startsWith("/api/chat/files/") && method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="week-plan.pdf"' });
+    return res.end("%PDF-1.4\n% an invented file\n");
+  }
 
   // The owner's voice: the recording is read and dropped; a canned transcript per mode (no ElevenLabs here).
   if (path === "/api/speech" && method === "POST") {

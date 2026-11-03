@@ -108,12 +108,26 @@ test("«Today»'s map keeps the sessions in their places by project and opens a 
   await fits(page);
 });
 
-test("«Talk to Retinue» opens the chat with the voice's session", async ({ page }) => {
+test("«Talk to Retinue» is the assistant's chat: a message, her answer as she writes it, a press on her card", async ({ page }) => {
   await login(page);
   await page.goto("/today");
   await page.getByRole("button", { name: "Talk to Retinue" }).first().click();
-  await expect(page.getByText("What is left before the Lisbon trip?").first()).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Message to Retinue" })).toBeVisible();
+  const chat = page.getByRole("complementary", { name: "Talk to Retinue" }).or(page.getByRole("dialog", { name: "Talk to Retinue" }));
+  const log = chat.getByRole("log", { name: "The conversation" });
+  await expect(log.getByText("What is left before the Ensk trip?")).toBeVisible();
+  await expect(log.getByText("In Telegram").first()).toBeVisible();
+  await fits(page);
+  // the widths share the mock: each sends its own words and presses the card that answers them
+  const words = `Book a table for ${test.info().project.name}`;
+  await chat.getByRole("textbox", { name: "Message to Retinue" }).fill(words);
+  await chat.getByRole("button", { name: "Send" }).click();
+  await expect(log.getByText(words, { exact: true })).toBeVisible();
+  const answer = log.getByTestId("chat-her").filter({ hasText: `Noted: “${words}”` });
+  await expect(answer).toBeVisible();
+  const card = log.getByTestId("chat-notice").filter({ hasText: `Add «${words}» to your tasks?` });
+  await card.getByRole("button", { name: "Add" }).click();
+  await expect(card.getByText("Chosen: Add")).toBeVisible();
+  await expect(card.getByRole("button")).toHaveCount(0);
   await fits(page);
 });
 

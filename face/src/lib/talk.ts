@@ -1,11 +1,14 @@
-// Talking to Retinue (docs/face.md «Talk to Retinue»): the chat beside every screen — the voice's main session
-// (`meta.voice`, retinue/voice.py) —, open or closed as this device left it; and what the header's microphone does with
-// a phrase: «1 — the recommended one, 2 — yes» answers the operator's cards by their numbers, anything else goes to
-// the chat. Only the owner's own words are read here — what he typed or dictated —, never a model's.
+// Talking to Retinue (docs/face.md «Talk to Retinue»): the chat beside every screen — the assistant's conversation,
+// the same one as in Telegram (retinue/chat.py) —, open or closed as this device left it; and what the header's
+// microphone does with a phrase: «1 — the recommended one, 2 — yes» answers the operator's cards by their numbers,
+// anything else goes to the chat. Only the owner's own words are read here — what he typed or dictated —, never a
+// model's.
 import { useSyncExternalStore } from "react";
+import { api } from "./api";
+import type { ChatDraft, ChatRow } from "./contract";
 import type { FeedRow } from "./feed";
 import type { Numbers } from "./operator";
-import type { Session } from "./types";
+import { toast } from "./toast";
 
 // --- the chat, open or closed ----------------------------------------------------------------------------------
 
@@ -56,16 +59,87 @@ export function useChatDraft(): { text: string; n: number } {
   return useSyncExternalStore(subscribe, () => draft, () => draft);
 }
 
-/** For tests: back to closed, nothing in the box. */
+/** For tests: back to closed, nothing in the box, no conversation. */
 export function forgetChat(): void {
   open = false;
   draft = { text: "", n: 0 };
+  chat = EMPTY;
+  pressing.clear();
   tell();
 }
 
-/** The voice's main session: its sphere's main one, when the app lists it. */
-export function voiceSession(sessions: Session[], sphere: string | null | undefined): Session | undefined {
-  return sphere ? sessions.find((s) => s.sphere === sphere && s.main && !s.archived) : undefined;
+// --- the conversation -----------------------------------------------------------------------------------------
+
+/** A draft not refreshed this long is over: the router went away mid-turn (retinue/chat.py `DRAFT_S`). */
+export const DRAFT_S = 30;
+
+export interface Chat {
+  rows: Record<string, ChatRow>;
+  /** What she is writing now, the whole text so far. */
+  draft: ChatDraft | null;
+  loaded: boolean;
+  failed: string | null;
+}
+
+const EMPTY: Chat = { rows: {}, draft: null, loaded: false, failed: null };
+let chat: Chat = EMPTY;
+/** Rows whose button this device pressed: what the press said is told once the row comes back. */
+const pressing = new Set<string>();
+let ending: ReturnType<typeof setTimeout> | null = null;
+
+/** A row in: the newest of it wins (`rev`); her answer or the system's word ends the draft. */
+export function takeRow(row: ChatRow): void {
+  const had = chat.rows[row.id];
+  if (had && had.rev >= row.rev) return;
+  chat = { ...chat, rows: { ...chat.rows, [row.id]: row }, draft: !had && row.by !== "owner" ? null : chat.draft };
+  if (pressing.has(row.id) && row.toast) {
+    pressing.delete(row.id);
+    toast(row.toast);
+  }
+  tell();
+}
+
+export function takeDraft(next: ChatDraft | null): void {
+  chat = { ...chat, draft: next };
+  if (ending) clearTimeout(ending);
+  ending = next ? setTimeout(() => takeDraft(null), DRAFT_S * 1000) : null;
+  tell();
+}
+
+/** The conversation's newest rows, read again: on opening the chat and after the stream lost its place. */
+export async function loadChat(read = api.chat): Promise<void> {
+  try {
+    const snapshot = await read();
+    chat = { ...chat, loaded: true, failed: null };
+    for (const row of snapshot.rows) takeRow(row);
+    if (snapshot.draft) takeDraft(snapshot.draft);
+    tell();
+  } catch (e) {
+    chat = { ...chat, failed: e instanceof Error ? e.message : "Not loaded." };
+    tell();
+  }
+}
+
+/** A button of hers pressed here: the router decides; the row comes back rewritten, with what it said. */
+export async function pressChat(row: string, button: string, press = api.chatPress): Promise<boolean> {
+  pressing.add(row);
+  try {
+    await press(button, row);
+    return true;
+  } catch (e) {
+    pressing.delete(row);
+    toast(e instanceof Error ? e.message : "Not pressed.", "error");
+    return false;
+  }
+}
+
+export function useChat(): Chat {
+  return useSyncExternalStore(subscribe, () => chat, () => chat);
+}
+
+/** The rows in the order they were said. */
+export function chatRows(c: Chat): ChatRow[] {
+  return Object.values(c.rows).sort((a, b) => a.at - b.at || a.rev - b.rev);
 }
 
 // --- «1 — yes, 2 — the second one» ------------------------------------------------------------------------------

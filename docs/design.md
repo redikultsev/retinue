@@ -131,7 +131,12 @@ Of the prototypes, «4 · Projects with sessions» was taken: a project is a pla
   count of what waits in it in mono at its right — its «Operator» count, the same number on its page and its parent's —, the fold chevron after it; the row opens the project. A sub-project
   is indented 14 px a level, its sessions with it. «Other» is a quiet 12 px heading, not a place.
 - **Talk to Retinue** is a column at the right (380 px) on a wide screen, a sheet on a phone: the sidebar's surface,
-  a one-line header (mark, «Retinue», «the voice · sees every project» quiet, ↗, ×), the conversation, the composer.
+  a one-line header (mark, «Retinue», «your assistant · also in Telegram» quiet, ×), the conversation, the composer
+  (no «＋»: it takes text and dictation). The conversation is the session's look: his words in the bubble (where
+  they came from, «In Telegram», quiet under it), hers as Markdown at 15/14 px, her files as the files' own rows
+  (mono name, size at the right); the system's words quieter than hers — muted 13 px in a dashed frame, as a
+  platform note in a session —, their buttons outlined under them (44 px on a phone); what she is writing below,
+  streamed, or «Writing…» with a 6 px blue dot that breathes while she has no words yet.
   The header's microphone and chat icon are ghost icon buttons beside «Log out».
 
 ## A plan: tasks, a day, a week

@@ -3,21 +3,36 @@
 //   card's answer, the chat's box). Through the platform's speech (lib/voice.ts), dictation only.
 // - `HeaderVoice` (the app's header): a phrase «1 — the recommended one, 2 — yes» answers the operator's cards by
 //   their numbers — shown first, sent on «Send»; any other phrase opens the chat with it in the box.
-// - `ChatToggle` and `ChatPane`: the voice's main session beside every screen — a column at the right on a wide
-//   screen, a sheet on a phone —, open or closed as the device left it.
-import { Link } from "@tanstack/react-router";
+// - `ChatToggle` and `ChatPane`: the assistant's conversation beside every screen — the same one as in Telegram — a
+//   column at the right on a wide screen, a sheet on a phone, open or closed as the device left it.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ComposerBox } from "@/components/composer";
-import { ArrowUpRight, Close, MessageCircle, Mic, Stop } from "@/components/icons";
-import { Transcript } from "@/components/transcript/transcript";
+import { Close, FileIcon, MessageCircle, Mic, Stop } from "@/components/icons";
+import { InputBubble } from "@/components/transcript/input";
+import { Markdown } from "@/components/transcript/item";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { ApiError, api } from "@/lib/api";
+import { sizeWord } from "@/lib/attach";
+import { type ChatRow, paths } from "@/lib/contract";
 import { feedSource, useFeed } from "@/lib/feed";
-import { live, useLiveState } from "@/lib/live";
+import { live } from "@/lib/live";
 import { keptNumbers, renumber } from "@/lib/operator";
-import { approvalsOf, listed, orderedInputs, orderedItems, orderedSummaries, proposalsOf } from "@/lib/store";
-import { chatWith, parseAnswers, type Reach, reach, setChatOpen, useChatDraft, useChatOpen, voiceSession } from "@/lib/talk";
+import {
+  chatRows,
+  chatWith,
+  loadChat,
+  parseAnswers,
+  pressChat,
+  type Reach,
+  reach,
+  setChatOpen,
+  takeDraft,
+  takeRow,
+  useChat,
+  useChatDraft,
+  useChatOpen,
+} from "@/lib/talk";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { clock, UNAVAILABLE, useVoice } from "@/lib/voice";
@@ -178,26 +193,101 @@ export function ChatToggle() {
 
 // --- the chat -------------------------------------------------------------------------------------------------------
 
-/** The voice's main session as a chat: its conversation, then its box with the microphone. No voice on this platform:
- * says so. */
+/** Where a message of his came from, when not from here. */
+const VIA: Record<string, string> = { telegram: "In Telegram", matrix: "In Matrix" };
+
+function OwnerRow({ row }: { row: ChatRow }) {
+  const note = row.pending ? "Sending…" : row.via ? (VIA[row.via] ?? `In ${row.via}`) : "";
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <InputBubble input={{ session: "", input_id: row.id, text: row.text, at: row.at, turn: null, n: null, attachments: [] }} />
+      {note && <span className="text-xs text-muted-foreground/70">{note}</span>}
+    </div>
+  );
+}
+
+function Files({ row }: { row: ChatRow }) {
+  const files = row.files ?? [];
+  if (!files.length) return null;
+  return (
+    <ul aria-label="Files" className="flex flex-col gap-1.5">
+      {files.map((f, k) => (
+        <li key={`${row.id}/${k}`} className="min-w-0">
+          {f.id ? (
+            <a href={paths.chatFile(f.id)} download={f.name} className="flex min-h-9 max-w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[13px] transition-colors hover:bg-accent max-md:min-h-11">
+              <FileIcon className="size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate font-mono">{f.name}</span>
+              <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{sizeWord(f.size)}</span>
+            </a>
+          ) : (
+            <span className="flex max-w-full items-center gap-2 px-2.5 py-1.5 text-[13px] text-muted-foreground">
+              <FileIcon className="size-4 shrink-0" />
+              <span className="min-w-0 truncate font-mono">{f.name}</span>
+              <span className="shrink-0 text-xs">{f.why}</span>
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The system's own word (a reminder, a refusal, a card): quieter than hers, its buttons under it. */
+function Notice({ row }: { row: ChatRow }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const buttons = row.buttons ?? [];
+  // the row came back rewritten: the press is over
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the row's rev is the signal
+  useEffect(() => setBusy(null), [row.rev]);
+  return (
+    <div data-testid="chat-notice" className="flex min-w-0 flex-col gap-2 rounded-lg border border-dashed px-3 py-2.5 text-muted-foreground [&_.markdown]:text-[13px]">
+      <Markdown text={row.text} />
+      {buttons.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {buttons.map(([label, id]) => (
+            <Button
+              key={id}
+              size="sm"
+              variant="outline"
+              className="max-md:h-11"
+              disabled={busy !== null}
+              onClick={() => {
+                setBusy(id);
+                void pressChat(row.id, id).then((ok) => ok || setBusy(null));
+              }}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Row({ row }: { row: ChatRow }) {
+  if (row.by === "owner") return <OwnerRow row={row} />;
+  if (row.by === "notice") return <Notice row={row} />;
+  return (
+    <div data-testid="chat-her" className="flex min-w-0 flex-col gap-2">
+      <Markdown text={row.text} />
+      <Files row={row} />
+    </div>
+  );
+}
+
+/** The assistant's conversation as a chat: the rows, what she is writing, then the box with the microphone. */
 function Chat() {
-  const state = useLiveState();
-  const sphere = live.meta?.voice;
-  const main = useMemo(() => voiceSession(listed(state.sessions), sphere), [state.sessions, sphere]);
-  const [started, setStarted] = useState<string | null>(null);
-  const id = main?.id ?? started ?? "";
+  const chat = useChat();
+  const rows = useMemo(() => chatRows(chat), [chat]);
   const draft = useChatDraft();
-  const loaded = !!id && id in state.floors;
-  const itemsOf = id ? state.items[id] : undefined;
-  const items = useMemo(() => orderedItems(itemsOf), [itemsOf]);
-  const approvals = useMemo(() => (id ? approvalsOf(state.approvals, id) : []), [state.approvals, id]);
-  const proposals = useMemo(() => (id ? proposalsOf(state.proposals, id) : []), [state.proposals, id]);
-  const summaries = useMemo(() => orderedSummaries(id ? state.summaries[id] : undefined), [state.summaries, id]);
-  const inputs = useMemo(() => orderedInputs(id ? state.inputs[id] : undefined), [state.inputs, id]);
-  const running = id ? state.sessions[id]?.state === "active" : false;
   useEffect(() => {
-    if (id && !live.isWatched(id)) live.watch(id).catch(() => undefined);
-  }, [id]);
+    void loadChat();
+    const off = [live.onChat(takeRow), live.onChatDraft(takeDraft), live.onResync(() => void loadChat())];
+    return () => {
+      for (const f of off) f();
+    };
+  }, []);
   // stay at the bottom while new words come, unless the owner scrolled up
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -205,16 +295,6 @@ function Chat() {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   });
-  if (!sphere)
-    return (
-      <div className="flex flex-col gap-2 p-4 text-sm">
-        <p className="font-medium">The voice is not configured</p>
-        <p className="text-muted-foreground">
-          Retinue talks here once the platform has a voice: a <code className="font-mono text-xs">voice:</code> section in platform.yaml
-          (docs/proactive.md, «The voice»). Until then, write to a session or to the bot in Telegram.
-        </p>
-      </div>
-    );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -225,29 +305,44 @@ function Chat() {
         }}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3"
       >
-        {!id ? (
-          <p className="text-sm text-muted-foreground">Ask about anything, in any project: Retinue sees them all and answers here.</p>
-        ) : !loaded ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+        {!chat.loaded ? (
+          <p className="text-sm text-muted-foreground">{chat.failed ?? "Loading…"}</p>
+        ) : !rows.length && !chat.draft ? (
+          <p className="text-sm text-muted-foreground">Ask about anything, in any project. This is the same conversation as with the bot in Telegram.</p>
         ) : (
-          <Transcript items={items} approvals={approvals} delta={state.deltas[id]} running={running} summaries={summaries} inputs={inputs} proposals={proposals} />
+          <div role="log" aria-label="The conversation" className="flex flex-col gap-4">
+            {rows.map((row) => (
+              <Row key={row.id} row={row} />
+            ))}
+            {chat.draft && (
+              <div data-testid="chat-draft" className="flex min-w-0 flex-col gap-1.5">
+                {chat.draft.text ? (
+                  <Markdown text={chat.draft.text} streaming />
+                ) : (
+                  <span role="status" className="inline-flex items-center gap-2 text-[13px] text-muted-foreground">
+                    <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-primary" />
+                    Writing…
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
       <div className="shrink-0 px-3 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <ComposerBox
           key={`chat:${draft.n}`}
-          owner={`chat:${id}`}
+          owner="chat"
           label="Message to Retinue"
-          placeholder="Talk to Retinue — about anything, any project"
+          placeholder="Ask about anything, any project"
           initial={draft.text}
           autoFocus={draft.n > 0}
           compact
-          running={running}
-          onStop={id ? () => void api.stop(id).catch(() => undefined) : undefined}
-          send={async (text, inputId, files) => {
-            if (id) return api.input(id, text, inputId, files);
-            const made = await api.toMain(sphere, text, inputId, files);
-            setStarted(made.session);
+          noFiles="Files go to Retinue through the bot in Telegram for now."
+          send={async (text, inputId) => {
+            stick.current = true;
+            const { row } = await api.chatSay(text, inputId);
+            takeRow({ ...row, rev: row.rev ?? 0 });
             return undefined;
           }}
         />
@@ -256,17 +351,12 @@ function Chat() {
   );
 }
 
-function ChatHead({ id, onClose }: { id?: string; onClose: () => void }) {
+function ChatHead({ onClose }: { onClose: () => void }) {
   return (
     <header className="flex min-h-12 shrink-0 items-center gap-2 border-b pr-1 pl-4">
       <MessageCircle className="size-4 shrink-0 text-muted-foreground" />
       <h2 className="text-[15px] font-medium">Retinue</h2>
-      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">the voice · sees every project</span>
-      {id && (
-        <Link to="/s/$id" params={{ id }} title="Open its session" aria-label="Open its session" className="hit inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-          <ArrowUpRight className="size-4" />
-        </Link>
-      )}
+      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">your assistant · also in Telegram</span>
       <Button variant="ghost" size="icon" aria-label="Close the chat" title="Close" onClick={onClose} className="size-8 md:size-8">
         <Close />
       </Button>
@@ -276,11 +366,9 @@ function ChatHead({ id, onClose }: { id?: string; onClose: () => void }) {
 
 /** The chat as the right column of a wide screen. */
 export function ChatPane() {
-  const state = useLiveState();
-  const main = voiceSession(listed(state.sessions), live.meta?.voice);
   return (
     <aside aria-label="Talk to Retinue" className="flex h-full w-full flex-col border-l bg-sidebar">
-      <ChatHead id={main?.id} onClose={() => setChatOpen(false)} />
+      <ChatHead onClose={() => setChatOpen(false)} />
       <Chat />
     </aside>
   );

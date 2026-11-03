@@ -153,6 +153,23 @@ def _run(at: float, length: int, pieces: list[tuple[float, float]]) -> int:
     return total
 
 
+def first_free(start: float, end: float, length: int, taken: list[tuple[float, float]],
+               pieces: list[tuple[float, float]]) -> float | None:
+    """The first quarter hour from `start` where a piece of `length` is free of `taken`, ends by `end` and keeps the
+    run of `pieces` it joins under RUN_S; None — there is none."""
+    at = math.ceil(start / STEP_S) * STEP_S
+    while at + length <= end:
+        if _free(at, length, taken) and _run(at, length, pieces) <= RUN_S:
+            return at
+        at += STEP_S
+    return None
+
+
+def free(at: float, length: int, taken: list[tuple[float, float]]) -> bool:
+    """Whether a piece of `length` at `at` crosses nothing in `taken`."""
+    return _free(at, length, taken)
+
+
 def lay(window: Window, now: float, busy: list[tuple[float, float]], pieces: list[tuple[float, float]],
         tasks: list[Task]) -> Layout:
     """The tasks laid into the window's free time, in code's order: each its next piece at the first quarter hour
@@ -166,12 +183,8 @@ def lay(window: Window, now: float, busy: list[tuple[float, float]], pieces: lis
         if not (need := left_s(task)):
             continue
         length = piece_s(need)
-        at = start
-        while at + length <= window.end:
-            if _free(at, length, taken) and _run(at, length, standing) <= RUN_S:
-                break
-            at += STEP_S
-        else:
+        at = first_free(start, window.end, length, taken, standing)
+        if at is None:
             out.left.append((task.id, f"no free {length // 60} min before the window ends"))
             continue
         out.placed.append((task.id, at, length // 60))

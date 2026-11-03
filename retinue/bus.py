@@ -56,6 +56,7 @@ class Tree:
     # owner's own turn. «This conversation» for the search and the files is these; the rest is somebody else's.
     exchanges: set[str] = field(default_factory=set)
     asked: set[str] = field(default_factory=set)  # the archive ids of the new messages the run answers
+    owner: bool = False  # the run answers the owner's own messages (`Core.turn`): his word may move his plan
     # What the run read, as code saw it: each search find, each file fetched, each read in the base, the other items
     # of a judgement — {id, exchange, source, closed}. A draft's card names what lies outside its exchange.
     reads: list[dict] = field(default_factory=list)
@@ -133,6 +134,7 @@ class BusServer:
                              web.post("/archive/search", self.archive_search),
                              web.post("/reminders/{action}", self.reminders),
                              web.post("/zone", self.zone),
+                             web.post("/plan/{action:move|estimate}", self.plan),
                              web.post("/attachments/get", self.attachment),
                              web.post("/travel/log", self.travel_log),
                              web.post("/kb/log", self.kb_log),
@@ -188,6 +190,13 @@ class BusServer:
         if not self.core.proactive:
             return web.json_response({"ok": False, "text": "Changing the time zone is not enabled in this router."})
         ok, text = await self.core.proactive.zone_tool(caller, str(body.get("turn", "")), str(body.get("zone", "")))
+        return web.json_response({"ok": ok, "text": text})
+
+    async def plan(self, request: web.Request) -> web.Response:
+        caller = self.caller(request)
+        body = await request.json()
+        body = body if isinstance(body, dict) else {}
+        ok, text = await self.core.plan_tool(caller, str(body.get("turn", "")), request.match_info["action"], body)
         return web.json_response({"ok": ok, "text": text})
 
     async def attachment(self, request: web.Request) -> web.Response:

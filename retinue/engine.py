@@ -209,6 +209,38 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         data = response.json()
         return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
 
+    async def plan(action: str, body: dict) -> dict:
+        async with client(30) as http:
+            response = await http.post(f"{bus_url}/plan/{action}", headers=headers, json={"turn": turn_id, **body})
+        data = response.json()
+        return {"content": [{"type": "text", "text": data["text"]}], "is_error": not data["ok"]}
+
+    @tool("plan_move",
+          "Move a task's time in the owner's plan when he asks in his own message («put the English homework on "
+          "Wednesday evening», «move the report to 15:00 tomorrow»). task — its id from collection_query on tasks. "
+          "day — the owner's local date, YYYY-MM-DD. part — morning (till 13:00), afternoon (13:00–18:00) or evening "
+          "(from 18:00): the code takes the first free time there; or at — HH:MM, only a time the owner named "
+          "himself. Its next piece moves, or a new one is laid when it has none. named — true only when the owner "
+          "named that very piece of time he had put there himself. Meetings never move. Done at once; after your "
+          "answer the code shows him one line of the turn's moves with «Undo» — do not repeat it.",
+          {"type": "object", "properties": {
+              "task": {"type": "string"}, "day": {"type": "string"},
+              "part": {"type": "string", "enum": ["morning", "afternoon", "evening"]},
+              "at": {"type": "string"}, "named": {"type": "boolean"}},
+           "required": ["task", "day"]})
+    async def plan_move(args):
+        return await plan("move", {k: args[k] for k in ("task", "day", "part", "at", "named") if k in args})
+
+    @tool("plan_estimate",
+          "Set how long a task takes (minutes) or the day it is due by (due, YYYY-MM-DD) when the owner says it in "
+          "his own message («the homework takes two hours», «the report is due Friday»). task — its id from "
+          "collection_query. The plan lays the time again by itself; it goes under the turn's «Undo» with the moves.",
+          {"type": "object", "properties": {
+              "task": {"type": "string"}, "minutes": {"type": "integer"}, "due": {"type": "string"}},
+           "required": ["task"]})
+    async def plan_estimate(args):
+        return await plan("estimate", {k: args[k] for k in ("task", "minutes", "due") if k in args})
+
     @tool("get_attachment",
           "Get again what the owner sent, by the number from the mark [attachment #N: …]. After compaction the "
           "pictures and PDFs are gone from the conversation — this tool returns the picture and the text: the "
@@ -267,7 +299,8 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return call
 
     return {t.name: t for t in (ask_agent, list_agents, search_archive, set_reminder, list_reminders,
-                                cancel_reminder, move_reminder, set_timezone, get_attachment, publish_trip,
+                                cancel_reminder, move_reminder, set_timezone, plan_move, plan_estimate,
+                                get_attachment, publish_trip,
                                 draft_reply, *map(collection_tool, colltools.TOOLS))}
 
 

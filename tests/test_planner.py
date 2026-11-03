@@ -253,3 +253,67 @@ def test_a_week_is_laid_window_after_window_under_one_plan_and_one_undo_takes_it
         assert await planner.undo(laid[0]["fields"]["plan"], msk(10, "09:01")) == f"Taken back: {len(laid)} blocks."
         assert await blocks(world) == []
     faced(tmp_path, run)
+
+
+def test_her_moves_on_his_word_go_under_one_plan_of_her_turn_and_one_undo_takes_them_and_her_estimate_back(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, told = await setup(world, tmp_path)
+        homework = await add(world, title="English homework", minutes=60)
+        await planner.plan(msk(10, "17:00"))
+        [laid] = await blocks(world)
+        assert hm(laid["fields"]["start"]) == "17:00"
+        ok, said = await planner.move("t1", homework["id"], "2026-11-11", "evening", "", False, msk(10, "16:55"))
+        assert ok and "do not repeat it" in said, said
+        [moved] = await blocks(world)
+        assert moved["id"] == laid["id"] and moved["fields"]["start"] == iso(msk(11, "18:00")), "the first free evening time"
+        assert moved["fields"]["plan"] != laid["fields"]["plan"], "under her turn's plan"
+        ok, said = await planner.estimate("t1", homework["id"], 120, "", msk(10, "16:55"))
+        assert ok, said
+        task = await world.platform.collections.get("tasks", homework["id"])
+        assert task["fields"]["minutes"] == 120
+        [change] = [c for c in await world.platform.collections.history("tasks", homework["id"]) if c["actor"] != "owner"]
+        assert (change["actor"], change["via"]) == ("assistant", "assistant"), "her write, not the rule's"
+        await planner.turn_done("t1")
+        assert told == ["Plan changed: English homework: Tue 10 Nov 17:00 → Wed 11 Nov 18:00; "
+                        "English homework: 60 → 120 min."]
+        assert planner.turn_plans == {}, "a turn's plan ends with the turn"
+        recent = world.platform.plan.plan_state()["recent"]
+        hers = next(p for p in recent if p["by"] == "assistant")
+        assert hers["id"] == moved["fields"]["plan"], "the grid lights her plan"
+        assert await planner.undo(hers["id"], msk(10, "17:10")) == "Taken back: 1 block, 1 estimate."
+        [back] = await blocks(world)
+        assert back["fields"]["start"] == laid["fields"]["start"] and back["fields"]["plan"] == laid["fields"]["plan"]
+        assert (await world.platform.collections.get("tasks", homework["id"]))["fields"]["minutes"] == 60
+    faced(tmp_path, run)
+
+
+def test_her_move_keeps_off_meetings_and_his_own_pieces_and_lays_a_new_piece_where_none_is(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, told = await setup(world, tmp_path)
+        report = await add(world, title="Write the report", minutes=60)
+        bank = await add(world, title="Call the bank", minutes=30)
+        await planner.plan(msk(10, "17:00"), only=report["id"])
+        ok, said = await planner.move("t2", report["id"], "2026-11-10", "", "19:30", False, msk(10, "16:55"))
+        assert not ok and "is taken" in said, "the lesson is there"
+        [laid] = await blocks(world)
+        await world.platform.collections.apply(SCREEN, "blocks", [
+            {"op": "set", "id": laid["id"], "version": laid["version"], "fields": {"locked": True}}], world.clock.now)
+        ok, said = await planner.move("t2", report["id"], "2026-11-10", "", "21:00", False, msk(10, "16:55"))
+        assert not ok and "laid this task's time himself" in said
+        ok, _ = await planner.move("t2", report["id"], "2026-11-10", "", "21:00", True, msk(10, "16:55"))
+        assert ok, "he named that piece"
+        ok, _ = await planner.move("t2", bank["id"], "2026-11-10", "", "00:30", False, msk(10, "17:05"))
+        assert ok
+        got = {b["fields"]["task"]: (b["fields"]["start"], b["fields"]["minutes"]) for b in await blocks(world)}
+        assert got == {report["id"]: (iso(msk(10, "21:00")), 60), bank["id"]: (iso(msk(11, "00:30")), 30)}, \
+            "00:30 is the window's own, after midnight; the bank had no piece: a new one"
+        ok, said = await planner.move("t2", bank["id"], "2026-11-10", "noon", "", False, msk(10, "17:05"))
+        assert not ok and "part" in said
+        ok, said = await planner.move("t2", "01AAAAAAAAAAAAAAAAAAAAAAAA", "2026-11-10", "evening", "", False,
+                                      msk(10, "17:05"))
+        assert not ok and "No such open task" in said
+        await planner.turn_done("t2")
+        assert len(told) == 1 and told[0].count("→") == 1 and "Call the bank: Wed 11 Nov 00:30, 30 min" in told[0]
+    faced(tmp_path, run)

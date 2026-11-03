@@ -395,3 +395,48 @@ def test_a_name_in_the_evening_list_keeps_its_underscores():
     said = _change_said({"op": "set", "before": {"next_step": "call"}, "after": {"next_step": "mail"}}, {})
     assert said == r"next\_step call → mail"
     assert render_telegram(f"C1. 10:00 · deal_notes: {said}") == ["C1. 10:00 · deal_notes: next_step call → mail"]
+
+
+def test_her_plan_moves_only_on_the_owner_s_own_word(tmp_path):
+    """`plan_move`, `plan_estimate` and her direct write of a task's time: refused in a turn that did not answer his
+    message or read someone else's text — a forward, a file, a letter; his own records read back do not count."""
+    async def run():
+        moved: list[tuple] = []
+
+        class Planner:
+            async def move(self, *args):
+                moved.append(args)
+                return True, "Done"
+
+            async def estimate(self, *args):
+                moved.append(args)
+                return True, "Done"
+
+            async def turn_done(self, turn_id):
+                pass
+
+        async def platform(path: str, data: dict, timeout: float = 60) -> dict:
+            return {"ok": True, "text": "Written: 1 change."}
+        core = Core([SHE], Store(str(tmp_path / "r.sqlite")), "owner")
+        core.platform, core.planner = platform, Planner()
+        await core.start([FakeChannel("telegram", False)])
+        move = {"task": "01AAAAAAAAAAAAAAAAAAAAAAAA", "day": "2026-11-11", "part": "evening"}
+        timed = {"collection": "tasks", "ops": [{"op": "set", "id": move["task"], "version": 1, "fields": {"minutes": 90}}]}
+        for mark in ("forwarded", "attachment", "mail", "archive", "travel", "telegram"):
+            turn = core.turns.open_root("assistant")
+            turn.tree.owner = True
+            turn.tree.foreign.add(mark)
+            ok, text = await core.plan_tool(SHE, turn.id, "move", move)
+            assert not ok and "in a message of his own" in text, mark
+            assert not (await core.collection_tool(SHE, turn.id, "apply", dict(timed)))[0], mark
+        assert moved == [], "a forward saying «move it to Friday» moves nothing"
+        alone = core.turns.open_root("assistant")  # the morning brief, a reminder's run: not his message
+        assert not (await core.plan_tool(SHE, alone.id, "estimate", {"task": move["task"], "minutes": 90}))[0]
+        his = core.turns.open_root("assistant")
+        his.tree.owner = True
+        his.tree.foreign.add("collection")
+        assert (await core.plan_tool(SHE, his.id, "move", move))[0], "his own records read back are his"
+        assert (await core.collection_tool(SHE, his.id, "apply", dict(timed)))[0]
+        assert (await core.plan_tool(SHE, "gone", "move", move))[0] is False, "no turn"
+        assert moved[0][1:5] == (move["task"], "2026-11-11", "evening", "") and len(moved) == 1
+    asyncio.run(run())

@@ -1348,6 +1348,7 @@ class Core:
         turn = self.turns.open_root(agent.id)
         self.writer = turn.id  # the caller holds the queue: this run's writes are the only ones confirmed
         self.inbound[turn.tree.id] = last.id
+        turn.tree.owner = True
         if any(event.meta.get("forwarded_from") for event in batch):
             turn.tree.foreign.add("forwarded")
         if any(self.archive.attachments_of(event.id) for event in batch):
@@ -1382,6 +1383,7 @@ class Core:
             self._want_now(context_id)
         if meta.get("limit"):
             await self._commit_base(turn, kind, context_id, origin, meta)  # what she wrote before the limit
+            await self._plan_told(turn)
             await self._limited(agent, batch, meta, origin)
             return
         # The reply goes on record before it is shown. A failure is the system's words, not the assistant's.
@@ -1391,6 +1393,7 @@ class Core:
                                              conversation_id=context_id, channel=where)
         await self._each(self._audience(origin) if origin else self.channels, "send", agent.id, answer, files,
                          reply_event.id)
+        await self._plan_told(turn)
         await self._commit_base(turn, kind, context_id, origin, meta)
         said = sum(len(e.text) for e in batch)
         self.store.log(conversation_id=context_id, source=self.owner, target=agent.id, status=status,
@@ -1684,6 +1687,41 @@ class Core:
         await self._each(self.channels, "protocol", f"courier: {caller.name} → draft: {'card' if ok else 'refused'}")
         return ok, text
 
+    async def _plan_told(self, turn) -> None:
+        """After her answer: the moves of her plan in this turn, one line of code's with «Undo»."""
+        if getattr(self, "planner", None) is not None:
+            try:
+                await self.planner.turn_done(turn.id)
+            except Exception:
+                log.exception("the turn's plan line not told")
+
+    async def plan_tool(self, caller: RouterAgent, turn_id: str, action: str, args: dict) -> tuple[bool, str]:
+        """`plan_move` and `plan_estimate`: the plan moved on the owner's word only — his own message, nobody else's
+        text in the turn (`_owner_word`). Code moves it (`Planner`), never her write to `blocks`."""
+        turn = self.turns.turns.get(turn_id)
+        if turn is None or turn.agent_id != caller.id:
+            return False, "No active request: the plan is changed only during an answer."
+        if not caller.collections:
+            return False, "Denied: this agent has not been granted the owner's collections."
+        if getattr(self, "planner", None) is None or self.platform is None:
+            return False, "The plan is not enabled in this router: say in your answer what to move."
+        if refusal := _owner_word(turn.tree):
+            ok, text = False, refusal
+        elif action == "move":
+            ok, text = await self.planner.move(turn.id, str(args.get("task") or ""), str(args.get("day") or ""),
+                                               str(args.get("part") or ""), str(args.get("at") or ""),
+                                               args.get("named") is True, time.time())
+        else:
+            minutes = args.get("minutes")
+            ok, text = await self.planner.estimate(turn.id, str(args.get("task") or ""),
+                                                   minutes if type(minutes) is int and minutes else None,
+                                                   str(args.get("due") or ""), time.time())
+        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target=f"plan/{action}",
+                       status="done" if ok else "rejected", input_chars=len(json.dumps(args, ensure_ascii=False)),
+                       output_chars=len(text), channel="bus")
+        await self._each(self.channels, "protocol", f"plan: {caller.name} → {action}: {'done' if ok else 'refused'}")
+        return ok, text
+
     async def collection_tool(self, caller: RouterAgent, turn_id: str, name: str, arguments) -> tuple[bool, str]:
         """An agent reads or writes the owner's collections: only during its own turn and with the `collections`
         grant. The platform checks every right; the router names who writes and what the turn read — the agent, by
@@ -1717,6 +1755,9 @@ class Core:
             return False, ("Not done: a task is closed on the owner's own word, and this turn read someone else's "
                            f"text ({', '.join(FOREIGN.get(f, f) for f in sorted(tree.foreign))}). Say in your answer "
                            "that it looks done; he closes it with «Done», or propose it with collection_propose.")
+        if name == "apply" and arguments.get("collection") == TASKS and _times(arguments.get("ops")) and \
+                (refusal := _owner_word(tree)):
+            return False, refusal
         if isinstance(arguments.get("idem"), str):
             arguments = {**arguments, "idem": f"{turn.id}:{arguments['idem']}"}  # hers to name within this turn alone
         # The call's name is its arguments' within the turn: the same call made again — a retry — writes once.
@@ -1838,6 +1879,29 @@ def _closes(ops: object) -> bool:
     """Whether apply's operations close a task: an add or a set that gives `state` done or dropped."""
     return isinstance(ops, list) and any(isinstance(op, dict) and isinstance(op.get("fields"), dict)
                                          and op["fields"].get("state") in CLOSED for op in ops)
+
+
+def _times(ops: object) -> bool:
+    """Whether apply's operations change an existing task's time: a set that gives `due` or `minutes`."""
+    return isinstance(ops, list) and any(isinstance(op, dict) and op.get("op") == "set" and isinstance(op.get("fields"), dict)
+                                         and ({"due", "minutes"} & op["fields"].keys()) for op in ops)
+
+
+# Someone else's text that keeps a turn off the owner's plan: «move it to Friday» in a letter, a forward, a file, an
+# old message or a site is not him saying it. `collection` is not among them: his own records read back are his.
+NOT_HIS_WORD = {"forwarded", "attachment", "archive", "mail", "travel", "telegram"}
+
+
+def _owner_word(tree) -> str:
+    """Why the turn may not change the owner's plan — empty when it may: a turn that answers his own messages, with
+    no exchange of other people's and none of their text read."""
+    theirs = (tree.foreign & NOT_HIS_WORD) | ({"chat"} if tree.exchanges else set())
+    if tree.owner and not theirs:
+        return ""
+    why = f" (this turn had someone else's text in it: {', '.join(FOREIGN.get(f, f) for f in sorted(theirs))})" \
+        if theirs else ""
+    return (f"Not changed{why}: the plan and a task's time move only on the owner's own word. Ask him to write it in "
+            "a message of his own, without a forward.")
 
 
 def _machine(actor: str | None) -> bool:

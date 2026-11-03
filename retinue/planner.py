@@ -80,12 +80,14 @@ class Planner:
         self.lock = asyncio.Lock()  # one writer of plans: a press, a look, an «Undo» never interleave
         self._seen = ""             # the busy window's mark at the last look: a change lays the plan again
         self.said: dict = {}        # what the last press came to, for the app: {at, text}
+        self.turn_plans: dict[str, str] = {}  # her turn's id → the one plan its moves go under
         self._migrate()
 
     # --- the platform ---------------------------------------------------------------------------------------------
 
-    async def _call(self, name: str, arguments: dict, call: str) -> dict:
-        body = {"actor": RULE, "via": "code", "foreign": [], "call": call, "arguments": arguments}
+    async def _call(self, name: str, arguments: dict, call: str, actor: str = RULE) -> dict:
+        body = {"actor": actor, "via": "code" if actor == RULE else actor, "foreign": [], "call": call,
+                "arguments": arguments}
         return await self.core.platform(f"collections/{name}", body, CALL_S)
 
     async def _rows(self, collection: str, filter: list[dict], fields: list[str] | None = None) -> list[dict] | None:
@@ -396,7 +398,7 @@ class Planner:
                     continue
                 before = known.get("before")
                 fields = {"state": "skipped"} if not before else \
-                    {k: v for k, v in before.items() if k in ("start", "minutes", "state")}
+                    {k: v for k, v in before.items() if k in ("start", "minutes", "state", "plan") and v is not None}
                 ops.append({"op": "set", "id": b["id"], "version": b["version"], "fields": fields})
             answer = await self._apply(ops, f"undo:{plan_id}:{len(ops)}")
             if answer is None:
@@ -407,9 +409,36 @@ class Planner:
                     self._keep(plans, record)  # someone else's block put back: its own plan knows the version
             plans[plan_id] = {**plans.get(plan_id, entry), "undone": now, "blocks": {}}
             self._keep_plans(plans, now)
+            estimates = await self._unestimate(entry.get("estimates") or [])
         await self.push(now)
-        said = f"Taken back: {len(ops)} {'block' if len(ops) == 1 else 'blocks'}."
+        said = f"Taken back: {len(ops)} {'block' if len(ops) == 1 else 'blocks'}"
+        said += f", {estimates} {'estimate' if estimates == 1 else 'estimates'}." if estimates else "."
         return said + (f" {kept} you changed since stay." if kept else "")
+
+    async def _unestimate(self, estimates: list[dict]) -> int:
+        """Her estimates under a plan taken back: each change she made to that task within moments of the call."""
+        if not estimates:
+            return 0
+        since = min(float(e.get("at") or 0) for e in estimates) - 5
+        try:
+            data = await self.core.platform("collections/changes", {"since": since, "limit": 200}, CALL_S)
+        except Exception as exc:  # noqa: BLE001 — said as not taken back
+            log.warning("her estimates not read back: %s", exc)
+            return 0
+        done = 0
+        for change in reversed(data.get("changes") or []):
+            if change.get("collection") != TASKS or change.get("actor") != "assistant" or change.get("reverted") \
+                    or change.get("op") == "revert":
+                continue
+            if not any(e.get("task") == change.get("id") and abs(float(change.get("ts") or 0) - float(e.get("at") or 0)) < 30
+                       for e in estimates):
+                continue
+            try:
+                answer = await self.core.platform("collections/revert", {"change_id": change["change_id"]}, CALL_S)
+                done += bool(answer.get("ok"))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("her estimate not taken back: %s", exc)
+        return done
 
     async def busy(self, minutes: int, now: float, label: str = "Busy") -> str:
         """«Busy» from now: a hold, and the plan's blocks it crosses laid again after it."""
@@ -436,6 +465,163 @@ class Planner:
                                      "fields": {"state": "skipped"}}], f"remove:{block_id}:{block['version']}")
         await self.push(now)
         return "Taken off the day." if ok is not None else "Not taken off: try again."
+
+    # --- her moves ------------------------------------------------------------------------------------------------
+
+    def _her_plan(self, plans: dict, turn_id: str, now: float) -> dict:
+        """The one plan a turn of hers goes under: made at its first move, «Undo» for all of them."""
+        entry = plans.get(self.turn_plans.get(turn_id, ""))
+        if not isinstance(entry, dict):
+            plan_id = f"p{secrets.token_hex(5)}"
+            self.turn_plans[turn_id] = plan_id
+            entry = plans[plan_id] = {"id": plan_id, "by": "assistant", "at": now, "windows": [], "blocks": {},
+                                      "left": {}, "said": [], "estimates": []}
+        return entry
+
+    def _part(self, day: date, part: str, at: str, window: L.Window) -> tuple[float, float] | str:
+        """Where on the day a move may land, in the owner's zone: an exact start (its own span), or a part of the
+        day — the morning till 13:00, the afternoon 13:00–18:00, the evening from 18:00 — inside the window."""
+        from zoneinfo import ZoneInfo
+        z = ZoneInfo(self.core.tz)
+        if at:
+            try:
+                hm = datetime.strptime(at, "%H:%M").time()
+            except ValueError:
+                return "at is the owner's local time, HH:MM."
+            start = datetime.combine(day, hm, z).timestamp()
+            if start < window.start:  # 00:30 of a window that closes after midnight is the next date's
+                start = datetime.combine(day + timedelta(days=1), hm, z).timestamp()
+            return start, start
+        bounds = {"morning": (None, "13:00"), "afternoon": ("13:00", "18:00"), "evening": ("18:00", None)}
+        if part not in bounds:
+            return "Say part — morning, afternoon or evening — or at, the time the owner named."
+        lo, hi = bounds[part]
+        start = datetime.combine(day, datetime.strptime(lo, "%H:%M").time(), z).timestamp() if lo else window.start
+        end = datetime.combine(day, datetime.strptime(hi, "%H:%M").time(), z).timestamp() if hi else window.end
+        return max(start, window.start), min(end, window.end)
+
+    def _when(self, ts: float) -> str:
+        from . import clock
+        return clock.local(ts, self.core.tz).strftime("%a %d %b %H:%M")
+
+    async def move(self, turn_id: str, task_id: str, day: str, part: str, at: str, named: bool,
+                   now: float) -> tuple[bool, str]:
+        """`plan_move` — her move of a task's next piece ahead (a new piece when it has none) to a day: to the first
+        free time of a part of it, or to the time the owner named. A piece the owner put there himself moves only
+        when he named it (`named`). Under her turn's one plan: one «Undo» for every move of the turn."""
+        async with self.lock:
+            if self._stale(now):
+                return False, "Not moved: the calendar has not been read in the last half hour. Say so; try later."
+            d = _day(day)
+            if d is None:
+                return False, "day is a date, YYYY-MM-DD, the owner's local day."
+            window = L.window_of(d, self.hours)
+            span = self._part(d, part, at, window)
+            if isinstance(span, str):
+                return False, span
+            world = await self._world(window, now)
+            pieces = await self._rows(BLOCKS, [{"field": "state", "op": "eq", "value": "planned"},
+                                               {"field": "task", "op": "eq", "value": task_id}])
+            if world is None or pieces is None:
+                return False, "Not moved: the plan could not be read. Try again."
+            tasks, standing, counted = world
+            row = next((t for t in tasks if t["id"] == task_id), None)
+            if row is None:
+                return False, "No such open task: take its id from collection_query on tasks."
+            ahead = sorted((b for b in pieces if self._span(b)[0] > now), key=self._span)
+            movable = [b for b in ahead if named or not b["fields"].get("locked")]
+            if ahead and not movable:
+                return False, ("Not moved: the owner laid this task's time himself. Move it only if he names that "
+                               "piece of it (named), or ask him.")
+            block = movable[0] if movable else None
+            task = self._task(row, counted)
+            length = int(block["fields"].get("minutes") or 30) * 60 if block else L.piece_s(L.need_s(task))
+            others = [self._span(b) for b in standing if block is None or b["id"] != block["id"]]
+            taken = self._busy(window, now) + others
+            lo, hi = span
+            if at:
+                start = lo
+                if start <= now:
+                    return False, f"Not moved: {at} on {d:%a %d %b} has passed."
+                if not L.free(start, length, taken):
+                    return False, (f"Not moved: {at}–{_hm(start + length, self.core.tz)} on {d:%a %d %b} is taken — "
+                                   "a meeting, a hold or another piece. Ask the owner for another time.")
+            else:
+                start = L.first_free(max(lo, now), hi, length, taken, others)
+                if start is None:
+                    return False, (f"Not moved: no free {length // 60} min on {d:%a %d %b} in the {part}. Say so; "
+                                   "the owner may name a time or another part of the day.")
+            plans = self.plans()
+            entry = self._her_plan(plans, turn_id, now)
+            plan_id = entry["id"]
+            title = line(str(row["fields"].get("title") or ""), 40)
+            if block is not None:
+                before = {k: block["fields"].get(k) for k in ("start", "minutes", "state", "plan")}
+                op = {"op": "set", "id": block["id"], "version": block["version"],
+                      "fields": {"start": iso(start), "plan": plan_id}}
+                said = f"{title}: {self._when(self._span(block)[0])} → {self._when(start)}"
+            else:
+                before = None
+                op = {"op": "add", "fields": {"task": task_id, "start": iso(start), "minutes": length // 60,
+                                              "state": "planned", "plan": plan_id}}
+                said = f"{title}: {self._when(start)}, {length // 60} min"
+            self._keep_plans(plans, now)
+            answer = await self._apply([op], f"move:{plan_id}:{_hash([op])}")
+            if answer is None:
+                return False, "Not moved: the block could not be written. Try again."
+            plans = self.plans()
+            for record in answer.get("records") or []:
+                if isinstance(record, dict):
+                    self._keep(plans, record, before)
+                    plans[plan_id]["blocks"][record["id"]]["day"] = d.isoformat()
+            plans[plan_id].setdefault("said", []).append(said)
+            self._keep_plans(plans, now)
+        await self.push(now)
+        return True, (f"Done: {said}. After your answer the code shows the owner the line of every move of this turn "
+                      "with «Undo»: do not repeat it and do not offer to undo.")
+
+    async def estimate(self, turn_id: str, task_id: str, minutes: int | None, due: str, now: float) -> tuple[bool, str]:
+        """`plan_estimate` — how long a task takes, or the day it is due by, on the owner's word: her write of the
+        task, under her turn's plan, so its «Undo» takes it back too. The plan lays it at the next look or press."""
+        if minutes is None and not due:
+            return False, "Say minutes, due or both."
+        if minutes is not None and not 5 <= minutes <= 24 * 60:
+            return False, "minutes: from 5 to 1440."
+        if due and _day(due) is None:
+            return False, "due is a date, YYYY-MM-DD."
+        async with self.lock:
+            rows = await self._rows(TASKS, [{"field": "state", "op": "eq", "value": "open"}], ["title", "minutes", "due"])
+            row = next((t for t in rows or [] if t["id"] == task_id), None)
+            if row is None:
+                return False, "No such open task: take its id from collection_query on tasks."
+            fields = {**({"minutes": minutes} if minutes is not None else {}), **({"due": due} if due else {})}
+            data = await self._call("apply", {"collection": TASKS, "ops": [
+                {"op": "set", "id": task_id, "version": row["version"], "fields": fields}]},
+                f"{turn_id}/estimate/{_hash([fields, task_id])}", actor="assistant")
+            if not data.get("ok"):
+                return False, str(data.get("text") or "Not written: try again.")[:300]
+            f = row["fields"]
+            title = line(str(f.get("title") or ""), 40)
+            parts = ([f"{f.get('minutes') or 30} → {minutes} min"] if minutes is not None else []) + \
+                    ([f"due {f.get('due') or 'none'} → {due}"] if due else [])
+            plans = self.plans()
+            entry = self._her_plan(plans, turn_id, now)
+            entry["estimates"].append({"task": task_id, "at": _now()})
+            entry["said"].append(f"{title}: " + ", ".join(parts))
+            self._keep_plans(plans, now)
+        return True, (f"Done: {title} — {', '.join(parts)}. Its blocks are laid again at the next look; more time is "
+                      "laid by «Plan my day» or a plan_move. The code shows the owner the line with «Undo».")
+
+    async def turn_done(self, turn_id: str) -> None:
+        """After her answer: every move of the turn in one line of code's, «Undo» under it."""
+        from .core import Button
+
+        plan_id = self.turn_plans.pop(turn_id, None)
+        entry = self.plans().get(plan_id or "")
+        if not isinstance(entry, dict) or not entry.get("said"):
+            return
+        await self.core.tell_owner("Plan changed: " + "; ".join(entry["said"]) + ".",
+                                   buttons=[Button("Undo", "plan-undo", entry["id"], alone=True)])
 
     # --- each look ------------------------------------------------------------------------------------------------
 

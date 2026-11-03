@@ -410,8 +410,8 @@ for a write its rights left to the owner, `needs`, their words.
 The assistant has the same four tools (`collection_describe`, `collection_query`, `collection_apply`,
 `collection_propose`), with the same schemas and words, as tools of the router's bus (`bus_tools` in
 `agents/assistant/agent.yaml`, the `collections` grant in `router.yaml`). Each goes engine → the router's
-`/collections/<name>` → the platform's `POST /owner/collections/<name>`, behind the router's token. There is no gate on
-her tools: the platform alone decides, by the collection's `rights` for the class `assistant` — which give her nothing
+`/collections/<name>` → the platform's `POST /owner/collections/<name>`, behind the router's token. Apart from a task's
+time on the owner's word ([Blocks](#blocks)), there is no gate on her tools: the platform alone decides, by the collection's `rights` for the class `assistant` — which give her nothing
 until the owner gives her some.
 
 - **Who writes is the router's word, and only from a closed list.** The router names the writer: `assistant` via
@@ -528,6 +528,17 @@ what it needs (he laid its time himself) taken off. A look whose write was refus
 task due today that no longer fits is said in Telegram. The Router pushes the plans and holds to the platform after each
 change (`POST /owner/plan`); the app reads them with the blocks (`GET /api/plan`) and presses through
 `POST /api/plan/press` (a `plan-press` note; one older than ten minutes when the Router takes it is dropped and said).
+
+**Her moves, on his word** (`plan_move`, `plan_estimate`: tools of the router's bus, carried out by the planner). The
+owner asks in a message of his own — «homework on Wednesday evening», «the report takes two hours» — and she names the
+task, the day and a part of it (morning till 13:00, afternoon 13:00–18:00, evening from 18:00, in his zone) or the time
+he named. Code moves the task's next piece ahead to the first free time there — a new piece when it has none — or to
+that time if nothing keeps it busy; a piece he put there himself only when he named it; meetings never. An estimate or a
+due date is her write of the task. The router allows either only in a turn that answers his own messages and read
+nobody else's text (a forward, a file, a letter, the archive, a site, a chat): otherwise she is told to ask him in a
+message of his own — and the same holds for her `set` of a task's `due` or `minutes` with `collection_apply`. Every
+move of one turn goes under one plan (`by: assistant`, which the grid lights); after her answer code says them in one
+line with «Undo», which takes back the blocks and her estimates of that turn.
 
 ### The evening list
 

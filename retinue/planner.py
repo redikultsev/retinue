@@ -42,6 +42,7 @@ RULE = "code:plan"
 PLANS_KEY = "plan.plans"    # the Router's kv: by plan id — {id, by, at, windows, blocks: {id: {version, before, day, end}},
                             # left: {day: [{task, title, why}]}, pending?, failed?, undone?}
 HOLDS_KEY = "plan.holds"    # the owner's holds: [{from, to, label}]
+HOURS_KEY = "plan.hours"    # the window he set in the app: {zone, opens, closes}; none — the default day in his zone
 SIGNS_KEY = "plan.signs"    # the moments the owner was seen here: his messages, his presses — [ts], newest last
 SIGNS_KEPT_S = 14 * 86400
 SIGN_STEP_S = 600           # one sign in ten minutes is enough to know he was there
@@ -80,7 +81,8 @@ def _hm(ts: float, tz: str) -> str:
 
 class Planner:
     def __init__(self, core, tasks, hours: L.Hours = L.HOURS) -> None:
-        self.core, self.tasks, self.hours = core, tasks, hours
+        self.core, self.tasks = core, tasks
+        self.hours = L.Hours.of(self._load(HOURS_KEY, {})) or hours  # `hours`: the day until he sets his own
         self.lock = asyncio.Lock()  # one writer of plans: a press, a look, an «Undo» never interleave
         self._seen = ""             # the busy window's mark at the last look: a change lays the plan again
         self.said: dict = {}        # what the last press came to, for the app: {at, text}
@@ -210,8 +212,7 @@ class Planner:
         plans = self.plans()
         body = {"at": now, "plans": self._by_day(plans), "recent": self._recent(plans, now), "holds": self.holds(now),
                 "said": self.said,
-                "window": {"zone": self.hours.zone, "opens": self.hours.opens.strftime("%H:%M"),
-                           "closes": self.hours.closes.strftime("%H:%M")}}
+                "window": self.hours.shape()}
         try:
             answer = await self.core.platform("plan", body, CALL_S)
             if answer.get("error"):
@@ -490,6 +491,14 @@ class Planner:
         self.core.store.set(HOLDS_KEY, "[]")
         await self.push(now)
         return "Busy taken off."
+
+    def set_hours(self, hours: L.Hours) -> str:
+        """The window he set on the plan's settings: kept, and the next plan lays into it. The blocks standing are not
+        moved for it; a past window is read in the new hours (a change is rare, and a plan keeps no window of its own)."""
+        self.core.store.set(HOURS_KEY, json.dumps(hours.shape()))
+        self.hours = hours
+        shape = hours.shape()
+        return f"Plan window: {shape['opens']}–{shape['closes']}, {hours.zone}. The next plan uses it."
 
     async def remove(self, block_id: str, now: float) -> str:
         """× on a block: it is skipped; nothing else moves."""
@@ -887,7 +896,7 @@ class Planner:
         return text
 
     async def press(self, data: dict, now: float) -> str:
-        """A press in the app (`plan-press`): plan, plan one task to a day, undo, busy, free, remove. Its moment
+        """A press in the app (`plan-press`): plan, plan one task to a day, undo, busy, free, remove, the window. Its moment
         is the press's own; one older than PRESS_MAX_S is dropped and said."""
         at = float(data.get("at") or now)
         self.sign(min(at, now))
@@ -923,6 +932,12 @@ class Planner:
             return await self.free(now)
         if action == "remove":
             return await self.remove(str(data.get("block") or ""), now)
+        if action == "hours":
+            hours = L.Hours.of(data)
+            if hours is None:
+                return "Not kept: a window is two times at least two hours apart and a zone."
+            async with self.lock:
+                return self.set_hours(hours)
         return "No such press."
 
 

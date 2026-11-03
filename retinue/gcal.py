@@ -63,8 +63,8 @@ class Writer(Neighbour):
 
 
 class Gcal:
-    def __init__(self, core, planner, writer: Writer, zone: str, link: str = "") -> None:
-        self.core, self.planner, self.writer, self.zone, self.link = core, planner, writer, zone, link
+    def __init__(self, core, planner, writer: Writer, link: str = "") -> None:
+        self.core, self.planner, self.writer, self.link = core, planner, writer, link
         self._at = 0.0
         self._task: asyncio.Task | None = None
         self.lock = asyncio.Lock()  # a sync and «Make it again» never interleave
@@ -318,7 +318,7 @@ class Gcal:
             if puts >= PUTS or time.monotonic() > until:
                 break
             puts += 1
-            answer = await self.writer.put({"block": block, **want, "zone": self.zone, "link": self.link,
+            answer = await self.writer.put({"block": block, **want, "zone": self.planner.hours.zone, "link": self.link,
                                             "etag": (was or {}).get("etag") or "", "revive": block in dropped,
                                             "calendar": state["calendar"]})
             stop = await self._stopped(state, answer)

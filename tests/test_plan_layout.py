@@ -110,10 +110,17 @@ def test_whole_day_events_and_free_time_keep_no_one_busy():
     assert meeting_busy(events, w.start, w.end) == []
 
 
-def test_hours_come_from_the_config_and_anything_off_is_the_default_day():
-    assert Hours.parse("10:00-01:00", "Europe/Berlin") == H
-    assert Hours.parse("nine to five", "Europe/Berlin") == Hours()
-    assert Hours.parse("10:00-01:00", "Mars/Olympus") == Hours()
+def test_hours_are_two_times_and_a_zone_and_anything_off_is_none():
+    assert Hours.of({"zone": "Europe/Berlin", "opens": "10:00", "closes": "01:00"}) == H
+    assert Hours.of({"zone": "UTC", "opens": "23:00", "closes": "01:00"}) == Hours("UTC", time(23, 0), time(1, 0))
+    assert Hours.of(H.shape()) == H and H.shape() == {"zone": "Europe/Berlin", "opens": "10:00", "closes": "01:00"}
+    for off in ({"zone": "Europe/Berlin", "opens": "nine", "closes": "17:00"},
+                {"zone": "Mars/Olympus", "opens": "10:00", "closes": "01:00"},
+                {"zone": "Europe/Berlin", "opens": "10:00", "closes": "10:00"},
+                {"zone": "Europe/Berlin", "opens": "23:30", "closes": "01:00"},
+                {"zone": "", "opens": "10:00", "closes": "01:00"},
+                {"opens": "10:00", "closes": "01:00"}, "10:00-01:00", None):
+        assert Hours.of(off) is None, off
     day = _of(TUE)
     assert (datetime.fromtimestamp(day.start, ZoneInfo("UTC")).hour, day.end - day.start) == (9, 14 * 3600)
 

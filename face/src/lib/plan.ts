@@ -1,7 +1,7 @@
 // «Today»'s tasks, day and week (docs/face.md «Tasks, Day, Week»): one read of the platform (`GET /api/plan`) — the
 // open tasks, their blocks of time near, the calendar's busy window and the day plan's state as the Router last pushed
 // them, the digest's asks and reminders — and the words and the arithmetic of the three tabs. A day is a window of the
-// plan's: its hours in its zone, as the Router's config sets them, shown in the owner's own. Plans are pressed (`/api/plan/press`) and
+// plan's: its hours in its zone, as the owner set them on the plan's settings, shown in the owner's own. Plans are pressed (`/api/plan/press`) and
 // laid by the Router; the owner's own moves of a block go through the collections' route, as any screen's do.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request } from "./api";
@@ -117,7 +117,9 @@ export type Press =
   | { action: "undo"; plan: string }
   | { action: "busy"; minutes: 30 | 60 | 120 }
   | { action: "free" }
-  | { action: "remove"; block: string };
+  | { action: "remove"; block: string }
+  /** The plan's window, set on its settings: two wall times in a zone, a close before the open after midnight. */
+  | ({ action: "hours" } & PlanWindow);
 
 export const planApi = {
   get: () => request<Plan>("/api/plan"),

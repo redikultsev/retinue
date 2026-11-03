@@ -2,8 +2,8 @@
 pure function of the window, the moment, what keeps the owner busy and the tasks, so the Router's plan, its re-layout
 and the tests all run the same code.
 
-- **The window** is one day of the owner's, his `Hours`: from when to when, in which zone — the router's config
-  (`plan_hours`, `plan_zone`), fixed whatever zone he travels to, since his work and his sleep keep that clock. One that
+- **The window** is one day of the owner's, his `Hours`: from when to when, in which zone — set by him in the app
+  (`planner.HOURS_KEY`), fixed whatever zone he travels to, since his work and his sleep keep that clock. One that
   closes after midnight belongs to the day it opened on. The window a plan is for is the one he is in while at least an
   hour of it is left, else the next one.
 - **«No later than»** (`by`, a moment): no piece of a task ends after it while it is ahead; once it has passed the
@@ -34,6 +34,7 @@ BUFFER_S = 10 * 60         # after a meeting
 RUN_S, PAUSE_S = 90 * 60, 15 * 60
 GAP_S = 10 * 60            # pieces closer than this are one run
 CHUNK_MIN_S, CHUNK_MAX_S = 30 * 60, 90 * 60
+HOURS_MIN_M = 120          # a window shorter than this is refused: an hour of it must be left for a plan of today
 DEFAULT_S = 30 * 60        # a task with no estimate
 KEEP_PIECE_S = 30 * 60     # a task whose time is all counted, not done: planned on in pieces of this
 
@@ -47,14 +48,23 @@ class Hours:
     closes: time = time(23, 0)
 
     @classmethod
-    def parse(cls, hours: str, zone: str) -> Hours:
-        """`"10:00-01:00"` in a zone; anything else is the default day."""
+    def of(cls, value: object) -> Hours | None:
+        """`{zone, opens: "10:00", closes: "01:00"}`; None when it is not of that shape or shorter than HOURS_MIN_M."""
+        if not isinstance(value, dict):
+            return None
         try:
-            opens, closes = (time.fromisoformat(part.strip()) for part in hours.split("-"))
+            opens, closes = (time.fromisoformat(str(value[k])) for k in ("opens", "closes"))
+            zone = str(value["zone"])
+            if not 0 < len(zone) < 64:
+                return None
             ZoneInfo(zone)
-        except (ValueError, KeyError):
-            return cls()
-        return cls(zone, opens, closes)
+        except (KeyError, ValueError, TypeError):
+            return None
+        span = (closes.hour * 60 + closes.minute - opens.hour * 60 - opens.minute) % (24 * 60)
+        return None if span < HOURS_MIN_M or opens.second or closes.second else cls(zone, opens, closes)
+
+    def shape(self) -> dict:
+        return {"zone": self.zone, "opens": self.opens.strftime("%H:%M"), "closes": self.closes.strftime("%H:%M")}
 
 
 HOURS = Hours()

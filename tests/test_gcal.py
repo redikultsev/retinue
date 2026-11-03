@@ -23,7 +23,7 @@ async def wired(world, tmp_path):
     account = google.Google(google.Key("owner@example.org", "calwrite", "rt", "cid", "cs"), fake.client())
     server = TestServer(calwrite.Service(tmp_path / "calendar.json", lambda: [account], "tok").app())
     await server.start_server()
-    gcal = Gcal(planner.core, planner, Writer(str(server.make_url("")), "tok", "the calendar writer"), "Europe/Berlin",
+    gcal = Gcal(planner.core, planner, Writer(str(server.make_url("")), "tok", "the calendar writer"),
                 "https://app.example.com/today?tab=plan")
     return planner, gcal, fake, server, told
 

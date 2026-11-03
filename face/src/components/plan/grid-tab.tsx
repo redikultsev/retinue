@@ -1,6 +1,6 @@
 // «Plan»: the week as an hourly grid (FullCalendar v7; a day on a phone) — meetings grey, the plan's blocks in their
 // goal's colour, the plan's window in the owner's zone as the lit hours — under the bar of presses: «Plan my day»,
-// «Plan my week», «Undo» of the last plan, «Busy now», and what the last press came to. A block dragged or stretched
+// «Plan my week», «Undo» of the last plan, «Busy now», the window's hours (its settings), and what the last press came to. A block dragged or stretched
 // is the owner's write of `blocks`, locked: a stretched one is the task's length from then on (the Router's layout
 // counts it). Tasks get their time on «Tasks» («Plan») or from «Plan my day/week»; the bar counts the open ones with
 // nothing ahead and opens «Tasks». The assistant's plans of the last quarter-hour are lit, and a new one is said once
@@ -30,6 +30,7 @@ import {
   windowOf,
 } from "@/lib/plan";
 import { cn } from "@/lib/utils";
+import { HoursButton } from "./hours";
 import { Popover, press, useOwnBlock } from "./shared";
 
 const SWATCH = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
@@ -375,6 +376,7 @@ function PlanBar({ plan, first, today, unplanned, nav }: {
           </span>
         )}
         <div className="ml-auto flex items-center gap-1">
+          <HoursButton window={plan.plan.window} />
           <span className="mr-1 text-[13px] font-medium tabular-nums">{nav.title}</span>
           <button type="button" aria-label="Back" onClick={() => nav.go("prev")} className="h-8 w-8 rounded-md border text-[13px] hover:bg-accent max-md:h-10 max-md:w-10">
             ‹

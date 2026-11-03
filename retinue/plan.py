@@ -50,13 +50,14 @@ class Refusal(ValueError):
 
 PLAN_KEY = "plan.state"      # the platform's kv: the Router's last push of the day plan
 PLAN_BYTES = 64 * 1024
-PRESSES = ("plan", "place", "undo", "busy", "free", "remove")
+PRESSES = ("plan", "place", "undo", "busy", "free", "remove", "hours")
 DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 ID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 PLAN_ID = re.compile(r"p[0-9a-f]{10}")
 TOKEN = re.compile(r"[0-9a-f]{32}")       # a person's row's `t` (`feed.TOKEN`)
 REMINDER = re.compile(r"reminder:\d{1,12}")  # a reminder of the digest (`feed.REMINDER_ID`)
 HM = re.compile(r"[0-2]\d:[0-5]\d")
+ZONE = re.compile(r"[A-Za-z][A-Za-z0-9_+-]{0,30}(?:/[A-Za-z0-9_+-]{1,30}){0,2}")  # an IANA name: the Router checks it is one
 
 
 def clean_press(body: object) -> dict:
@@ -64,9 +65,10 @@ def clean_press(body: object) -> dict:
     if not isinstance(body, dict) or body.get("action") not in PRESSES:
         raise Refusal(f"action: one of {', '.join(PRESSES)}")
     action, out = body["action"], {"action": body["action"]}
-    shapes = {"day": DAY, "task": ID, "block": ID, "plan": PLAN_ID, "t": TOKEN, "ref": REMINDER}
+    shapes = {"day": DAY, "task": ID, "block": ID, "plan": PLAN_ID, "t": TOKEN, "ref": REMINDER, "opens": HM, "closes": HM,
+              "zone": ZONE}
     takes = {"plan": ("day", "days"), "place": ("day", "task"), "undo": ("plan",), "remove": ("block",), "busy": ("minutes",),
-             "free": ()}[action]
+             "free": (), "hours": ("opens", "closes", "zone")}[action]
     if action == "place" and body.get("task") is None:
         # «Plan» on a person's row or a reminder: the Router makes its task and lays it — one press, no «make» first.
         takes = ("day", "t") if body.get("t") is not None else ("day", "ref")

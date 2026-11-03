@@ -413,3 +413,36 @@ def test_a_record_he_changed_on_his_screen_that_day_is_a_sign_too(tmp_path):
         assert len(await blocks(world, "passed")) == 1
         assert await planner._present(msk(11, "10:00"), msk(12, "10:00")) is False
     faced(tmp_path, run)
+
+
+def test_the_window_he_sets_in_the_app_is_kept_across_a_restart_and_the_next_plan_lays_into_it(tmp_path):
+    from retinue.plan import Refusal, clean_press
+
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        await add(world, title="Pay the bill", minutes=30)
+        said = await planner.press({"action": "hours", "opens": "20:00", "closes": "02:00", "zone": "Europe/Berlin",
+                                    "at": msk(10, "17:00")}, msk(10, "17:00"))
+        assert said == "Plan window: 20:00–02:00, Europe/Berlin. The next plan uses it."
+        assert world.platform.plan.plan_state()["window"] == {"zone": "Europe/Berlin", "opens": "20:00", "closes": "02:00"}
+        again = Planner(planner.core, planner.tasks, Hours("UTC"))  # the Router restarted: his window, not the default
+        assert again.hours == Hours("Europe/Berlin", wall(20, 0), wall(2, 0))
+        await again.plan(msk(10, "17:00"))
+        [block] = await blocks(world)
+        assert "20:00" <= hm(block["fields"]["start"]) < "23:00", "inside his evening window, not at 17:00"
+        refused = await again.press({"action": "hours", "opens": "09:00", "closes": "17:00", "zone": "Mars/Olympus",
+                                     "at": msk(10, "17:01")}, msk(10, "17:01"))
+        assert refused.startswith("Not kept") and again.hours.opens == wall(20, 0)
+    faced(tmp_path, run)
+    assert clean_press({"action": "hours", "opens": "10:00", "closes": "01:00", "zone": "America/Argentina/Salta",
+                        "day": "2026-11-11"}) == {"action": "hours", "opens": "10:00", "closes": "01:00",
+                                                  "zone": "America/Argentina/Salta"}
+    for bad in ({"action": "hours", "opens": "10:00", "closes": "01:00"},
+                {"action": "hours", "opens": "10", "closes": "01:00", "zone": "Europe/Berlin"},
+                {"action": "hours", "opens": "10:00", "closes": "01:00", "zone": "../../etc/passwd"}):
+        try:
+            clean_press(bad)
+        except Refusal:
+            continue
+        raise AssertionError(bad)

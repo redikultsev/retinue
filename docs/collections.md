@@ -502,9 +502,10 @@ deletions in Google onto them ([calendar.md](calendar.md)) — and neither delet
 **The day plan** (`retinue/planner.py`, `retinue/plan_layout.py`) is laid by a press — «Plan my day» in the app,
 `/plan` in Telegram, «Plan» on a task — never by itself:
 
-- the window is the owner's day as `router.yaml` sets it — `plan_hours: "10:00-01:00"` (a «to» before the «from» is
-  after midnight; the default is 09:00–23:00) in `plan_zone` (the default, `owner_tz`) — and keeps that zone's clock
-  whatever zone he travels to; a plan is for the window he is in while an hour of it is left, else the next one;
+- the window is the owner's day as he sets it on the plan's settings in the app — opens, closes (a close before the
+  open is after midnight) and a zone; until he does, 09:00–23:00 in `owner_tz` — kept in the Router's kv
+  (`plan.hours`), at least two hours long, and keeps that zone's clock whatever zone he travels to; a change lays the
+  next plan in it and moves no block for itself; a plan is for the window he is in while an hour of it is left, else the next one;
 - busy is his busy occurrences (his own, or invitations he accepted — one he never answered keeps no one busy), ten
   minutes after each, his holds, and the blocks standing;
 - the order is code's — overdue and due today first, then by due date, then the shorter, then the older; a task's

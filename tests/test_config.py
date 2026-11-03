@@ -252,6 +252,8 @@ def test_the_pages_are_on_when_the_config_names_their_address(tmp_path, monkeypa
     old = load(tmp_path, AGENT + "telegram:\n  owner_id: 42\nlifehub_url: https://hub.in.example.com\n"
                               "lifehub_data: /lifehub\n")
     assert old.pages_url == "", "the retired hub's keys start the router with no pages, not a crash"
+    hand_set = load(tmp_path, AGENT + 'telegram:\n  owner_id: 42\nplan_zone: Europe/Berlin\nplan_hours: "10:00-01:00"\n')
+    assert not hasattr(hand_set, "plan_hours"), "the plan's window is set in the app: the old keys start the router"
 
 
 def test_a_link_to_the_owners_pages_is_clickable_in_telegram(tmp_path, monkeypatch):

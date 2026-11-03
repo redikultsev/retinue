@@ -109,6 +109,13 @@ services:
     restart: unless-stopped
     command: ["retinue-agent", "--config", "/agent/agent.yaml"]
     mem_limit: 2g                   # ~90 MiB idle; each run is a Claude Code CLI, up to three at once (bus.py)
+    # She reads strangers' letters and messages: whatever ran inside would hold no capability, gain none, and write
+    # nowhere but her volume, the base's files and /tmp, which a restart clears: Claude Code's only writes outside
+    # its state (/data/claude, CLAUDE_CONFIG_DIR) — `docker diff` of a running assistant, 2026-11.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=256m"]
     healthcheck:
       <<: *health
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9000), 3).close()"]

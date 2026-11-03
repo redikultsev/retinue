@@ -122,7 +122,10 @@ def test_assistant_container_cannot_write_its_settings_and_keeps_only_its_sessio
     assert assistant["volumes"] == ["/srv/retinue/agents/assistant:/agent:ro", "assistant-data:/data",
                                     "/srv/retinue/memory/tree:/kb", "/srv/retinue/memory/policy.json:/memory-policy.json:ro"], \
         "settings read-only; the session transcript on its own volume; the base's files, not its repository"
-    assert "tmpfs" not in assistant
+    assert assistant["cap_drop"] == ["ALL"] and assistant["security_opt"] == ["no-new-privileges:true"], \
+        "she reads strangers' text: no capability held, none gained"
+    assert assistant["read_only"] is True and [t.split(":")[0] for t in assistant["tmpfs"]] == ["/tmp"], \
+        "nothing written but her volume, the base and scratch a restart clears"
     assert "CLAUDE_CONFIG_DIR" not in assistant["environment"] and "ANTHROPIC_API_KEY" not in assistant["environment"]
     router_mounts = " ".join(SERVICES["router"]["volumes"])
     assert "router-data:/data" in router_mounts and "router-data" not in str(assistant), \

@@ -817,12 +817,6 @@ def _check_code(cfg: PlatformConfig) -> None:
 BRANCH = re.compile(r"(?!.*\.\.)(?!.*//)(?!.*/\.)(?!.*@\{)(?!.*\.lock(?:/|$))[A-Za-z0-9_][A-Za-z0-9._/-]{0,99}(?<![./])")
 
 
-# What an agent can be given through the router.
-BUS_TOOLS = ("ask_agent", "list_agents", "search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-             "move_reminder", "set_timezone", "plan_move", "plan_estimate", "plan_hold", "get_attachment", "publish_trip",
-             "draft_reply", "collection_describe", "collection_query", "collection_apply", "collection_propose")
-
-
 @dataclass
 class EngineConfig:
     type: str = "claude"  # "claude" | "echo" (smoke tests, no model)
@@ -830,7 +824,7 @@ class EngineConfig:
     tools: list[str] | None = None      # built-in tools the model sees at all: [] = none, None = the CLI default
     allowed_tools: list[str] = field(default_factory=list)
     disallowed_tools: list[str] = field(default_factory=list)
-    bus_tools: list[str] = field(default_factory=lambda: ["ask_agent", "list_agents"])  # subset of BUS_TOOLS
+    bus_tools: list[str] = field(default_factory=lambda: ["ask_agent", "list_agents"])  # of `tools.TOOLS`
     config_dir: str | None = None       # CLAUDE_CONFIG_DIR: the session transcripts; the agent's own volume
     max_turns: int = 30
     max_budget_usd: float | None = None
@@ -880,6 +874,10 @@ class AgentConfig:
             raise SystemExit("RETINUE_MEMORY needs RETINUE_MEMORY_POLICY: without the policy nothing may be written")
         if cfg.trust_class not in TRUST_CLASSES:
             raise SystemExit(f"unknown trust_class {cfg.trust_class!r}")
-        if unknown := [t for t in cfg.engine.bus_tools if t not in BUS_TOOLS]:
-            raise SystemExit(f"unknown bus_tools {unknown}; known: {', '.join(BUS_TOOLS)}")
+        # What an agent can be given through the router. Imported here: config's other readers need not load the
+        # collections and the pages the tools' schemas come from.
+        from .tools import TOOLS
+
+        if unknown := [t for t in cfg.engine.bus_tools if t not in TOOLS]:
+            raise SystemExit(f"unknown bus_tools {unknown}; known: {', '.join(TOOLS)}")
         return cfg

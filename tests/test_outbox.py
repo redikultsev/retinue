@@ -16,7 +16,7 @@ from retinue.mailroom import DIRECTIONS, Mailroom
 from retinue.outbox import Neighbour, Outbox, OutboxStore
 from retinue.protocol import Store
 
-from test_core import FakeChannel, drain
+from test_core import FakeChannel, drain, use
 
 NOW = 1_760_000_000.0
 ME = "owner@example.org"
@@ -88,7 +88,7 @@ async def propose(core, args, foreign=()):
     turn = core.turns.open_root("assistant")
     turn.tree.foreign.update(foreign)
     try:
-        return await core.draft_reply(core.agents["assistant"], turn.id, args)
+        return await use(core, core.agents["assistant"], turn.id, "draft_reply", **args)
     finally:
         core.turns.close(turn)
 
@@ -135,7 +135,7 @@ def test_a_draft_is_refused_with_what_to_fix(tmp_path):
         mine = letter(core.archive, ref="m2", direction="out")
         plain = RouterAgent(id="assistant", name="Ассистентка", url="http://a", trust_class="private")
         turn = core.turns.open_root("assistant")
-        said = [await core.draft_reply(plain, turn.id, {"reply_to": event.id, "text": "Да."})]
+        said = [await use(core, plain, turn.id, "draft_reply", reply_to=event.id, text="Да.")]
         for args in ({"reply_to": event.id, "to": "anna@acme.example", "text": "Да."}, {"text": "Да."},
                      {"reply_to": "mail:nothing", "text": "Да."}, {"reply_to": mine.id, "text": "Да."},
                      {"reply_to": event.id, "text": "Оплатите ‮счёт"}, {"reply_to": event.id, "text": "Да.",
@@ -501,8 +501,8 @@ def test_a_card_names_what_she_read_outside_this_conversation_and_warns_louder_a
                 if kind == "kb":
                     await core.kb_log(me, turn.id, "Read", "allow", value)
                 else:
-                    await core.archive_search(me, turn.id, value, scope=kind)
-            ok, said = await core.draft_reply(me, turn.id, {"reply_to": target.id, "text": text})
+                    await use(core, me, turn.id, "search_archive", query=value, scope=kind)
+            ok, said = await use(core, me, turn.id, "draft_reply", reply_to=target.id, text=text)
             core.turns.close(turn)
             draft_ = outbox.store.get(said.split()[1])
             cards.append(draft_)

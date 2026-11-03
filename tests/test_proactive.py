@@ -15,7 +15,7 @@ from retinue.proactive import Proactive, deadline_line, scan
 from retinue.protocol import Store
 from retinue.scheduler import Scheduler
 
-from test_core import AGENT, FakeChannel, drain, local  # noqa: F401
+from test_core import AGENT, FakeChannel, drain, local, use  # noqa: F401
 
 ASSISTANT = dataclasses.replace(AGENT, reminders=True)
 TODAY = date(2026, 10, 15)
@@ -161,22 +161,22 @@ def test_the_zone_is_changed_in_words_kept_across_restarts_and_checked(tmp_path)
         for mark in ("mail", "telegram", "calendar", "travel", "forwarded", "attachment", "archive"):
             judged = core.turns.open_root("assistant")
             judged.tree.foreign.add(mark)
-            ok, text = await core.proactive.zone_tool(ASSISTANT, judged.id, "Asia/Tokyo")
+            ok, text = await use(core, ASSISTANT, judged.id, "set_timezone", zone="Asia/Tokyo")
             assert not ok and text.startswith(f"Not changed: this turn had someone else's text in it ({mark})"), mark
         chat = core.turns.open_root("assistant")
         chat.tree.exchanges.add("chat:777")
-        assert (await core.proactive.zone_tool(ASSISTANT, chat.id, "Asia/Tokyo"))[0] is False, "a run a chat started"
+        assert (await use(core, ASSISTANT, chat.id, "set_timezone", zone="Asia/Tokyo"))[0] is False, \
+            "a run a chat started"
         assert core.tz == "UTC" and telegram.cards == [], "a letter saying «I'm in Tokyo» moves nothing"
         turn = core.turns.open_root("assistant")
-        ok, text = await core.proactive.zone_tool(ASSISTANT, turn.id, "Tokyo")
+        ok, text = await use(core, ASSISTANT, turn.id, "set_timezone", zone="Tokyo")
         assert ok and text.startswith("The zone is now Asia/Tokyo: it is ")
         assert core.tz == core.jobs.tz == "Asia/Tokyo"
         assert telegram.cards[-1][0] == "Zone: UTC → Asia/Tokyo.", "never silent"
         assert core.store.get(f"now.{core.store.conversation('assistant')}") == "1", "her line with the owner's zone is renewed"
-        assert (await core.proactive.zone_tool(ASSISTANT, turn.id, "Narnia")) == (
+        assert (await use(core, ASSISTANT, turn.id, "set_timezone", zone="Narnia")) == (
             False, "Not changed: «Narnia» is not a zone. It needs an IANA name, e.g. Asia/Tokyo.")
-        assert (await core.proactive.zone_tool(AGENT, turn.id, "Asia/Manila"))[0] is False, "no reminders grant"
-        assert (await core.proactive.zone_tool(ASSISTANT, "gone", "Asia/Manila"))[0] is False, "no turn"
+        assert (await use(core, AGENT, turn.id, "set_timezone", zone="Asia/Manila"))[0] is False, "no reminders grant"
         again = make_core(tmp_path)
         assert again.tz == again.jobs.tz == "Asia/Tokyo", "the owner's word outlives router.yaml's zone"
 

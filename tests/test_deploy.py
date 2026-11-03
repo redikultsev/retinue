@@ -17,6 +17,7 @@ from dockerup import docker_up
 from retinue import cliengine, lane_host, pagesd, reach
 from retinue.bus import bus_token
 from retinue.config import AgentConfig, PlatformConfig, RouterConfig
+from retinue.tools import TOOLS
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = yaml.safe_load((ROOT / "deploy" / "compose.yml").read_text())
@@ -49,10 +50,9 @@ def test_one_assistant_and_nothing_else():
     engine = AgentConfig.load(ROOT / "agents" / "assistant" / "agent.yaml").engine
     assert engine.tools == [] and engine.allowed_tools == [], "no built-in tool is offered or allowed"
     assert {"Bash", "WebSearch", "WebFetch"} <= set(engine.disallowed_tools)
-    assert engine.bus_tools == ["search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-                                "move_reminder", "set_timezone", "plan_move", "plan_estimate", "plan_hold", "get_attachment", "publish_trip",
-                                "draft_reply", "collection_describe", "collection_query", "collection_apply", "collection_propose"], \
-        "the archive, reminders and the zone, attachments, trip pages, draft replies, the collections; no ask_agent"
+    assert engine.bus_tools == [name for name in TOOLS if name not in ("ask_agent", "list_agents")], \
+        "every tool of the router's bus — the archive, reminders and the zone, the plan, attachments, trip pages, " \
+        "draft replies, the collections — and no other agent to ask"
     assert (engine.model, engine.effort) == ("claude-opus-5-5[1m]", "xhigh"), "Opus 5.5 by id, its 1M context, xhigh"
     instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
     assert all(f"`{name}`" in instructions for name in engine.bus_tools), "she is told about every tool she has"

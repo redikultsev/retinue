@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 
 from aiohttp import web
 
+from . import tools
 from .config import RouterAgent
 
 log = logging.getLogger("retinue.bus")
@@ -96,6 +97,11 @@ class Turns:
     def close(self, turn: Turn) -> None:
         self.turns.pop(turn.id, None)
 
+    def of(self, agent_id: str, turn_id: str) -> Turn | None:
+        """The agent's own open turn by its id, or None: everything an agent asks the router for is bound to one."""
+        turn = self.turns.get(turn_id)
+        return turn if turn is not None and turn.agent_id == agent_id else None
+
 
 def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
     """Raise Denied with a reason the caller (and the owner) can read."""
@@ -120,27 +126,17 @@ def check(caller: RouterAgent, target: RouterAgent | None, turn: Turn) -> None:
 
 
 class BusServer:
-    """HTTP endpoint on the agents network: GET /agents, POST /call, POST /archive/search,
-    POST /reminders/{add,list,cancel,move}, POST /zone, POST /attachments/get, POST /travel/log, POST /kb/log,
-    POST /trips/publish, POST /courier/draft, POST /collections/{describe,query,apply,propose}. Authenticated by
-    per-agent token."""
+    """HTTP endpoint on the agents network: POST /tools/<name> for every tool of `tools.TOOLS`, and the engine's guards'
+    records, POST /travel/log and POST /kb/log. Authenticated by per-agent token."""
 
     def __init__(self, core, secret: str, port: int) -> None:
         self.core = core
         self.port = port
         self.tokens = {bus_token(secret, a): a for a in core.agents}
         self.app = web.Application()
-        self.app.add_routes([web.get("/agents", self.list_agents), web.post("/call", self.call),
-                             web.post("/archive/search", self.archive_search),
-                             web.post("/reminders/{action}", self.reminders),
-                             web.post("/zone", self.zone),
-                             web.post("/plan/{action:move|estimate|hold}", self.plan),
-                             web.post("/attachments/get", self.attachment),
+        self.app.add_routes([web.post("/tools/{name}", self.tool),
                              web.post("/travel/log", self.travel_log),
-                             web.post("/kb/log", self.kb_log),
-                             web.post("/trips/publish", self.publish_trip),
-                             web.post("/courier/draft", self.draft_reply),
-                             web.post("/collections/{name:describe|query|apply|propose}", self.collections)])
+                             web.post("/kb/log", self.kb_log)])
 
     async def start(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
@@ -156,59 +152,19 @@ class BusServer:
                 return self.core.agents[agent_id]
         raise web.HTTPUnauthorized()
 
-    async def list_agents(self, request: web.Request) -> web.Response:
+    async def tool(self, request: web.Request) -> web.Response:
         caller = self.caller(request)
-        allowed = [a for a in self.core.agents.values()
-                   if a.id != caller.id and (a.id in caller.can_call or "*" in caller.can_call)]
-        return web.json_response([{"id": a.id, "name": a.name, "description": a.description,
-                                   "trust_class": a.trust_class} for a in allowed])
-
-    async def call(self, request: web.Request) -> web.Response:
-        caller = self.caller(request)
-        body = await request.json()
-        ok, text = await self.core.bus_call(caller, str(body.get("turn", "")), str(body.get("agent", "")),
-                                            str(body.get("text", "")))
-        return web.json_response({"ok": ok, "text": text})
-
-    async def archive_search(self, request: web.Request) -> web.Response:
-        caller = self.caller(request)
-        body = await request.json()
-        ok, text = await self.core.archive_search(caller, str(body.get("turn", "")), str(body.get("query", "")),
-                                                  str(body.get("scope") or ""), str(body.get("since") or ""),
-                                                  str(body.get("until") or ""))
-        return web.json_response({"ok": ok, "text": text})
-
-    async def reminders(self, request: web.Request) -> web.Response:
-        caller = self.caller(request)
-        body = await request.json()
-        ok, text = await self.core.reminders(caller, str(body.get("turn", "")), request.match_info["action"], body)
-        return web.json_response({"ok": ok, "text": text})
-
-    async def zone(self, request: web.Request) -> web.Response:
-        caller = self.caller(request)
-        body = await request.json()
-        if not self.core.proactive:
-            return web.json_response({"ok": False, "text": "Changing the time zone is not enabled in this router."})
-        ok, text = await self.core.proactive.zone_tool(caller, str(body.get("turn", "")), str(body.get("zone", "")))
-        return web.json_response({"ok": ok, "text": text})
-
-    async def plan(self, request: web.Request) -> web.Response:
-        caller = self.caller(request)
+        name = request.match_info["name"]
+        if name not in tools.TOOLS:
+            raise web.HTTPNotFound()
         body = await request.json()
         body = body if isinstance(body, dict) else {}
-        ok, text = await self.core.plan_tool(caller, str(body.get("turn", "")), request.match_info["action"], body)
-        return web.json_response({"ok": ok, "text": text})
-
-    async def attachment(self, request: web.Request) -> web.Response:
-        caller = self.caller(request)
-        body = await request.json()
-        try:
-            number = int(body.get("id") or 0)
-        except (TypeError, ValueError):
-            number = 0
-        ok, text, images = await self.core.get_attachment(caller, str(body.get("turn", "")), number)
-        return web.json_response({"ok": ok, "text": text, "images": [
-            {"mimeType": media_type, "data": base64.b64encode(data).decode()} for media_type, data in images]})
+        answer = await tools.run(self.core, caller, str(body.get("turn") or ""), name, body.get("arguments"))
+        said: dict = {"ok": answer.ok, "text": answer.text}
+        if answer.images:
+            said["images"] = [{"mimeType": media_type, "data": base64.b64encode(data).decode()}
+                              for media_type, data in answer.images]
+        return web.json_response(said)
 
     async def kb_log(self, request: web.Request) -> web.Response:
         caller = self.caller(request)
@@ -223,23 +179,3 @@ class BusServer:
         ok = await self.core.travel_log(caller, str(body.get("turn", "")), str(body.get("tool", "")),
                                         str(body.get("decision", "")), body.get("chars"), str(body.get("reason", "")))
         return web.json_response({"ok": ok, "text": "" if ok else "No active request."})
-
-    async def draft_reply(self, request: web.Request) -> web.Response:
-        caller = self.caller(request)
-        body = await request.json()
-        ok, text = await self.core.draft_reply(caller, str(body.get("turn", "")), body.get("draft"))
-        return web.json_response({"ok": ok, "text": text})
-
-    async def publish_trip(self, request: web.Request) -> web.Response:
-        caller = self.caller(request)
-        body = await request.json()
-        ok, text = await self.core.publish_trip(caller, str(body.get("turn", "")), body.get("trip"))
-        return web.json_response({"ok": ok, "text": text})
-
-    async def collections(self, request: web.Request) -> web.Response:
-        caller = self.caller(request)
-        body = await request.json()
-        body = body if isinstance(body, dict) else {}
-        ok, text = await self.core.collection_tool(caller, str(body.get("turn", "")), request.match_info["name"],
-                                                   body.get("arguments"))
-        return web.json_response({"ok": ok, "text": text})

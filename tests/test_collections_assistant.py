@@ -20,7 +20,7 @@ from retinue.core import DIGEST_AFTER, Core, _change_said
 from retinue.engine import bus_tools
 from retinue.protocol import Store
 from retinue.render import render_telegram
-from test_core import FakeChannel
+from test_core import FakeChannel, use
 from test_face import faced
 from test_platformd import ROUTER, short_wait  # noqa: F401 — the fixture is autouse
 
@@ -345,20 +345,20 @@ def test_her_call_is_named_by_its_arguments_within_her_turn(tmp_path):
         turn, later = core.turns.open_root("assistant"), core.turns.open_root("assistant")
         add = {"collection": "followups", "ops": [{"op": "add", "fields": {"note": "call back"}}]}
         for t in (turn, turn, later):
-            assert (await core.collection_tool(SHE, t.id, "apply", dict(add)))[0]
+            assert (await use(core, SHE, t.id, "collection_apply", **add))[0]
         assert sent[0]["call"] == sent[1]["call"] != sent[2]["call"], "a retry in the turn is the same call"
-        await core.collection_tool(SHE, turn.id, "propose", dict(add))
+        await use(core, SHE, turn.id, "collection_propose", **add)
         assert sent[3]["call"] != sent[0]["call"], "a proposal of the same is another call"
-        await core.collection_tool(SHE, turn.id, "apply", {**add, "idem": "add-1"})
+        await use(core, SHE, turn.id, "collection_apply", **add, idem="add-1")
         assert sent[4]["arguments"]["idem"] == f"{turn.id}:add-1", "her idem is hers within this turn"
 
         cal = "calendar:work@example.com/ev-1"
         mail = core.turns.open_root("assistant")
         mail.tree.foreign.add("mail")
         mail.tree.asked.update({cal, LETTER})
-        ok, _ = await core.collection_tool(SHE, mail.id, "apply", {"collection": "followups", "ops": [
-            {"op": "add", "fields": {"note": "meeting"}, "src": cal}, {"op": "add", "fields": {"note": "x"},
-                                                                      "src": LETTER}]})
+        ok, _ = await use(core, SHE, mail.id, "collection_apply", collection="followups", ops=[
+            {"op": "add", "fields": {"note": "meeting"}, "src": cal},
+            {"op": "add", "fields": {"note": "x"}, "src": LETTER}])
         assert ok and [o["src"] for o in sent[-1]["arguments"]["ops"]] == ["cal:work@example.com/ev-1", LETTER]
     asyncio.run(run())
 
@@ -430,20 +430,19 @@ def test_her_plan_moves_only_on_the_owner_s_own_word(tmp_path):
             turn = core.turns.open_root("assistant")
             turn.tree.owner = True
             turn.tree.foreign.add(mark)
-            ok, text = await core.plan_tool(SHE, turn.id, "move", move)
+            ok, text = await use(core, SHE, turn.id, "plan_move", **move)
             assert not ok and "in a message of his own" in text, mark
-            assert not (await core.plan_tool(SHE, turn.id, "hold", {"label": "Lunch", "minutes": 45}))[0], mark
-            assert not (await core.collection_tool(SHE, turn.id, "apply", dict(timed)))[0], mark
+            assert not (await use(core, SHE, turn.id, "plan_hold", label="Lunch", minutes=45))[0], mark
+            assert not (await use(core, SHE, turn.id, "collection_apply", **timed))[0], mark
         assert moved == [], "a forward saying «move it to Friday» moves nothing"
         alone = core.turns.open_root("assistant")  # the morning brief, a reminder's run: not his message
-        assert not (await core.plan_tool(SHE, alone.id, "estimate", {"task": move["task"], "minutes": 90}))[0]
+        assert not (await use(core, SHE, alone.id, "plan_estimate", task=move["task"], minutes=90))[0]
         his = core.turns.open_root("assistant")
         his.tree.owner = True
         his.tree.foreign.add("collection")
-        assert (await core.plan_tool(SHE, his.id, "move", move))[0], "his own records read back are his"
-        assert (await core.collection_tool(SHE, his.id, "apply", dict(timed)))[0]
-        assert (await core.plan_tool(SHE, "gone", "move", move))[0] is False, "no turn"
+        assert (await use(core, SHE, his.id, "plan_move", **move))[0], "his own records read back are his"
+        assert (await use(core, SHE, his.id, "collection_apply", **timed))[0]
         assert moved[0][1:5] == (move["task"], "2026-11-11", "evening", "") and len(moved) == 1
-        assert (await core.plan_tool(SHE, his.id, "hold", {"label": "Lunch", "minutes": 45}))[1] == "Lunch till 14:45."
+        assert (await use(core, SHE, his.id, "plan_hold", label="Lunch", minutes=45))[1] == "Lunch till 14:45."
         assert moved[1][:3] == ("Lunch", 45, "")
     asyncio.run(run())

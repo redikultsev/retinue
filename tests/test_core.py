@@ -15,6 +15,14 @@ from retinue.config import RouterAgent
 from retinue import clock
 from retinue.core import LIMITED, AgentFile, Button, Core, Reply, defuse, history_line
 from retinue.protocol import Store
+from retinue.tools import run as run_tool
+
+
+async def use(core, caller, turn_id, name, **arguments):
+    """A tool of the router's bus, called as her engine calls it (`tools.run`): (ok, text), and get_attachment's
+    pictures too."""
+    said = await run_tool(core, caller, turn_id, name, arguments)
+    return (said.ok, said.text, said.images) if name == "get_attachment" else (said.ok, said.text)
 
 
 class FakeChannel:
@@ -523,7 +531,7 @@ def test_a_found_question_comes_with_its_answer(tmp_path):
     pair("Посоветуй, что посмотреть в Энске за один день", "Вот маршрут: площадь, музей, рынок.", 14)
     pair("А где там поесть?", "В Энске — шашлык в Таверне Энск.", 15)
     turn = core.turns.open_root("assistant")
-    ok, text = asyncio.run(core.archive_search(core.agents["assistant"], turn.id, "Энск"))
+    ok, text = asyncio.run(use(core, core.agents["assistant"], turn.id, "search_archive", query="Энск"))
     assert ok and text.startswith("Found: 2"), text
     assert "Вот маршрут: площадь, музей, рынок." in text, "the answer, though it never names the city"
     assert "А где там поесть?" in text, "and the question an answer was given to"
@@ -1036,7 +1044,7 @@ def test_get_attachment_only_from_the_callers_own_conversations(tmp_path):
 
     async def run():
         turn = core.turns.open_root("assistant")
-        return [await core.get_attachment(assistant, turn.id, number) for number in (own, past, foreign)]
+        return [await use(core, assistant, turn.id, "get_attachment", id=number) for number in (own, past, foreign)]
 
     (ok_own, _, _), (ok_past, _, _), (ok_foreign, text, images) = asyncio.run(run())
     assert ok_own and ok_past, "this conversation and the caller's earlier ones"
@@ -1231,7 +1239,7 @@ def test_a_caption_found_by_the_search_is_named_a_retelling_of_someone_elses_fil
                               channel="tgb", native_id="777/10", ts=local(7, 14))
     archive.note(photo, event, "Зурбаган, площадь у собора: фонтан", run="mail-1", ts=local(7, 15))
     turn = core.turns.open_root("assistant")
-    ok, text = asyncio.run(core.archive_search(core.agents["assistant"], turn.id, "Зурбаган"))
+    ok, text = asyncio.run(use(core, core.agents["assistant"], turn.id, "search_archive", query="Зурбаган"))
     assert ok and "note:1 · 2026-10-07 15:00 UTC, Wednesday · Assistant's caption to someone else's file" in text, text
     assert "Telegram, caption to attachment #1" in text and "Зурбаган, площадь у собора: фонтан" in text
 
@@ -1312,7 +1320,7 @@ def test_a_search_in_a_run_someone_else_started_keeps_to_this_chat_unless_she_wi
     turn.tree.exchanges.add("chat:777")
 
     def search(query, **narrow):
-        return asyncio.run(core.archive_search(agent, turn.id, query, **narrow))
+        return asyncio.run(use(core, agent, turn.id, "search_archive", query=query, **narrow))
 
     ok, here = search("Зурбаган")
     assert ok and here.startswith("Found: 1 (searched: this thread), closest first.")
@@ -1334,7 +1342,7 @@ def test_a_search_in_a_run_someone_else_started_keeps_to_this_chat_unless_she_wi
     assert "wider — scope: mail (letters, calendar), owner (conversations with the owner), all" in nothing
 
     own = core.turns.open_root("assistant")
-    _, his = asyncio.run(core.archive_search(agent, own.id, "Зурбаган"))
+    _, his = asyncio.run(use(core, agent, own.id, "search_archive", query="Зурбаган"))
     assert "иску" in his and "Почта: Зурбаган" in his, "in his own conversation: everything, as before"
 
 
@@ -1347,7 +1355,7 @@ def test_a_file_from_a_chat_is_fetched_only_in_a_run_of_that_chat(tmp_path):
     here, there = world["photo"].meta["attachments"][0], world["other_photo"].meta["attachments"][0]
 
     async def get(turn, number):
-        return await core.get_attachment(agent, turn.id, number)
+        return await use(core, agent, turn.id, "get_attachment", id=number)
 
     ok, text, images = asyncio.run(get(run, here))
     assert ok and images == [("image/jpeg", b"j")] and "someone else's: Telegram, Пётр" in text

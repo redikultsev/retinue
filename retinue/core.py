@@ -33,6 +33,7 @@ from .bus import MAX_PARALLEL, MAX_TEXT, Denied, Turns, check
 from .config import RouterAgent
 from .protocol import Store
 from .scheduler import DIGEST, PRICE, REMINDER, RETRY, SUMMARY, WEEKLY, Job, Scheduler
+from .tools import Answer, Refused
 
 log = logging.getLogger("retinue.core")
 
@@ -1467,11 +1468,9 @@ class Core:
                                   + ". What was written is kept on the server.", origin=origin,
                                   conversation_id=told_in or context_id)
 
-    async def bus_call(self, caller: RouterAgent, turn_id: str, target_id: str, text: str) -> tuple[bool, str]:
-        """An agent asks another agent. The caller is authenticated by its bus token; the rest is checked here."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
-            return False, "No active request: agents can be asked only during an answer."
+    async def bus_call(self, caller: RouterAgent, turn, target_id: str, text: str) -> Answer:
+        """`ask_agent`: an agent asks another agent. The caller is authenticated by its bus token and asks in its own
+        turn (`tools.run`); the rest is checked here, and recorded here."""
         target = self.agents.get(target_id)
         tree = turn.tree
         try:
@@ -1480,7 +1479,7 @@ class Core:
             await self._trace(tree, f"⛔ **{caller.name} → {target.name if target else target_id}:** denied — {exc}")
             self.store.log(conversation_id=f"tree-{tree.id}", source=caller.id, target=target_id, status="denied",
                            input_chars=len(text), output_chars=0, channel="bus")
-            return False, f"Denied: {exc}."
+            return Answer(False, f"Denied: {exc}.")
         tree.calls += 1
         text = text[:MAX_TEXT]
         await self._trace(tree, f"**{caller.name} → {target.name}:**\n\n{text}", target.id)
@@ -1505,7 +1504,7 @@ class Core:
                        input_chars=len(text), output_chars=len(answer), channel="bus")
         await self._each(self.channels, "protocol",
                          f"bus: {caller.name} → {target.name}: {status}, {len(text)} → {len(answer)} characters")
-        return status == "done", answer
+        return Answer(status == "done", answer)
 
     def _days(self, since: str, until: str) -> tuple[float | None, float | None]:
         """The owner's days as a span: from the start of `since` to the end of `until`. ValueError for anything but
@@ -1522,27 +1521,22 @@ class Core:
         tree.reads.append({"id": event.id, "exchange": exchange_of(event),
                            "source": source if source in (MAIL, CALENDAR, CHAT) else "owner"})
 
-    async def archive_search(self, caller: RouterAgent, turn_id: str, query: str, scope: str = "", since: str = "",
-                             until: str = "") -> tuple[bool, str]:
-        """An agent searches the raw archive: only during its own turn and only with the `archive` grant.
-        An empty result names what the archive covers, so that «nothing» does not sound like a fact.
+    async def archive_search(self, caller: RouterAgent, turn, query: str, scope: str = "", since: str = "",
+                             until: str = "") -> Answer:
+        """`search_archive`: an agent searches the raw archive, in its own turn and with the `archive` grant
+        (`tools.run`). An empty result names what the archive covers, so that «nothing» does not sound like a fact.
 
         In a run somebody else's message started (a judgement of a chat or a letter) the search is that exchange
         unless she names a wider `scope`, and code leaves out, whatever the scope, the system's notices to the owner. In the owner's own turn it is everything, as it was."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
-            return False, "No active request: the archive can be searched only during an answer."
-        if not caller.archive:
-            return False, "Denied: this agent has not been granted archive search."
         tree = turn.tree
         others = bool(tree.exchanges)
         scope = scope.strip() or ("chat" if others else "all")
         if scope not in SCOPES:
-            return False, "Not done: scope is chat, owner, mail or all."
+            raise Refused("Not done: scope is chat, owner, mail or all.")
         try:
             start, end = self._days(since, until)
         except ValueError:
-            return False, "Not done: since and until are dates like 2026-10-09, in the owner's time."
+            raise Refused("Not done: since and until are dates like 2026-10-09, in the owner's time.") from None
         tree.foreign.add("archive")  # earlier messages: forwards and the system's words among them
         query = query.strip()[:MAX_QUERY]
         narrow: dict = {"since": start, "until": end}
@@ -1604,28 +1598,20 @@ class Core:
             lines.append("- other messengers, Telegram chats outside the chosen ones, files on the Mac and other "
                          "mailboxes are not collected.")
             text = "\n".join(lines)
-        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="archive", status="done",
-                       input_chars=len(query), output_chars=len(text), channel="bus")
-        return True, text
+        return Answer(True, text, chars=len(query))
 
-    async def get_attachment(self, caller: RouterAgent, turn_id: str,
-                             number: int) -> tuple[bool, str, list[tuple[str, bytes]]]:
-        """An agent asks for an attachment again by its number — after compaction the session keeps only «[image]».
-        Only during its own turn, only with the `attachments` grant, only what the owner sent in the caller's own
-        conversations. Returns the same pictures and text the turn had; a PDF cannot travel in a tool result, so its
-        text layer stands in."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
-            return False, "No active request: attachments can be fetched only during an answer.", []
-        if not caller.attachments:
-            return False, "Denied: this agent has not been granted attachments.", []
+    async def get_attachment(self, caller: RouterAgent, turn, number: int) -> Answer:
+        """`get_attachment`: an agent asks for an attachment again by its number — after compaction the session keeps
+        only «[image]». In its own turn and with the `attachments` grant (`tools.run`), only what the owner sent in
+        the caller's own conversations. Returns the same pictures and text the turn had; a PDF cannot travel in a tool
+        result, so its text layer stands in."""
         attachment = self.archive.attachment(number)
         event = self.archive.get(attachment.event_id) if attachment else None
         # The owner's own files in his conversations; somebody's file only in a run of that very exchange.
         if attachment is None or event is None or not (
                 (event.kind == OWNER and self.store.belongs(event.conversation_id, caller.id))
                 or (event.kind in (CHAT, MAIL) and exchange_of(event) in turn.tree.exchanges)):
-            return False, f"There is no attachment #{number}.", []
+            raise Refused(f"There is no attachment #{number}.")
         turn.tree.foreign.add("attachment")
         self._read(turn.tree, event)
         stored = self.archive.read(attachment)
@@ -1639,76 +1625,7 @@ class Core:
             lines.append(attachment.text)
         if attachment.files and not stored:
             lines.append("The attachment's file is gone from the router's disk.")
-        text = "\n".join(lines)
-        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="attachments/get",
-                       status="done", input_chars=0, output_chars=len(text), channel="bus")
-        return True, text, images
-
-    async def reminders(self, caller: RouterAgent, turn_id: str, action: str, args: dict) -> tuple[bool, str]:
-        """An agent sets, lists, cancels or moves the owner's reminders: only during its own turn and only with the
-        `reminders` grant. Every check of the time — the format, the weekday, the past, a repeat — is made in code."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
-            return False, "No active request: reminders can be set only during an answer."
-        if not caller.reminders:
-            return False, "Denied: this agent has not been granted reminders."
-        now, when, weekday = time.time(), str(args.get("when", "")), str(args.get("weekday", ""))
-        try:
-            job_id = int(args.get("id") or 0)
-        except (TypeError, ValueError):
-            job_id = 0
-        if action == "add":
-            ok, text = self.jobs.add(str(args.get("text", "")), when, weekday, now, str(args.get("repeat") or ""))
-        elif action == "list":
-            ok, text = True, self.jobs.listing()
-        elif action == "cancel":
-            ok, text = self.jobs.cancel(job_id)
-        elif action == "move":
-            ok, text = self.jobs.move(job_id, when, weekday, now)
-        else:
-            return False, f"No such reminder action: {action}."
-        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target=f"reminders/{action}",
-                       status="done" if ok else "rejected", input_chars=len(str(args.get("text", ""))),
-                       output_chars=len(text), channel="bus")
-        return ok, text
-
-    async def publish_trip(self, caller: RouterAgent, turn_id: str, trip) -> tuple[bool, str]:
-        """An agent publishes a trip page among the owner's pages: only during its own turn and with the `trips` grant. What
-        she sends is checked and looked up in travel-ops by code (`Pages.publish`); the answer has the address."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
-            return False, "No active request: a page can be published only during an answer."
-        if not caller.trips:
-            return False, "Denied: this agent has not been granted trip publishing."
-        if not self.pages:
-            return False, "Pages are not connected: there will be no page. Answer the owner without a link."
-        ok, text = await self.pages.publish(trip, self.travel, time.time())
-        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="trips/publish",
-                       status="done" if ok else "rejected", input_chars=len(json.dumps(trip, ensure_ascii=False)),
-                       output_chars=len(text), channel="bus")
-        await self._each(self.channels, "protocol",
-                         f"pages: {caller.name} → trip page: {'published' if ok else 'refused'}")
-        return ok, text
-
-    async def draft_reply(self, caller: RouterAgent, turn_id: str, args) -> tuple[bool, str]:
-        """An agent proposes a reply to a person: only during its own turn and with the `drafts` grant. Code builds the
-        envelope from the archive and shows the owner the card (`Outbox.propose`); nothing leaves without his press.
-        Whether someone else's words started the run, the router knows — not her: the turn's mark of foreign text."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
-            return False, "No active request: a draft can be proposed only during an answer."
-        if not caller.drafts:
-            return False, "Denied: this agent has not been granted drafts."
-        if not self.outbox:
-            return False, ("Sending to people is not connected: there will be no draft. Give the owner the text in "
-                           "your answer.")
-        ok, text = await self.outbox.propose(args, set(turn.tree.foreign), self.outbox.clock(),
-                                             reads=list(turn.tree.reads), others=bool(turn.tree.exchanges))
-        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target="courier/draft",
-                       status="done" if ok else "rejected", input_chars=len(json.dumps(args, ensure_ascii=False)),
-                       output_chars=len(text), channel="bus")
-        await self._each(self.channels, "protocol", f"courier: {caller.name} → draft: {'card' if ok else 'refused'}")
-        return ok, text
+        return Answer(True, "\n".join(lines), chars=0, images=images)
 
     def _signed(self, ts: float) -> None:
         """The owner was here: the day plan counts what passed by it (`planner.Planner.sign`)."""
@@ -1726,16 +1643,9 @@ class Core:
             except Exception:
                 log.exception("the turn's plan line not told")
 
-    async def plan_tool(self, caller: RouterAgent, turn_id: str, action: str, args: dict) -> tuple[bool, str]:
+    async def plan_tool(self, turn, action: str, args: dict) -> Answer:
         """`plan_move`, `plan_estimate` and `plan_hold`: the plan changed on the owner's word only — his own message, nobody else's
         text in the turn (`_owner_word`). Code moves it (`Planner`), never her write to `blocks`."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
-            return False, "No active request: the plan is changed only during an answer."
-        if not caller.collections:
-            return False, "Denied: this agent has not been granted the owner's collections."
-        if getattr(self, "planner", None) is None or self.platform is None:
-            return False, "The plan is not enabled in this router: say in your answer what to move."
         if refusal := _owner_word(turn.tree):
             ok, text = False, refusal
         elif action == "move":
@@ -1753,48 +1663,34 @@ class Core:
             ok, text = await self.planner.estimate(turn.id, str(args.get("task") or ""),
                                                    minutes if type(minutes) is int and minutes else None,
                                                    str(args.get("due") or ""), time.time(), str(args.get("by") or ""))
-        self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target=f"plan/{action}",
-                       status="done" if ok else "rejected", input_chars=len(json.dumps(args, ensure_ascii=False)),
-                       output_chars=len(text), channel="bus")
-        await self._each(self.channels, "protocol", f"plan: {caller.name} → {action}: {'done' if ok else 'refused'}")
-        return ok, text
+        return Answer(ok, text)
 
-    async def collection_tool(self, caller: RouterAgent, turn_id: str, name: str, arguments) -> tuple[bool, str]:
-        """An agent reads or writes the owner's collections: only during its own turn and with the `collections`
-        grant. The platform checks every right; the router names who writes and what the turn read — the agent, by
-        mail when it judges mail, with the turn's marks of someone else's text — and nothing the model says changes
-        that. A judgement of a chat writes nothing; one of mail names, in every operation, the letter it comes from,
-        so the same letter read again changes nothing more. A record someone else's text wrote marks the turn."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
-            return False, "No active request: the collections are read and written only during an answer."
-        if not caller.collections:
-            return False, "Denied: this agent has not been granted the owner's collections."
-        if self.platform is None:
-            return False, ("The platform is not connected: there are no collections here. Say in your answer what "
-                           "should be recorded.")
-        if not isinstance(arguments, dict):
-            return False, "Not done: the tool's arguments are an object."
+    async def collection_tool(self, turn, name: str, arguments: dict) -> Answer:
+        """An agent reads or writes the owner's collections, in its own turn and with the `collections` grant
+        (`tools.run`). The platform checks every right; the router names who writes and what the turn read — the
+        agent, by mail when it judges mail, with the turn's marks of someone else's text — and nothing the model says
+        changes that. A judgement of a chat writes nothing; one of mail names, in every operation, the letter it comes
+        from, so the same letter read again changes nothing more. A record someone else's text wrote marks the turn."""
         tree, writes = turn.tree, name in ("apply", "propose")
         if writes and "telegram" in tree.foreign:
-            return False, ("A judgement of a chat message writes nothing to the collections: say in your answer what "
-                           "should be recorded.")
+            raise Refused("A judgement of a chat message writes nothing to the collections: say in your answer what "
+                          "should be recorded.")
         mail = "mail" in tree.foreign
         if writes and mail:
             ops = arguments.get("ops")
             if not isinstance(ops, list) or not ops or \
                     any(not isinstance(op, dict) or op.get("src") not in tree.asked for op in ops):
-                return False, ("Not done: from mail, every operation names the item it comes from — src is its "
-                               "archive id: " + ", ".join(sorted(tree.asked)) + ".")
+                raise Refused("Not done: from mail, every operation names the item it comes from — src is its "
+                              "archive id: " + ", ".join(sorted(tree.asked)) + ".")
             # The archive names a calendar item `calendar:`, the collections' `src` `cal:`.
             arguments = {**arguments, "ops": [{**op, "src": re.sub(r"^calendar:", "cal:", op["src"])} for op in ops]}
         if name == "apply" and arguments.get("collection") == TASKS and tree.foreign and _closes(arguments.get("ops")):
-            return False, ("Not done: a task is closed on the owner's own word, and this turn read someone else's "
-                           f"text ({', '.join(FOREIGN.get(f, f) for f in sorted(tree.foreign))}). Say in your answer "
-                           "that it looks done; he closes it with «Done», or propose it with collection_propose.")
+            raise Refused("Not done: a task is closed on the owner's own word, and this turn read someone else's "
+                          f"text ({', '.join(FOREIGN.get(f, f) for f in sorted(tree.foreign))}). Say in your answer "
+                          "that it looks done; he closes it with «Done», or propose it with collection_propose.")
         if name == "apply" and arguments.get("collection") == TASKS and _times(arguments.get("ops")) and \
                 (refusal := _owner_word(tree)):
-            return False, refusal
+            raise Refused(refusal)
         if isinstance(arguments.get("idem"), str):
             arguments = {**arguments, "idem": f"{turn.id}:{arguments['idem']}"}  # hers to name within this turn alone
         # The call's name is its arguments' within the turn: the same call made again — a retry — writes once.
@@ -1811,21 +1707,14 @@ class Core:
                                "should be recorded.")
         if ok and data.get("foreign"):
             tree.foreign.add("collection")
-        self.store.log(conversation_id=f"tree-{tree.id}", source=caller.id, target=f"collections/{name}",
-                       status="done" if ok else "rejected", input_chars=len(json.dumps(arguments, ensure_ascii=False)),
-                       output_chars=len(text), channel="bus")
-        if writes:
-            await self._each(self.channels, "protocol",
-                             f"collections: {caller.name} → {name}: {'done' if ok else 'refused'}")
-        return ok, text
+        return Answer(ok, text, chars=len(json.dumps(arguments, ensure_ascii=False)))
 
     async def travel_log(self, caller: RouterAgent, turn_id: str, tool: str, decision: str, chars,
                          reason: str = "") -> bool:
         """The engine's guard decided on a call the agent makes to travel-ops itself (its own MCP server): a
         protocol line for every search and every refusal, with the reason where the protocol is shown. Only
         during the agent's own turn; what the agent's container says is a record, not a command."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
+        if (turn := self.turns.of(caller.id, turn_id)) is None:
             return False
         tool = re.sub(r"[^A-Za-z_]", "", tool)[:40]
         status = "allowed" if decision == "allow" else "denied"
@@ -1842,8 +1731,7 @@ class Core:
                      reason: str = "") -> bool:
         """The engine's guard decided on a file tool call in the knowledge base: a protocol line `kb/<tool>` with the
         path, and the reason of a refusal. Only during the agent's own turn; a record, not a command."""
-        turn = self.turns.turns.get(turn_id)
-        if turn is None or turn.agent_id != caller.id:
+        if (turn := self.turns.of(caller.id, turn_id)) is None:
             return False
         tool = re.sub(r"[^A-Za-z_]", "", tool)[:20]
         status = "allowed" if decision == "allow" else "denied"

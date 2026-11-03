@@ -1,8 +1,8 @@
 """Raw archive: the verbatim record of everything said to the owner and by the owner. Append-only, searchable.
 
 It lives in the router process, in its own SQLite file. Agents never get the file: they search it through the
-router's bus (`POST /archive/search`), the same way they ask each other. A status is a new event that refers to
-an older one (`ref`), never an edit of a row.
+router's bus (`search_archive` in `retinue/tools.py`), the same way they ask each other. A status is a new event that
+refers to an older one (`ref`), never an edit of a row.
 
 What the owner sent besides text is kept next to it: the `attachments` table says what the model got from each
 file (the number `#N` it sees, a transcript or a document's text), and the files it got as content blocks (a JPEG,

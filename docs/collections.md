@@ -411,7 +411,7 @@ for a write its rights left to the owner, `needs`, their words.
 The assistant has the same four tools (`collection_describe`, `collection_query`, `collection_apply`,
 `collection_propose`), with the same schemas and words, as tools of the router's bus (`bus_tools` in
 `agents/assistant/agent.yaml`, the `collections` grant in `router.yaml`). Each goes engine → the router's
-`/collections/<name>` → the platform's `POST /owner/collections/<name>`, behind the router's token. Apart from a task's
+`/tools/<name>` → the platform's `POST /owner/collections/<name>`, behind the router's token. Apart from a task's
 time on the owner's word ([Blocks](#blocks)), there is no gate on her tools: the platform alone decides, by the collection's `rights` for the class `assistant` — which give her nothing
 until the owner gives her some.
 

@@ -414,7 +414,7 @@ def test_someone_elses_text_marks_every_commit_of_the_session_that_read_it(kb, t
     from retinue.core import Core, Reply
     from retinue.protocol import Store
 
-    from test_core import AGENT, FakeChannel, drain
+    from test_core import AGENT, FakeChannel, drain, use
 
     memory, hub, _ = kb
     agent = dataclasses.replace(AGENT, archive=True)
@@ -422,7 +422,7 @@ def test_someone_elses_text_marks_every_commit_of_the_session_that_read_it(kb, t
 
     async def fake_ask(url, text, context_id, on_progress=None, turn_id=None, control=None, **extra):
         if "найди" in text:
-            await core.archive_search(agent, turn_id, "отчёт")
+            await use(core, agent, turn_id, "search_archive", query="отчёт")
         if "запиши" in text:
             number = next(count)
             (memory.tree / f"notes/knowledge/n{number}.md").write_text(RECORD.format(id=f"n{number}", who="А", body="Б."))

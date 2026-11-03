@@ -16,6 +16,7 @@ from retinue.config import EngineConfig, RouterAgent
 from retinue.core import Core
 from retinue.engine import SESSION_LOST, TOO_LARGE, UNREADABLE, UNREADABLE_NOTE, ClaudeEngine, bus_tools
 from retinue.protocol import Store
+from retinue.tools import Answer
 
 from test_core import FakeChannel
 
@@ -882,26 +883,28 @@ def test_draft_reply_reaches_the_router_and_answers_what_the_owner_will_see(tmp_
 def test_the_search_tool_takes_a_scope_and_dates_and_the_router_gets_them(tmp_path, monkeypatch):
     seen = {}
 
-    async def fake(self, caller, turn_id, query, scope="", since="", until=""):
-        seen.update(turn=turn_id, query=query, scope=scope, since=since, until=until)
-        return True, "Найдено: 0"
+    async def fake(self, caller, turn, query, scope="", since="", until=""):
+        seen.update(turn=turn.id, query=query, scope=scope, since=since, until=until)
+        return Answer(True, "Найдено: 0")
 
     monkeypatch.setattr(Core, "archive_search", fake)
 
     async def run():
         agent = RouterAgent(id="assistant", name="Assistant", url="a", trust_class="private", archive=True)
         core = Core([agent], Store(str(tmp_path / "r.sqlite")), "owner")
+        turn = core.turns.open_root("assistant")
         server = TestServer(BusServer(core, "secret", 0).app)
         await server.start_server()
         try:
-            tool = bus_tools(str(server.make_url("")).rstrip("/"), bus_token("secret", "assistant"), "turn-1")[
+            tool = bus_tools(str(server.make_url("")).rstrip("/"), bus_token("secret", "assistant"), turn.id)[
                 "search_archive"]
             await tool.handler({"query": "Зурбаган", "scope": "mail", "since": "2026-10-01", "until": "2026-10-12"})
-            return tool
+            return tool, turn.id
         finally:
             await server.close()
 
-    tool = asyncio.run(run())
-    assert seen == {"turn": "turn-1", "query": "Зурбаган", "scope": "mail", "since": "2026-10-01", "until": "2026-10-12"}
+    tool, turn_id = asyncio.run(run())
+    assert seen == {"turn": turn_id, "query": "Зурбаган", "scope": "mail", "since": "2026-10-01",
+                    "until": "2026-10-12"}
     assert tool.input_schema["required"] == ["query"]
     assert tool.input_schema["properties"]["scope"]["enum"] == ["chat", "owner", "mail", "all"]

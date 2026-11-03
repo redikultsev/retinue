@@ -26,6 +26,7 @@ import {
   type Plan,
   placed,
   planDay,
+  shorts,
   windowOf,
 } from "@/lib/plan";
 import { cn } from "@/lib/utils";
@@ -335,6 +336,7 @@ function PlanBar({ plan, first, today, unplanned, nav }: {
   nav: { title: string; go: (to: "prev" | "next" | "today") => void };
 }) {
   const own = lastOwn(plan);
+  const short = [...shorts(plan, today)];
   const s = plan.plan.said;
   const said = s?.text && (s.at ?? 0) > plan.now - 600 ? s.text : null;
   const age = plan.calendar.at ? Math.round((plan.now - plan.calendar.at) / 60) : null;
@@ -385,6 +387,11 @@ function PlanBar({ plan, first, today, unplanned, nav }: {
           </button>
         </div>
       </div>
+      {short.length > 0 && (
+        <Link to="/today" search={{ tab: "tasks" }} className="w-fit text-xs text-destructive hover:underline">
+          Short before the deadline: {short.map(([, x]) => `${x.title} ${duration(x.minutes)}`).join(", ")}
+        </Link>
+      )}
       {said && <p className="text-xs text-muted-foreground">{said}</p>}
     </div>
   );

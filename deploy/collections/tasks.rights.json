@@ -6,6 +6,7 @@
         "title",
         "goal",
         "due",
+        "by",
         "minutes",
         "notes",
         "state",

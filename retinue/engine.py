@@ -232,14 +232,17 @@ def bus_tools(bus_url: str, bus_token: str, turn_id: str) -> dict:
         return await plan("move", {k: args[k] for k in ("task", "day", "part", "at", "named") if k in args})
 
     @tool("plan_estimate",
-          "Set how long a task takes (minutes) or the day it is due by (due, YYYY-MM-DD) when the owner says it in "
-          "his own message («the homework takes two hours», «the report is due Friday»). task — its id from "
-          "collection_query. The plan lays the time again by itself; it goes under the turn's «Undo» with the moves.",
+          "Set how long a task takes (minutes), the day it is due by (due, YYYY-MM-DD) or the moment it must be done "
+          "by (by, his local time YYYY-MM-DDTHH:MM: «before the lesson at 19:00 on Thursday») when the owner says it "
+          "in his own message («the homework takes two hours», «the report is due Friday»). task — its id from "
+          "collection_query. No piece of it is then laid to end after by. The plan lays the time again by itself; "
+          "it goes under the turn's «Undo» with the moves.",
           {"type": "object", "properties": {
-              "task": {"type": "string"}, "minutes": {"type": "integer"}, "due": {"type": "string"}},
+              "task": {"type": "string"}, "minutes": {"type": "integer"}, "due": {"type": "string"},
+              "by": {"type": "string"}},
            "required": ["task"]})
     async def plan_estimate(args):
-        return await plan("estimate", {k: args[k] for k in ("task", "minutes", "due") if k in args})
+        return await plan("estimate", {k: args[k] for k in ("task", "minutes", "due", "by") if k in args})
 
     @tool("get_attachment",
           "Get again what the owner sent, by the number from the mark [attachment #N: …]. After compaction the "

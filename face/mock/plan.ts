@@ -18,6 +18,7 @@ const FORM = {
   goal: { type: "enum", values: GOALS.map((g) => g.value), labels: Object.fromEntries(GOALS.map((g) => [g.value, g.label])) },
   state: { type: "enum", values: ["open", "done", "dropped"], required: true, labels: { open: "Open", done: "Done", dropped: "Dropped" } },
   due: { type: "date" },
+  by: { type: "instant" },
   minutes: { type: "int" },
   ask: { type: "text", hide: true },
   notes: { type: "text" },
@@ -53,7 +54,7 @@ add({ title: "Book the dentist", goal: "health", minutes: 15 });
 add({ title: "Ask Ivan for the soup recipe", minutes: 15 });
 const pay = add({ title: "Pay the hosting invoice", goal: "home", minutes: 15, ask: "letter:2" });
 const guitar = add({ title: "Practise the guitar piece", goal: "study", minutes: 90, due: day(1) });
-const report = add({ title: "Write the quarterly report, first half", goal: "work", minutes: 120 });
+const report = add({ title: "Write the quarterly report, first half", goal: "work", minutes: 120, by: iso(wall(2, 18, 0)) });
 const domain = add({ title: "Renew the domain", goal: "home", minutes: 15, state: "done" });
 
 interface Blk { id: string; fields: Fields; version: number }
@@ -65,9 +66,13 @@ function block(task: Rec, start: number, minutes: number, extra: Fields = {}): B
 }
 block(pay, wall(0, 18, 0), 15, { why: "overdue" });
 block(guitar, wall(1, 17, 30), 90, { locked: true });
-block(report, wall(2, 19, 0), 90);
+const half = block(report, wall(2, 14, 0), 90);
 block(domain, wall(0, 9, 0), 15, { state: "passed" });
-const plans: Record<string, unknown> = {};
+const plans: Record<string, unknown> = {
+  // Of the report's two hours only ninety fit before 18:00 that day: the plan says what is short.
+  [day(2)]: { id: "p0000000001", at: now(), blocks: [half.id], left: [], undone: false, failed: false,
+              short: [{ task: report.id, title: String(report.fields.title), minutes: 30 }] },
+};
 const recent: { id: string; by: "owner" | "assistant"; at: number; undone: boolean; failed: boolean }[] = [];
 const holds: { from: number; to: number; label: string }[] = [];
 let said: { at?: number; text?: string; day?: string } = {};

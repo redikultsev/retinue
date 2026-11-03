@@ -97,7 +97,10 @@ def clean_plan(body: object, now: float) -> dict:
         left = [{"task": str(x.get("task") or "")[:26], "title": line(str(x.get("title") or ""), 120),
                  "why": line(str(x.get("why") or ""), 120)} for x in entry.get("left") or [] if isinstance(x, dict)][:50]
         blocks = entry.get("blocks") or {}
-        kept[day] = {"id": str(entry.get("id") or "")[:12], "at": float(entry.get("at") or 0), "left": left,
+        short = [{"task": str(x.get("task") or "")[:26], "title": line(str(x.get("title") or ""), 120),
+                  "minutes": int(x["minutes"])} for x in entry.get("short") or []
+                 if isinstance(x, dict) and type(x.get("minutes")) is int and 0 < x["minutes"] <= 100_000][:50]
+        kept[day] = {"id": str(entry.get("id") or "")[:12], "at": float(entry.get("at") or 0), "left": left, "short": short,
                      "blocks": sorted(k for k in blocks if isinstance(k, str) and ID.fullmatch(k))[:200],
                      "undone": bool(entry.get("undone")), "failed": bool(entry.get("failed"))}
     recent = [{"id": str(p["id"]), "by": p.get("by") if p.get("by") in ("owner", "assistant") else "owner",

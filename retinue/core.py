@@ -1715,7 +1715,7 @@ class Core:
             minutes = args.get("minutes")
             ok, text = await self.planner.estimate(turn.id, str(args.get("task") or ""),
                                                    minutes if type(minutes) is int and minutes else None,
-                                                   str(args.get("due") or ""), time.time())
+                                                   str(args.get("due") or ""), time.time(), str(args.get("by") or ""))
         self.store.log(conversation_id=f"tree-{turn.tree.id}", source=caller.id, target=f"plan/{action}",
                        status="done" if ok else "rejected", input_chars=len(json.dumps(args, ensure_ascii=False)),
                        output_chars=len(text), channel="bus")
@@ -1882,9 +1882,9 @@ def _closes(ops: object) -> bool:
 
 
 def _times(ops: object) -> bool:
-    """Whether apply's operations change an existing task's time: a set that gives `due` or `minutes`."""
+    """Whether apply's operations change an existing task's time: a set that gives `due`, `by` or `minutes`."""
     return isinstance(ops, list) and any(isinstance(op, dict) and op.get("op") == "set" and isinstance(op.get("fields"), dict)
-                                         and ({"due", "minutes"} & op["fields"].keys()) for op in ops)
+                                         and ({"due", "by", "minutes"} & op["fields"].keys()) for op in ops)
 
 
 # Someone else's text that keeps a turn off the owner's plan: «move it to Friday» in a letter, a forward, a file, an

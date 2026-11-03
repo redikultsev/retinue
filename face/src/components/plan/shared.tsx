@@ -17,12 +17,14 @@ import {
   hm,
   iso,
   minutesOf,
+  moment,
   nextBlock,
   type Placed,
   type Plan,
   planApi,
   planDay,
   type Press,
+  shorts,
   type Task,
   type TaskFields,
 } from "@/lib/plan";
@@ -112,7 +114,15 @@ export function TaskMeta({ plan, task, today }: { plan: Plan; task: Task; today:
   const bits: React.ReactNode[] = [];
   if (goalLabel(plan.tasks.goals, task.fields.goal)) bits.push(<Goal key="g" plan={plan} goal={task.fields.goal} />);
   bits.push(<span key="m">{duration(minutesOf(task))}</span>);
-  if (due) bits.push(<span key="d" className={cn(late && "text-destructive")}>by {dayWords(due, today, true)}</span>);
+  const by = moment(task.fields.by);
+  if (by !== null) {
+    const missed = by <= plan.now && task.fields.state === "open";
+    bits.push(<span key="b" className={cn(missed && "text-destructive")}>
+      {missed ? "missed " : "by "}{dayWords(dayOf(by, plan.tz), today, true)} {hm(by, plan.tz)}
+    </span>);
+  } else if (due) bits.push(<span key="d" className={cn(late && "text-destructive")}>by {dayWords(due, today, true)}</span>);
+  const short = shorts(plan, today).get(task.id);
+  if (short) bits.push(<span key="s" className="text-destructive">short {duration(short.minutes)}</span>);
   if (task.fields.ask) bits.push(<span key="a">from {task.fields.ask.startsWith("reminder:") ? "a reminder" : "a message"}</span>);
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">

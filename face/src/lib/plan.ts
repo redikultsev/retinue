@@ -12,6 +12,8 @@ export interface TaskFields {
   goal?: string;
   state?: "open" | "done" | "dropped";
   due?: string;
+  /** «No later than»: no piece of it is laid to end after this moment. */
+  by?: string;
   minutes?: number;
   ask?: string;
   notes?: string;
@@ -60,6 +62,8 @@ export interface DayPlan {
   id: string;
   at: number;
   left: { task: string; title: string; why: string }[];
+  /** What the plan could not fit before a task's deadline in this window: minutes still missing. */
+  short?: { task: string; title: string; minutes: number }[];
   blocks: string[];
   undone: boolean;
   failed: boolean;
@@ -320,4 +324,17 @@ export function goalLabel(goals: Plan["tasks"]["goals"], goal: string | undefine
 /** The asks and reminders a task already names: they need no «Make it a task» again. */
 export function named(plan: Plan): Set<string> {
   return new Set(plan.tasks.rows.filter((t) => t.fields.state === "open" && t.fields.ask).map((t) => t.fields.ask as string));
+}
+
+/** What the plans from `today` on say is short before the deadline, by task: its minutes still missing. */
+export function shorts(plan: Plan, today: string): Map<string, { title: string; minutes: number }> {
+  const out = new Map<string, { title: string; minutes: number }>();
+  for (const [day, p] of Object.entries(plan.plan.plans)) {
+    if (day < today || p.undone) continue;
+    for (const x of p.short ?? []) {
+      const open = plan.tasks.rows.some((t) => t.id === x.task && t.fields.state === "open");
+      if (open && (out.get(x.task)?.minutes ?? 0) < x.minutes) out.set(x.task, { title: x.title, minutes: x.minutes });
+    }
+  }
+  return out;
 }

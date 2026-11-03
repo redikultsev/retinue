@@ -6,6 +6,8 @@ and the tests all run the same code.
   (`plan_hours`, `plan_zone`), fixed whatever zone he travels to, since his work and his sleep keep that clock. One that
   closes after midnight belongs to the day it opened on. The window a plan is for is the one he is in while at least an
   hour of it is left, else the next one.
+- **«No later than»** (`by`, a moment): no piece of a task ends after it while it is ahead; once it has passed the
+  task is overdue — first in the order, laid anywhere — rather than gone.
 - **Busy** is what the caller says keeps him busy — his meetings (each with BUFFER_S after it), his holds, the blocks
   already standing — plus everything before the next quarter hour.
 - **The order** is code's: what is overdue or due on the window's day first, then by due date, then the shorter, then
@@ -75,6 +77,7 @@ class Task:
     planned: int = 0       # minutes its pieces still planned in other windows hold
     locked: int = 0        # minutes of its pieces ahead the owner put or stretched himself, in any window
     owned: bool = False    # every piece of it ahead is the owner's own: he laid its time, the plan lays none
+    by: float | None = None  # «no later than»: no piece of it ends after this moment, while it is ahead
 
 
 @dataclass
@@ -183,9 +186,11 @@ def lay(window: Window, now: float, busy: list[tuple[float, float]], pieces: lis
         if not (need := left_s(task)):
             continue
         length = piece_s(need)
-        at = first_free(start, window.end, length, taken, standing)
+        end = window.end if task.by is None or task.by <= now else min(window.end, task.by)
+        at = first_free(start, end, length, taken, standing)
         if at is None:
-            out.left.append((task.id, f"no free {length // 60} min before the window ends"))
+            out.left.append((task.id, f"no free {length // 60} min before the window ends" if end == window.end
+                             else f"no free {length // 60} min before its deadline"))
             continue
         out.placed.append((task.id, at, length // 60))
         taken.append((at, at + length))

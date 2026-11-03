@@ -317,3 +317,23 @@ def test_her_move_keeps_off_meetings_and_his_own_pieces_and_lays_a_new_piece_whe
         await planner.turn_done("t2")
         assert len(told) == 1 and told[0].count("→") == 1 and "Call the bank: Wed 11 Nov 00:30, 30 min" in told[0]
     faced(tmp_path, run)
+
+
+def test_a_task_with_no_later_than_is_laid_before_it_and_what_does_not_fit_is_said_short(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        homework = await add(world, title="English homework", minutes=120, by=iso(msk(10, "19:00")))
+        said = await planner.plan(msk(10, "17:00"))
+        [laid] = await blocks(world)
+        assert (hm(laid["fields"]["start"]), laid["fields"]["minutes"]) == ("17:00", 90), "one piece, before the lesson"
+        assert laid["fields"]["why"] == "due today", "its day is the day of its «no later than»"
+        assert said.endswith("Short before the deadline: English homework 0 h 30."), said
+        [day] = world.platform.plan.plan_state()["plans"].values()
+        assert day["short"] == [{"task": homework["id"], "title": "English homework", "minutes": 30}]
+        ok, text = await planner.estimate("t3", homework["id"], None, "", msk(10, "17:05"), "2026-11-12T18:00")
+        assert ok and "no later than Thu 12 Nov 18:00" in text, text
+        task = await world.platform.collections.get("tasks", homework["id"])
+        assert task["fields"]["by"] == iso(msk(12, "18:00"))
+        assert not (await planner.estimate("t3", homework["id"], None, "", msk(10, "17:05"), "Thursday"))[0]
+    faced(tmp_path, run)

@@ -170,6 +170,7 @@ class Planner:
             if p is None:
                 continue
             out[day] = {"id": p["id"], "at": p.get("at", 0), "left": (p.get("left") or {}).get(day, []),
+                        "short": (p.get("short") or {}).get(day, []),
                         "blocks": {b: r.get("version") for b, r in (p.get("blocks") or {}).items() if r.get("day") == day},
                         "failed": bool(p.get("failed")), "undone": False}
         return out
@@ -220,7 +221,7 @@ class Planner:
         """The open tasks, the window's blocks, the minutes each task's passed pieces counted and the minutes its
         pieces planned in other windows hold. None: unread."""
         tasks = await self._rows(TASKS, [{"field": "state", "op": "eq", "value": "open"}],
-                                 ["title", "minutes", "due"])
+                                 ["title", "minutes", "due", "by"])
         blocks = await self._rows(BLOCKS, [{"field": "state", "op": "in", "value": ["planned", "passed"]},
                                            {"field": "start", "op": "between",
                                             "value": [iso(window.start - 86400), iso(window.end)]}])
@@ -269,16 +270,24 @@ class Planner:
         start = moment(block["fields"].get("start")) or 0.0
         return start, start + int(block["fields"].get("minutes") or 0) * 60
 
-    @staticmethod
-    def _task(row: dict, counted: tuple) -> L.Task:
+    def _task(self, row: dict, counted: tuple) -> L.Task:
+        """A task as the layout sees it: its due day the earlier of `due` and the day of its «no later than»."""
         f = row["fields"]
         done, elsewhere, locked, owned = counted
+        by = moment(f.get("by")) if f.get("by") else None
+        due = _day(f.get("due")) if f.get("due") else None
+        if by is not None:
+            from zoneinfo import ZoneInfo
+            on = datetime.fromtimestamp(by, ZoneInfo(self.hours.zone)).date()
+            due = min(due, on) if due else on
         return L.Task(row["id"], f.get("minutes") if isinstance(f.get("minutes"), int) else None,
-                      done.get(row["id"], 0), _day(f.get("due")) if f.get("due") else None, float(row.get("created") or 0),
-                      elsewhere.get(row["id"], 0), locked.get(row["id"], 0), row["id"] in owned)
+                      done.get(row["id"], 0), due, float(row.get("created") or 0),
+                      elsewhere.get(row["id"], 0), locked.get(row["id"], 0), row["id"] in owned, by)
 
     @staticmethod
-    def _why(task: L.Task, window: L.Window) -> str:
+    def _why(task: L.Task, window: L.Window, now: float | None = None) -> str:
+        if task.by is not None and now is not None and task.by <= now:
+            return "missed its deadline"
         if task.due is None:
             return ""
         if task.due < window.day:
@@ -303,6 +312,7 @@ class Planner:
                               "left": {}}
             self._keep_plans(plans, now)
             said: list[str] = []
+            shorts: list[dict] = []
             failed = False
             for n in range(max(1, min(days, 7))):
                 window = first if n == 0 else L.window_of(first.day + timedelta(days=n), self.hours)
@@ -323,7 +333,7 @@ class Planner:
                 key = window.day.isoformat()
                 ops = [{"op": "add", "fields": {"task": task, "start": iso(start), "minutes": minutes,
                                                 "state": "planned", "plan": plan_id,
-                                                **({"why": w} if (w := self._why(by_id[task], window)) else {})}}
+                                                **({"why": w} if (w := self._why(by_id[task], window, now)) else {})}}
                        for task, start, minutes in layout.placed]
                 answer = await self._apply(ops, f"plan:{plan_id}:{key}") if ops else {"records": []}
                 plans = self.plans()
@@ -334,6 +344,9 @@ class Planner:
                 entry.setdefault("windows", []).append(key)
                 entry.setdefault("left", {})[key] = [{"task": t, "title": line(titles.get(t, ""), 120), "why": why}
                                                      for t, why in layout.left]
+                if short := self._short(window, now, candidates, layout, titles):
+                    entry.setdefault("short", {})[key] = short
+                    shorts += short
                 for record in answer.get("records") or []:
                     if isinstance(record, dict):
                         self._keep(plans, record)
@@ -353,10 +366,30 @@ class Planner:
         await self.push(now)
         if failed and not entry.get("blocks"):
             return "Not planned: the blocks could not be written. Try again."
+        short = (" Short before the deadline: " + ", ".join(
+            f"{line(x['title'], 40)} {x['minutes'] // 60} h {x['minutes'] % 60:02d}" for x in shorts[:5]) + ".") if shorts else ""
         if days == 1:
-            return said[0] if said else "Not planned: try again."
+            return (said[0] + short) if said else "Not planned: try again."
         head = f"Week planned from {first.day:%a %d %b}: " + (", ".join(said) if said else "no open task fits its free time")
-        return head + "." + (" Cut short — try again for the rest." if failed else "")
+        return head + "." + short + (" Cut short — try again for the rest." if failed else "")
+
+    @staticmethod
+    def _short(window: L.Window, now: float, tasks: list[L.Task], layout: L.Layout, titles: dict[str, str]) -> list[dict]:
+        """What does not fit before its deadline: a task due by this window — its day, or its «no later than» in it,
+        not passed — that still needs more than this plan laid and the other windows hold."""
+        laid: dict[str, int] = {}
+        for task, _, minutes in layout.placed:
+            laid[task] = laid.get(task, 0) + minutes
+        out = []
+        for task in tasks:
+            ends_here = (task.by is not None and now < task.by <= window.end) or \
+                (task.by is None and task.due is not None and window.day == task.due)
+            if not ends_here:
+                continue
+            missing = L.left_s(task) // 60 - laid.get(task.id, 0)
+            if missing > 0:
+                out.append({"task": task.id, "title": line(titles.get(task.id, ""), 120), "minutes": missing})
+        return out
 
     def _drop_plan(self, plan_id: str, now: float) -> None:
         plans = self.plans()
@@ -580,21 +613,34 @@ class Planner:
         return True, (f"Done: {said}. After your answer the code shows the owner the line of every move of this turn "
                       "with «Undo»: do not repeat it and do not offer to undo.")
 
-    async def estimate(self, turn_id: str, task_id: str, minutes: int | None, due: str, now: float) -> tuple[bool, str]:
-        """`plan_estimate` — how long a task takes, or the day it is due by, on the owner's word: her write of the
-        task, under her turn's plan, so its «Undo» takes it back too. The plan lays it at the next look or press."""
-        if minutes is None and not due:
-            return False, "Say minutes, due or both."
+    async def estimate(self, turn_id: str, task_id: str, minutes: int | None, due: str, now: float,
+                       by: str = "") -> tuple[bool, str]:
+        """`plan_estimate` — how long a task takes, the day it is due by, or the moment it must be done by («no later
+        than», `by`, the owner's local time), on the owner's word: her write of the task, under her turn's plan, so
+        its «Undo» takes it back too. The plan lays it at the next look or press."""
+        if minutes is None and not due and not by:
+            return False, "Say minutes, due, by or several."
         if minutes is not None and not 5 <= minutes <= 24 * 60:
             return False, "minutes: from 5 to 1440."
         if due and _day(due) is None:
             return False, "due is a date, YYYY-MM-DD."
+        by_ts = None
+        if by:
+            from zoneinfo import ZoneInfo
+            try:
+                by_ts = datetime.strptime(by, "%Y-%m-%dT%H:%M").replace(tzinfo=ZoneInfo(self.core.tz)).timestamp()
+            except ValueError:
+                return False, "by is the owner's local time, YYYY-MM-DDTHH:MM."
+            if by_ts <= now:
+                return False, f"by {by} has passed."
         async with self.lock:
-            rows = await self._rows(TASKS, [{"field": "state", "op": "eq", "value": "open"}], ["title", "minutes", "due"])
+            rows = await self._rows(TASKS, [{"field": "state", "op": "eq", "value": "open"}],
+                                    ["title", "minutes", "due", "by"])
             row = next((t for t in rows or [] if t["id"] == task_id), None)
             if row is None:
                 return False, "No such open task: take its id from collection_query on tasks."
-            fields = {**({"minutes": minutes} if minutes is not None else {}), **({"due": due} if due else {})}
+            fields = {**({"minutes": minutes} if minutes is not None else {}), **({"due": due} if due else {}),
+                      **({"by": iso(by_ts)} if by_ts is not None else {})}
             data = await self._call("apply", {"collection": TASKS, "ops": [
                 {"op": "set", "id": task_id, "version": row["version"], "fields": fields}]},
                 f"{turn_id}/estimate/{_hash([fields, task_id])}", actor="assistant")
@@ -603,7 +649,8 @@ class Planner:
             f = row["fields"]
             title = line(str(f.get("title") or ""), 40)
             parts = ([f"{f.get('minutes') or 30} → {minutes} min"] if minutes is not None else []) + \
-                    ([f"due {f.get('due') or 'none'} → {due}"] if due else [])
+                    ([f"due {f.get('due') or 'none'} → {due}"] if due else []) + \
+                    ([f"no later than {self._when(by_ts)}"] if by_ts is not None else [])
             plans = self.plans()
             entry = self._her_plan(plans, turn_id, now)
             entry["estimates"].append({"task": task_id, "at": _now()})

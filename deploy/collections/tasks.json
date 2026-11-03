@@ -39,6 +39,9 @@
       "due": {
         "type": "date"
       },
+      "by": {
+        "type": "instant"
+      },
       "minutes": {
         "type": "int"
       },

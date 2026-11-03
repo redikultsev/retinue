@@ -462,12 +462,13 @@ owner's spheres):
 | `title` | text, required | what to do |
 | `goal` | enum | the sphere it serves: its swatch and the split of the day's time |
 | `state` | enum `open`, `done`, `dropped`, indexed | |
-| `due` | date | the day it is due by; a time of day stays a reminder's |
+| `due` | date | the day it is due by |
+| `by` | instant | «no later than»: no piece of it is laid to end after this moment |
 | `minutes` | int | how long it takes; 30 when not said |
 | `ask` | text, indexed, hidden | the row of «Waiting for you» it came from — `letter:<id>`, `chat:<id>` (the digest's ids), `reminder:<id>` |
 | `notes` | text | |
 
-The rights the files give: the assistant adds and sets the title, goal, due, minutes, notes, state and ask — and
+The rights the files give: the assistant adds and sets the title, goal, due, by, minutes, notes, state and ask — and
 closes a task only in a turn that read no one else's text (the router refuses it otherwise: a letter that says «done»
 is not the owner saying it); sessions and the Mac add and set the same but `ask`; `code:waiting` adds and sets the
 title, state, ask and due; nobody but the owner deletes. A task has no time of its own: its pieces of time are
@@ -503,7 +504,12 @@ due today). Only `code:plan` writes them besides the owner, and it never deletes
   whatever zone he travels to; a plan is for the window he is in while an hour of it is left, else the next one;
 - busy is his busy occurrences (his own, or invitations he accepted — one he never answered keeps no one busy), ten
   minutes after each, his holds, and the blocks standing;
-- the order is code's — overdue and due today first, then by due date, then the shorter, then the older;
+- the order is code's — overdue and due today first, then by due date, then the shorter, then the older; a task's
+  due day is the earlier of `due` and the day of its `by`;
+- no piece of a task ends after its `by` while that is ahead; once it has passed the task is overdue («missed its
+  deadline»), first and laid anywhere, not gone;
+- what a plan could not fit before a deadline that falls in its window — what the task still needs past what it laid
+  and other windows hold — is its `short`: said in the press's answer, a line over the grid and «short 1 h» on the task;
 - a task goes in pieces of 30 to 90 minutes, one a window; a run of pieces closer than ten minutes apart stays under 90,
   so a quarter-hour pause follows it that no short task can slip into;
 - what its passed pieces counted comes off what a task needs — for one with a due date never more than half, until it is

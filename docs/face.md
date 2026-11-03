@@ -445,8 +445,9 @@ Days and times are the owner's zone's (the platform's, as the Router last told i
 - **Tasks**: «By when» or «By goal»; a box that adds a task by its title; **Needs you** — a person's ask the digest
   carries, or a reminder of the next seven days, that no open task names yet, each with «Make it a task»; **To plan** —
   the open tasks with no block ahead, the due soonest first; **Planned** — those with one, the soonest first; **Done
-  today**. A row: the circle that closes it (or opens it again), its title, its goal, how long, by when — red once that
-  day has passed —, where it came from, its next block, and «Plan» («Move» once planned).
+  today**. A row: the circle that closes it (or opens it again), its title, its goal, how long, by when — its «no later than» with
+  the time if it has one, red once passed —, «short 1 h» in red while a plan says that much does not fit before the
+  deadline, where it came from, its next block, and «Plan» («Move» once planned).
 - **«Plan»**: a day of the next seven — the Router puts the task at the first free time of that day's window — or an
   exact time, the owner's own block (`locked`); «Take off the day».
 - **Plan** is the week as an hourly grid — [FullCalendar](https://fullcalendar.io) 7.1.3 (MIT), its own chunk of
@@ -455,7 +456,8 @@ Days and times are the owner's zone's (the platform's, as the Router last told i
   Meetings are grey (a dashed edge for free time), whole-day events above the hours, holds shaded, the blocks in their
   goal's colour, a passed one faded. Over the grid: «Plan my day», «Plan my week» (seven windows from the day's, one
   plan, one «Undo»), «Undo plan» while the owner's plan is the newest, «Busy now» (30 min, 1 h, 2 h; «Busy till 21:00 ×»
-  while held), what the last press came to, and how old the calendar is when it is old. A block dragged (15-minute
+  while held), «Short before the deadline: …» when a plan from today on could not fit a task in time (it opens Tasks),
+  what the last press came to, and how old the calendar is when it is old. A block dragged (15-minute
   steps) is the owner's, `locked`; its end pulled is its new length, `locked` too — the Router counts what he laid
   himself as the task's time ([collections.md](collections.md#blocks)); nothing is dropped into the past, and a block
   under way keeps its start but can be made longer. A press on a block opens its menu — the keyboard's and the touch

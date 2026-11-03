@@ -123,3 +123,15 @@ def test_what_other_windows_hold_is_not_laid_again():
     assert left_s(Task("talk", 180, planned=90)) == 90 * 60 and left_s(Task("bill", 15, planned=15)) == 0
     out = lay(w, at(TUE, "18:00"), [], [], [Task("bill", 15, planned=15), Task("talk", 180, planned=90)])
     assert shown(out) == [("talk", "18:00", 90)] and not out.left, "the bill is another day's; nothing said about it"
+
+
+def test_no_piece_ends_after_its_no_later_than_and_a_passed_one_lays_it_anywhere():
+    window = window_of(TUE)
+    lesson = [(at(TUE, "18:00"), at(TUE, "19:00"))]
+    homework = Task("homework", 60, by=at(TUE, "18:00"))
+    layout = lay(window, at(TUE, "16:30"), lesson, [], [homework])
+    assert shown(layout) == [("homework", "16:30", 60)], "done before the lesson"
+    late = lay(window, at(TUE, "17:30"), lesson, [], [homework])
+    assert late.placed == [] and late.left == [("homework", "no free 60 min before its deadline")]
+    missed = lay(window, at(TUE, "18:30"), lesson, [], [homework])
+    assert shown(missed) == [("homework", "19:00", 60)], "its moment passed: laid anyway, not lost"

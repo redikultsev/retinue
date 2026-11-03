@@ -91,6 +91,7 @@ services:
       RETINUE_COLLECTOR_TOKEN: ${RETINUE_COLLECTOR_TOKEN:-}   # only with `collector_url` in router.yaml
       RETINUE_GATEWAY_TOKEN: ${RETINUE_GATEWAY_TOKEN:-}       # only with `gateway_url`
       RETINUE_SENDER_TOKEN: ${RETINUE_SENDER_TOKEN:-}         # only with `sender_url`
+      RETINUE_CALWRITE_TOKEN: ${RETINUE_CALWRITE_TOKEN:-}     # only with `calwrite_url`
       RETINUE_PLATFORM_TOKEN: ${RETINUE_PLATFORM_TOKEN:-}     # only with `platform_url`
     # `outside`: Telegram; `travel-router`: price alerts; `mail-router`: what the mail collector found;
     # `tg-router`: the owner's chosen Telegram chats and replies in them; `send-router`: letters he confirmed;

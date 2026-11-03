@@ -816,6 +816,17 @@ def test_the_calendar_writer_holds_its_key_alone_and_reaches_google_through_the_
     assert reprinted["RETINUE_CALWRITE_TOKEN"] == printed["RETINUE_CALWRITE_TOKEN"], "on for good, the same token"
 
 
+def test_every_token_the_router_reads_reaches_its_container():
+    """RouterConfig.load requires each neighbour's token from the environment once its URL is in router.yaml: one
+    the compose file does not pass stops the router at start (2026-11-03, the calendar writer's)."""
+    import inspect
+
+    from retinue import config
+
+    read = set(re.findall(r'_env\("([A-Z_]+)"\)', inspect.getsource(config.RouterConfig.load)))
+    assert read and read <= set(SERVICES["router"]["environment"]), read - set(SERVICES["router"]["environment"])
+
+
 def test_her_rules_for_the_memory_of_an_exchange():
     """What the router now gives her and expects of her about the past of a chat: search before «I don't know»,
     this chat first and wider when needed, what the card will say about other sources, captions and messages written

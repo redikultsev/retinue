@@ -61,7 +61,9 @@ and `base` (the root of the Base) and `code` (your repositories, [code.md](code.
   forwarded message, your own forward too, is data for the assistant, never a session's input. Transcription holds the Telegram update loop
   as the assistant's own voice path does, and an album of audio files becomes one input per file.
 - A session's **summary** is the final text of a turn, sent as a [ping](#pings). A code session closes on it;
-  a reply opens it again. A private session goes idle. A session idle for 7 days is closed.
+  a reply opens it again. A private session goes idle. A session idle for 7 days is closed. A session's state —
+  `active`, `waiting`, `idle`, `closed` — and what each move does to its cards are one module's
+  (`retinue/lifecycle.py`).
 - A turn cut by a graceful stop of the platform or of its lane (`docker compose stop`, `restart`, an update that
   recreates either, in any order) goes on by itself: the platform records the runs it stopped, a lane journals
   its own stop as such (`stopped` with `by: shutdown`), and when such a run's end comes in, the session is resumed
@@ -96,7 +98,7 @@ one past the CLI's 6-hour cap is read as 6 hours), the time in `owner_tz` of `pl
 
 ### Archive
 
-«Archive» in a session's menu in the app (`POST /api/sessions/{id}/archive`, `Platform.archive`) takes the session out
+«Archive» in a session's menu in the app (`POST /api/sessions/{id}/archive`, `Lifecycle.archive`) takes the session out
 of every list at once, with its sub-sessions and side questions and theirs. Each one still open ends where it stands, as
 a stopped sub-session does: its queued runs dropped, its running turn interrupted, its cards stale («Expired: you
 archived the session»), closed. Nothing is deleted: its link still opens it, and the row carries `archived` until a turn

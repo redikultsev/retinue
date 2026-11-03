@@ -672,7 +672,7 @@ class Subs:
                 db.execute("UPDATE sessions SET hops = hops + 1 WHERE id = ?", (parent_id,))
                 self.store.add_input(f"subrep:{held[-1][0]}", parent_id, text, now, by="report")
                 self.store.enqueue(parent_id, text, now, by="report", commit=False)
-            self.platform.set_state(parent_id, "active", now)
+            self.platform.life.queued(parent_id, now)
             given.append(parent_id)
         return given
 

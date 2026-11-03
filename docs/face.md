@@ -489,7 +489,8 @@ dimension does not help (Cockburn & McKenzie, 2002).
   A–Z, «Other» last —, a sub-project an area of its own right after its project («Travel / Lisbon in May»); they fill
   the width at 300 px and more each, two tiles to a row.
 - **The places are the platform's** (a session's `slot`, `retinue/sessions.py` `take_slot`): the lowest place free in
-  its project when it is made, kept while its state changes, freed when it is archived — the phone and the laptop
+  its project when it is made, kept while its state changes, freed when it is archived and taken again, the lowest
+  free then, when it comes back («Undo», «Restore», or a turn of it beginning) — the phone and the laptop
   agree. One dashed place shows where the next one will appear. A session from before the slots comes after them.
 - **A tile**: its operator number in mono while it waits («#3», the numbers of «Operator» and of the microphone), the
   relation's icon for a sub-session, fork or side question, «waits for you» · «working» · «done», the title, and one

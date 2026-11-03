@@ -30,8 +30,8 @@ from zoneinfo import ZoneInfo
 from aiohttp import web
 
 from . import (approvals, attachments, citecheck, cliengine, collections_admin, colltools, courier, episodes, events, face, feed, finish,
-               followups, inbox, lanetravel, outfiles, pings, plan, projecthosts, questions, signals, spaces, subs, tobase,
-               topush, transcript, views)
+               followups, inbox, lanetravel, lifecycle, outfiles, pings, plan, projecthosts, questions, signals, spaces, subs,
+               tobase, topush, transcript, views)
 from .base import BaseRepo, under
 from . import library as library_mod
 from . import reach as reach_mod
@@ -43,7 +43,7 @@ from .spheres import Spheres
 from . import voice as voice_mod
 from .voice import Voice
 from .config import PlatformConfig
-from .gate import Gate, retire
+from .gate import Gate
 from .mail import Unavailable
 from .outbox import Neighbour
 from .sessions import PlatformStore, parsed
@@ -55,8 +55,7 @@ POLL_LIMIT = 200             # lines per pull: lane_host's own ceiling
 BACKOFF_MAX_S = 30.0
 TICK_S = 60.0                # the clock: idle sessions closed, old raw lines pruned, unpressed cards expired
 WATCH_S = 5.0                # how often the collections are looked at for what the server's terminal wrote
-BUTTON_TTL_S = 7 * 86400
-IDLE_CLOSE_S = 7 * 86400
+BUTTON_TTL_S = lifecycle.CARD_TTL_S  # a card's buttons live as long as it asks
 CLEANUP_DAYS = 30            # the CLI's own transcripts in the lane
 STOP_TIMEOUT_S = 5.0         # a lane's answer to the shutdown's /stop: a hung lane must not outlast the stop grace
 LABELS = {approvals.APPROVE: "Allow", approvals.REJECT: "Deny", approvals.OPEN: "Open"}
@@ -123,6 +122,7 @@ class Platform:
         # None: no `voice:` in platform.yaml.
         self.voice = Voice(self) if cfg.voice is not None else None
         self.subs = subs.Subs(self)  # sub-sessions a session starts, their reports, its own name (`subs.py`)
+        self.life = lifecycle.Lifecycle(store, self.subs, self._interrupt)  # a session's states and their moves
         self.followups = followups.FollowUps(self)  # a session brought back to a task that waits (`followups.py`)
         self.colltools = colltools.CollTools(self)  # the agents' tools for the collections, and their proposals
         self.events = events.wire(self)  # the projects' events and their reactions (`events.py`)
@@ -143,7 +143,6 @@ class Platform:
             self.base.busy = self._base_busy
         # The Base: who changed what, and the platform's own commit after each turn (`tobase.py`).
         self.tobase = tobase.ToBase(self)
-        self.feed.tobase = self.tobase
         # The owner's repositories in the room (`code.py`) and «Push», their push by his button (`topush.py`).
         self.code = CodeRepos(cfg.code, cfg.lanes[cfg.code.lane].work_mount) if cfg.code is not None else None
         self.topush = topush.ToPush(self)
@@ -443,8 +442,7 @@ class Platform:
             session = self.store.new_session(track.name, track.lane, track.kind, now, parent=parent, sphere=sphere,
                                              fork_of=fork_of, main=main, cwd=cwd)
             if not self.store.add_input(input_id, session, text, now, *((ready.meta, ready.thumbs) if ready else ())):
-                self._set_state(session, "closed", now)  # lost the race to a copy of this message: that one is it
-                self.store.set_main(session, False)
+                self.life.duplicate(session, now)  # lost the race to a copy of this message: that one is it
                 session = self.store.input_session(input_id)
             elif ready is not None and ready.meta:
                 self.store.enqueue(session, text, now, ready.lane(self._today(now)))
@@ -453,7 +451,7 @@ class Platform:
                 self.store.enqueue(session, prompt or text, now)
                 await self.drain()
             else:
-                self._set_state(session, "idle", now)
+                self.life.empty(session, now)
         said = f"Session {session} · {track.name}. To write to it, reply to its messages."
         return {"ok": True, "session": session, "say": _with_refused(said, ready)}
 
@@ -550,9 +548,7 @@ class Platform:
             episodes.owner_wrote(self.store, session_id, text, now)  # a correction, or the same request again
             self.store.db.execute("UPDATE sessions SET owner_joined = 1 WHERE id = ?", (session_id,))
             self.store.db.commit()  # the turn's ping answers him: it rings (`_summary`)
-            for approval in self.store.approvals(session=session_id, kind=questions.KINDS, states=("pending", "shown")):
-                if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
-                    retire(self.store, {**approval, "state": "stale"}, "Expired: you wrote a new message", now)
+            self.life.owner_wrote(session_id, now)
         if session["lane"] in self.lanes and any(r["session"] == session_id for r in self.store.open_runs()):
             try:
                 if (await self.lanes[session["lane"]].answer(session_id, text, content)).get("status") == "sent":
@@ -560,7 +556,7 @@ class Platform:
             except Unavailable as exc:
                 log.warning("session %s: %s", session_id, exc)
         self.store.enqueue(session_id, text, now, content, by=by)
-        self._set_state(session_id, "active", now)
+        self.life.queued(session_id, now)
         await self.drain()
         queued = any(q["session"] == session_id for q in self.store.queued())
         return "Accepted — the session is waiting for room on the lane." if queued else "Accepted."
@@ -592,7 +588,7 @@ class Platform:
             episodes.mark(self.store, approval["session"], episodes.CARD_REJECTED, now, run=approval["run"])
         self.store.enqueue(approval["session"], None, now)  # a bare resume: the CLI asks PreToolUse again
         self.store.mark_seen(approval["session"], now)
-        self._set_state(approval["session"], "active", now)
+        self.life.decided(approval["session"], now)
         await self.drain()
         return ("Allowed." if granted else "Denied."), view
 
@@ -610,10 +606,7 @@ class Platform:
         stopped = await self._stop_family(session)  # a parent's sub-sessions stop with it, a run of its own or not
         if session["lane"] not in self.lanes:
             return stopped
-        self.subs.stopped(session)
-        if session.get("sub_of"):  # closed now, whether its run's end comes later or came already: open no longer
-            self._set_state(session_id, "closed", self.clock())
-            stopped = True
+        stopped = self.life.owner_stopped(session, self.clock()) or stopped
         try:
             return (await self.lanes[session["lane"]].stop(session_id)).get("status") == "stopping" or stopped
         except Unavailable as exc:
@@ -626,37 +619,21 @@ class Platform:
         now, any_stopped = self.clock(), False
         for child in self.subs.family(parent["id"]):
             any_stopped = True
-            await self._halt(child, now)
+            await self.life.halt(child, now)
         return any_stopped
 
-    async def _halt(self, session: dict, now: float, why: str = "Expired: you stopped the session") -> None:
-        """A session ended where it stands: its queued runs dropped, its running one interrupted, its cards stale,
-        and it closed."""
-        self.subs.stopped(session)
-        self.store.db.execute("DELETE FROM queue WHERE session = ? AND attempt IS NULL", (session["id"],))
-        self.store.db.commit()
-        for approval in self.store.approvals(session=session["id"], kind=questions.KINDS, states=("pending", "shown")):
-            if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
-                retire(self.store, {**approval, "state": "stale"}, why, now)
-        running = any(r["session"] == session["id"] for r in self.store.open_runs())
-        if running and session["lane"] in self.lanes:
-            try:
-                await self.lanes[session["lane"]].stop(session["id"])
-            except Unavailable as exc:
-                log.warning("session %s not stopped: %s", session["id"], exc)
-        self._set_state(session["id"], "closed", now)
+    async def _interrupt(self, session: dict) -> None:
+        """A halted session's running turn interrupted by its lane (`Lifecycle.halt`)."""
+        if session["lane"] not in self.lanes:
+            return
+        try:
+            await self.lanes[session["lane"]].stop(session["id"])
+        except Unavailable as exc:
+            log.warning("session %s not stopped: %s", session["id"], exc)
 
     async def archive(self, session_id: str) -> bool:
-        """«Archive»: the session and its sub-sessions and side questions out of the face's list, each one still
-        open ended where it stands (`_halt`). A message to one opens it again and brings it back (`_set_state`).
-        False when there is no such session."""
-        now = self.clock()
-        ids = self.store.archive(session_id, now)
-        for id_ in reversed(ids):  # its kin first: nothing they say after it starts a turn of it
-            session = self.store.session(id_)
-            if session is not None and session["state"] != "closed":
-                await self._halt(session, now, "Expired: you archived the session")
-        return bool(ids)
+        """«Archive» (`Lifecycle.archive`). False when there is no such session."""
+        return await self.life.archive(session_id, self.clock())
 
     def _pressable(self, approval: dict, digest: str, kind: str = "approval") -> bool:
         """The card still asks what the session waits on: shown, its session waiting with this call as the last
@@ -682,8 +659,8 @@ class Platform:
             return False
         # a session asks one thing at a time: its question shown before this one is asked again by it — retired
         for older in self.store.approvals(session=session["id"], kind="question", states=("shown",)):
-            if older["id"] != approval["id"] and self.store.move(older["id"], ("shown",), "stale", now):
-                retire(self.store, {**older, "state": "stale"}, "Asked again — answer the newer card", now)
+            if older["id"] != approval["id"]:
+                lifecycle.withdraw(self.store, older, "stale", "Asked again — answer the newer card", now)
         shown = {**approval, "state": "shown", "view": view}
         for n in range(len(questions.of(approval["input"]))):
             card = questions.card(shown, n, session["id"], session["track"])
@@ -806,7 +783,7 @@ class Platform:
             return {"toast": f"Accepted. Still to answer: {left}.", "view": card, "keep": []}
         self.store.enqueue(approval["session"], None, now)  # a bare resume: the gate hands the CLI the answers
         self.store.mark_seen(approval["session"], now)
-        self._set_state(approval["session"], "active", now)
+        self.life.decided(approval["session"], now)
         await self.drain()
         return {"toast": "Answer passed to the session.", "view": card, "keep": []}
 
@@ -871,7 +848,7 @@ class Platform:
         track, lane = self.tracks[session["track"]], self.cfg.lanes[session["lane"]]
         fork, why = self.spheres.fork_start(session)  # a fork's first run copies its parent's conversation
         if why is not None:  # said as the session's own summary: the next message tries again
-            self._set_state(session["id"], "idle", now)
+            self.life.turn_ended(session, why, now, failed=True)
             self._summary(session, why, pings.FAILED)
             return "refused"
         marks = approvals.marks_for(track, lane, read_only=bool(session.get("parent")))
@@ -930,7 +907,7 @@ class Platform:
         self.store.attempt(queued["seq"], None)
         status = str(answer.get("status") or "")
         if status == "started":
-            self._set_state(session["id"], "active", now)
+            self.life.started(session["id"], now)
             return status
         self.store.end_run(run, now)
         if status in ("busy", "running"):
@@ -1033,18 +1010,9 @@ class Platform:
             await asyncio.sleep(self.cfg.base.every_s)
 
     def _refused(self, session: dict, why: str, now: float, run: str | None = None) -> str:
-        self._set_state(session["id"], "idle", now)
         self._summary(session, f"The lane did not start the session: {why}", pings.FAILED)
-        self._turn_over(session, f"The lane did not start the session: {why}", failed=True, run=run)
+        self.life.turn_ended(session, f"The lane did not start the session: {why}", now, failed=True, run=run)
         return "refused"
-
-    def _turn_over(self, session: dict, text: str, failed: bool = False, run: str | None = None) -> None:
-        """A sub-session's turn is over, however it ended: it closes (a message opens it again), and its parent gets
-        a report when the turn was the parent's doing (`subs`)."""
-        if not session.get("sub_of"):
-            return
-        self.subs.turn_ended(session, text, failed, run)
-        self._set_state(session["id"], "closed", self.clock())
 
     # --- the lanes' journals ------------------------------------------------------------------------------------
 
@@ -1138,16 +1106,15 @@ class Platform:
             if event in ("started", "refused") and (seq := self.store.attempted(run)) is not None:
                 self.store.dequeue(seq)
                 if event == "started":
-                    self._set_state(session["id"], "active", now)
+                    self.life.started(session["id"], now)
                 else:
                     self._refused(session, str(line.get("error") or event), now, run)
-            current = self.store.session(session["id"])["state"]
-            if current != "active":  # a waiting one keeps its card; a finished one has said so
+            if not self.life.working(session["id"]):  # a waiting one keeps its card; a finished one has said so
                 return
             if event in ("exited", "restarted") and self.store.resume_interrupted(run, now):
                 self._continue(session, now)
             elif event in ("stopped", "restarted", "exited") and not self.store.interrupted(run):
-                self._set_state(session["id"], "idle", now)
+                self.life.run_ended(session["id"], now)
 
     def _result(self, session: dict, run: str, line: dict, now: float) -> None:
         stop = line.get("stop_reason")
@@ -1159,10 +1126,10 @@ class Platform:
                     self.store.move(approval["id"], ("pending",), "dropped", now)
             asked = self.store.approvals(session=session["id"], tool_use_id=call_id, kind=questions.KINDS)
             shown = [self._show(session, a, now) for a in asked if a["state"] == "pending"]
-            if any(shown) or any(a["state"] == "shown" for a in asked):
-                self._set_state(session["id"], "waiting", now)
+            waits = any(shown) or any(a["state"] == "shown" for a in asked)
+            self.life.deferred(session["id"], now, shown=waits)
+            if waits:
                 return
-            self._set_state(session["id"], "idle", now)
             if not self.store.approvals(session=session["id"], tool_use_id=call_id, kind="courier"):
                 # The gate deferred while it shut down: the call is asked again, or the owner's decision on it,
                 # which the CLI has not heard yet, is given.
@@ -1172,10 +1139,9 @@ class Platform:
             for approval in self.store.approvals(session=session["id"], kind=questions.KINDS,
                                                  states=("granted", "answered")):
                 self.store.move(approval["id"], (approval["state"],), "expired", now)
-            self._set_state(session["id"], "idle", now)
             gone = "The deferred call cannot go on: the session no longer has this tool. Write what to do next."
             self._summary(session, gone, pings.FAILED, run)
-            self._turn_over(session, gone, failed=True, run=run)
+            self.life.turn_ended(session, gone, now, failed=True, run=run)
         elif self._failed(line) and self.store.interrupted(run):
             pass  # the shutdown's own interrupt: the run's end resumes the session (`_continue`)
         elif self._failed(line):
@@ -1185,9 +1151,8 @@ class Platform:
                 episodes.mark(self.store, session["id"], episodes.RUN_ERROR, now, run=run)
             episodes.ended(self.store, session["id"], run, f"Turn ended with an error: {why}")
             self._summary(session, f"Turn ended with an error: {why}", pings.FAILED, run)
-            self._set_state(session["id"], "idle", now)
             self._owe_look(session)
-            self._turn_over(session, f"Turn ended with an error: {why}", failed=True, run=run)
+            self.life.turn_ended(session, f"Turn ended with an error: {why}", now, failed=True, run=run)
         else:
             text = str(line.get("result") or "") or "Turn finished without text."
             checked = citecheck.ended(self.store, session["id"], text)  # a source check's own end: rings on a flag
@@ -1200,9 +1165,8 @@ class Platform:
                 self._summary(session, text, run=run)
                 self._cite_check(session, run, text, now)
             episodes.ended(self.store, session["id"], run, text)  # the turn's summary, for a mark before or after
-            self._set_state(session["id"], "closed" if session["kind"] == "code" else "idle", now)
             self._owe_look(session)
-            self._turn_over(session, text, run=run)
+            self.life.turn_ended(session, text, now, run=run)
 
     def _cite_check(self, session: dict, run: str, text: str, now: float) -> None:
         """A turn that ended on several cited addresses: a side session that checks them is queued (`citecheck`)."""
@@ -1219,7 +1183,7 @@ class Platform:
             citecheck.bind(self.store, checker, row["id"], run, urls, n, now)
             self.store.add_input(f"cite:{run}", checker, title, now)
             self.store.enqueue(checker, prompt, now, by="check")
-            self._set_state(checker, "active", now)
+            self.life.queued(checker, now)
         except Exception:  # noqa: BLE001 — a check that could not start never holds the turn's end back
             log.exception("source check not started")
 
@@ -1270,7 +1234,7 @@ class Platform:
         """A turn the platform's or the lane's own shutdown cut: the session goes on once, told why — unless the CLI
         never said which session it was, and a resume would start a new one without the task."""
         if not self.store.session(session["id"])["cli_session"]:
-            self._set_state(session["id"], "idle", now)
+            self.life.run_ended(session["id"], now)
             self._summary(session, "Turn cut off: the platform restarted before the session began. "
                                    "Write the task again.", pings.FAILED)
             return
@@ -1325,32 +1289,13 @@ class Platform:
         at = datetime.fromtimestamp(until, ZoneInfo(self.cfg.owner_tz)).strftime("%H:%M")
         self._summary(session, f"Subscription limit — waiting for the reset at {at}", pings.FAILED, limit_until=until)
 
-    def _set_state(self, session: str, state: str, now: float) -> None:
-        """`turn_started` is set only when a turn begins — active from idle, closed or new — never on a resume after a
-        card (waiting -> active), which moves `at`: the face's «Working» counts a turn from it."""
-        fields: dict = {"archived": None} if state == "active" else {}  # a turn begins: back in the list
-        if state == "active" and (self.store.session(session) or {}).get("state") not in ("active", "waiting"):
-            fields["turn_started"] = now
-        self.store.update_session(session, now, state=state, idle_since=now if state == "idle" else None, **fields)
-
-    set_state = _set_state
-
     # --- the clock ----------------------------------------------------------------------------------------------
 
     def tick(self) -> None:
         now = self.clock()
-        for session in self.store.sessions_in("idle", idle_before=now - IDLE_CLOSE_S):
-            self._set_state(session, "closed", now)
+        self.life.tick(now)  # a week idle closes a session, a week unpressed expires a card
         self.store.prune(now)
         self.out.prune(now)
-        for approval in self.store.approvals(kind=questions.KINDS, states=("shown",)):
-            if approval["at"] <= now - BUTTON_TTL_S and self.store.move(approval["id"], ("shown",), "expired", now):
-                retire(self.store, {**approval, "state": "expired"}, "Expired: no decision for seven days", now)
-                if self.store.session(approval["session"])["state"] == "waiting":
-                    self._set_state(approval["session"], "idle", now)
-                    self._turn_over(self.store.session(approval["session"]), "The card expired: no decision for seven "
-                                                                             "days, the turn is not finished.", failed=True,
-                                    run=f"expired:{approval['id']}")
         self._mark_idle(now)  # the cards still shown after the expiry
         self.subs.deliver()  # a report that waited for its siblings, or for a limit to pass: `_clock` drains
         self.subs.expire()  # the proposals past their week: their cards told
@@ -1398,17 +1343,9 @@ class Platform:
             self.tasks.append(asyncio.create_task(self._code_loop()))
 
     def retire_cards(self) -> None:
-        """At start: every card still asking in a session of a lane that is gone or retired goes stale with a line
-        that says why, and its session stops waiting — so it leaves «Decide» and /wait. Nothing could take its answer."""
-        now = self.clock()
-        for approval in self.store.approvals(kind=questions.KINDS, states=("pending", "shown")):
-            session = self.store.session(approval["session"])
-            if session is None or session["lane"] in self.live:
-                continue
-            if self.store.move(approval["id"], (approval["state"],), "stale", now) and approval["state"] == "shown":
-                retire(self.store, {**approval, "state": "stale"}, "Expired: the lane is retired", now)
-            if session["state"] == "waiting":
-                self._set_state(session["id"], "idle", now)
+        """At start: the cards of a lane that is gone or retired stop asking, so they leave «Decide» and /wait
+        (`Lifecycle.lanes_gone`)."""
+        self.life.lanes_gone(self.live, self.clock())
 
     async def _poller(self, lane: str) -> None:
         wait = POLL_S

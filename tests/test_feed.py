@@ -313,7 +313,7 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
         question = await asked(world)
         world.clock.now += 60
         replying = await turn(world, "\n## **Нашёл три отеля**\nдальше…", input_id_="tg:50")
-        world.platform.set_state(replying, "waiting", world.clock.now)  # waits for his message, no card shown
+        world.store.update_session(replying, world.clock.now, state="waiting")  # waits for his message, no card shown
         world.clock.now += 60
         read = await turn(world, "Готово: пост в черновиках.", input_id_="tg:51", took=60)
         world.store.set_sphere(read, "reading")
@@ -431,7 +431,7 @@ def test_a_session_waits_under_reply_only_while_it_waits_with_no_card_and_a_repl
         session = await turn(world, 'Готово.\nReplies: "Да" · "Нет"')
         rows = [r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]]
         assert all(r["action"] != "reply" and "replies" not in r for r in rows), "a finished turn waits for nothing"
-        world.platform.set_state(session, "waiting", world.clock.now)
+        world.store.update_session(session, world.clock.now, state="waiting")
         [row] = (await world.get("/api/feed"))["groups"][0]["rows"]
         assert (row["action"], row["essence"]) == ("reply", "Готово.") and "replies" not in row
         await world.owner("input", {"input_id": "tg:2", "session": session, "text": "Нет, по-другому"})

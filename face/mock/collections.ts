@@ -1,9 +1,11 @@
-// A Space's views in the mock (retinue/views.py's answers), and the owner's writes to them: the «work» Space has two
-// made-up collections — deals on a board, follow-ups in a queue with «Done» and «Add a follow-up» — plus a list too
-// short for a board and a view whose field its form lacks; «travel» has none and shows its text alone. Deals and
-// follow-ups are records kept here with their versions and changes, so a card moved, a row done, a record added and
-// a change undone show as the platform would show them. `POST /api/_mock/collection` moves a deal on as another
-// writer would — `?quiet=1` without telling the app, for the next write of it to meet a conflict.
+// The collections in the mock (retinue/collections.py's store, retinue/views.py's answers): records kept with their
+// versions and changes, each collection by its form, and the writes to them — the owner's from the screen, at the
+// version shown (a record moved on since is a 409), and the other writers' (`writeAs`) — so a card moved, a row done, a
+// record added and a change undone show as the platform would show them. The «work» Space has two made-up
+// collections — deals on a board, follow-ups in a queue with «Done» and «Add a follow-up» — plus a list too short for a
+// board and a view whose field its form lacks; «travel» has none and shows its text alone; «home» keeps `tasks` and
+// `blocks`, which mock/plan.ts defines. `POST /api/_mock/collection` moves a deal on as another writer would —
+// `?quiet=1` without telling the app, for the next write of it to meet a conflict.
 import { randomBytes } from "node:crypto";
 import type {
   Change,
@@ -16,6 +18,7 @@ import type {
   OneView,
   Op,
   RecordAnswer,
+  Refusal,
   SpaceChange,
   SpaceViews,
   View,
@@ -42,7 +45,7 @@ const REPLY = 2;
 const DELETED = "_deleted";
 
 const STAGES = ["lead", "qualified", "proposal", "negotiation", "won", "lost"];
-const FIELDS: Record<"deals" | "followups", Record<string, FieldSpec>> = {
+const WORK: Record<"deals" | "followups", Record<string, FieldSpec>> = {
   deals: {
     company: { type: "text", required: true },
     contact: { type: "text" },
@@ -61,18 +64,39 @@ const FIELDS: Record<"deals" | "followups", Record<string, FieldSpec>> = {
     note: { type: "text" },
   },
 };
-type Name = keyof typeof FIELDS;
-
-interface Rec extends CollectionRecord {
-  collection: Name;
+export interface Rec extends CollectionRecord {
+  collection: string;
 }
 
+/** A collection: its Space, its form, a record's words — its title, and what a ref to it says — the collection whose
+ * records name it, shown on its sheet, and the record an add may be a duplicate of. */
+export interface Kind {
+  space: string;
+  fields: Record<string, FieldSpec>;
+  title: (rec: Rec) => string;
+  word?: (rec: Rec) => string;
+  related?: { name: string; ref: string; date: string };
+  same?: (fields: Record<string, unknown>) => Rec | undefined;
+}
+
+const kinds = new Map<string, Kind>();
 const records = new Map<string, Rec>();
 const changes: Change[] = []; // the oldest first
-const revs: Record<Name, string> = { deals: "", followups: "" };
+const revs = new Map<string, string>();
+
+/** A collection defined, as `retinue-platform collections define` does it. */
+export function define(name: string, kind: Kind): void {
+  kinds.set(name, kind);
+  revs.set(name, revs.get(name) ?? "");
+}
+
+const kindOf = (name: string) => kinds.get(name)!;
+const rev = (name: string) => revs.get(name) || null;
+const via = (actor: string) =>
+  actor === "owner" ? "screen" : actor === "assistant" ? "assistant" : actor.startsWith("code:") ? "code" : actor.startsWith("session:") ? "session" : "import";
 
 function change(
-  collection: Name,
+  collection: string,
   id: string,
   op: Change["op"],
   before: Record<string, unknown> | null,
@@ -93,7 +117,7 @@ function change(
     after,
     actor,
     model: null,
-    via: actor === "owner" ? "screen" : actor === "assistant" ? "assistant" : "import",
+    via: via(actor),
     src: null,
     foreign: [],
     reverts: null,
@@ -101,18 +125,37 @@ function change(
     ...extra,
   };
   changes.push(made);
-  revs[collection] = made.change_id;
+  revs.set(collection, made.change_id);
   return made;
 }
 
-function seed(collection: Name, fields: Record<string, unknown>, ageDays: number): Rec {
+/** A record made `ageDays` ago, by an import unless another writer is named. */
+export function seed(collection: string, fields: Record<string, unknown>, ageDays: number, actor = "import:01J8ZQ4Y7Z5G0000000000IMPT"): Rec {
   const ms = Date.now() - ageDays * DAY_MS;
   const id = ulid(ms);
-  const rec: Rec = { collection, id, fields, version: 1, created: ms / 1000, updated: ms / 1000, deleted: null };
+  const rec: Rec = { collection, id, fields: { ...fields }, version: 1, created: ms / 1000, updated: ms / 1000, deleted: null };
   records.set(id, rec);
-  change(collection, id, "add", null, fields, ms, "import:01J8ZQ4Y7Z5G0000000000IMPT", { via: "import" });
+  change(collection, id, "add", null, fields, ms, actor);
   return rec;
 }
+
+const company = (rec: Rec) => String(rec.fields.company);
+define("deals", {
+  space: "work",
+  fields: WORK.deals,
+  title: (rec) => [rec.fields.company, rec.fields.contact].filter(Boolean).join(" · "),
+  word: company,
+  related: { name: "followups", ref: "deal", date: "date" },
+  same: (fields) => live("deals").find((r) => company(r).trim().toLowerCase() === String(fields.company).trim().toLowerCase()),
+});
+define("followups", {
+  space: "work",
+  fields: WORK.followups,
+  title: (rec) => {
+    const deal = records.get(String(rec.fields.deal));
+    return [deal?.deleted === null ? deal.fields.company : null, rec.fields.note].filter(Boolean).join(" · ") || "Untitled";
+  },
+});
 
 const ahead = (days: number) => iso(Date.now() + days * DAY_MS);
 const DEALS: [Record<string, unknown>, number][] = [
@@ -147,10 +190,20 @@ for (const [company, channel, days, note] of [
 }
 
 /** Every enum of a collection's form, with its words. */
-const labelsOf = (name: Name) =>
-  Object.fromEntries(Object.entries(FIELDS[name]).flatMap(([f, spec]) => (spec.type === "enum" ? [[f, spec.labels ?? {}]] : [])));
+const labelsOf = (name: string) =>
+  Object.fromEntries(Object.entries(kindOf(name).fields).flatMap(([f, spec]) => (spec.type === "enum" ? [[f, spec.labels ?? {}]] : [])));
 
-const live = (collection: Name) => [...records.values()].filter((r) => r.collection === collection && r.deleted === null);
+const live = (collection: string) => [...records.values()].filter((r) => r.collection === collection && r.deleted === null);
+
+/** A collection's live records, as the store reads them. */
+export const recordsOf = (collection: string): CollectionRecord[] => live(collection).map(shown);
+/** One record, deleted or not, or undefined. */
+export const recordOf = (collection: string, id: string): CollectionRecord | undefined => {
+  const rec = records.get(id);
+  return rec && rec.collection === collection ? shown(rec) : undefined;
+};
+/** A collection's rev: its newest change. */
+export const revOf = rev;
 
 /** When a record's field last changed (its `add` when never since), in ms. */
 function since(rec: Rec, field: string): number {
@@ -166,8 +219,8 @@ const daysSince = (ms: number) => Math.floor((Date.now() - ms) / DAY_MS);
 function row(rec: Rec, fields: string[], days: number | null, rot: number | null): ViewRow {
   const refs: Record<string, string> = {};
   for (const f of fields) {
-    const target = FIELDS[rec.collection][f]?.type === "ref" ? records.get(String(rec.fields[f])) : undefined;
-    if (target && target.deleted === null) refs[f] = String(target.fields.company);
+    const target = kindOf(rec.collection).fields[f]?.type === "ref" ? records.get(String(rec.fields[f])) : undefined;
+    if (target && target.deleted === null) refs[f] = wordOf(target);
   }
   const shown = Object.fromEntries(Object.entries(rec.fields).filter(([k]) => fields.includes(k)));
   const last = [...changes].reverse().find((c) => c.id === rec.id && c.src);
@@ -179,11 +232,14 @@ function week(now = new Date()) {
   return { first: iso(monday.getTime()), last: iso(monday.getTime() + 6 * DAY_MS), start: monday.getTime() };
 }
 
+/** What a ref to a record says. */
+const wordOf = (rec: Rec) => (kindOf(rec.collection).word ?? kindOf(rec.collection).title)(rec);
+
 /** The changes a revert took back. */
 const takenBack = () => new Set(changes.flatMap((c) => (c.reverts ? [c.reverts] : [])));
 
 /** As `views._changed`: a change taken back, and the revert that took it, move nothing. */
-const thisWeek = (collection: Name, test: (c: Change) => boolean) => {
+const thisWeek = (collection: string, test: (c: Change) => boolean) => {
   const taken = takenBack();
   return new Set(
     changes
@@ -324,8 +380,8 @@ const partnersRev = ulid(Date.now() - 9 * DAY_MS);
 function collections(space: string): CollectionViews[] {
   if (space !== "work") return [];
   return [
-    { name: "deals", rev: revs.deals, labels: labelsOf("deals"), views: dealViews() },
-    { name: "followups", rev: revs.followups, labels: labelsOf("followups"), views: followupViews() },
+    { name: "deals", rev: rev("deals"), labels: labelsOf("deals"), views: dealViews() },
+    { name: "followups", rev: rev("followups"), labels: labelsOf("followups"), views: followupViews() },
     { name: "partners", rev: partnersRev, views: partners },
     { name: "suppliers", rev: null, views: [{ name: "open", kind: "queue", title: "Suppliers to call", rot: null, fields: ["name"], count: 0, rows: [], dropped: 0 }] },
   ];
@@ -333,17 +389,17 @@ function collections(space: string): CollectionViews[] {
 
 const moment = () => ({ tz: TZ, today: iso(Date.now()), at: Date.now() / 1000 });
 
-function title(rec: Rec): string {
-  if (rec.collection === "deals") return [rec.fields.company, rec.fields.contact].filter(Boolean).join(" · ");
-  const deal = records.get(String(rec.fields.deal));
-  return [deal?.deleted === null ? deal.fields.company : null, rec.fields.note].filter(Boolean).join(" · ") || "Untitled";
-}
+const title = (rec: Rec): string => kindOf(rec.collection).title(rec);
 
-function words(values: (Record<string, unknown> | null)[]): Record<string, string> {
+/** The words of the records the values' refs name, by id. */
+function words(collection: string, values: (Record<string, unknown> | null)[]): Record<string, string> {
   const out: Record<string, string> = {};
+  const refs = Object.entries(kindOf(collection).fields).filter(([, spec]) => spec.type === "ref").map(([name]) => name);
   for (const v of values) {
-    const deal = v && typeof v.deal === "string" ? records.get(v.deal) : undefined;
-    if (deal && deal.deleted === null) out[deal.id] = String(deal.fields.company);
+    for (const name of refs) {
+      const target = v && typeof v[name] === "string" ? records.get(v[name]) : undefined;
+      if (target && target.deleted === null) out[target.id] = wordOf(target);
+    }
   }
   return out;
 }
@@ -358,7 +414,7 @@ export function mockCollections(path: string, query: URLSearchParams): { status:
   }
   if (path === "/api/c/_changes") {
     const before = query.get("before");
-    const all = changes.filter((c) => query.get("space") === "work" && (!before || c.change_id < before)).reverse();
+    const all = changes.filter((c) => kinds.get(c.collection)?.space === query.get("space") && (!before || c.change_id < before)).reverse();
     const taken = takenBack();
     const page = all.slice(0, 50).map((c): SpaceChange => {
       const rec = records.get(c.id ?? "");
@@ -368,45 +424,53 @@ export function mockCollections(path: string, query: URLSearchParams): { status:
       space: query.get("space") ?? "",
       changes: page,
       next: all.length > 50 ? page[page.length - 1]!.change_id : null,
-      words: words(page.flatMap((c) => [c.before, c.after])),
+      words: Object.assign({}, ...page.map((c) => (kinds.has(c.collection) ? words(c.collection, [c.before, c.after]) : {}))),
     };
     return { status: 200, data };
   }
-  const form = /^\/api\/c\/(deals|followups)\/_form$/.exec(path);
-  if (form) {
-    const name = form[1] as Name;
-    const deals = live("deals").sort((a, b) => b.updated - a.updated);
-    const data: FormAnswer = { name, rev: revs[name], fields: FIELDS[name], options: name === "followups" ? { deal: deals.map((r) => ({ id: r.id, title: title(r) })) } : {} };
+  const form = /^\/api\/c\/([a-z][a-z0-9_]*)\/_form$/.exec(path);
+  if (form && kinds.has(form[1]!)) {
+    const name = form[1]!;
+    const fields = kindOf(name).fields;
+    const options = Object.fromEntries(
+      Object.entries(fields).flatMap(([field, spec]) =>
+        spec.type === "ref" && spec.to && kinds.has(spec.to)
+          ? [[field, live(spec.to).sort((a, b) => b.updated - a.updated).map((r) => ({ id: r.id, title: title(r) }))]]
+          : [],
+      ),
+    );
+    const data: FormAnswer = { name, rev: rev(name), fields, options };
     return { status: 200, data };
   }
-  const one = /^\/api\/c\/(deals|followups)\/([0-9A-HJKMNP-TV-Z]{26})$/.exec(path);
-  if (one) {
+  const one = /^\/api\/c\/([a-z][a-z0-9_]*)\/([0-9A-HJKMNP-TV-Z]{26})$/.exec(path);
+  if (one && kinds.has(one[1]!)) {
     const rec = records.get(one[2] ?? "");
     if (!rec || rec.collection !== one[1]) return { status: 404, data: { error: "No such view or record." } };
     const mine = changes.filter((c) => c.id === rec.id).reverse();
+    const kind = kindOf(rec.collection);
+    const related = kind.related;
     const data: RecordAnswer = {
       name: rec.collection,
-      rev: revs[rec.collection],
+      rev: rev(rec.collection),
       title: title(rec),
-      fields: FIELDS[rec.collection],
+      fields: kind.fields,
       record: shown(rec),
       changes: mine,
-      words: words([rec.fields, ...mine.flatMap((c) => [c.before, c.after])]),
-      related:
-        rec.collection === "deals"
-          ? [
-              {
-                name: "followups",
-                fields: FIELDS.followups,
-                date: "date",
-                ref: "deal",
-                records: live("followups")
-                  .filter((f) => f.fields.deal === rec.id)
-                  .sort((a, b) => String(b.fields.date).localeCompare(String(a.fields.date)))
-                  .map(shown),
-              },
-            ].filter((r) => r.records.length)
-          : [],
+      words: words(rec.collection, [rec.fields, ...mine.flatMap((c) => [c.before, c.after])]),
+      related: related
+        ? [
+            {
+              name: related.name,
+              fields: kindOf(related.name).fields,
+              date: related.date,
+              ref: related.ref,
+              records: live(related.name)
+                .filter((f) => f.fields[related.ref] === rec.id)
+                .sort((a, b) => String(b.fields[related.date]).localeCompare(String(a.fields[related.date])))
+                .map(shown),
+            },
+          ].filter((r) => r.records.length)
+        : [],
     };
     return { status: 200, data };
   }
@@ -427,18 +491,18 @@ function month(): { first: string; last: string } {
 
 class Refused extends Error {
   readonly status: number;
-  readonly data: Record<string, unknown>;
-  constructor(status: number, data: Record<string, unknown>) {
+  readonly data: Refusal;
+  constructor(status: number, data: Refusal) {
     super(String(data.error));
     this.status = status;
     this.data = data;
   }
 }
 
-const refuse = (error: string, kind: string | null = null, record: Rec | null = null, last: Change | null = null) =>
+const refuse = (error: string, kind: Refusal["kind"] = null, record: Rec | null = null, last: Change | null = null) =>
   new Refused(kind === "stale" || kind === "after" ? 409 : 400, { error, kind, record: record ? shown(record) : null, change: last });
 
-function at(collection: Name, id: string, version: number): Rec {
+function at(collection: string, id: string, version: number): Rec {
   const rec = records.get(id);
   if (!rec || rec.collection !== collection) throw refuse(`${collection} has no record '${id}'`);
   if (rec.version !== version) {
@@ -448,15 +512,15 @@ function at(collection: Name, id: string, version: number): Rec {
   return rec;
 }
 
-function check(collection: Name, fields: Record<string, unknown>) {
+function check(collection: string, fields: Record<string, unknown>) {
   for (const [name, value] of Object.entries(fields)) {
-    const spec = FIELDS[collection][name];
+    const spec = kindOf(collection).fields[name];
     if (!spec) throw refuse(`${collection} has no field '${name}'`);
     if (spec.type === "enum" && value !== null && !spec.values?.includes(String(value))) throw refuse(`'${name}' is one of ${spec.values?.join(", ")}: not '${value}'`);
   }
 }
 
-function put(rec: Rec, after: Record<string, unknown>, op: Change["op"], extra: Partial<Change> = {}): Change | null {
+function put(rec: Rec, after: Record<string, unknown>, op: Change["op"], actor: string, extra: Partial<Change> = {}): Change | null {
   const before: Record<string, unknown> = {};
   const changed: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(after)) {
@@ -474,21 +538,20 @@ function put(rec: Rec, after: Record<string, unknown>, op: Change["op"], extra: 
   }
   rec.version += 1;
   rec.updated = Date.now() / 1000;
-  return change(rec.collection, rec.id, op, before, changed, Date.now(), "owner", extra);
+  return change(rec.collection, rec.id, op, before, changed, Date.now(), actor, extra);
 }
 
-function apply(collection: Name, op: Op): [Rec, Change | null] {
+function apply(collection: string, op: Op, actor: string): [Rec, Change | null] {
   if (op.op === "add") {
     check(collection, op.fields);
-    const missing = Object.entries(FIELDS[collection]).filter(([k, s]) => s.required && op.fields[k] === undefined);
+    const missing = Object.entries(kindOf(collection).fields).filter(([k, s]) => s.required && op.fields[k] === undefined);
     if (missing.length) throw refuse(`${missing.map(([k]) => `'${k}'`).join(", ")} required`);
-    const company = (r: Rec) => String(r.fields.company).trim().toLowerCase();
-    const same = collection === "deals" ? live("deals").find((r) => company(r) === String(op.fields.company).trim().toLowerCase()) : undefined;
+    const same = kindOf(collection).same?.(op.fields);
     if (same && !op.distinct) throw refuse(`possible duplicate of ${same.id}: the same company`, "duplicate", same);
     const id = ulid();
     const rec: Rec = { collection, id, fields: { ...op.fields }, version: 1, created: Date.now() / 1000, updated: Date.now() / 1000, deleted: null };
     records.set(id, rec);
-    return [rec, change(collection, id, "add", null, op.fields, Date.now())];
+    return [rec, change(collection, id, "add", null, op.fields, Date.now(), actor)];
   }
   if (op.op === "revert") {
     const target = changes.find((c) => c.change_id === op.change_id);
@@ -500,34 +563,34 @@ function apply(collection: Name, op: Op): [Rec, Change | null] {
       .slice(changes.indexOf(target) + 1)
       .find((c) => c.id === rec.id && (!touched || Object.keys(c.after ?? {}).some((k) => touched.includes(k))));
     if (later) throw refuse(`changed after it: ${Object.keys(later.after ?? {}).join(", ")} by ${later.actor} (${later.op}, ${later.change_id})`, "after", rec, later);
-    return [rec, put(rec, goal, "revert", { reverts: target.change_id })];
+    return [rec, put(rec, goal, "revert", actor, { reverts: target.change_id })];
   }
   const rec = at(collection, op.id, op.version);
   if (op.op === "set") {
     check(collection, op.fields);
-    return [rec, put(rec, op.fields, "set")];
+    return [rec, put(rec, op.fields, "set", actor)];
   }
-  return [rec, put(rec, { [DELETED]: op.op === "delete" ? Date.now() / 1000 : null }, op.op)];
+  return [rec, put(rec, { [DELETED]: op.op === "delete" ? Date.now() / 1000 : null }, op.op, actor)];
 }
 
-/** `POST /api/c/<collection>`: the owner's operations, each at the version shown — `{status, data, moved}`, `moved`
- * the collection's event when something changed — or null when the path is not one. Not one transaction, as the
- * platform's is: a refused operation leaves those before it written. */
-export function mockWrite(
-  path: string,
-  body: Record<string, unknown>,
-): { status: number; data: unknown; moved?: { name: string; space: string; rev: string } } | null {
-  const m = /^\/api\/c\/([a-z][a-z0-9_]*)$/.exec(path);
-  if (!m) return null;
-  const collection = m[1] as Name;
+/** A collection's event on the stream, `{name, space, rev}`. */
+export interface Moved {
+  name: string;
+  space: string;
+  rev: string;
+}
+
+/** A write of `actor`'s, each operation at the version it names — `{status, data, moved}`, `moved` the collection's
+ * event when something changed. Not one transaction, as the platform's is: a refused operation leaves those before
+ * it written. */
+export function writeAs(actor: string, collection: string, ops: Op[]): { status: number; data: WriteAnswer | Refusal; moved?: Moved } {
   const refused = (error: string) => ({ status: 400, data: { error, kind: null, record: null, change: null } });
-  if (!(collection in FIELDS)) return refused(`there is no collection '${collection}' to write to here`);
-  const ops = Array.isArray(body.ops) ? (body.ops as Op[]) : [];
+  if (!kinds.has(collection)) return refused(`there is no collection '${collection}' to write to here`);
   if (!ops.length) return refused("ops is a list of 1 to 200 operations");
   const answer: WriteAnswer = { name: collection, rev: null, change_ids: [], records: [] };
   for (const [n, op] of ops.entries()) {
     try {
-      const [rec, made] = apply(collection, op);
+      const [rec, made] = apply(collection, op, actor);
       answer.change_ids.push(made?.change_id ?? null);
       answer.records.push(shown(rec));
     } catch (e) {
@@ -535,13 +598,20 @@ export function mockWrite(
       throw e;
     }
   }
-  answer.rev = revs[collection];
-  return { status: 200, data: answer, ...(answer.change_ids.some(Boolean) ? { moved: { name: collection, space: "work", rev: revs[collection] } } : {}) };
+  answer.rev = rev(collection);
+  return { status: 200, data: answer, ...(answer.change_ids.some(Boolean) ? { moved: { name: collection, space: kindOf(collection).space, rev: revs.get(collection)! } } : {}) };
+}
+
+/** `POST /api/c/<collection>`: the owner's operations, each at the version shown — or null when the path is not one. */
+export function mockWrite(path: string, body: Record<string, unknown>): ReturnType<typeof writeAs> | null {
+  const m = /^\/api\/c\/([a-z][a-z0-9_]*)$/.exec(path);
+  if (!m) return null;
+  return writeAs("owner", m[1]!, Array.isArray(body.ops) ? (body.ops as Op[]) : []);
 }
 
 /** A deal moves one column on, as a session would (the first open column's oldest card): the stream's `collection`
  * event, `{name, space, rev}`. */
-export function moveDeal(): { name: string; space: string; rev: string } {
+export function moveDeal(): Moved {
   const open = STAGES.filter((s) => s !== "lost");
   const deals = live("deals");
   const from = open.find((s) => deals.some((r) => r.fields.stage === s)) ?? "lead";
@@ -551,19 +621,19 @@ export function moveDeal(): { name: string; space: string; rev: string } {
   rec.version += 1;
   rec.updated = Date.now() / 1000;
   change("deals", rec.id, "set", { stage: from }, { stage: to }, Date.now(), "session:mock", { via: "session" });
-  return { name: "deals", space: "work", rev: revs.deals };
+  return { name: "deals", space: "work", rev: revs.get("deals")! };
 }
 
 // --- what the agents proposed (retinue/colltools.py) --------------------------------------------------------------
 
 const proposals = new Map<string, CollectionProposal & { ops: Op[] }>();
 
-function propose(session: string, collection: Name, ops: Op[], shownChanges: CollectionProposal["changes"], why: string | null, needs: string | null, ageMs: number) {
+function propose(session: string, collection: string, ops: Op[], shownChanges: CollectionProposal["changes"], why: string | null, needs: string | null, ageMs: number) {
   const id = randomBytes(6).toString("hex");
   const created = (Date.now() - ageMs) / 1000;
   proposals.set(id, {
     id, tool_use_id: `toolu_${id}`, session, actor: `session:${session}`, collection, space: "work", changes: shownChanges,
-    fields: FIELDS[collection], words: words(shownChanges.flatMap((c) => [c.before, c.after])), why, needs, created, at: created,
+    fields: kindOf(collection).fields, words: words(collection, shownChanges.flatMap((c) => [c.before, c.after])), why, needs, created, at: created,
     state: "open", change_ids: null, ops,
   });
 }

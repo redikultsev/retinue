@@ -147,6 +147,10 @@ test("«Today»'s tasks and schedule — the week's grid — open and fit, and a
   await expect(page.getByText("Daily stand-up").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Plan my week" })).toBeVisible(); // not pressed: it would plan every task the other widths' runs press
   await fits(page);
+  // «Not working today» holds the rest of the day's window and says so over the grid — «already» for a width after the first
+  await page.getByRole("button", { name: "Now", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Not working today" }).click();
+  await expect(page.getByText(/^Not working till \d\d:\d\d( already)?\./)).toBeVisible();
   // the day, the week and the grid were tabs once: an old link to any lands on «Schedule»
   for (const old of ["day", "week", "plan"]) {
     await page.goto(`/today?tab=${old}`);

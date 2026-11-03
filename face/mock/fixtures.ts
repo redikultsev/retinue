@@ -1,6 +1,7 @@
 // What the mock face API starts with: tracks, sessions, transcripts with an item of every kind, a shown approval
 // card, a courier card, a long input, and a realistic `git diff HEAD`. Shapes follow docs/face.md «API» and
 // retinue/transcript.py, retinue/approvals.py `card`, retinue/courier.py `CardView`.
+import type { TurnEnding } from "../src/lib/contract.ts";
 import type { About, BaseCard, Approval, CardView, Input, Item, ItemData, OutFile, Proposal, PushCard, Session, Sphere, Summary, Track } from "../src/lib/types.ts";
 
 export const T0 = Math.floor(Date.now() / 1000);
@@ -62,10 +63,10 @@ export function freeSlot(all: Iterable<Session>, s: Pick<Session, "project" | "s
 }
 for (const s of [...sessions].sort((a, b) => a.created - b.created)) s.slot = freeSlot(sessions, s);
 
-/** How those sessions' turns ended (the platform's `turn_ending`, docs/platform.md «Turn endings»; `TurnEnding` in
- * src/lib/feed.ts, which the mock's Node config can not import), each artifact as the feed serves it: `src`, where the
- * app opens it in place, and `kind`. The picture and the PDF are the project's own files (mock/spaces.ts). */
-export const endings: Record<string, { kind: string; [field: string]: unknown }> = {
+/** How those sessions' turns ended (the platform's `turn_ending`, docs/platform.md «Turn endings»), each artifact as
+ * the feed serves it: `src`, where the app opens it in place, and `kind`. The picture and the PDF are the project's own
+ * files (mock/spaces.ts). */
+export const endings: Record<string, TurnEnding> = {
   e1e1a001: {
     kind: "ask",
     request: "Find a host for the Acme site under €20 a month, so the launch is not held up",

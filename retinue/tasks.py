@@ -75,7 +75,7 @@ class Tasks:
         after = None
         for page in range(QUERY_PAGES):
             arguments = {"collection": TASKS, "filter": [{"field": "ask", "op": "not_empty"}],
-                         "fields": ["title", "state", "ask"], **({"after": after} if after else {})}
+                         "fields": ["title", "state", "ask", "due", "by"], **({"after": after} if after else {})}
             data = await self._call("query", arguments, f"named/{page}/{after or ''}")
             answer = data.get("answer") if data.get("ok") else None
             if not isinstance(answer, dict):
@@ -119,16 +119,39 @@ class Tasks:
         found = next(((row_id, row) for row_id, row in rows(self.core, now).items() if seqs & set(row["seqs"])), None)
         if found is None:
             return None
-        return await self._make(found[0], found[1]["title"], None, now)
+        due = str(found[1].get("due") or "")  # her reading of the letter's deadline: a day, or a day and a time
+        return await self._make(found[0], found[1]["title"], due[:10] or None, now, self._by(due))
 
-    async def _make(self, ask: str, title: str, due: str | None, now: float) -> str | None:
+    def _by(self, due: str) -> str | None:
+        """A deadline with a time of day, his local, as the task's «no later than»."""
+        if "T" not in due:
+            return None
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        try:
+            at = datetime.strptime(due, "%Y-%m-%dT%H:%M").replace(tzinfo=ZoneInfo(self.core.tz)).timestamp()
+        except (ValueError, KeyError):
+            return None
+        return datetime.fromtimestamp(at, ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")  # past too: «missed its deadline»
+
+    async def _make(self, ask: str, title: str, due: str | None, now: float, by: str | None = None) -> str | None:
         named = await self._named()
         if named is None:
             return None
         if mine := next((r for r in named if r["fields"].get("ask") == ask and r["fields"].get("state") == OPEN), None):
+            # Made before the letter was dated, or a later letter brought an earlier deadline: the task takes it.
+            had = mine["fields"]
+            change = {**({"due": due} if due and (not had.get("due") or due < had["due"]) else {}),
+                      **({"by": by} if by and (not had.get("by") or by < had["by"]) else {})}
+            if change:
+                idem = f"task-due:{mine['id']}:{_hash(change)}"
+                data = await self._call("apply", {"collection": TASKS, "ops": [
+                    {"op": "set", "id": mine["id"], "version": mine["version"], "fields": change}], "idem": idem}, idem)
+                if not data.get("ok"):
+                    log.warning("the task's deadline not set: %s", line(str(data.get("text") or "no answer"), 300))
             return mine["id"]
         fields = {"title": line(title, TITLE_CHARS) or "Task", "state": OPEN, "ask": ask,
-                  **({"due": due} if due else {})}
+                  **({"due": due} if due else {}), **({"by": by} if by else {})}
         idem = f"task:{ask}:{int(now // 60)}"
         data = await self._call("apply", {"collection": TASKS, "ops": [{"op": "add", "fields": fields}], "idem": idem}, idem)
         records = (data.get("answer") or {}).get("records") or [] if data.get("ok") else []
@@ -331,3 +354,8 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def _hash(fields: dict) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()[:12]

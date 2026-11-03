@@ -78,7 +78,9 @@ BACK = "Undo"
 EXTRA_RIGHTS = "telegram.rights"  # the Business bot's rights beyond can_reply the owner was told of
 EVENT_HEAD = (
     "[Mail, calendar and Telegram. A separate run outside the conversation with the owner. Answer by the schema, by the "
-    "rules of the «Mail and calendar» section: for each item — what is needed from the owner (needs), the deadline (deadline), the "
+    "rules of the «Mail and calendar» section: for each item — what is needed from the owner (needs), the deadline (deadline, "
+    "in words; and due — the same as his local date YYYY-MM-DD, or YYYY-MM-DDTHH:MM when it names a time, counted from "
+    "Now below; empty when there is none or you cannot tell), the "
     "cost of waiting (cost): what he loses if he learns of it at 09:00 or when he next writes to you; whether it is new "
     "to him (new), and text — what to write to him, in English, one to three lines. Whether to write at once, the "
     "router decides by your answer and the owner's rules. to_assistant — the message is addressed to you as the "
@@ -656,7 +658,7 @@ class Mailroom:
                 continue
             self._captions(item, decision.media, context_id, now)
             card = {**(item["card"] or {}), "text": decision.text, "needs_now": decision.needs,
-                    "deadline_now": decision.deadline, "cost": decision.cost, "new": decision.new, "judged": now,
+                    "deadline_now": decision.deadline, "due_now": decision.due, "cost": decision.cost, "new": decision.new, "judged": now,
                     "to_assistant": decision.to_assistant}
             where = route(decision, bool(item["sender"]) and self.store.muted(item["sender"], item["kind"] or ""))
             if where == NOW:

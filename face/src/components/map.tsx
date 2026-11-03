@@ -13,12 +13,12 @@ import type { Feed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { type Area, mapAreas, onMap, type Tile, tileOf } from "@/lib/map";
 import { useWide } from "@/lib/media";
-import { knownProjects, sessionProject, useProjects, within } from "@/lib/projects";
+import { useProjectOf, useProjects, within } from "@/lib/projects";
 import { listed, orderedItems } from "@/lib/store";
 import { latestPlan, planLine } from "@/lib/summary";
-import { sessionRequests } from "@/lib/today";
 import type { Session, Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { requests } from "@/lib/waiting";
 
 const WORDS = { waits: "waits for you", working: "working", done: "done" } as const;
 
@@ -140,13 +140,13 @@ export function MapView({
   const wide = useWide();
   const [open, setOpen] = useState<string | null>(null);
   const grid = useRef<HTMLElement>(null);
-  const known = useMemo(() => new Set([...knownProjects(nodes, spheres), ...(project ? [project] : [])]), [nodes, spheres, project]);
+  const of = useProjectOf(spheres);
   const sessions = useMemo(() => {
     const all = onMap(listed(state.sessions), now);
-    return project ? all.filter((s) => within(sessionProject(s, known), project)) : all;
-  }, [state.sessions, now, project, known]);
-  const areas = useMemo(() => mapAreas(sessions, spheres, nodes ?? [], (s) => sessionProject(s, known)), [sessions, spheres, nodes, known]);
-  const rows = useMemo(() => sessionRequests(feed), [feed]);
+    return project ? all.filter((s) => within(of(s), project)) : all;
+  }, [state.sessions, now, project, of]);
+  const areas = useMemo(() => mapAreas(sessions, spheres, nodes ?? [], of), [sessions, spheres, nodes, of]);
+  const rows = useMemo(() => requests(feed), [feed]);
   const tiles = useMemo(() => new Map(sessions.map((s) => [s.id, tileOf(s, rows, numbers)])), [sessions, rows, numbers]);
   const picked = open ? state.sessions[open] : undefined;
   const pickedTile = open ? tiles.get(open) : undefined;

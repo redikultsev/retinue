@@ -10,7 +10,7 @@ import { api } from "@/lib/api";
 import type { Feed, FeedRow } from "@/lib/feed";
 import { live } from "@/lib/live";
 import { NUMBERS_KEY } from "@/lib/operator";
-import { rowWithin } from "@/lib/projects";
+import { forgetProjects, setProjects } from "@/lib/projects";
 import { CHAT_KEY, chatWith, forgetChat, parseAnswers, reach, setChatOpen, voiceSession } from "@/lib/talk";
 import type { Session } from "@/lib/types";
 
@@ -125,11 +125,12 @@ describe("a project's «Operator»", () => {
         row("c", { project: "work/acme/site", title: "The new header" }),
       ] }],
     };
-    const known = new Set(["work", "work/acme", "work/acme/site", "travel"]);
-    mount(<Operator feed={feed} spheres={[]} now={NOW} filter={(r) => rowWithin(r, "work/acme", known)} />);
+    setProjects(["work", "work/acme", "work/acme/site", "travel"].map((name) => ({ name, title: name, parent: "", questions: 0, tasks: 0 })));
+    mount(<Operator feed={feed} spheres={[]} now={NOW} project="work/acme" />);
     const cards = await screen.findAllByTestId("operator-card");
     expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual(["A host for the site", "The new header"]);
     expect(within(cards[1]!).getByText("#3")).toBeTruthy(); // its number on «Today», not a new one
     expect(within(cards[0]!).getByRole("button", { name: "Dictate the answer" })).toBeTruthy();
+    forgetProjects();
   });
 });

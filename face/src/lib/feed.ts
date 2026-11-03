@@ -198,9 +198,6 @@ export const DEBOUNCE_MS = 400;
 export const POLL_MS = 60_000;
 /** The router pushes at least hourly: a digest older than two hours is said to be old. */
 export const STALE_DIGEST_S = 2 * 3600;
-/** A row pressed here stays hidden while the feed still has it — the router's next digest takes a moment — but no
- * longer than this: a press that did not go through brings its row back. */
-export const PRESSED_HIDE_S = 600;
 
 interface LiveLike {
   subscribe: (listener: () => void) => () => void;
@@ -213,8 +210,6 @@ export interface FeedDeps {
   load: () => Promise<Feed>;
   setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
-  /** Milliseconds now; `Date.now` by default. */
-  now?: () => number;
 }
 
 const defaultDeps: FeedDeps = {
@@ -223,24 +218,8 @@ const defaultDeps: FeedDeps = {
   clearTimer: (timer) => clearTimeout(timer),
 };
 
-/** The feed without the rows whose token was pressed here, its count down by as many. */
-export function withoutPressed(feed: Feed, pressed: ReadonlySet<string>): Feed {
-  let gone = 0;
-  const groups = feed.groups
-    .map((g) => {
-      const rows = g.rows.filter((r) => !(r.t && pressed.has(r.t)));
-      gone += g.rows.length - rows.length;
-      return { ...g, rows };
-    })
-    .filter((g) => g.rows.length > 0);
-  return gone ? { ...feed, count: feed.count - gone, groups } : feed;
-}
-
 export class FeedSource {
   feed: Feed | null = null;
-  private raw: Feed | null = null;
-  /** Tokens pressed here, and when (ms). */
-  private pressed = new Map<string, number>();
   private listeners = new Set<() => void>();
   private unsubscribe: (() => void) | null = null;
   private debounce: ReturnType<typeof setTimeout> | null = null;
@@ -289,32 +268,7 @@ export class FeedSource {
     for (const timer of [this.debounce, this.poll]) if (timer) this.deps.clearTimer(timer);
     this.debounce = this.poll = null;
     this.seen = null;
-    this.feed = this.raw = null;
-    this.pressed.clear();
-    this.notify();
-  }
-
-  /** A row pressed: out of the feed until the feed has it no more, or PRESSED_HIDE_S. */
-  hide(t: string): void {
-    this.pressed.set(t, this.now());
-    this.apply();
-  }
-
-  /** «Undo», or a press that failed: the row is back as the feed has it. */
-  unhide(t: string): void {
-    this.pressed.delete(t);
-    this.apply();
-  }
-
-  private now(): number {
-    return (this.deps.now ?? Date.now)();
-  }
-
-  private apply() {
-    const now = this.now();
-    const tokens = new Set((this.raw?.groups ?? []).flatMap((g) => g.rows.flatMap((r) => (r.t ? [r.t] : []))));
-    for (const [t, at] of this.pressed) if (!tokens.has(t) || now - at > PRESSED_HIDE_S * 1000) this.pressed.delete(t);
-    this.feed = this.raw && withoutPressed(this.raw, new Set(this.pressed.keys()));
+    this.feed = null;
     this.notify();
   }
 
@@ -335,8 +289,8 @@ export class FeedSource {
     }
     this.loading = true;
     try {
-      this.raw = await this.deps.load();
-      this.apply();
+      this.feed = await this.deps.load();
+      this.notify();
     } catch {
       // offline or logged out: the live store says so; the last feed stays on screen
     } finally {
@@ -385,13 +339,4 @@ export function herLine(essence: string): { verb: string; text: string; due: str
     due = tail[1]!.includes("‹") ? "" : tail[1]!;
   }
   return { verb, text: text.replace(/ · $/, "").trim(), due };
-}
-
-/** A person's row — a letter's or a chat's ask with its token: its place is Tasks («From people»), not the queue. */
-export const personRow = (row: FeedRow): boolean => !!row.t && row.source !== "draft";
-
-/** What waits in «Waiting» itself: the feed's count less the people's rows Tasks holds. */
-export function waitingCount(feed: Feed | null): number {
-  if (!feed) return 0;
-  return Math.max(0, feed.count - feed.groups.flatMap((g) => g.rows).filter(personRow).length);
 }

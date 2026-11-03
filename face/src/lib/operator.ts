@@ -25,12 +25,6 @@ const VERB: Record<string, string> = {
 /** The verb on a card's top line: by its ending, else by its row's action. */
 export const verbOf = (row: FeedRow): string => VERB[endingOf(row)?.kind ?? row.action] ?? "waits";
 
-/** A card that waits for the owner — a thing to look at too; a finished turn is only to read. */
-export function waits(row: FeedRow): boolean {
-  const e = endingOf(row);
-  return e ? e.kind !== "done" : row.action !== "read";
-}
-
 export const WHY_OWNER: Record<string, string> = {
   goal: "your goal or taste",
   fact: "a fact only you know",

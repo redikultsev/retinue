@@ -4,17 +4,17 @@
 // in a moment later. Nothing of it is kept: not by the platform, not here once another row is opened. The actions go where
 // the thing is — the Gmail thread, the person's chat, her card in Telegram for a draft's «Send» — and «Ask the
 // assistant» starts a session of its own about the row, its context written into the new task for the owner to add his
-// question to. «Done», «Not a task», «Tomorrow» close the row as on the row itself.
+// question to. «Done», «Not a task», «Tomorrow» close the row as on the row itself (lib/asks.ts `pressAsk`).
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AlertCircle, ArrowUpRight, Ban, Check, Clock, SphereMark } from "@/components/icons";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
+import { pressAsk } from "@/lib/asks";
 import { type DetailAsk, type DetailLink, type FeedRow, feedSource, herLine, linkOk, type Press, type WaitingDetail, waited } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { openOutside } from "@/lib/telegram";
 import { startNew } from "@/pages/new";
-import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 export const PRESSES: [Press, string][] = [
@@ -22,33 +22,6 @@ export const PRESSES: [Press, string][] = [
   ["dismissed", "Not a task"],
   ["later", "Tomorrow"],
 ];
-const UNDO_MS = 10_000;
-const PRESS_FAILED = "It did not go through — try again.";
-
-/** «Done», «Not a task», «Tomorrow» on her row: the row leaves the feed at once (`FeedSource.hide`), the router marks
- * what the row's token names, and the toast offers «Undo» for ten seconds. False when the press did not go through. */
-export async function pressRow(t: string, action: Press, label: string, press = api.waitingPress): Promise<boolean> {
-  const back = async () => {
-    try {
-      await press(t, "open");
-      feedSource.unhide(t);
-    } catch {
-      toast(PRESS_FAILED, "error");
-    }
-  };
-  feedSource.hide(t);
-  try {
-    await press(t, action);
-  } catch {
-    feedSource.unhide(t);
-    toast(PRESS_FAILED, "error");
-    return false;
-  }
-  toast(label, "info", UNDO_MS, undefined, { label: "Undo", run: () => void back() });
-  return true;
-}
-
-
 const NEED_WORDS: Record<string, string> = { reply: "Reply", decide: "Decide", pay: "Pay", attend: "Attend", act: "Do" };
 /** What the owner does about it, by her most pressing ask: one line, the buttons under it do it. */
 const NEXT: Record<string, string> = {
@@ -319,7 +292,7 @@ export function WaitingPane({
         ) : (
           <>
             {pressable && (
-              <Button onClick={() => void pressRow(row.t!, "done", "Done")}>
+              <Button onClick={() => void pressAsk(row.t!, "done", "Done")}>
                 <Check />
                 Done
               </Button>
@@ -327,7 +300,7 @@ export function WaitingPane({
             {open && <Out link={open} />}
             {pressable &&
               PRESSES.slice(1).map(([action, label]) => (
-                <Button key={action} variant="outline" onClick={() => void pressRow(row.t!, action, label)}>
+                <Button key={action} variant="outline" onClick={() => void pressAsk(row.t!, action, label)}>
                   {action === "later" ? <Clock /> : <Ban />}
                   {label}
                 </Button>

@@ -5,7 +5,7 @@ import { Inbox } from "@/components/inbox";
 import { Toaster } from "@/components/toaster";
 import { WaitingPane } from "@/components/waiting-sheet";
 import { ApiError, api } from "@/lib/api";
-import { DEBOUNCE_MS, type Feed, type FeedRow, FeedSource, feedSource, herLine, POLL_MS, PRESSED_HIDE_S, type WaitingDetail, waited } from "@/lib/feed";
+import { DEBOUNCE_MS, type Feed, type FeedRow, FeedSource, feedSource, herLine, POLL_MS, type WaitingDetail, waited } from "@/lib/feed";
 import { live } from "@/lib/live";
 import { spacesApi } from "@/lib/spaces";
 import { initialState, type State } from "@/lib/store";
@@ -186,8 +186,6 @@ describe("Her row", () => {
   it("closes from its pane: the row's token goes with «Done», and the toast takes it back", async () => {
     vi.spyOn(api, "waitingDetail").mockResolvedValue({ detail });
     const press = vi.spyOn(api, "waitingPress").mockResolvedValue({ ok: true });
-    const hide = vi.spyOn(feedSource, "hide");
-    const unhide = vi.spyOn(feedSource, "unhide");
     mount(
       <>
         {pane(letter)}
@@ -197,12 +195,10 @@ describe("Her row", () => {
     const open = await screen.findByRole("region", { name: "Acme Hosting" });
     fireEvent.click(within(open).getByRole("button", { name: "Done" }));
     await waitFor(() => expect(press).toHaveBeenCalledWith(T, "done"));
-    expect(hide).toHaveBeenCalledWith(T);
     const toast = await screen.findByRole("status");
     expect(toast.textContent).toBe("DoneUndo");
     fireEvent.click(within(toast).getByRole("button", { name: "Undo" }));
     await waitFor(() => expect(press).toHaveBeenLastCalledWith(T, "open"));
-    await waitFor(() => expect(unhide).toHaveBeenCalledWith(T));
   });
 
   it("leaves a person's row to Tasks: the queue shows the draft, not the ask", async () => {
@@ -359,40 +355,6 @@ describe("FeedSource", () => {
     await vi.advanceTimersByTimeAsync(POLL_MS * 3);
     expect(load).toHaveBeenCalledTimes(4);
     expect(source.feed).toBeNull();
-  });
-});
-
-describe("A pressed row", () => {
-  it("stays hidden while the feed has it, at most ten minutes, and is back on «Undo»", async () => {
-    const T = "0123456789abcdef0123456789abcdef";
-    const withRow: Feed = {
-      ...FEED,
-      count: 2,
-      groups: [{ action: "assistant", title: "From the assistant", rows: [row({ key: "w", action: "assistant", t: T }), row({ key: "x", action: "assistant" })] }],
-    };
-    let clock = NOW * 1000;
-    const load = vi.fn().mockResolvedValue(withRow);
-    const source = new FeedSource({ load, setTimer: () => 0 as unknown as ReturnType<typeof setTimeout>, clearTimer: () => {}, now: () => clock });
-    await source.refresh();
-    source.hide(T);
-    expect(source.feed?.count).toBe(1);
-    expect(source.feed?.groups[0]?.rows.map((r) => r.key)).toEqual(["x"]);
-    await source.refresh();
-    expect(source.feed?.count, "the router has not pushed yet: still hidden").toBe(1);
-    source.unhide(T);
-    expect(source.feed?.count).toBe(2);
-
-    source.hide(T);
-    clock += (PRESSED_HIDE_S + 1) * 1000;
-    await source.refresh();
-    expect(source.feed?.count, "ten minutes on and still there: the press did not go through").toBe(2);
-
-    source.hide(T);
-    load.mockResolvedValueOnce({ ...withRow, count: 1, groups: [{ ...withRow.groups[0], rows: [row({ key: "x", action: "assistant" })] }] });
-    await source.refresh();
-    expect(source.feed?.count).toBe(1);
-    await source.refresh();
-    expect(source.feed?.count, "the row came back (another «Undo»): it shows, the press is forgotten").toBe(2);
   });
 });
 

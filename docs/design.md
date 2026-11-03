@@ -128,7 +128,7 @@ What it decides ([face.md](face.md#a-project)):
 Of the prototypes, «4 · Projects with sessions» was taken: a project is a place.
 
 - **A project's row** is a session row's height (30 px, 44 on touch): its mark, its name at 13 px medium, the amber
-  count of what waits in it in mono at its right, the fold chevron after it; the row opens the project. A sub-project
+  count of what waits in it in mono at its right — its «Operator» count, the same number on its page and its parent's —, the fold chevron after it; the row opens the project. A sub-project
   is indented 14 px a level, its sessions with it. «Other» is a quiet 12 px heading, not a place.
 - **Talk to Retinue** is a column at the right (380 px) on a wide screen, a sheet on a phone: the sidebar's surface,
   a one-line header (mark, «Retinue», «the voice · sees every project» quiet, ↗, ×), the conversation, the composer.

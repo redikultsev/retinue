@@ -15,13 +15,13 @@ import { Dialog } from "@/components/ui/dialog";
 import { ApiError, api } from "@/lib/api";
 import { feedSource, useFeed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
-import { keptNumbers, renumber, waits } from "@/lib/operator";
+import { keptNumbers, renumber } from "@/lib/operator";
 import { approvalsOf, listed, orderedInputs, orderedItems, orderedSummaries, proposalsOf } from "@/lib/store";
 import { chatWith, parseAnswers, type Reach, reach, setChatOpen, useChatDraft, useChatOpen, voiceSession } from "@/lib/talk";
-import { sessionRequests } from "@/lib/today";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { clock, UNAVAILABLE, useVoice } from "@/lib/voice";
+import { requests, waitingKeys } from "@/lib/waiting";
 
 /** The microphone beside an answer: dictation into it. While it records: the time, «Stop» and «Cancel» in its place. */
 export function DictateButton({
@@ -133,8 +133,8 @@ export function HeaderVoice() {
       const numbered = parseAnswers(text);
       // the numbers «Today», a project's «Operator» and the map show: kept on the device, given now to a card none
       // of them has drawn yet
-      const rows = sessionRequests(feed);
-      const numbers = renumber(keptNumbers(), rows.filter(waits).map((r) => r.key), Date.now() / 1000);
+      const rows = requests(feed);
+      const numbers = renumber(keptNumbers(), waitingKeys(feed), Date.now() / 1000);
       if (numbered.length) setAnswers(reach(numbered, numbers, rows));
       else chatWith(text);
     },

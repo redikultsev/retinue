@@ -7,6 +7,7 @@ import type { FeedRow, TurnEnding } from "./feed";
 import { endingOf, type Numbers } from "./operator";
 import { RECENT_S } from "./store";
 import type { Session, Sphere } from "./types";
+import { waits as rowWaits } from "./waiting";
 
 export interface MapRef {
   name: string;
@@ -52,7 +53,7 @@ export function placeAll(sessions: Session[]): { places: (Session | null)[]; nex
 
 /** The map's areas: the projects with a session on the map and every project above them, in the left panel's order —
  * the spheres as the platform lists them, then the others A–Z, «Other» last; a sub-project right after its project.
- * `where(s)`: the project a session belongs to (lib/projects.ts `sessionProject`). */
+ * `where(s)`: the project a session belongs to (lib/projects.ts `useProjectOf`). */
 export function mapAreas(sessions: Session[], spheres: Sphere[], nodes: MapRef[], where: (s: Session) => string): Area[] {
   const byKey = new Map<string, Session[]>();
   for (const s of sessions) byKey.set(where(s), [...(byKey.get(where(s)) ?? []), s]);
@@ -115,8 +116,8 @@ export function needs(row: FeedRow): string {
 /** A session's tile: by its request on the feed (the first that waits), else by its own state. */
 export function tileOf(s: Session, rows: FeedRow[], numbers: Numbers): Tile {
   const mine = rows.filter((r) => r.session === s.id);
-  const row = mine.find((r) => r.action !== "read") ?? mine[0] ?? null;
-  const waits = (row !== null && row.action !== "read") || isWaiting(s);
+  const row = mine.find(rowWaits) ?? mine[0] ?? null;
+  const waits = (row !== null && rowWaits(row)) || isWaiting(s);
   const state: TileState = waits ? "waits" : s.state === "active" ? "working" : "done";
   const n = waits && row ? numbers[row.key]?.n : undefined;
   return { state, row, n, line: row ? needs(row) : "" };

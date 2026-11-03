@@ -32,12 +32,13 @@ import { ApiError, api } from "@/lib/api";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { useFeed } from "@/lib/feed";
-import { knownProjects, rowWaits, rowWithin, sessionProject, useProjects, within } from "@/lib/projects";
+import { useProjectOf, useProjects } from "@/lib/projects";
 import { FILTERS, type Filter, type FoldedRow, foldProjects, foldRows, isWaiting, type ProjectGroup, projectGroups } from "@/lib/spheres";
 import { approvalsOf, lastWords, listed, orderedItems, orderedSummaries, waitsOnOwner } from "@/lib/store";
 import { toast } from "@/lib/toast";
 import { QUEUED, type Session, type Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { waitingIn } from "@/lib/waiting";
 
 const FILTER_KEY = "retinue-list-filter";
 const FOLDED_KEY = "retinue-list-folded";
@@ -457,19 +458,13 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
   const nodes = useProjects();
   const feed = useFeed();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const known = useMemo(() => knownProjects(nodes, spheres), [nodes, spheres]);
+  const of = useProjectOf(spheres);
   const groups = useMemo(
-    () => projectGroups(listed(sessions), spheres, nodes ?? [], filter, Date.now() / 1000, (s) => sessionProject(s, known)),
-    [sessions, spheres, nodes, filter, known],
+    () => projectGroups(listed(sessions), spheres, nodes ?? [], filter, Date.now() / 1000, of),
+    [sessions, spheres, nodes, filter, of],
   );
-  // what waits for the owner in each project, its sub-projects' too: the feed's rows, as «Today» counts them; before
-  // the feed is in, the sessions that wait
-  const waitingIn = useMemo(() => {
-    const rows = (feed?.groups ?? []).flatMap((g) => g.rows).filter(rowWaits);
-    const all = listed(sessions).filter(isWaiting);
-    return (key: string) =>
-      !key ? 0 : feed ? rows.filter((r) => rowWithin(r, key, known)).length : all.filter((s) => within(sessionProject(s, known), key)).length;
-  }, [feed, known, sessions]);
+  // what waits for the owner in each project, its sub-projects' too: the number of its «Operator» tab
+  const waitsIn = useMemo(() => waitingIn(feed, listed(sessions), of), [feed, sessions, of]);
   const opened = projectOfPath(pathname);
   function pick(value: Filter) {
     setFilter(value);
@@ -560,7 +555,7 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
             <section key={g.key || "-"} aria-label={g.title} className="flex flex-col">
               <ProjectHead
                 group={g}
-                waiting={waitingIn(g.key)}
+                waiting={waitsIn(g.key)}
                 count={under.reduce((n, x) => n + x.rows.length, 0)}
                 folded={g.folded}
                 onFold={() => fold(`project:${g.key}`)}

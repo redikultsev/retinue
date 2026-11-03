@@ -330,7 +330,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
   and above the keyboard.
 - **The middle** is calm: a greeting for the time of day on the device's clock (“Good morning” from 5, “Good afternoon”
   from 12, “Good evening” from 18, “Good night” from 23), then how things stand — “N waiting · N working” (the
-  feed's count, the running sessions; “Quiet: nothing waiting” when both are nought) — a tap opening “Today”, and the
+  «Today N», the running sessions; “Quiet: nothing waiting” when both are nought) — a tap opening “Today”, and the
   nearest deadline of the feed, when there is one.
 - **The [composer](#the-composer)**: on a desktop it has the focus at once, on a phone it waits for a tap (the
   keyboard does not jump up). Under it, **the sphere picker**: “Auto” (the default) and one chip per sphere. With a
@@ -467,7 +467,10 @@ platform's `turn_ending`) is drawn by it, «You asked: …» — your request in
 - **done**: what came out and what is next, and whose move.
 
 Every answer — a button, a box's words — goes to the session as your next message, and the card says it in place
-(«You: …»). A row with a card of its own (a question, an approval, a proposal, a push) shows that card. A waiting card
+(«You: …»). A row with a card of its own (a question, an approval, a proposal, a push) shows that card. A card waits
+unless its turn is only to read — a finished one (`done`, or a turn to read with no word for you); a thing to look at
+waits, though the feed lists it under “Read” — and that one rule (`lib/waiting.ts` `waits`) gives the numbers, the
+amber mark on «Today», a tile's «waits for you» and every count of a project. A waiting card
 keeps its number while it waits; a freed number is not given to another card for half an hour (kept on the device).
 Nothing jumps while you read: a new card is counted at the top («New: N — show»), one answered or gone stays in its
 place, dimmed, until you lay the list out again or come back after a minute away. No key answers a card here: one
@@ -504,7 +507,8 @@ its «Undo» in the toast, its question when the record moved on —, and a task
 Days and times are the owner's zone's (the platform's, as the Router last told it).
 
 - **Tasks**: «By when» or «By goal»; a box that adds a task by its title; **From people** — a person's ask the digest
-  carries, or a reminder of the next seven days, that no open task names yet: the circle is «Done», «Plan» a day of
+  carries (the feed's row with its token, `lib/asks.ts`: a press takes it off at once, here and in «Tasks N»), or a
+  reminder of the next seven days, that no open task names yet: the circle is «Done», «Plan» a day of
   the week (the Router makes its task and lays it, one press), «⋯» «Tomorrow» and «Not a task»; its title opens what it
   is about — her words, the sender, «Open in Gmail» — in a sheet; **To plan** —
   the open tasks with no block ahead, the due soonest first; **Planned** — those with one, the soonest first; **Done
@@ -689,12 +693,14 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
 
 ## In the app
 
-- **Home: “Today”** ([above](#today)), with the feed “Waiting for you” ([below](#the-feed)). Its count is on the tab,
-  in the header, the tab title and the app badge.
+- **Home: “Today”** ([above](#today)), with the feed “Waiting for you” ([below](#the-feed)). Its count, «Today N» — the
+  feed's count less the people's asks (`lib/waiting.ts`; the cards the sessions wait on until the feed is in) —, is on
+  the tab, in the header, the left column, the tab title, the app badge and on «New». The platform's `count` stays
+  every row's: `/wait` in Telegram, which has no «Tasks», counts the asks too.
 - <a id="projects-and-their-sessions"></a>**The list is the projects and their sessions** (of the prototypes,
   «4 · Projects with sessions»): each project is a place — its row, its mark and its name, opens its page
-  ([below](#a-project)) and carries the amber count of what waits for you in it and its sub-projects (the feed's rows,
-  as «Today» counts them) —, a sub-project indented inside its project, the project's own sessions under its row, then
+  ([below](#a-project)) and carries the amber count of what waits for you in it and its sub-projects (its sessions'
+  requests that wait, as its «Operator» tab counts them; before the feed is in, its sessions that wait) —, a sub-project indented inside its project, the project's own sessions under its row, then
   its sub-projects. A session belongs to the nearest project of the Base folder it runs in (its row's `project`), else
   to its sphere ([platform.md](platform.md#spheres)); one of neither is under «Other», last. A session that hangs under
   another stays under it, in that one's project. The projects come in the order of `platform.yaml`'s spheres, then
@@ -858,7 +864,7 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
   session, whose turn the platform commits. `RecordPage` takes `pane` to show beside a session on a wide screen.
 - **A new card for another session** while the app is open: a quiet toast “Awaiting decision: <track> · <title>” that
   opens it — not for a session on screen, not for a card that was already waiting when the app loaded. The tab title
-  and the app badge count the cards as before.
+  and the app badge count «Today N» as before.
 - **A card that waits past the prompt cache** carries “The session is idle N min — resuming re-reads the context
   (~K k tokens) uncached”, as in Telegram ([platform.md](platform.md#approvals)).
 - **The Mini App** (`/a/<id>` from a Telegram card): once a press decides the card, the result shows for a second and
@@ -889,7 +895,7 @@ a line's end before 4000 characters),
 `proposal` (the object of the `proposal` event) on a
 proposal's row (`source: proposal`), `t` (the row's token) on a person's row of hers. `project` is a session's folder under the Base
 (`work/acme`); `null` for hers, the Base's root or a folder outside it.
-A pressed row leaves the feed at once and stays hidden while the feed still has its `t`, ten minutes at most — a press
+A pressed row leaves Tasks at once and stays hidden while the feed still has its `t`, ten minutes at most — a press
 that did not go through brings it back; the toast “Done · Undo” stays 10 seconds, and “Undo” sends `open`
 with the same `t`. `closed_today` and `expired_week` count what closed today and what ran out unmarked in the week.
 `bot` is the bot's username as the router last pushed it; `assistant_at` when it last pushed — a list older than two

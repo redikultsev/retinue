@@ -165,7 +165,7 @@ export interface ProjectRef {
  * session that hangs under another (a sub-session, a fork, a side question) stays under it, in that one's project.
  * With no filter every top project is there, as a place to open; with one, only those with a session that passes it.
  * The order: the spheres as the platform lists them, then the other projects A–Z; in a project its own sessions,
- * then its sub-projects. `where(s)`: the project a session belongs to (lib/projects.ts `sessionProject`). */
+ * then its sub-projects. `where(s)`: the project a session belongs to (lib/projects.ts `useProjectOf`). */
 export function projectGroups(
   sessions: Session[],
   spheres: Sphere[],

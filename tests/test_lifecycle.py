@@ -123,6 +123,23 @@ def test_a_move_leaves_the_state_its_event_names(tmp_path, event, kind, before, 
         assert reported == [], "only a sub-session's turn is reported, and only when it is over"
 
 
+def slot(world: World, session: str) -> int | None:
+    return world.store.db.execute("SELECT slot FROM sessions WHERE id = ?", (session,)).fetchone()[0]
+
+
+@pytest.mark.parametrize("event", sorted(BEGINS))
+def test_a_turn_beginning_in_an_archived_session_takes_its_place_on_the_map_again(tmp_path, event):
+    world = World(tmp_path)
+    first, second = world.session("idle"), world.session("idle")
+    assert (slot(world, first), slot(world, second)) == (0, 1)
+    world.store.archive(first, T0)
+    assert slot(world, first) is None, "freed when archived"
+    EVENTS[event](world, world.row(first))
+    assert world.row(first)["archived"] is None and slot(world, first) == 0, "the lowest place free now"
+    EVENTS[event](world, world.row(second))
+    assert slot(world, second) == 1, "a session not archived keeps its own place"
+
+
 def test_a_new_session_made_twice_is_no_spheres_main_session(tmp_path):
     world = World(tmp_path)
     session = world.store.new_session("notes", "room", "private", T0, sphere="travel", main=True)

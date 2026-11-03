@@ -176,10 +176,13 @@ class Lifecycle:
 
     def _active(self, session: str, now: float) -> None:
         """A turn begins — from idle, closed or new it is a new one, and `turn_started` moves (the face's «Working»
-        counts from it) — or goes on; either way the session is back in the face's list."""
+        counts from it) — or goes on; either way the session is back in the face's list and on its map."""
+        row = self.store.session(session) or {}
         fields: dict = {"archived": None}
-        if (self.store.session(session) or {}).get("state") not in ("active", "waiting"):
+        if row.get("state") not in ("active", "waiting"):
             fields["turn_started"] = now
+        if row.get("archived") is not None:  # back on the map, in the lowest place free now, as «Undo» brings it
+            self.store.take_slot(session)
         self._move(session, "active", now, **fields)
 
     def _move(self, session: str, state: str, now: float, **fields) -> None:

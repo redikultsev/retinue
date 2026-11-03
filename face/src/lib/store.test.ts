@@ -12,7 +12,6 @@ import {
   orderedSummaries,
   sessionItems,
   shownApprovals,
-  waitingCount,
 } from "./store";
 import type { Approval, Input, Item, Session, StreamEvent } from "./types";
 
@@ -303,10 +302,6 @@ describe("groups", () => {
     expect(st.sessions.s?.state).toBe("waiting");
     st = reduce(st, { type: "event", id: null, event: { kind: "session", data: session("s", { at: 20, state: "waiting", waiting: 1, pinned: true }) } });
     expect(st.sessions.s?.pinned).toBe(true);
-  });
-
-  it("counts waiting cards for the title", () => {
-    expect(waitingCount([session("w", { state: "waiting", waiting: 2 }), session("a")])).toBe(2);
   });
 });
 

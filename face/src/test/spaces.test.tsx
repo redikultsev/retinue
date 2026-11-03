@@ -152,7 +152,8 @@ describe("SpacePage", () => {
     // the header is one line: its name, what it is, its tabs — «Overview» first and open
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Travel");
     expect(screen.getByText("project · 1 sub-project")).toBeTruthy();
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Records3", "Operator"]);
+    // «Operator N»: what waits in it — before the feed is in, its sessions that wait, as its row on the left says
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Records3", "Operator1"]);
     expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("1 waiting")).toBeTruthy();
 

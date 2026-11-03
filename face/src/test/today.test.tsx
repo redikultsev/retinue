@@ -14,7 +14,6 @@ import {
   projectTitle,
   running,
   SEEN_KEY,
-  sessionRequests,
   tickMs,
   todaySearch,
   turnStart,
@@ -373,6 +372,5 @@ describe("«Today» by action", () => {
     expect(within(cards[1]!).getByRole("link", { name: /Open the session/ }).getAttribute("href")).toBe("/s/old");
     for (const gone of ["Anna Petrova", "Assistant", "Trip to Ensk", "Send Acme the draft"]) expect(screen.queryByText(gone)).toBeNull();
     expect(screen.queryByRole("region", { name: "Working" })).toBeNull();
-    expect(sessionRequests(feed).map((r) => r.key)).toEqual(["reply:r/1", "read:old"]);
   });
 });

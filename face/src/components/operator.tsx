@@ -13,10 +13,12 @@ import { QuestionDecide } from "@/components/question-decide";
 import { Crumb, Reply } from "@/components/reply";
 import { Button } from "@/components/ui/button";
 import { type Feed, type FeedRow, feedSource, waited } from "@/lib/feed";
-import { endingOf, keepNumbers, keptNumbers, type Numbers, releaseHeld, renumber, useHeld, verbOf, waits } from "@/lib/operator";
-import { projectTitle, sessionRequests } from "@/lib/today";
+import { endingOf, keepNumbers, keptNumbers, type Numbers, releaseHeld, renumber, useHeld, verbOf } from "@/lib/operator";
+import { useProjectOf } from "@/lib/projects";
+import { projectTitle } from "@/lib/today";
 import type { Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { requests, waitingKeys, waits } from "@/lib/waiting";
 
 function Body({ row }: { row: FeedRow }) {
   const refresh = () => void feedSource.refresh();
@@ -60,7 +62,7 @@ function useNumbers(waiting: string[], now: number): Numbers {
 /** The operator's numbers of every waiting card, the same on «Today», a project's «Operator», the map and to the
  * header's microphone. */
 export function useOperatorNumbers(feed: Feed | null, now: number): Numbers {
-  return useNumbers(sessionRequests(feed).filter(waits).map((r) => r.key), now);
+  return useNumbers(waitingKeys(feed), now);
 }
 
 /** One request as its card: the top line (its number while it waits, its project, its title, what it asks, since
@@ -88,25 +90,25 @@ export function Operator({
   spheres,
   now,
   head,
-  filter,
+  project,
   empty = "No session is asking you for anything.",
 }: {
   feed: Feed | null;
   spheres: Sphere[];
   now: number;
   head?: React.ReactNode;
-  /** Only these cards — a project's and its sub-projects' (its page's «Operator»). The numbers stay the ones «Today»
+  /** Only this project's and its sub-projects' cards (its page's «Operator»). The numbers stay the ones «Today»
    * gives: «3» is the same card on either screen and to the header's microphone. */
-  filter?: (row: FeedRow) => boolean;
+  project?: string;
   empty?: string;
 }) {
-  const all = sessionRequests(feed);
-  const rows = filter ? all.filter(filter) : all;
+  const of = useProjectOf(spheres);
+  const rows = requests(feed, project ? { path: project, of } : undefined);
   // the last word of every card shown, so one gone from the feed keeps its place with what it said
   const last = useRef(new Map<string, FeedRow>());
   for (const r of rows) last.current.set(r.key, r);
   const { shown, incoming, gone } = useHeld(rows.map((r) => r.key));
-  const numbers = useNumbers(all.filter(waits).map((r) => r.key), now);
+  const numbers = useOperatorNumbers(feed, now);
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-4 pt-3 pb-16 md:px-6">

@@ -466,8 +466,3 @@ export function lastWords(items: Item[], delta: string | undefined, summaries: S
 export function listed(sessions: Record<string, Session>): Session[] {
   return Object.values(sessions).filter((s) => !s.archived);
 }
-
-/** The number in the title and the app badge: the cards waiting for the owner. */
-export function waitingCount(sessions: Session[]): number {
-  return sessions.reduce((n, s) => n + (s.waiting > 0 ? s.waiting : s.state === "waiting" ? 1 : 0), 0);
-}

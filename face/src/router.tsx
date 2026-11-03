@@ -8,14 +8,13 @@ import {
   redirect,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Shell } from "@/components/shell";
 import { Toaster } from "@/components/toaster";
-import { feedSource, useFeed } from "@/lib/feed";
-import { live, useLiveState } from "@/lib/live";
+import { feedSource } from "@/lib/feed";
+import { live } from "@/lib/live";
 import { cardNotice, visibleSessions } from "@/lib/notify";
 import { toast } from "@/lib/toast";
-import { listed, waitingCount } from "@/lib/store";
 import { ApprovalPage } from "@/pages/approval";
 import { PushPage } from "@/pages/push";
 import { FilePage } from "@/pages/file";
@@ -28,6 +27,7 @@ import { ProjectPage, RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
 import { TodayPage, type TodayTab } from "@/pages/today";
 import { WeekPage } from "@/pages/week";
 import { todaySearch, visits } from "@/lib/today";
+import { useTodayCount } from "@/lib/waiting";
 
 // an old link to «Files» lands on «Results», where the files are now
 const tabOf = (v: unknown) => (v === "changes" || v === "chat" || v === "results" ? v : v === "files" ? "results" : undefined);
@@ -38,12 +38,9 @@ const turnOf = (v: unknown) => {
   return Number.isInteger(n) && n >= 0 ? n : undefined;
 };
 
-/** `(2) Retinue` and the app badge: what waits for the owner — the feed's rows, the cards until it has loaded. */
+/** `(2) Retinue` and the app badge: what waits for the owner — «Today N», the cards until the feed has loaded. */
 function useWaitingTitle() {
-  const { sessions } = useLiveState();
-  const feed = useFeed();
-  const cards = useMemo(() => waitingCount(listed(sessions)), [sessions]);
-  const n = feed ? feed.count : cards;
+  const n = useTodayCount();
   useEffect(() => {
     document.title = n > 0 ? `(${n}) Retinue` : "Retinue";
     const nav = navigator as Navigator & { setAppBadge?: (n: number) => Promise<void>; clearAppBadge?: () => Promise<void> };

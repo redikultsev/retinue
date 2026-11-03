@@ -13,14 +13,16 @@ import { Operator } from "@/components/operator";
 import { type PlanTab, PlanTabs } from "@/components/plan/plan-tabs";
 import { Chart } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
-import { type Chip, type Feed, useFeed, waitingCount } from "@/lib/feed";
+import { useAsks } from "@/lib/asks";
+import { type Chip, type Feed, useFeed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { useWide } from "@/lib/media";
-import { named, type Plan, usePlan } from "@/lib/plan";
+import { type Plan, usePlan } from "@/lib/plan";
 import { listed } from "@/lib/store";
 import { finished, running, type TodayMode, todayWord, useSince, useTodayMode } from "@/lib/today";
 import type { Session, Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { todayCount, useTodayCount } from "@/lib/waiting";
 
 /** Running sessions whose transcript the app has not loaded: their snapshot is read once, then the stream keeps it. */
 const WATCH_AT_MOST = 5;
@@ -138,10 +140,10 @@ export function TodayView({
       if (!(s.id in live.getState().floors) && !live.isWatched(s.id)) live.watch(s.id).catch(() => undefined);
   }, [ids]);
   // the same number as the count in the sidebar and the header: what the feed says waits
-  const waiting = waitingCount(feed);
-  const p = plan?.plan;
-  const taken = p ? named(p) : new Set<string>();
-  const open = (p?.tasks.rows.filter((t) => t.fields.state === "open").length ?? 0) + (p?.asks.filter((a) => a.t && !taken.has(a.id)).length ?? 0);
+  const waiting = todayCount(feed);
+  const p = plan?.plan ?? null;
+  // «Tasks N»: the open ones and the people's asks no task names yet
+  const open = (p?.tasks.rows.filter((t) => t.fields.state === "open").length ?? 0) + useAsks(feed, p).length;
   const [mode, setMode] = useTodayMode(asked);
   const head = <ModeSwitch mode={mode} onMode={setMode} />;
   // what waits and what goes on; the tasks are a tab of their own
@@ -212,13 +214,13 @@ export function TodayPage({
   );
 }
 
-/** The count on the tab and in the sidebar: what waits for the owner. */
+/** The count on the tab and in the sidebar: what waits for the owner («Today N»). */
 export function TodayCount({ className }: { className?: string }) {
-  const feed = useFeed();
-  if (!feed || feed.count === 0) return null;
+  const count = useTodayCount();
+  if (count === 0) return null;
   return (
-    <Badge variant="warning" className={className} aria-label={`${feed.count} waiting`}>
-      {feed.count}
+    <Badge variant="warning" className={className} aria-label={`${count} waiting`}>
+      {count}
     </Badge>
   );
 }

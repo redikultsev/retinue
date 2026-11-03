@@ -16,11 +16,12 @@ import { api } from "@/lib/api";
 import { type Deadline, useFeed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { useCoarsePointer, useWide } from "@/lib/media";
-import { listed, waitingCount } from "@/lib/store";
+import { listed } from "@/lib/store";
 import { sphereLabel } from "@/lib/spheres";
 import { running } from "@/lib/today";
 import type { Meta, Session, Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useTodayCount } from "@/lib/waiting";
 
 const DRAFT_KEY = "retinue-new-draft";
 const SPHERE_KEY = "retinue-new-sphere";
@@ -184,7 +185,7 @@ export function NewPage({ newSession = api.newSession, toMain = api.toMain, tran
   const feed = useFeed();
   const { sessions } = useLiveState();
   const list = useMemo(() => listed(sessions), [sessions]);
-  const waiting = feed ? feed.count : waitingCount(list);
+  const waiting = useTodayCount();
   const working = useMemo(() => running(list).length, [list]);
   const deadline = nearest(feed?.deadlines);
   const meta = live.meta; // read again on every change of the live state, the first snapshot's included

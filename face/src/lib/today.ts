@@ -1,7 +1,6 @@
 // «Today»: what the home screen folds from what the app already has — the session rows (sphere, state, unread), the
 // stream's items and the text being written, the feed's deadlines. Nothing here asks the server anything.
 import { useCallback, useState, useSyncExternalStore } from "react";
-import type { Feed, FeedRow } from "./feed";
 import { plural } from "./format";
 import type { Item, Session, Sphere } from "./types";
 
@@ -231,14 +230,6 @@ export function projectTitle(project: string, spheres: Sphere[]): string {
   if (!parts.length) return "Other";
   const first = spheres.find((s) => s.name === parts[0])?.title ?? parts[0]!;
   return [first, ...parts.slice(1)].join(" / ");
-}
-
-const REQUESTS = new Set(["answer", "decide", "reply", "read", "step"]);
-
-/** The operator's: what a session asks of the owner — a question, a card to decide, its message awaited, a step of
- * his own, a finished turn to look at —, in the feed's order. Her world, the dates and the tasks are not among them. */
-export function sessionRequests(feed: Feed | null): FeedRow[] {
-  return (feed?.groups ?? []).flatMap((g) => g.rows).filter((r) => !!r.session && REQUESTS.has(r.action));
 }
 
 // --- the address ------------------------------------------------------------------------------------------------

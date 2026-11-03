@@ -18,10 +18,11 @@ import { Crumb, Reply } from "@/components/reply";
 import { QuestionDecide, typing } from "@/components/question-decide";
 import { Markdown } from "@/components/transcript/item";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { pressRow, WaitingPane } from "@/components/waiting-sheet";
+import { WaitingPane } from "@/components/waiting-sheet";
 import { RecordPage } from "@/pages/spaces";
 import { ApiError, api } from "@/lib/api";
-import { type Deadline, type Feed, type FeedRow, feedSource, herLine, personRow, STALE_DIGEST_S, waited } from "@/lib/feed";
+import { pressAsk } from "@/lib/asks";
+import { type Deadline, type Feed, type FeedRow, feedSource, herLine, STALE_DIGEST_S, waited } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { useWide } from "@/lib/media";
@@ -29,11 +30,12 @@ import { splitRecord } from "@/lib/pane";
 import { day } from "@/lib/spaces";
 import { endingOf } from "@/lib/operator";
 import { orderedItems, orderedSummaries } from "@/lib/store";
-import { knownProjects, projectLabel, rowProject, sessionProject, useProjects } from "@/lib/projects";
+import { projectLabel, useProjectOf, useProjects } from "@/lib/projects";
 import { dayWords, elapsed, lastLine, turnStart } from "@/lib/today";
 import { toast } from "@/lib/toast";
 import type { Session, Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { todayRows, waits } from "@/lib/waiting";
 
 /** Whose move a row is: a session stands until the owner answers (`agent`), a person or a thing waits (`person`). */
 type Mark = "agent" | "person" | "none";
@@ -64,7 +66,7 @@ function feedItem(row: FeedRow): InboxItem {
         : row.action === "reply"
           ? "Reply"
           : "Read";
-  return { key: row.key, kind: "feed", row, label, title: row.title, line: row.essence, due: "", at: row.since, mark: row.action === "read" ? "none" : "agent" };
+  return { key: row.key, kind: "feed", row, label, title: row.title, line: row.essence, due: "", at: row.since, mark: waits(row) ? "agent" : "none" };
 }
 
 export interface InboxLists {
@@ -78,14 +80,14 @@ export interface InboxLists {
  * what waits — unless its turn ended with a word for the owner (`ending`): then it waits, with that word; a person's
  * row is Tasks' («From people»), not here. */
 export function inboxLists(feed: Feed | null, running: Session[], done: Session[], deadlines: Deadline[], lines: (s: Session) => string): InboxLists {
-  const rows = (feed?.groups ?? []).flatMap((g) => g.rows);
+  const rows = todayRows(feed);
   const ended = new Set(rows.filter((r) => r.session && endingOf(r)).map((r) => r.session));
   const finished = done.filter((s) => !ended.has(s.id));
   const doneIds = new Set(finished.map((s) => s.id));
   const dateIds = new Set(deadlines.map((d) => d.id));
   return {
     waiting: rows
-      .filter((r) => !personRow(r) && !(r.action === "read" && r.session && doneIds.has(r.session)) && !(r.source === "deadline" && dateIds.has(r.ref)))
+      .filter((r) => !(r.session && doneIds.has(r.session) && !waits(r)) && !(r.source === "deadline" && dateIds.has(r.ref)))
       .map(feedItem),
     running: running.map((s) => ({ key: `run:${s.id}`, kind: "running", session: s, label: "Runs", title: s.title || s.track, line: lines(s), at: turnStart(s) })),
     done: finished.map((s) => ({ key: `done:${s.id}`, kind: "done", session: s, label: "Done", title: s.title || s.track, line: "", at: s.at })),
@@ -409,23 +411,15 @@ export function Inbox({
   const state = useLiveState();
   const today = new Date(now * 1000);
   const nodes = useProjects();
+  const of = useProjectOf(spheres);
   const lists = useMemo(() => {
-    const known = knownProjects(nodes, spheres);
     const where = (item: InboxItem) =>
-      projectLabel(
-        item.kind === "feed"
-          ? rowProject(item.row, known)
-          : item.kind === "date"
-            ? (item.deadline.sphere ?? "")
-            : sessionProject(item.session, known),
-        nodes,
-        spheres,
-      );
+      projectLabel(item.kind === "feed" ? of(item.row) : item.kind === "date" ? (item.deadline.sphere ?? "") : of(item.session), nodes, spheres);
     return withProjects(
       inboxLists(feed, running, done, feed?.deadlines ?? [], (s) => lastLine(orderedItems(state.items[s.id]), state.deltas[s.id])),
       where,
     );
-  }, [feed, running, done, state.items, state.deltas, nodes, spheres]);
+  }, [feed, running, done, state.items, state.deltas, nodes, spheres, of]);
   const waitingNow = lists.waiting;
   const all = [...waitingNow, ...lists.running, ...lists.done, ...lists.dates];
   const wide = useWide();
@@ -451,7 +445,7 @@ export function Inbox({
         setSel(all[Math.max(0, Math.min(all.length - 1, i + step))]!.key);
       } else if (e.key === "e") {
         const item = all[i];
-        if (item?.kind === "feed" && item.row.t) void pressRow(item.row.t, "done", "Done");
+        if (item?.kind === "feed" && item.row.t) void pressAsk(item.row.t, "done", "Done");
       }
     };
     window.addEventListener("keydown", onKey);

@@ -35,8 +35,7 @@ import { type EditApi, editApi, type ProposalsApi, proposalsApi } from "@/lib/ed
 import { plural, sessionStateWord, when } from "@/lib/format";
 import { useFeed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
-import { waits } from "@/lib/operator";
-import { knownProjects, rowWaits, rowWithin, sessionProject, useProjects, within } from "@/lib/projects";
+import { learnProjects, useProjectOf, within } from "@/lib/projects";
 import { listed, RECENT_S } from "@/lib/store";
 import {
   baseFile,
@@ -59,10 +58,10 @@ import {
   spacesApi,
   TYPE_WORDS,
 } from "@/lib/spaces";
-import { sessionRequests } from "@/lib/today";
 import { toast } from "@/lib/toast";
 import type { Session, Sphere } from "@/lib/types";
 import { cn, inputId, LIST, LIST_ROW } from "@/lib/utils";
+import { waitingIn } from "@/lib/waiting";
 
 const NO_SPHERES: Sphere[] = [];
 
@@ -744,16 +743,13 @@ function ProjectScreen({
 }) {
   const { sessions } = useLiveState();
   const spheres = useSpheres();
-  const nodes = useProjects();
   const feed = useFeed();
   const now = useNowS();
   const subs = data?.projects ?? [];
-  // the projects a session's folder is matched against: the app's list, and this one and its own sub-projects (the
-  // list may not be read yet)
-  const known = useMemo(
-    () => new Set([...knownProjects(nodes, spheres), path, ...(data?.projects ?? []).map((p) => p.name)]),
-    [nodes, spheres, path, data],
-  );
+  // this project and its sub-projects are known to every screen's matching, the list read or not
+  const learned = [path, ...subs.map((p) => p.name)].join("\n");
+  useEffect(() => learnProjects(learned.split("\n")), [learned]);
+  const of = useProjectOf(spheres);
   const [top = "", ...rest] = path.split("/");
   const below = rest.join("/");
   const sphere = below ? undefined : sphereOf(spheres, top);
@@ -773,13 +769,12 @@ function ProjectScreen({
     return listed(sessions)
       .filter((s) => !(s.side ?? !!s.parent))
       .filter((s) => s.state !== "closed" || sessionWaits(s) || at - s.at < RECENT_S)
-      .filter((s) => ids.includes(s.id) || sessionProject(s, known) === path)
+      .filter((s) => ids.includes(s.id) || of(s) === path)
       .sort((a, b) => rank(a) - rank(b) || b.at - a.at);
-  }, [sessions, ids, known, path]);
-  const inSub = (sub: string) => listed(sessions).filter((s) => within(sessionProject(s, known), sub)).length;
-  const requests = useMemo(() => sessionRequests(feed).filter((r) => rowWithin(r, path, known)), [feed, path, known]);
-  const waitingNow = requests.filter(waits).length;
-  const waitingIn = (sub: string) => (feed?.groups ?? []).flatMap((g) => g.rows).filter((r) => rowWaits(r) && rowWithin(r, sub, known)).length;
+  }, [sessions, ids, of, path]);
+  const inSub = (sub: string) => listed(sessions).filter((s) => within(of(s), sub)).length;
+  // what waits in it and in each sub-project: the one count of a project («Operator N», its row on the left)
+  const waitsIn = useMemo(() => waitingIn(feed, listed(sessions), of), [feed, sessions, of]);
 
   const questions = data?.sections.filter((s) => s.kind === "questions").flatMap((s) => s.items) ?? [];
   const tasks = data?.sections.filter((s) => s.kind === "tasks").flatMap((s) => s.items) ?? [];
@@ -809,7 +804,7 @@ function ProjectScreen({
   counts[OVERVIEW] = work ? actsOf(work.places) || undefined : undefined;
   counts[RECORDS] = records || undefined;
   counts[FILES] = files || undefined;
-  counts[OPERATOR] = waitingNow || undefined;
+  counts[OPERATOR] = waitsIn(path) || undefined;
   const current = named.find((t) => t.title === tab);
   const waitingCount = mine.filter(sessionWaits).length;
   const working = mine.filter((s) => s.state === "active" && !s.waiting).length;
@@ -873,7 +868,7 @@ function ProjectScreen({
             feed={feed}
             spheres={spheres}
             now={now}
-            filter={(r) => rowWithin(r, path, known)}
+            project={path}
             empty="Nothing in this project is asking you for anything."
             head={<OperatorSwitch view={operatorView} onView={pickOperatorView} />}
           />
@@ -913,7 +908,7 @@ function ProjectScreen({
                       <SessionRow key={s.id} s={s} />
                     ))}
                     {subs.map((row) => (
-                      <SubProjectRow key={row.name} row={row} waiting={waitingIn(row.name)} sessions={inSub(row.name)} />
+                      <SubProjectRow key={row.name} row={row} waiting={waitsIn(row.name)} sessions={inSub(row.name)} />
                     ))}
                   </ul>
                 ) : (

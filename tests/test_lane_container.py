@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import time
 import urllib.request
@@ -25,17 +24,13 @@ import pytest
 
 from retinue import cliengine
 
-
-def _docker() -> bool:
-    if not shutil.which("docker"):
-        return False
-    return subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+from dockerup import docker_up
 
 
 TOKEN = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
 pytestmark = [pytest.mark.probe,
               pytest.mark.skipif(not TOKEN, reason="needs CLAUDE_CODE_OAUTH_TOKEN"),
-              pytest.mark.skipif(not _docker(), reason="needs Docker")]
+              pytest.mark.skipif(not docker_up(), reason="needs Docker")]
 
 ROOT = Path(__file__).resolve().parents[1]
 # The lanes' security_opt in compose, with the seccomp profile from the repository rather than its installed copy.

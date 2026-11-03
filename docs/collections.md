@@ -508,11 +508,17 @@ deletions in Google onto them ([calendar.md](calendar.md)) — and neither delet
 **The day plan** (`retinue/planner.py`, `retinue/plan_layout.py`) is laid by a press — «Plan my day» in the app,
 `/plan` in Telegram, «Plan» on a task — never by itself:
 
-- the window is the owner's day as `router.yaml` sets it — `plan_hours: "10:00-01:00"` (a «to» before the «from» is
-  after midnight; the default is 09:00–23:00) in `plan_zone` (the default, `owner_tz`) — and keeps that zone's clock
-  whatever zone he travels to; a plan is for the window he is in while an hour of it is left, else the next one;
+- the window is the owner's day as he sets it on the plan's settings in the app — opens, closes (a close before the
+  open is after midnight) and a zone; until he does, 09:00–23:00 in `owner_tz` — kept in the Router's kv
+  (`plan.hours`), at least two hours long, and keeps that zone's clock whatever zone he travels to; a change lays the
+  next plan in it and moves no block for itself; a plan is for the window he is in while an hour of it is left, else the next one;
 - busy is his busy occurrences (his own, or invitations he accepted — one he never answered keeps no one busy), ten
-  minutes after each, his holds, and the blocks standing;
+  minutes after each, his holds, the places his meals keep, and the blocks standing;
+- **his activities** — what takes his time and is not a task: meals, the road, rest — are a setting next to the window
+  (kv `plan.activities`, set on the plan's settings; until then Breakfast 10:00–11:30 20 min, Lunch 13:00–16:00 45,
+  Dinner 19:00–22:00 45, Rest 60, Travel 30). One with a range of starts is a meal: in each window its minutes are kept
+  free at the first quarter hour of the range clear of meetings and holds — fixed, not following the clock — unless a
+  hold of its name falls in that window (he said he is eating). Every path that lays a task counts that place busy;
 - the order is code's — overdue and due today first, then by due date, then the shorter, then the older; a task's
   due day is the earlier of `due` and the day of its `by`;
 - no piece of a task ends after its `by` while that is ahead; once it has passed the task is overdue («missed its
@@ -534,8 +540,13 @@ days never loses the blocks of the one before; the app is told each day's latest
 (`recent`), which its grid lights. «Undo» puts
 back each of its blocks still at the version it wrote — taken off when the plan added it — and names the ones the owner
 moved since. No plan is laid on a calendar the Router has not read in the last half hour (just after a restart, before
-the first read): the press says so. «Busy» (a hold from the moment of the press) lays again the plan's blocks it
-crosses — a piece already begun stays. At each look (30 s) a block whose time is over is counted once the next window
+the first read): the press says so. «Now» — an activity (a hold of its name and length) or «Busy» — is a hold from the
+moment of the press; it ends a hold running then (two never run at once) and lays again the plan's blocks it crosses —
+a piece already begun stays. × ends the hold running now; the holds ahead stay. «Not working today» (the last item of
+«Now», or `plan_hold` with `day_off`) is a plan of its own: a hold «Not working» to the end of today's window, and the
+plans' blocks in it that are not his — the one running cut at the press, those ahead moved to the first free time of the
+next seven windows (none free: `skipped`, said; one now past its deadline named) — his own blocks and holds stay; its
+«Undo» puts every block back and takes the hold off; a second press while it holds is the first. At each look (30 s) a block whose time is over is counted once the next window
 has opened: `passed` — its minutes off its task — if the owner was seen in its window (from its opening to the next
 one's: a message of his, a press in the app or in Telegram, a record he changed on his screen or from a Mac), else
 `skipped` with «no sign of you that day», said in Telegram, and its time goes back to the task; one he put or stretched
@@ -548,12 +559,13 @@ task due today that no longer fits is said in Telegram. The Router pushes the pl
 change (`POST /owner/plan`); the app reads them with the blocks (`GET /api/plan`) and presses through
 `POST /api/plan/press` (a `plan-press` note; one older than ten minutes when the Router takes it is dropped and said).
 
-**Her moves, on his word** (`plan_move`, `plan_estimate`: tools of the router's bus, carried out by the planner). The
+**Her moves, on his word** (`plan_move`, `plan_estimate`, `plan_hold`: tools of the router's bus, carried out by the planner). The
 owner asks in a message of his own — «homework on Wednesday evening», «the report takes two hours» — and she names the
 task, the day and a part of it (morning till 13:00, afternoon 13:00–18:00, evening from 18:00, in his zone) or the time
 he named. Code moves the task's next piece ahead to the first free time there — a new piece when it has none — or to
 that time if nothing keeps it busy; a piece he put there himself only when he named it; meetings never. An estimate or a
-due date is her write of the task. The router allows either only in a turn that answers his own messages and read
+due date is her write of the task. «Having lunch», «lying down for an hour», «tomorrow at 19:00 to the airport» is a
+hold (`plan_hold`: a label, minutes, his local time when not now — from 15 minutes ago to 14 days ahead), never a task. The router allows either only in a turn that answers his own messages and read
 nobody else's text (a forward, a file, a letter, the archive, a site, a chat): otherwise she is told to ask him in a
 message of his own — and the same holds for her `set` of a task's `due` or `minutes` with `collection_apply`. Every
 move of one turn goes under one plan (`by: assistant`, which the grid lights); after her answer code says them in one

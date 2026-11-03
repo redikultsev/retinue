@@ -29,6 +29,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import secrets
 from datetime import date, datetime, timedelta, timezone
 
@@ -42,6 +43,8 @@ RULE = "code:plan"
 PLANS_KEY = "plan.plans"    # the Router's kv: by plan id — {id, by, at, windows, blocks: {id: {version, before, day, end}},
                             # left: {day: [{task, title, why}]}, pending?, failed?, undone?}
 HOLDS_KEY = "plan.holds"    # the owner's holds: [{from, to, label}]
+HOURS_KEY = "plan.hours"    # the window he set in the app: {zone, opens, closes}; none — the default day in his zone
+ACTIVITIES_KEY = "plan.activities"  # his activities: [{title, minutes, from?, to?}]; none — L.ACTIVITIES
 SIGNS_KEY = "plan.signs"    # the moments the owner was seen here: his messages, his presses — [ts], newest last
 SIGNS_KEPT_S = 14 * 86400
 SIGN_STEP_S = 600           # one sign in ten minutes is enough to know he was there
@@ -50,6 +53,10 @@ PLANS_MAX = 120             # and never more plans than this, the oldest going f
 RECENT = 20                 # the plans of the last day the grid is told about, at most
 CALENDAR_FRESH_S = 30 * 60  # a busy window older than this lays no plan
 HOLD_MAX_S = 24 * 3600      # a hold from a button is at most this long
+HOLD_AHEAD_S = 14 * 86400   # a hold she sets on his word starts at most this far ahead
+HOLD_BACK_S = 15 * 60       # and at the earliest this long ago («I went for lunch ten minutes ago»)
+OFF_DAYS = 7                # «Not working today» moves the day's blocks into the next this many windows
+HELD_S = 36 * 3600          # an ended hold is kept this long: longer than any window, so its meal stays eaten
 CALL_S = 15
 PAGE = 200
 BUSY_MINUTES = (30, 60, 120)
@@ -78,9 +85,17 @@ def _hm(ts: float, tz: str) -> str:
     return clock.local(ts, tz).strftime("%H:%M")
 
 
+def _day_hm(ts: float, tz: str) -> str:
+    from . import clock
+    return clock.local(ts, tz).strftime("%a %d %b %H:%M")
+
+
 class Planner:
     def __init__(self, core, tasks, hours: L.Hours = L.HOURS) -> None:
-        self.core, self.tasks, self.hours = core, tasks, hours
+        self.core, self.tasks = core, tasks
+        self.hours = L.Hours.of(self._load(HOURS_KEY, {})) or hours  # `hours`: the day until he sets his own
+        kept = [a for a in map(L.Activity.of, self._load(ACTIVITIES_KEY, [])) if a]
+        self.activities = tuple(kept) if self.core.store.get(ACTIVITIES_KEY) is not None else L.ACTIVITIES
         self.lock = asyncio.Lock()  # one writer of plans: a press, a look, an «Undo» never interleave
         self._seen = ""             # the busy window's mark at the last look: a change lays the plan again
         self.said: dict = {}        # what the last press came to, for the app: {at, text}
@@ -131,7 +146,12 @@ class Planner:
         return self._load(PLANS_KEY, {})
 
     def holds(self, now: float) -> list[dict]:
-        return [h for h in self._load(HOLDS_KEY, []) if isinstance(h, dict) and float(h.get("to") or 0) > now]
+        """His holds running or ahead."""
+        return [h for h in self.held(now) if float(h.get("to") or 0) > now]
+
+    def held(self, now: float) -> list[dict]:
+        """His holds kept: those ahead, and those of the last HELD_S — a meal he said he ate stays eaten for its day."""
+        return [h for h in self._load(HOLDS_KEY, []) if isinstance(h, dict) and float(h.get("to") or 0) > now - HELD_S]
 
     def _keep_plans(self, plans: dict, now: float | None = None) -> None:
         """The plans worth keeping: those with a block ahead, else made in the last PLANS_KEPT_S; the newest PLANS_MAX."""
@@ -209,9 +229,8 @@ class Planner:
             return
         plans = self.plans()
         body = {"at": now, "plans": self._by_day(plans), "recent": self._recent(plans, now), "holds": self.holds(now),
-                "said": self.said,
-                "window": {"zone": self.hours.zone, "opens": self.hours.opens.strftime("%H:%M"),
-                           "closes": self.hours.closes.strftime("%H:%M")}}
+                "said": self.said, "window": self.hours.shape(),
+                "activities": [a.shape() for a in self.activities], "meals": self.meals(now)}
         try:
             answer = await self.core.platform("plan", body, CALL_S)
             if answer.get("error"):
@@ -264,10 +283,24 @@ class Planner:
         return at is None or now - float(at) > CALENDAR_FRESH_S
 
     def _busy(self, window: L.Window, now: float) -> list[tuple[float, float]]:
+        """What keeps him busy in the window: his meetings with their buffer, his holds, and the places his meals keep."""
         events = getattr(self.tasks, "events", None) or []
-        busy = L.meeting_busy(events, window.start, window.end)
-        busy += [(float(h["from"]), float(h["to"])) for h in self.holds(now)]
-        return busy
+        holds = self.held(now)
+        busy = L.meeting_busy(events, window.start, window.end) + [(float(h["from"]), float(h["to"])) for h in holds]
+        return busy + [(a, b) for _, a, b in L.meal_places(window, self.hours, self.activities, busy, holds)]
+
+    def meals(self, now: float, days: int = 8) -> list[dict]:
+        """The places his meals keep from today's window on, for the grid."""
+        first = L.window_at(now, self.hours).day - timedelta(days=1)
+        events = getattr(self.tasks, "events", None) or []
+        holds = self.held(now)
+        out = []
+        for n in range(days + 1):
+            window = L.window_of(first + timedelta(days=n), self.hours)
+            busy = L.meeting_busy(events, window.start, window.end) + [(float(h["from"]), float(h["to"])) for h in holds]
+            out += [{"title": t, "from": a, "to": b} for t, a, b in
+                    L.meal_places(window, self.hours, self.activities, busy, holds)]
+        return out
 
     @staticmethod
     def _span(block: dict) -> tuple[float, float]:
@@ -422,14 +455,15 @@ class Planner:
             if not isinstance(entry, dict) or entry.get("undone"):
                 return "That plan is not known any more: nothing taken back."
             written = entry.get("blocks") or {}
-            rows = await self._rows(BLOCKS, [{"field": "state", "op": "eq", "value": "planned"}])
+            rows = await self._rows(BLOCKS, [{"field": "state", "op": "in", "value": ["planned", "skipped"]}])
             if rows is None:
                 return "Not taken back: the blocks could not be read. Try again."
             ops, kept = [], 0
             for b in rows:
                 known = written.get(b["id"])
-                if known is None:
-                    continue
+                if known is None or (b["fields"].get("state") == "skipped"
+                                     and (b["version"] != known.get("version") or not known.get("before"))):
+                    continue  # one this plan took off is put back; one taken off since is not his to keep
                 if b["version"] != known.get("version"):
                     kept += 1
                     continue
@@ -446,6 +480,8 @@ class Planner:
                     self._keep(plans, record)  # someone else's block put back: its own plan knows the version
             plans[plan_id] = {**plans.get(plan_id, entry), "undone": now, "blocks": {}}
             self._keep_plans(plans, now)
+            if entry.get("off"):  # «Not working today» taken back: its hold too, the time is his again
+                self.core.store.set(HOLDS_KEY, json.dumps([h for h in self.held(now) if h.get("plan") != plan_id]))
             estimates = await self._unestimate(entry.get("estimates") or [])
         await self.push(now)
         said = f"Taken back: {len(ops)} {'block' if len(ops) == 1 else 'blocks'}"
@@ -478,18 +514,167 @@ class Planner:
         return done
 
     async def busy(self, minutes: int, now: float, label: str = "Busy") -> str:
-        """«Busy» from now: a hold, and the plan's blocks it crosses laid again after it."""
+        """«Busy» or an activity on «Now», from now: a hold, and the plan's blocks it crosses laid again after it."""
         minutes = max(5, min(int(minutes), HOLD_MAX_S // 60))
-        holds = self.holds(now) + [{"from": now, "to": now + minutes * 60, "label": line(label, 40)}]
-        self.core.store.set(HOLDS_KEY, json.dumps(holds))
-        moved = await self.relay(now)
-        return f"Busy till {_hm(now + minutes * 60, self.core.tz)}." + (f" {moved}" if moved else "")
+        return await self.hold(label, now, now + minutes * 60, now)
+
+    async def hold(self, label: str, start: float, end: float, now: float) -> str:
+        """A hold of his from `start` to `end`: one running at `start` ends there — two never run at once — one that
+        would start inside it is taken off and named, and the plan's blocks it crosses are laid again after it."""
+        label = line(label, 40) or "Busy"
+        async with self.lock:
+            held = [dict(h, to=start) if float(h["from"]) < start < float(h["to"]) else h for h in self.held(now)]
+            dropped = [h for h in held if start <= float(h["from"]) < end]
+            held = [h for h in held if h not in dropped] + [{"from": start, "to": end, "label": label}]
+            self.core.store.set(HOLDS_KEY, json.dumps(sorted(held, key=lambda h: h["from"])))
+        moved = await self.relay(now)  # it takes the lock itself
+        when = f"till {_hm(end, self.hours.zone)}" if start <= now + 60 else \
+            f"{_day_hm(start, self.hours.zone)}–{_hm(end, self.hours.zone)}"
+        gone = f" Taken off: {', '.join(str(h.get('label') or 'Busy') for h in dropped)}." if dropped else ""
+        return f"{label} {when}.{gone}" + (f" {moved}" if moved else "")
+
+    async def off_today(self, now: float) -> str:
+        """«Not working today»: a hold «Not working» from now to the end of today's window, and the plan's blocks in
+        it that are not his — the one running cut at now, those ahead moved to the first free time of the next OFF_DAYS
+        windows, none free: skipped — as a plan of its own: one «Undo» puts every block back and takes the hold off.
+        His own blocks and his other holds stay. A second press while it holds is the first one."""
+        from zoneinfo import ZoneInfo
+        window = self._window_of(now)
+        if now >= window.end:  # before today's window opens: the whole of it
+            window = L.window_of(datetime.fromtimestamp(now, ZoneInfo(self.hours.zone)).date(), self.hours)
+        start = max(now, window.start)
+        if any(h.get("plan") and h.get("label") == "Not working" and float(h["to"]) >= window.end
+               for h in self.holds(now)):
+            return f"Not working till {_hm(window.end, self.hours.zone)} already."
+        async with self.lock:
+            if self._stale(now):
+                return "Not done: the calendar has not been read in the last half hour. Try again in a minute."
+            world = await self._world(window, now)
+            if world is None:
+                return "Not done: the plan could not be read. Try again."
+            tasks, standing, counted = world
+            by_id = {t["id"]: t for t in tasks}
+            titles = {t["id"]: str(t["fields"].get("title") or "") for t in tasks}
+            ahead = sorted((b for b in standing if self._span(b)[1] > start), key=self._span)
+            mine = [b for b in ahead if not b["fields"].get("locked")]
+            his = [b for b in ahead if b["fields"].get("locked")]
+            running = [b for b in mine if self._span(b)[0] < start]
+            plan_id = f"p{secrets.token_hex(5)}"
+            plans = self.plans()
+            plans[plan_id] = {"id": plan_id, "by": "owner", "at": now, "windows": [window.day.isoformat()],
+                              "blocks": {}, "left": {}, "off": window.day.isoformat()}
+            self._keep_plans(plans, now)
+            ops = [{"op": "set", "id": b["id"], "version": b["version"],
+                    "fields": {"minutes": max(5, math.ceil((start - self._span(b)[0]) / 60)), "plan": plan_id}}
+                   for b in running]
+            where, left, late = [], [b for b in mine if b not in running], []
+            for n in range(1, OFF_DAYS + 1):
+                if not left:
+                    break
+                later = L.window_of(window.day + timedelta(days=n), self.hours)
+                there = await self._world(later, now)
+                if there is None:
+                    break
+                pieces = [self._span(b) for b in there[1]] + [(a, z) for _, a, z in where if later.start <= a < later.end]
+                busy = self._busy(later, now)
+                for b in list(left):
+                    length = int(b["fields"].get("minutes") or 0) * 60
+                    spot = L.first_free(max(later.start, now), later.end, length, busy + pieces, pieces)
+                    if spot is None:
+                        continue
+                    pieces.append((spot, spot + length))
+                    where.append((b, spot, spot + length))
+                    left.remove(b)
+                    ops.append({"op": "set", "id": b["id"], "version": b["version"],
+                                "fields": {"start": iso(spot), "plan": plan_id}})
+                    task = self._task(by_id[b["fields"]["task"]], counted) if b["fields"].get("task") in by_id else None
+                    if task and ((task.due and task.due < later.day) or (task.by and task.by < spot + length)):
+                        late.append(b)
+            ops += [{"op": "set", "id": b["id"], "version": b["version"],
+                     "fields": {"state": "skipped", "why": "not working that day", "plan": plan_id}} for b in left]
+            answer = await self._apply(ops, f"off:{plan_id}") if ops else {"records": []}
+            if answer is None:
+                self._drop_plan(plan_id, now)
+                return "Not done: the blocks could not be written. Try again."
+            held = self.held(now) + [{"from": start, "to": window.end, "label": "Not working", "plan": plan_id}]
+            self.core.store.set(HOLDS_KEY, json.dumps(sorted(held, key=lambda h: h["from"])))
+            plans = self.plans()
+            before = {b["id"]: {k: b["fields"].get(k) for k in ("start", "minutes", "state", "plan")} for b in mine}
+            for record in answer.get("records") or []:
+                if isinstance(record, dict) and record.get("id") in before:
+                    self._keep(plans, record, before[record["id"]])
+                    if (s := moment((record.get("fields") or {}).get("start"))) is not None:
+                        day = self._window_of(s).day.isoformat()
+                        plans[plan_id]["blocks"][record["id"]]["day"] = day
+                        if day not in plans[plan_id]["windows"]:
+                            plans[plan_id]["windows"].append(day)
+            self._keep_plans(plans, now)
+        await self.push(now)
+        name = lambda bs: ", ".join(line(titles.get(b["fields"].get("task"), ""), 40) for b in bs)  # noqa: E731
+        days: dict[str, int] = {}
+        for _, a, _ in where:
+            key = f"{self._window_of(a).day:%a}"
+            days[key] = days.get(key, 0) + 1
+        said = f"Not working till {_hm(window.end, self.hours.zone)}."
+        if where:
+            said += f" Moved {len(where)} {'block' if len(where) == 1 else 'blocks'}: " + \
+                ", ".join(f"{d} {k}" for d, k in days.items()) + "."
+        if late:
+            said += f" Past its deadline now: {name(late)}."
+        if left:
+            said += f" No room in a week for: {name(left)}."
+        if his:
+            said += f" Yours stay: {name(his)}."
+        return said
+
+    async def hold_said(self, label: str, minutes: object, at: str, now: float) -> tuple[bool, str]:
+        """`plan_hold` — her hold on the owner's word: «having lunch», «lying down for an hour», «tomorrow at 19:00 to
+        the airport, an hour and a half». `at` is his local wall time in the plan's zone, empty — now."""
+        if not label.strip():
+            return False, "label: what it is («Lunch», «Travel»)."
+        if type(minutes) is not int or not 5 <= minutes <= L.ACTIVITY_MAX_M:
+            return False, f"minutes: 5 to {L.ACTIVITY_MAX_M}."
+        start = now
+        if at:
+            try:
+                if "T" not in at:
+                    raise ValueError(at)
+                wall = datetime.fromisoformat(at)
+            except ValueError:
+                return False, "at: his local time, YYYY-MM-DDTHH:MM."
+            from zoneinfo import ZoneInfo
+            start = (wall if wall.tzinfo else wall.replace(tzinfo=ZoneInfo(self.hours.zone))).timestamp()
+        if start < now - HOLD_BACK_S or start > now + HOLD_AHEAD_S:
+            return False, "at: from 15 minutes ago to 14 days ahead."
+        text = await self.hold(label, start, start + minutes * 60, now)  # its relay takes the lock
+        self.said = {"at": now, "text": text}
+        await self.push(now)
+        return True, text
 
     async def free(self, now: float) -> str:
-        """The holds taken off: the time is free again — and stays free: nothing is pulled into it."""
-        self.core.store.set(HOLDS_KEY, "[]")
+        """× on the hold running now: it ends now and the time is free again — and stays free, nothing is pulled into
+        it. The holds ahead stay; the ended one is kept, so a meal he began stays eaten."""
+        async with self.lock:
+            held = self.held(now)
+            running = [h for h in held if float(h["from"]) <= now < float(h["to"])]
+            self.core.store.set(HOLDS_KEY, json.dumps([dict(h, to=now) if h in running else h for h in held]))
         await self.push(now)
-        return "Busy taken off."
+        return f"{running[0].get('label') or 'Busy'} taken off." if running else "Nothing is running."
+
+    def set_activities(self, activities: list[L.Activity]) -> str:
+        """His activities, set on the plan's settings: the «Now» menu, and the meals whose places the plan keeps."""
+        self.core.store.set(ACTIVITIES_KEY, json.dumps([a.shape() for a in activities]))
+        self.activities = tuple(activities)
+        meals = [a.title for a in activities if a.starts]
+        return f"Activities kept: {len(activities)}" + (f", meals keep their place: {', '.join(meals)}." if meals else ".")
+
+    def set_hours(self, hours: L.Hours) -> str:
+        """The window he set on the plan's settings: kept, and the next plan lays into it. The blocks standing are not
+        moved for it; a past window is read in the new hours (a change is rare, and a plan keeps no window of its own)."""
+        self.core.store.set(HOURS_KEY, json.dumps(hours.shape()))
+        self.hours = hours
+        shape = hours.shape()
+        return f"Plan window: {shape['opens']}–{shape['closes']}, {hours.zone}. The next plan uses it."
 
     async def remove(self, block_id: str, now: float) -> str:
         """× on a block: it is skipped; nothing else moves."""
@@ -678,18 +863,22 @@ class Planner:
 
     async def cycle(self, now: float) -> None:
         """Pieces whose time is over passed, closed tasks' future pieces skipped; then, when anything changed since the
-        last look — the calendar, a hold, a block, a task — the plans laid again where something crosses them. The
-        look is seen only once that went through: a refused write is tried again at the next one."""
+        last look — the calendar, a hold, a block, a task, his activities, the day — the plans laid again where
+        something crosses them, and the state pushed to the app. The look is seen only once that went through: a
+        refused write is tried again at the next one."""
         if self.core.platform is None:
             return
         try:
             snapshot = await self._settle(now)
             if snapshot is None:
                 return
-            mark = hashlib.sha256(json.dumps([getattr(self.tasks, "events", None) or [], self.holds(now), snapshot],
+            mark = hashlib.sha256(json.dumps([getattr(self.tasks, "events", None) or [], self.held(now), snapshot,
+                                              [a.shape() for a in self.activities],
+                                              L.window_at(now, self.hours).day.isoformat()],
                                              sort_keys=True).encode()).hexdigest()
             if mark != self._seen and await self._relay(now) is not None:
                 self._seen = mark
+                await self.push(now)  # the meals' places follow the calendar, the holds and the day: the grid too
         except Exception:
             log.exception("the plan's look failed")
 
@@ -887,7 +1076,8 @@ class Planner:
         return text
 
     async def press(self, data: dict, now: float) -> str:
-        """A press in the app (`plan-press`): plan, plan one task to a day, undo, busy, free, remove. Its moment
+        """A press in the app (`plan-press`): plan, plan one task to a day, undo, busy, an activity now, free, remove,
+        the window, the activities. Its moment
         is the press's own; one older than PRESS_MAX_S is dropped and said."""
         at = float(data.get("at") or now)
         self.sign(min(at, now))
@@ -919,10 +1109,34 @@ class Planner:
             return await self.undo(str(data.get("plan") or ""), now)
         if action == "busy":
             return await self.busy(int(data.get("minutes") or 60), at)
+        if action == "off":
+            return await self.off_today(at)
+        if action == "now":
+            name = str(data.get("activity") or "").casefold()
+            activity = next((a for a in self.activities if a.title.casefold() == name), None)
+            if activity is None:
+                return "No such activity — it was taken off the list. Look again."
+            return await self.busy(activity.minutes, at, activity.title)
+        if action == "activities":
+            given = data.get("activities")
+            kept = [L.Activity.of(a) for a in given] if isinstance(given, list) else [None]
+            if None in kept or len(kept) > L.ACTIVITIES_MAX or \
+                    len({a.title.casefold() for a in kept}) < len(kept):  # type: ignore[union-attr]
+                return f"Not kept: up to {L.ACTIVITIES_MAX} activities, each named once, 5 min to 12 h, a range both ends."
+            async with self.lock:
+                text = self.set_activities(kept)  # type: ignore[arg-type]
+            await self.relay(now)  # the meals' new places: what they cross is laid again
+            return text
         if action == "free":
             return await self.free(now)
         if action == "remove":
             return await self.remove(str(data.get("block") or ""), now)
+        if action == "hours":
+            hours = L.Hours.of(data)
+            if hours is None:
+                return "Not kept: a window is two times at least two hours apart and a zone."
+            async with self.lock:
+                return self.set_hours(hours)
         return "No such press."
 
 

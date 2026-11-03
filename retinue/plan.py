@@ -50,13 +50,14 @@ class Refusal(ValueError):
 
 PLAN_KEY = "plan.state"      # the platform's kv: the Router's last push of the day plan
 PLAN_BYTES = 64 * 1024
-PRESSES = ("plan", "place", "undo", "busy", "free", "remove")
+PRESSES = ("plan", "place", "undo", "busy", "free", "remove", "hours", "now", "activities", "off")
 DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 ID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 PLAN_ID = re.compile(r"p[0-9a-f]{10}")
 TOKEN = re.compile(r"[0-9a-f]{32}")       # a person's row's `t` (`feed.TOKEN`)
 REMINDER = re.compile(r"reminder:\d{1,12}")  # a reminder of the digest (`feed.REMINDER_ID`)
 HM = re.compile(r"[0-2]\d:[0-5]\d")
+ZONE = re.compile(r"[A-Za-z][A-Za-z0-9_+-]{0,30}(?:/[A-Za-z0-9_+-]{1,30}){0,2}")  # an IANA name: the Router checks it is one
 
 
 def clean_press(body: object) -> dict:
@@ -64,15 +65,27 @@ def clean_press(body: object) -> dict:
     if not isinstance(body, dict) or body.get("action") not in PRESSES:
         raise Refusal(f"action: one of {', '.join(PRESSES)}")
     action, out = body["action"], {"action": body["action"]}
-    shapes = {"day": DAY, "task": ID, "block": ID, "plan": PLAN_ID, "t": TOKEN, "ref": REMINDER}
+    shapes = {"day": DAY, "task": ID, "block": ID, "plan": PLAN_ID, "t": TOKEN, "ref": REMINDER, "opens": HM, "closes": HM,
+              "zone": ZONE}
     takes = {"plan": ("day", "days"), "place": ("day", "task"), "undo": ("plan",), "remove": ("block",), "busy": ("minutes",),
-             "free": ()}[action]
+             "free": (), "hours": ("opens", "closes", "zone"), "now": ("activity",), "activities": ("activities",),
+             "off": ()}[action]
     if action == "place" and body.get("task") is None:
         # «Plan» on a person's row or a reminder: the Router makes its task and lays it — one press, no «make» first.
         takes = ("day", "t") if body.get("t") is not None else ("day", "ref")
     for key in takes:
         value = body.get(key)
-        if key == "minutes":
+        if key == "activity":
+            if not isinstance(value, str) or not 0 < len(value) <= 40:
+                raise Refusal("activity: its name")
+        elif key == "activities":
+            if not isinstance(value, list) or len(value) > 12 or not all(
+                    isinstance(a, dict) and set(a) <= {"title", "minutes", "from", "to"} and isinstance(a.get("title"), str)
+                    and len(a["title"]) <= 40 and type(a.get("minutes")) is int
+                    and all(a.get(k) is None or (isinstance(a[k], str) and HM.fullmatch(a[k])) for k in ("from", "to"))
+                    for a in value):
+                raise Refusal("activities: up to 12 of {title, minutes, from?, to?}")
+        elif key == "minutes":
             if value not in (30, 60, 120):
                 raise Refusal("minutes: 30, 60 or 120")
         elif key == "days":
@@ -123,7 +136,15 @@ def clean_plan(body: object, now: float) -> dict:
     window = body.get("window") or {}
     shaped = isinstance(window, dict) and isinstance(window.get("zone"), str) and len(window["zone"]) < 64 and \
         all(isinstance(window.get(k), str) and HM.fullmatch(window[k]) for k in ("opens", "closes"))
+    activities = [{"title": line(str(a.get("title") or ""), 40), "minutes": int(a["minutes"]),
+                   **({k: a[k] for k in ("from", "to")} if all(isinstance(a.get(k), str) and HM.fullmatch(a[k])
+                                                                 for k in ("from", "to")) else {})}
+                  for a in (body.get("activities") or [])[:12] if isinstance(a, dict) and type(a.get("minutes")) is int]
+    meals = [{"title": line(str(m.get("title") or ""), 40), "from": float(m["from"]), "to": float(m["to"])}
+             for m in (body.get("meals") or [])[:60]
+             if isinstance(m, dict) and all(type(m.get(k)) in (int, float) for k in ("from", "to"))]
     return {"at": float(body["at"]), "plans": kept, "recent": recent, "holds": held, "said": told,
+            "activities": activities, "meals": meals,
             **({"window": {k: window[k] for k in ("zone", "opens", "closes")}} if shaped else {})}
 
 
@@ -194,7 +215,8 @@ class Plan:
         except ValueError:
             state = {}
         return {"at": state.get("at"), "plans": state.get("plans") or {}, "recent": state.get("recent") or [],
-                "holds": state.get("holds") or [],
+                "holds": state.get("holds") or [], "activities": state.get("activities") or [],
+                "meals": state.get("meals") or [],
                 "said": state.get("said") or {}, "window": state.get("window") or {"zone": self.platform.views.zone(),
                                                                                      "opens": "09:00", "closes": "23:00"}}
 

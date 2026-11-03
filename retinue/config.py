@@ -138,8 +138,6 @@ class RouterConfig:
     telegram: TelegramConfig | None = None
     default_agent: str | None = None    # who gets messages without an address; the only agent, if there is one
     owner_tz: str = "UTC"               # IANA zone: every time the model and the owner see is local time here
-    plan_zone: str = ""                 # the day plan's window keeps this zone's clock wherever he is; empty: owner_tz
-    plan_hours: str = "09:00-23:00"     # the window: from-to, a «to» earlier than «from» is after midnight
     backup_status: str = "/status/backup.json"  # written by the host's backup; the morning summary reports it
     health_status: str = "/status/health.json"  # the containers, written by the host every 2 min (health.py)
     bus_listen_port: int = 9100         # agents reach the router here, on `agents`. The router listens on every
@@ -185,6 +183,9 @@ class RouterConfig:
         # with no pages until it does.
         if retired := [key for key in ("lifehub_url", "lifehub_data", "lifehub_build") if raw.pop(key, None)]:
             log.warning("router config: %s is the retired life hub's — run setup.sh PAGES=1 (docs/pages.md)",
+                        ", ".join(retired))
+        if retired := [key for key in ("plan_hours", "plan_zone") if raw.pop(key, None) is not None]:
+            log.warning("router config: %s is no longer read — the plan's window is set in the app (docs/collections.md)",
                         ", ".join(retired))
         cfg = cls(agents=agents, matrix=matrix, telegram=telegram, memory=memory, proactive=proactive, voice=voice,
                   **raw)
@@ -818,8 +819,8 @@ BRANCH = re.compile(r"(?!.*\.\.)(?!.*//)(?!.*/\.)(?!.*@\{)(?!.*\.lock(?:/|$))[A-
 
 # What an agent can be given through the router.
 BUS_TOOLS = ("ask_agent", "list_agents", "search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-             "move_reminder", "set_timezone", "plan_move", "plan_estimate", "get_attachment", "publish_trip", "draft_reply",
-             "collection_describe", "collection_query", "collection_apply", "collection_propose")
+             "move_reminder", "set_timezone", "plan_move", "plan_estimate", "plan_hold", "get_attachment", "publish_trip",
+             "draft_reply", "collection_describe", "collection_query", "collection_apply", "collection_propose")
 
 
 @dataclass

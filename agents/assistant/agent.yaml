@@ -18,7 +18,7 @@ engine:
   # may change); ask_agent is not given at this stage. travel-ops is an MCP server of its own (RETINUE_TRAVEL_URL),
   # every call checked by the engine's guard.
   bus_tools: [search_archive, set_reminder, list_reminders, cancel_reminder, move_reminder, set_timezone, plan_move,
-              plan_estimate, get_attachment, publish_trip, draft_reply, collection_describe, collection_query,
+              plan_estimate, plan_hold, get_attachment, publish_trip, draft_reply, collection_describe, collection_query,
               collection_apply, collection_propose]
   # Steps of one run. A trip is a search, a page or two, photos, a refinement, the answer — and a fix after a
   # refused argument: 8 cut it short. A cap against a loop, not a target; every step spends the subscription.

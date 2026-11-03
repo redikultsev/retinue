@@ -7,13 +7,13 @@ import ipaddress
 import json
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
+from dockerup import docker_up
 from retinue import cliengine, lane_host, pagesd, reach
 from retinue.bus import bus_token
 from retinue.config import AgentConfig, PlatformConfig, RouterConfig
@@ -50,7 +50,7 @@ def test_one_assistant_and_nothing_else():
     assert engine.tools == [] and engine.allowed_tools == [], "no built-in tool is offered or allowed"
     assert {"Bash", "WebSearch", "WebFetch"} <= set(engine.disallowed_tools)
     assert engine.bus_tools == ["search_archive", "set_reminder", "list_reminders", "cancel_reminder",
-                                "move_reminder", "set_timezone", "plan_move", "plan_estimate", "get_attachment", "publish_trip",
+                                "move_reminder", "set_timezone", "plan_move", "plan_estimate", "plan_hold", "get_attachment", "publish_trip",
                                 "draft_reply", "collection_describe", "collection_query", "collection_apply", "collection_propose"], \
         "the archive, reminders and the zone, attachments, trip pages, draft replies, the collections; no ask_agent"
     assert (engine.model, engine.effort) == ("claude-opus-5-5[1m]", "xhigh"), "Opus 5.5 by id, its 1M context, xhigh"
@@ -1793,8 +1793,7 @@ def test_every_image_is_pinned_by_digest_or_built_here():
     assert yaml.safe_load(files[2].read_text())["services"]["tuwunel"]["image"] == SERVICES["tuwunel"]["image"]
 
 
-@pytest.mark.skipif(not shutil.which("docker") or subprocess.run(["docker", "info"], capture_output=True).returncode != 0,
-                    reason="needs Docker")
+@pytest.mark.skipif(not docker_up(), reason="needs Docker")
 def test_the_faces_nginx_config_loads_in_its_own_image(tmp_path):
     """Text tests of the config miss what only nginx sees: an unquoted `{8}` in a location regex took the face down."""
     image = re.search(r"^FROM (nginxinc/nginx-unprivileged\S+)", (ROOT / "deploy" / "face" / "Dockerfile").read_text(), re.M)[1]

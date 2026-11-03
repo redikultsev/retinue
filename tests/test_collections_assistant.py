@@ -412,6 +412,10 @@ def test_her_plan_moves_only_on_the_owner_s_own_word(tmp_path):
                 moved.append(args)
                 return True, "Done"
 
+            async def hold_said(self, *args):
+                moved.append(args)
+                return True, "Lunch till 14:45."
+
             async def turn_done(self, turn_id):
                 pass
 
@@ -428,6 +432,7 @@ def test_her_plan_moves_only_on_the_owner_s_own_word(tmp_path):
             turn.tree.foreign.add(mark)
             ok, text = await core.plan_tool(SHE, turn.id, "move", move)
             assert not ok and "in a message of his own" in text, mark
+            assert not (await core.plan_tool(SHE, turn.id, "hold", {"label": "Lunch", "minutes": 45}))[0], mark
             assert not (await core.collection_tool(SHE, turn.id, "apply", dict(timed)))[0], mark
         assert moved == [], "a forward saying «move it to Friday» moves nothing"
         alone = core.turns.open_root("assistant")  # the morning brief, a reminder's run: not his message
@@ -439,4 +444,6 @@ def test_her_plan_moves_only_on_the_owner_s_own_word(tmp_path):
         assert (await core.collection_tool(SHE, his.id, "apply", dict(timed)))[0]
         assert (await core.plan_tool(SHE, "gone", "move", move))[0] is False, "no turn"
         assert moved[0][1:5] == (move["task"], "2026-11-11", "evening", "") and len(moved) == 1
+        assert (await core.plan_tool(SHE, his.id, "hold", {"label": "Lunch", "minutes": 45}))[1] == "Lunch till 14:45."
+        assert moved[1][:3] == ("Lunch", 45, "")
     asyncio.run(run())

@@ -187,12 +187,12 @@ def main() -> None:
         bridge.detail_waiting = lambda ref, token, now: detail(core, ref, token, now)
         tasks = Tasks(core)  # the tasks against their rows, a row's task for «Plan», the busy window
         bridge.cycle = tasks.cycle
-        planner = Planner(core, tasks, Hours.parse(cfg.plan_hours, cfg.plan_zone or cfg.owner_tz))  # the day plan
+        planner = Planner(core, tasks, Hours(cfg.owner_tz))  # the day plan; its window is his, set in the app
         tasks.planner = core.planner = bridge.planner = planner
         core.actions.update({"plan-undo": planner.undo_pressed, "plan-busy": planner.busy_pressed})
         if cfg.calwrite_url:  # the plan's blocks in his Google calendar «Retinue», both ways
             tasks.gcal = Gcal(core, planner, Writer(cfg.calwrite_url, cfg.calwrite_token, "the calendar writer"),
-                              planner.hours.zone, f"{cfg.face_url.rstrip('/')}/today?tab=schedule" if cfg.face_url else "")
+                              f"{cfg.face_url.rstrip('/')}/today?tab=schedule" if cfg.face_url else "")
             core.actions["gcal-again"] = tasks.gcal.again_pressed
         if mail:  # a mark by his Telegram button shows in the app at once too
             mail.changed = bridge.poke

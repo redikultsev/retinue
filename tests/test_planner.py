@@ -46,6 +46,7 @@ async def setup(world, tmp_path):
     async def tell_owner(text, **_):
         told.append(text)
     router = Store(str(tmp_path / "router.sqlite"))
+    router.set("plan.activities", "[]")  # no meals unless a test sets them: the times below are the tasks' own
     core = SimpleNamespace(platform=platform_of(world), store=router, tz=H.zone, tell_owner=tell_owner)
     events = [{"start": msk(10, "19:00"), "end": msk(10, "20:00"), "title": "Lesson", "all_day": False, "busy": True}]
     return Planner(core, SimpleNamespace(events=events, events_at=1e12), H), told  # a busy window always fresh
@@ -412,4 +413,146 @@ def test_a_record_he_changed_on_his_screen_that_day_is_a_sign_too(tmp_path):
         await planner.cycle(msk(11, "10:05"))
         assert len(await blocks(world, "passed")) == 1
         assert await planner._present(msk(11, "10:00"), msk(12, "10:00")) is False
+    faced(tmp_path, run)
+
+
+def test_the_window_he_sets_in_the_app_is_kept_across_a_restart_and_the_next_plan_lays_into_it(tmp_path):
+    from retinue.plan import Refusal, clean_press
+
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        await add(world, title="Pay the bill", minutes=30)
+        said = await planner.press({"action": "hours", "opens": "20:00", "closes": "02:00", "zone": "Europe/Berlin",
+                                    "at": msk(10, "17:00")}, msk(10, "17:00"))
+        assert said == "Plan window: 20:00–02:00, Europe/Berlin. The next plan uses it."
+        assert world.platform.plan.plan_state()["window"] == {"zone": "Europe/Berlin", "opens": "20:00", "closes": "02:00"}
+        again = Planner(planner.core, planner.tasks, Hours("UTC"))  # the Router restarted: his window, not the default
+        assert again.hours == Hours("Europe/Berlin", wall(20, 0), wall(2, 0))
+        await again.plan(msk(10, "17:00"))
+        [block] = await blocks(world)
+        assert "20:00" <= hm(block["fields"]["start"]) < "23:00", "inside his evening window, not at 17:00"
+        refused = await again.press({"action": "hours", "opens": "09:00", "closes": "17:00", "zone": "Mars/Olympus",
+                                     "at": msk(10, "17:01")}, msk(10, "17:01"))
+        assert refused.startswith("Not kept") and again.hours.opens == wall(20, 0)
+    faced(tmp_path, run)
+    assert clean_press({"action": "hours", "opens": "10:00", "closes": "01:00", "zone": "America/Argentina/Salta",
+                        "day": "2026-11-11"}) == {"action": "hours", "opens": "10:00", "closes": "01:00",
+                                                  "zone": "America/Argentina/Salta"}
+    for bad in ({"action": "hours", "opens": "10:00", "closes": "01:00"},
+                {"action": "hours", "opens": "10", "closes": "01:00", "zone": "Europe/Berlin"},
+                {"action": "hours", "opens": "10:00", "closes": "01:00", "zone": "../../etc/passwd"}):
+        try:
+            clean_press(bad)
+        except Refusal:
+            continue
+        raise AssertionError(bad)
+
+
+def test_a_meal_keeps_its_place_from_every_task_and_lunch_said_now_frees_it_and_moves_what_it_crosses(tmp_path):
+    from retinue.plan_layout import Activity
+
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        assert "meals keep their place: Lunch" in await planner.press(
+            {"action": "activities", "activities": [{"title": "Lunch", "minutes": 45, "from": "13:00", "to": "16:00"},
+                                                    {"title": "Rest", "minutes": 60}], "at": msk(10, "09:00")},
+            msk(10, "09:00"))
+        assert planner.activities == (Activity("Lunch", 45, wall(13, 0), wall(16, 0)), Activity("Rest", 60))
+        for n in range(4):
+            await add(world, title=f"Task {n}", minutes=90)
+        await planner.plan(msk(10, "12:00"))
+        spans = [(moment(b["fields"]["start"]), moment(b["fields"]["start"]) + b["fields"]["minutes"] * 60)
+                 for b in await blocks(world)]
+        assert spans and all(b <= msk(10, "13:00") or a >= msk(10, "13:45") for a, b in spans), "lunch kept free"
+        state = world.platform.plan.plan_state()
+        assert {"title": "Lunch", "from": msk(10, "13:00"), "to": msk(10, "13:45")} in state["meals"]
+        assert state["activities"][1] == {"title": "Rest", "minutes": 60}
+
+        # At 12:30 he goes for lunch: a hold «Lunch»; the meal's place that day is let go; what it crosses moves.
+        said = await planner.press({"action": "now", "activity": "lunch", "at": msk(10, "12:30")}, msk(10, "12:30"))
+        assert said.startswith("Lunch till 13:15")
+        assert not [m for m in world.platform.plan.plan_state()["meals"] if m["from"] == msk(10, "13:00")]
+        later = [b for b in await blocks(world) if moment(b["fields"]["start"]) >= msk(10, "12:30")]
+        assert all(moment(b["fields"]["start"]) >= msk(10, "13:15") for b in later)
+
+        # «Rest» from 13:00 cuts the lunch running then; × ends the rest and keeps tomorrow's airport.
+        await planner.press({"action": "now", "activity": "Rest", "at": msk(10, "13:00")}, msk(10, "13:00"))
+        ok, text = await planner.hold_said("Travel", 90, "2026-11-11T19:00", msk(10, "13:00"))
+        assert ok and text.startswith("Travel Wed 11 Nov 19:00–20:30")
+        assert [(h["label"], h["to"]) for h in planner.held(msk(10, "13:00"))] == [
+            ("Lunch", msk(10, "13:00")), ("Rest", msk(10, "14:00")), ("Travel", msk(11, "20:30"))], \
+            "the rest cut lunch at 13:00; the lunch is kept, eaten"
+        assert not [m for m in planner.meals(msk(10, "15:00")) if m["title"] == "Lunch" and msk(10, "00:00") <= m["from"] < msk(11, "00:00")], \
+            "lunch eaten 12:30–13:00 stays eaten when the hold is over: no place comes back after the rest"
+        assert await planner.free(msk(10, "13:10")) == "Rest taken off."
+        assert await planner.free(msk(10, "13:11")) == "Nothing is running."
+        assert [h["label"] for h in planner.holds(msk(10, "13:10"))] == ["Travel"]
+        assert (await planner.hold_said("Travel", 30, "2026-11-01T10:00", msk(10, "13:10")))[0] is False
+        assert (await planner.hold_said("Travel", 0, "", msk(10, "13:10")))[0] is False
+        assert (await planner.hold_said("Travel", 30, "2026-11-11", msk(10, "13:10")))[0] is False, "a date is no time"
+        ok, text = await planner.hold_said("Dinner", 45, "2026-11-11T18:50", msk(10, "13:10"))
+        assert ok and "Taken off: Travel." in text, "a hold starting inside the new one is named, not lost quietly"
+        assert (await planner.press({"action": "activities", "activities": [{"title": "Lunch", "minutes": 45},
+                                                                             {"title": "lunch", "minutes": 30}],
+                                     "at": msk(10, "13:10")}, msk(10, "13:10"))).startswith("Not kept")
+    faced(tmp_path, run)
+
+
+def test_not_working_today_moves_the_rest_of_the_day_on_keeps_his_own_and_one_undo_takes_it_all_back(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        for n in range(3):
+            await add(world, title=f"Task {n}", minutes=60)
+        await planner.plan(msk(10, "13:50"))
+        laid = await blocks(world)
+        assert len(laid) == 3 and all(moment(b["fields"]["start"]) >= msk(10, "14:00") for b in laid)
+        his = laid[-1]
+        await world.platform.collections.apply(SCREEN, "blocks", [
+            {"op": "set", "id": his["id"], "version": his["version"], "fields": {"locked": True}}], world.clock.now)
+        before = {b["id"]: b["fields"]["start"] for b in await blocks(world)}
+
+        said = await planner.press({"action": "off", "at": msk(10, "14:00")}, msk(10, "14:00"))
+        assert said.startswith("Not working till 01:00. Moved 2 blocks: Wed 2.") and "Yours stay: Task" in said
+        after = {b["id"]: b for b in await blocks(world)}
+        moved = [b for i, b in after.items() if i != his["id"]]
+        assert all(msk(11, "10:00") <= moment(b["fields"]["start"]) < msk(12, "01:00") for b in moved), "on to Wed"
+        assert after[his["id"]]["fields"]["start"] == his["fields"]["start"], "his own stays"
+        [hold] = planner.holds(msk(10, "14:00"))
+        assert (hold["label"], hold["from"], hold["to"]) == ("Not working", msk(10, "14:00"), msk(11, "01:00"))
+        assert world.platform.plan.plan_state()["recent"][0]["by"] == "owner", "«Undo plan» in the app is this one"
+
+        plan_id = world.platform.plan.plan_state()["recent"][0]["id"]
+        assert (await planner.undo(plan_id, msk(10, "14:05"))).startswith("Taken back: 2 blocks")
+        assert {b["id"]: b["fields"]["start"] for b in await blocks(world)} == before
+        assert planner.holds(msk(10, "14:05")) == [], "the time is his again"
+    faced(tmp_path, run)
+
+
+def test_not_working_today_cuts_the_running_block_keeps_his_holds_names_what_has_no_room_and_undo_puts_all_back(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        await add(world, title="Report", minutes=60, due="2026-11-10")
+        await add(world, title="Bill", minutes=30)
+        await planner.plan(msk(10, "13:50"))
+        before = {b["id"]: (b["fields"]["start"], b["fields"]["minutes"]) for b in await blocks(world)}
+        await planner.hold("Travel", msk(10, "18:00"), msk(10, "18:30"), msk(10, "14:20"))
+        week = [{"start": msk(d, "09:00"), "end": msk(d + 1, "02:00"), "title": "Away", "all_day": False, "busy": True}
+                for d in range(11, 18)]
+        planner.tasks.events = planner.tasks.events + week  # no room in the next seven windows
+        said = await planner.press({"action": "off", "at": msk(10, "14:20")}, msk(10, "14:20"))
+        assert "No room in a week for: Bill." in said, said
+        assert await planner.press({"action": "off", "at": msk(10, "14:21")}, msk(10, "14:21")) == \
+            "Not working till 01:00 already.", "a second press is the first"
+        [running] = await blocks(world)
+        assert running["fields"]["minutes"] == 20, "the report begun at 14:00 is cut at 14:20"
+        assert [h["label"] for h in planner.holds(msk(10, "14:21"))] == ["Not working", "Travel"], "his hold stays"
+
+        off = next(p for p in planner.plans().values() if p.get("off"))
+        assert (await planner.undo(off["id"], msk(10, "14:25"))).startswith("Taken back: 2 blocks")
+        assert {b["id"]: (b["fields"]["start"], b["fields"]["minutes"]) for b in await blocks(world)} == before
+        assert [h["label"] for h in planner.holds(msk(10, "14:25"))] == ["Travel"]
     faced(tmp_path, run)

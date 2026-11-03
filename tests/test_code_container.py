@@ -8,11 +8,12 @@ Docker."""
 from __future__ import annotations
 
 import hashlib
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from dockerup import docker_up
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = """FROM python:3.12-slim-trixie
@@ -85,11 +86,7 @@ echo ALL-OK
 '''
 
 
-def _docker() -> bool:
-    return bool(shutil.which("docker")) and subprocess.run(["docker", "info"], capture_output=True).returncode == 0
-
-
-pytestmark = pytest.mark.skipif(not _docker(), reason="needs Docker")
+pytestmark = pytest.mark.skipif(not docker_up(), reason="needs Docker")
 
 
 def test_the_code_path_across_the_platforms_and_the_rooms_users(tmp_path):

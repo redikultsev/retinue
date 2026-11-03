@@ -955,3 +955,34 @@ def test_the_sheets_loop_takes_what_was_asked_beside_the_notes_and_waits_when_th
     assert [body for call, body in platform.calls if call == "waiting/detail"] == [{"r": "a" * 16, "detail": None}]
     assert sleeps == [bridge_module.DETAIL_SPIN_S, bridge_module.PUMP_S * 2], \
         "a moment after an answer that came at once; backing off when the platform is away"
+
+
+def test_the_apps_chat_is_taken_before_a_card_telegram_holds_back_and_only_once(tmp_path):
+    """A card Telegram is slow to take stops the pull; what the owner wrote or pressed in the app's chat after it is
+    taken anyway, and not again when the card's pull comes back with it."""
+    said = {"seq": 2, "kind": "chat", "session": "", "data": {"text": "Book the table", "input_id": "face:1"}}
+    press = {"seq": 3, "kind": "chat-press", "session": "", "data": {"id": "b" * 16, "row": "system:1"}}
+    ch, bridge, platform = make(tmp_path, [card(1), said, press])
+    ch.fail = {"make test": "429 Too Many Requests: retry after 5"}
+    taken = []
+
+    class App:
+        async def take(self, kind, data):
+            taken.append((kind, data))
+            if kind == "chat-press":
+                raise RuntimeError("the press's own bug")  # logged; the note is done with
+
+    bridge.app = App()
+
+    async def run():
+        with pytest.raises(TelegramError):
+            await bridge.deliver()
+        assert taken == [("chat", said["data"]), ("chat-press", press["data"])], "not behind the card"
+        assert platform.confirmed == []
+        with pytest.raises(TelegramError):
+            await bridge.deliver()
+        ch.fail = {}
+        assert await bridge.deliver() == 3
+
+    asyncio.run(run())
+    assert len(taken) == 2 and platform.confirmed == [3], "taken once, confirmed in order"

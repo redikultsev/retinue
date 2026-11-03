@@ -414,7 +414,7 @@ class TelegramChannel:
             await self.call("sendDocument", files={"document": (f.name, f.data, f.media_type)},
                             chat_id=str(self.cfg.owner_id))
 
-    async def mirror(self, agent_id: str, origin: str, text: str) -> None:
+    async def mirror(self, agent_id: str, origin: str, text: str, ref: str | None = None) -> None:
         pass  # Telegram is not the record of other channels
 
     async def notice(self, agent_id: str, text: str, buttons: list[tuple[str, str]] | None = None,

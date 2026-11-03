@@ -127,6 +127,16 @@ way every answer to the router does. The platform never calls the router.
   the cards and hands it to the handler the router named for that kind — a press on «Waiting for you» in the notes'
   order, a press on the plan beside them, since it reads and writes the collections. A press that fails is logged and
   you are told it did not apply; its note is confirmed either way.
+- **The app's chat** («Talk to Retinue», [face.md](face.md#talk-to-retinue)) is a channel of the router's, the
+  assistant's conversation (`retinue/channels/app.py`, `retinue/chat.py`). What you write there is journaled as a
+  `chat` note `{text, input_id}`, a button you press as `chat-press` `{id, row}`; the bridge takes them before the rest
+  of each pull, each once, so a card Telegram is slow to take never holds them back, and confirms them in order with
+  the others. The router pushes the conversation's rows (`POST /owner/chat {rows}`: each `{id, at, by: owner | her |
+  notice, text, via?, buttons?, files?, toast?}` by its archive id, merged into the one there, up to 100 a push),
+  what she is writing (`POST /owner/chat/draft {text?}`: the whole text so far, never stored) and her files
+  (`POST /owner/chat/file {row, name, mime, data}`, up to 20 MB each, 200 MB in all). It is a record channel: it gets
+  your messages from Telegram and every answer, and after a push that did not go — and at its start — the
+  conversation's last 200 rows again. The platform keeps 1000 rows (the `chat` store, [migrations.md](migrations.md)).
 - **The look**: every 30 s, in a task of its own beside the notes' pump, the router does in this order — the tasks
   against their rows (`tasks.Tasks.reconcile`), the busy window when it is due (`tasks.Tasks.calendar`), the plan's
   look (`planner.Planner.cycle`), the calendar «Retinue» in a task of its own ([calendar.md](calendar.md)), then the
@@ -254,7 +264,8 @@ bot's own commands (`new`, `app`, `wait`… — `config.BOT_COMMANDS`); the plat
 - **The voice.** With `voice:` in `platform.yaml`, one sphere — the root project, whose sessions run in the Base's
   root — has the voice as its main session: the router writes into it by `/owner/voice` and holds the call until
   the turn is over, and the turn's summaries go back to the router as its answer instead of as pings
-  ([proactive.md](proactive.md#the-voice)).
+  ([proactive.md](proactive.md#the-voice)). It is an option for the router's channels; the app's «Talk to Retinue» is
+  the router's own conversation, whoever speaks in it, not this sphere's session.
 - **Unread.** A session is unread when a summary or a new card came after you last looked at it: opened it in the app
   on a visible screen, wrote into it (in the app or in Telegram) or decided its card there. One `seen_at` per session:
   you are one person. The app marks it with a dot.

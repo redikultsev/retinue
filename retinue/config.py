@@ -116,7 +116,7 @@ class ProactiveConfig:
 
 
 VOICE_ENGINES = ("assistant", "session")
-VOICE_CHANNELS = ("telegram",)  # the router's channel the platform reaches the owner through
+VOICE_CHANNELS = ("telegram", "app")  # the router's channels a session voice may hear and speak in
 
 
 @dataclass
@@ -239,7 +239,7 @@ class RouterConfig:
 
 
 def _check_voice_channels(cfg: RouterConfig) -> None:
-    """`voice.engine: session` is a session on the platform, which reaches the owner through Telegram."""
+    """`voice.engine: session` is a session on the platform, which hears the owner in Telegram, the app or both."""
     voice = cfg.voice
     if voice.engine not in VOICE_ENGINES:
         raise SystemExit(f"router config: voice.engine {voice.engine!r} is not one of {', '.join(VOICE_ENGINES)}")
@@ -247,8 +247,9 @@ def _check_voice_channels(cfg: RouterConfig) -> None:
         return
     if not cfg.platform_url:
         raise SystemExit("router config: voice.engine session is the root project's main session — add platform_url")
-    if voice.channels != list(VOICE_CHANNELS):
-        raise SystemExit(f"router config: voice.channels is [telegram], not {voice.channels!r}")
+    if not voice.channels or not set(voice.channels) <= set(VOICE_CHANNELS):
+        raise SystemExit(f"router config: voice.channels are some of {', '.join(VOICE_CHANNELS)}, "
+                         f"not {voice.channels!r}")
 
 
 @dataclass

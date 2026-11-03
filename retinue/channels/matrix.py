@@ -22,7 +22,7 @@ from ..render import render
 log = logging.getLogger("retinue.matrix")
 
 PROTOCOL = "_protocol"
-ORIGIN_LABELS = {"telegram": "📱 Telegram"}
+ORIGIN_LABELS = {"telegram": "📱 Telegram", "app": "the app"}
 
 
 class MatrixChannel:
@@ -122,7 +122,7 @@ class MatrixChannel:
             await intent.send_file(room_id, mxc, info=FileInfo(mimetype=f.media_type, size=len(f.data)),
                                    file_name=f.name)
 
-    async def mirror(self, agent_id: str, origin: str, text: str) -> None:
+    async def mirror(self, agent_id: str, origin: str, text: str, ref: str | None = None) -> None:
         # The router cannot post as the owner (and should not), so the owner's words arrive as a quote.
         if room_id := self._room(agent_id):
             label = ORIGIN_LABELS.get(origin, origin)

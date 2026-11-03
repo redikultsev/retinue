@@ -25,6 +25,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import httpx
@@ -44,6 +45,9 @@ from .outfiles import ACTIVE, PHOTO_MAX, PHOTOS
 from .spoken import SPOKEN_MARK
 from .protocol import Store
 from .render import TELEGRAM_LIMIT, _tg_escape, _tg_link, linkable, render_telegram, tg_card
+
+if TYPE_CHECKING:
+    from .channels.app import AppChannel
 
 log = logging.getLogger("retinue.bridge")
 
@@ -77,6 +81,7 @@ ICONS = {"question": "❓", "approval": "⚠️", "courier": "📦", "session": 
          "collection_proposal": "🗃"}
 SPHERES = "platform.spheres"  # the router's kv: the platform's spheres as it last named them, as JSON
 SPHERES_EVERY_S = 600        # how often the pump asks the platform for them again (a restart of it may change them)
+APP_KINDS = ("chat", "chat-press")  # the app's chat (`channels/app.py`): taken before the rest of a pull
 
 
 class PlatformClient(Neighbour):
@@ -140,6 +145,8 @@ class PlatformBridge:
         self.detail_waiting: Callable[[str, str, float], dict | None] | None = None
         self._detailing: asyncio.Task | None = None
         self.spheres_at = 0.0  # when the platform last named its spheres (`refresh_spheres`)
+        self.app: AppChannel | None = None  # the app's chat: its notes go to it first (`deliver`)
+        self.app_done: set[int] = set()  # the app's notes taken and not confirmed yet: a card before them holds them
 
     def attach(self, channel: TelegramChannel) -> None:
         self.channel = channel
@@ -173,10 +180,17 @@ class PlatformBridge:
 
     async def deliver(self) -> int:
         """One pull: every note shown in order, then confirmed up to the last one done with. The first that fails for a
-        passing reason stops the pull; it and those after it come again next time. How many notes were done with."""
+        passing reason stops the pull; it and those after it come again next time. The app's chat is taken first, each
+        note once, whatever stops the rest: what the owner writes in the app never waits for Telegram. How many notes
+        were done with."""
         done = []
         try:
-            for note in await self.neighbour.items(NOTES_PER_PULL):
+            notes = await self.neighbour.items(NOTES_PER_PULL)
+            await self._app_notes(notes)
+            for note in notes:
+                if note.get("kind") in APP_KINDS:
+                    done.append(note["seq"])
+                    continue
                 try:
                     await self._show(note)
                 except NOT_SHOWABLE as exc:
@@ -192,6 +206,23 @@ class PlatformBridge:
                 except Exception:
                     log.exception("platform notes up to %s were not confirmed", done[-1])
         return len(done)
+
+    async def _app_notes(self, notes: list[dict]) -> None:
+        """The app's notes of this pull not taken yet, in order. One that fails is logged and done with: the owner's
+        message is on record before anything can fail, and a press fails the same way twice."""
+        first = notes[0]["seq"] if notes else 0
+        self.app_done = {seq for seq in self.app_done if seq >= first}  # confirmed: never pulled again
+        for note in notes:
+            if note.get("kind") not in APP_KINDS or note["seq"] in self.app_done:
+                continue
+            self.app_done.add(note["seq"])
+            if self.app is None:
+                log.warning("platform note %s for the app's chat, and the router has none; skipped", note["seq"])
+                continue
+            try:
+                await self.app.take(note["kind"], note.get("data") or {})
+            except Exception:
+                log.exception("the app's note %s was not taken", note["seq"])
 
     async def detail_loop(self) -> None:
         """The rows the app opens, answered as soon as asked: a long call for what was asked (`PlatformClient.asked`),

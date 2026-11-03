@@ -20,6 +20,7 @@ from . import attachments, voice
 from .archive import Archive
 from .bridge import PlatformBridge, PlatformClient
 from .bus import BusServer, bus_token
+from .channels.app import AppChannel
 from .channels.telegram import TelegramChannel
 from .config import RouterConfig
 from .core import AgentFile, Core, Reply, ask_agent
@@ -53,6 +54,9 @@ def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventL
         # nothing else.
         pages = [f"{urlsplit(cfg.pages_url).hostname}/"] if cfg.pages_url else []
         channels.append(TelegramChannel(cfg.telegram, store, [*cfg.link_hosts, *pages], bridge))
+    if bridge:  # the app's «Talk to Retinue»: the same conversation, through the platform (`channels/app.py`)
+        bridge.app = AppChannel(bridge.neighbour)
+        channels.append(bridge.app)
     return channels
 
 

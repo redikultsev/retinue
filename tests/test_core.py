@@ -45,7 +45,7 @@ class FakeChannel:
         self.events.append(("send", agent_id, text, [f.name for f in files]))
         self.refs.append(ref)
 
-    async def mirror(self, agent_id, origin, text):
+    async def mirror(self, agent_id, origin, text, ref=None):
         self.events.append(("mirror", agent_id, origin, text))
 
     async def notice(self, agent_id, text, buttons=None, ref=None):
@@ -376,6 +376,68 @@ def test_messages_written_during_a_run_get_one_answer(tmp_path):
     reply = archive.recent(archive.get("telegram:1").conversation_id, 10)[-1]
     assert (reply.kind, reply.ref, reply.meta) == ("assistant", "telegram:3", {"covers": ["telegram:2", "telegram:3"]})
     assert archive.answered("telegram:2") and archive.answered("telegram:3")
+
+
+def test_an_answer_to_a_batch_written_in_two_channels_reaches_both_and_the_app_hears_everything(tmp_path):
+    """One conversation whatever the channel: messages written in Telegram and in the app while she was busy get one
+    answer, in both — and in every record channel (the app), with her drafts and the owner's words from the others.
+    The request names a message written in the app."""
+    archive, prompts = Archive(str(tmp_path / "archive.sqlite")), []
+
+    async def run():
+        gate = asyncio.Event()
+
+        async def fake_ask(url, text, context_id, on_progress=None, turn_id=None):
+            prompts.append(text)
+            if len(prompts) == 1:
+                await gate.wait()
+            await on_progress(f"draft {len(prompts)}")
+            return "done", f"answer {len(prompts)}", []
+
+        core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", ask=fake_ask, archive=archive)
+        telegram, app, other = FakeChannel("telegram", False), FakeChannel("app", True), FakeChannel("web", False)
+        await core.start([telegram, app, other])
+        await core.handle(telegram, None, "Where to eat tonight?", native_id="1")
+        await asyncio.sleep(0.01)
+        await core.handle(app, None, "Somewhere quiet", native_id="face:2")  # while the first answer is written
+        await core.handle(telegram, None, "Under 40", native_id="3")
+        gate.set()
+        await drain()
+        return telegram, app, other
+
+    telegram, app, other = asyncio.run(run())
+    sends = lambda channel: [e[2] for e in channel.events if e[0] == "send"]  # noqa: E731
+    assert sends(telegram) == ["answer 1", "answer 2"], "the batch's first message was Telegram's"
+    assert sends(app) == ["answer 1", "answer 2"], "the app wrote in the batch, and records every answer"
+    assert sends(other) == [], "a channel nobody wrote in hears nothing"
+    assert ("draft", "assistant", "draft 1") in app.events and ("draft", "assistant", "draft 2") in app.events, \
+        "her drafts reach the record channels too"
+    assert [e[3] for e in app.events if e[0] == "mirror"] == ["Where to eat tonight?", "Under 40"]
+    assert "[New message from the owner, 1 of 3," not in prompts[1]
+    assert "[New message from the owner, 1 of 2, " in prompts[1] and ", in the app]\nSomewhere quiet" in prompts[1]
+    assert ", in the app]" not in prompts[1].split("Somewhere quiet")[1], "Telegram goes unnamed"
+
+
+def test_a_card_pressed_in_one_channel_is_rewritten_in_the_channel_that_keeps_it(tmp_path):
+    async def run():
+        core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner",
+                    archive=Archive(str(tmp_path / "archive.sqlite")))
+        telegram, app = FakeChannel("telegram", False), FakeChannel("app", True)
+        rewritten = []
+
+        async def rewrite(card_id, pressed):
+            rewritten.append((card_id, pressed.card, pressed.keep))
+        app.rewrite = rewrite
+        await core.start([telegram, app])
+        await core.handle(telegram, None, "!check")
+        card_id, ((_, button), _) = telegram.cards[-1][2], telegram.cards[-1][1]
+        pressed = await core.press(telegram, button)
+        again = await core.press(telegram, button)
+        return card_id, pressed, again, rewritten
+
+    card_id, pressed, again, rewritten = asyncio.run(run())
+    assert pressed.ok and not again.ok
+    assert rewritten == [(card_id, pressed.card, [])], "once: a press that changed nothing rewrites nothing"
 
 
 def test_every_run_is_accounted(tmp_path):

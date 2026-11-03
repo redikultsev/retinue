@@ -448,7 +448,8 @@ class CollTools:
     def owner_routes(self) -> list:
         return [web.post("/owner/collections/{name:describe|query|apply|propose}", self.owner_tool),
                 web.post("/owner/collections/changes", self.owner_changes),
-                web.post("/owner/collections/revert", self.owner_revert)]
+                web.post("/owner/collections/revert", self.owner_revert),
+                web.post("/owner/collections/present", self.owner_present)]
 
     async def _router_writer(self, body: dict) -> Writer | str:
         """The writer a Router's call names, or why there is none: `assistant`, or a `code:` rule the rights of some
@@ -515,6 +516,19 @@ class CollTools:
                 lambda: machine_changes(self.collections, after, since, limit, tuple(exclude))))
         except Refused as exc:
             return web.json_response({"error": str(exc)}, status=400)
+
+    async def owner_present(self, request: web.Request) -> web.Response:
+        """Whether the owner changed any record between `since` and `until` — on a screen of his, or from a Mac: a sign
+        he was there, for the day plan's count of what passed (`planner`). `{present}`; nothing else is said."""
+        body = await _body(request)
+        since, until = body.get("since"), body.get("until")
+        if type(since) not in (int, float) or type(until) not in (int, float) or until <= since:
+            return web.json_response({"error": "since and until: two moments, the second later"}, status=400)
+        store = self.collections
+        found = await store.read(lambda: store._db.execute(
+            "SELECT 1 FROM changes WHERE ts >= ? AND ts < ? AND (actor = 'owner' OR actor LIKE 'mac:%') LIMIT 1",
+            (since, until)).fetchone())
+        return web.json_response({"present": found is not None})
 
     async def owner_revert(self, request: web.Request) -> web.Response:
         """The owner's press under a change in the evening list: `{change_id}` → `{ok, text}`. Only a change the

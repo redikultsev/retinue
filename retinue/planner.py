@@ -11,7 +11,8 @@ collection `blocks`, written as the rule `code:plan` in one apply, all or none. 
   before (`before`), or is `skipped` when the plan added it; one the owner moved, resized or closed since is his, and is
   named instead.
 - **«Busy»** is a hold from the moment of the press; the plan's blocks it crosses are laid again after it.
-- **Each look** (the digest's, every 30 s): a block whose time is over is `passed` — its minutes count toward its task;
+- **Each look** (the digest's, every 30 s): a block whose time is over is counted once the next window opens —
+  `passed`, its minutes toward its task, if the owner was seen in its window (`sign`, `_present`), else `skipped`;
   the future blocks of a task that is no longer open are `skipped`, so «Done» frees their time. Whenever the calendar,
   the holds, the blocks or the tasks changed since the last look — the owner's own moves included — the plan's blocks
   are laid again where something crosses them, in every window a plan holds: moved (`start`), not taken off and added
@@ -41,6 +42,9 @@ RULE = "code:plan"
 PLANS_KEY = "plan.plans"    # the Router's kv: by plan id — {id, by, at, windows, blocks: {id: {version, before, day, end}},
                             # left: {day: [{task, title, why}]}, pending?, failed?, undone?}
 HOLDS_KEY = "plan.holds"    # the owner's holds: [{from, to, label}]
+SIGNS_KEY = "plan.signs"    # the moments the owner was seen here: his messages, his presses — [ts], newest last
+SIGNS_KEPT_S = 14 * 86400
+SIGN_STEP_S = 600           # one sign in ten minutes is enough to know he was there
 PLANS_KEPT_S = 14 * 86400   # a plan with no block ahead is kept this long after it was made
 PLANS_MAX = 120             # and never more plans than this, the oldest going first
 RECENT = 20                 # the plans of the last day the grid is told about, at most
@@ -689,9 +693,40 @@ class Planner:
         except Exception:
             log.exception("the plan's look failed")
 
+    # --- the owner's signs ----------------------------------------------------------------------------------------
+
+    def sign(self, ts: float) -> None:
+        """The owner was here at `ts`: a message of his, a press in the app or in Telegram."""
+        signs = [float(x) for x in self._load(SIGNS_KEY, []) if type(x) in (int, float) and x > ts - SIGNS_KEPT_S]
+        if signs and abs(signs[-1] - ts) < SIGN_STEP_S:
+            return
+        self.core.store.set(SIGNS_KEY, json.dumps(sorted([*signs, ts])))
+
+    async def _present(self, start: float, end: float) -> bool | None:
+        """Whether the owner was seen between `start` and `end`: a sign of his here, or a record he changed on his
+        screen or from a Mac. None when the platform could not say."""
+        if any(start <= float(x) < end for x in self._load(SIGNS_KEY, []) if type(x) in (int, float)):
+            return True
+        try:
+            answer = await self.core.platform("collections/present", {"since": start, "until": end}, CALL_S)
+        except Exception as exc:  # noqa: BLE001 — decided at the next look
+            log.warning("whether the owner was here not read: %s", exc)
+            return None
+        return answer.get("present") if isinstance(answer.get("present"), bool) else None
+
+    def _window_of(self, ts: float) -> L.Window:
+        """The window a moment is in: its day's, or the evening before's when it is past midnight before it opens."""
+        from zoneinfo import ZoneInfo
+        day = datetime.fromtimestamp(ts, ZoneInfo(self.hours.zone)).date()
+        window = L.window_of(day, self.hours)
+        return window if ts >= window.start else L.window_of(day - timedelta(days=1), self.hours)
+
     async def _settle(self, now: float) -> list | None:
-        """The pieces whose time is over passed, the future pieces of closed tasks skipped. What the look saw of the
-        blocks and the tasks after it, for the mark; None when they could not be read."""
+        """The pieces whose time is over counted, the future pieces of closed tasks skipped. A piece is counted
+        (`passed`) once the next window has opened, if the owner was seen in its window — from its opening to the
+        next one's — or always when he put it there himself (`locked`); else it is skipped, «no sign of you», and its
+        time goes back to its task. Till then it stays planned, in the past: the plan holds its time. What the look saw
+        of the blocks and the tasks after it, for the mark; None when they could not be read."""
         async with self.lock:
             rows = await self._rows(BLOCKS, [{"field": "state", "op": "eq", "value": "planned"}])
             tasks = await self._rows(TASKS, [{"field": "state", "op": "eq", "value": "open"}],
@@ -699,17 +734,40 @@ class Planner:
             if rows is None or tasks is None:
                 return None
             open_ids = {t["id"] for t in tasks}
-            ops = []
+            titles = {t["id"]: str(t["fields"].get("title") or "") for t in tasks}
+            ops, unseen, seen = [], [], {}
             for b in rows:
                 start, end = self._span(b)
                 if end <= now:
-                    ops.append({"op": "set", "id": b["id"], "version": b["version"], "fields": {"state": "passed"}})
+                    window = self._window_of(start)
+                    after = L.window_of(window.day + timedelta(days=1), self.hours)
+                    if b["fields"].get("locked"):
+                        state = "passed"
+                    elif now < after.start:
+                        continue  # its window's evening is not over: decided when the next one opens
+                    else:
+                        key = window.day.isoformat()
+                        if key not in seen:
+                            seen[key] = await self._present(window.start, after.start)
+                        if seen[key] is None:
+                            continue
+                        state = "passed" if seen[key] else "skipped"
+                    ops.append({"op": "set", "id": b["id"], "version": b["version"],
+                                "fields": {"state": state, **({"why": "no sign of you that day"} if state == "skipped" else {})}})
+                    if state == "skipped" and b["fields"].get("task") in open_ids:
+                        unseen.append((b["fields"]["task"], start))
                 elif b["fields"].get("task") not in open_ids and start > now:
                     ops.append({"op": "set", "id": b["id"], "version": b["version"], "fields": {"state": "skipped"}})
-            if ops and await self._apply(ops, f"settle:{_hash(ops)}") is not None:
+            written = bool(ops) and await self._apply(ops, f"settle:{_hash(ops)}") is not None
+            if written:
                 changed = {o["id"] for o in ops}
                 rows = [b for b in rows if b["id"] not in changed]
-            return [sorted((b["id"], b["version"]) for b in rows), sorted((t["id"], t["version"]) for t in tasks)]
+            snapshot = [sorted((b["id"], b["version"]) for b in rows), sorted((t["id"], t["version"]) for t in tasks)]
+        if written and unseen:
+            await self.core.tell_owner(
+                "Not counted — no sign of you that day, so their time goes back to the tasks: " + ", ".join(
+                    f"{line(titles.get(t, ''), 40)} ({self._when(s)})" for t, s in unseen[:5]) + ".")
+        return snapshot
 
     async def relay(self, now: float) -> str:
         """The plans laid again where something now crosses them (`_relay`): what moved, said."""
@@ -832,6 +890,7 @@ class Planner:
         """A press in the app (`plan-press`): plan, plan one task to a day, undo, busy, free, remove. Its moment
         is the press's own; one older than PRESS_MAX_S is dropped and said."""
         at = float(data.get("at") or now)
+        self.sign(min(at, now))
         if now - at > PRESS_MAX_S:
             text = "A press from the app came too late — the Router was away. Press again."
             self.said = {"at": now, "text": text}

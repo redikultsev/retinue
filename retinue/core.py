@@ -672,6 +672,7 @@ class Core:
         if card is None:
             return Pressed(False, "The button was already pressed or has expired.")
         _, label, action, value, alone = spent
+        self._signed(time.time())
         self.archive.append(OWNER, f"[button] {label}", conversation_id=card.conversation_id, channel=origin.name,
                             ref=card.id)
         handler = self.actions.get(action)
@@ -1349,6 +1350,8 @@ class Core:
         self.writer = turn.id  # the caller holds the queue: this run's writes are the only ones confirmed
         self.inbound[turn.tree.id] = last.id
         turn.tree.owner = True
+        for event in batch:
+            self._signed(event.ts)
         if any(event.meta.get("forwarded_from") for event in batch):
             turn.tree.foreign.add("forwarded")
         if any(self.archive.attachments_of(event.id) for event in batch):
@@ -1686,6 +1689,14 @@ class Core:
                        output_chars=len(text), channel="bus")
         await self._each(self.channels, "protocol", f"courier: {caller.name} → draft: {'card' if ok else 'refused'}")
         return ok, text
+
+    def _signed(self, ts: float) -> None:
+        """The owner was here: the day plan counts what passed by it (`planner.Planner.sign`)."""
+        if getattr(self, "planner", None) is not None:
+            try:
+                self.planner.sign(ts)
+            except Exception:
+                log.exception("the owner's sign not kept")
 
     async def _plan_told(self, turn) -> None:
         """After her answer: the moves of her plan in this turn, one line of code's with «Undo»."""

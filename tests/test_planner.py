@@ -134,8 +134,11 @@ def test_busy_lays_again_what_it_crosses_and_each_look_counts_what_passed_and_fr
         assert bank["id"] in skipped, "a done task's piece ahead frees its time"
         assert await blocks(world, "passed") == []
         await planner.cycle(msk(10, "23:59"))
+        assert await blocks(world, "passed") == [], "over, but the evening is not: decided when the next window opens"
+        planner.sign(msk(10, "20:20"))
+        await planner.cycle(msk(11, "10:05"))
         passed = await blocks(world, "passed")
-        assert [b["fields"]["task"] for b in passed] == [read["id"]], "its time is over: counted"
+        assert [b["fields"]["task"] for b in passed] == [read["id"]], "he was here that day: counted"
     faced(tmp_path, run)
 
 
@@ -376,3 +379,37 @@ def test_a_place_press_names_a_task_a_person_s_row_or_a_reminder_and_nothing_els
         except Refusal:
             continue
         raise AssertionError(bad)
+
+
+def test_a_piece_of_a_day_with_no_sign_of_him_is_not_counted_and_one_he_laid_himself_always_is(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, told = await setup(world, tmp_path)
+        homework = await add(world, title="English homework", minutes=60)
+        report = await add(world, title="Write the report", minutes=30)
+        await planner.plan(msk(10, "17:00"))
+        mine = next(b for b in await blocks(world) if b["fields"]["task"] == report["id"])
+        await world.platform.collections.apply(SCREEN, "blocks", [
+            {"op": "set", "id": mine["id"], "version": mine["version"], "fields": {"locked": True}}], world.clock.now)
+        planner.sign(msk(9, "12:00"))  # the day before: not this window's
+        await planner.cycle(msk(11, "10:05"))
+        assert [b["fields"]["task"] for b in await blocks(world, "passed")] == [report["id"]], "his own piece counts"
+        [skipped] = await blocks(world, "skipped")
+        assert skipped["fields"]["task"] == homework["id"] and skipped["fields"]["why"] == "no sign of you that day"
+        assert told == ["Not counted — no sign of you that day, so their time goes back to the tasks: "
+                        "English homework (Tue 10 Nov 17:30)."]
+        said = await planner.plan(msk(11, "10:05"))
+        assert "English homework" in said, "its hour is laid again"
+    faced(tmp_path, run)
+
+
+def test_a_record_he_changed_on_his_screen_that_day_is_a_sign_too(tmp_path):
+    async def run(world):
+        world.clock.now = msk(10, "18:00")
+        planner, _ = await setup(world, tmp_path)
+        await add(world, title="English homework", minutes=60)  # added on his screen at 18:00: he was here
+        await planner.plan(msk(10, "17:00"))
+        await planner.cycle(msk(11, "10:05"))
+        assert len(await blocks(world, "passed")) == 1
+        assert await planner._present(msk(11, "10:00"), msk(12, "10:00")) is False
+    faced(tmp_path, run)

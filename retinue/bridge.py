@@ -366,6 +366,8 @@ class PlatformBridge:
         the owner is told. Whatever fails here is logged, the owner is told it did not apply, and the note is done
         with: a press never holds back the cards behind it."""
         try:
+            if self.planner is not None:
+                self.planner.sign(time.time())  # a press in the app: he was there
             if self.press_waiting is None:
                 return
             if self.press_waiting(str(data.get("t") or ""), str(data.get("action") or ""), time.time()):

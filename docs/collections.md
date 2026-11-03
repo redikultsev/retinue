@@ -449,6 +449,7 @@ until the owner gives her some.
 | `collections/describe` · `query` · `apply` · `propose` | `{actor, via, model?, foreign, call, arguments}` → `{ok, text}`, always 200: a refusal is words for the model. An answer that shows records adds `foreign` (one someone else's text wrote); `describe` without a collection adds `writable`, `[{name, space, add, set}]`: what the writer may change, for the note of her judgement of mail |
 | `collections/changes` | `{after?, since?, limit?, exclude_actors?}` → `{changes, words, next}`: the assistant's and the rules' changes to records, oldest first, after the change_id `after` (else since the moment `since`), at most 200, without the rules `exclude_actors` names (up to 8 `code:<rule>`; the evening list leaves out `code:plan` and `code:calsync`, the owner's own presses carried out); each with its collection's `space`, its record's `title`, `reverted`, and for a revert `reverts_actor`, whose change it took back |
 | `collections/revert` | `{change_id}` → `{ok, text}`: takes back that change, as `owner` via `assistant`, if the assistant or a rule made it |
+| `collections/present` | `{since, until}` → `{present}`: whether the owner or a Mac changed any record in that span — a sign for the day plan's count |
 
 ### Tasks
 
@@ -527,8 +528,12 @@ days never loses the blocks of the one before; the app is told each day's latest
 back each of its blocks still at the version it wrote — taken off when the plan added it — and names the ones the owner
 moved since. No plan is laid on a calendar the Router has not read in the last half hour (just after a restart, before
 the first read): the press says so. «Busy» (a hold from the moment of the press) lays again the plan's blocks it
-crosses — a piece already begun stays. At each look (30 s) a block whose time is over is `passed` and a closed task's
-blocks ahead are `skipped`; then, whenever the calendar, the holds, the blocks or the tasks changed since the last look —
+crosses — a piece already begun stays. At each look (30 s) a block whose time is over is counted once the next window
+has opened: `passed` — its minutes off its task — if the owner was seen in its window (from its opening to the next
+one's: a message of his, a press in the app or in Telegram, a record he changed on his screen or from a Mac), else
+`skipped` with «no sign of you that day», said in Telegram, and its time goes back to the task; one he put or stretched
+himself counts always. Till then it stays `planned`, in the past, holding its time. A day of work only in Mac sessions
+that wrote nothing leaves no sign. A closed task's blocks ahead are `skipped`; then, whenever the calendar, the holds, the blocks or the tasks changed since the last look —
 the owner's own moves included — the plans' blocks are laid again where something crosses them, in every window from
 today's on that a plan holds a block in: moved (`start`), not taken off and added again, and a task's plan pieces beyond
 what it needs (he laid its time himself) taken off. A look whose write was refused is tried again at the next one. A

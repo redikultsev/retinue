@@ -14,6 +14,7 @@ from retinue.collections import Writer
 from datetime import time as wall
 from zoneinfo import ZoneInfo
 
+from retinue.mirror import Mirror
 from retinue.plan_layout import Hours
 from retinue.planner import Planner, iso, moment
 from retinue.protocol import Store
@@ -49,7 +50,8 @@ async def setup(world, tmp_path):
     router.set("plan.activities", "[]")  # no meals unless a test sets them: the times below are the tasks' own
     core = SimpleNamespace(platform=platform_of(world), store=router, tz=H.zone, tell_owner=tell_owner)
     events = [{"start": msk(10, "19:00"), "end": msk(10, "20:00"), "title": "Lesson", "all_day": False, "busy": True}]
-    return Planner(core, SimpleNamespace(events=events, events_at=1e12), H), told  # a busy window always fresh
+    mirror = Mirror(platform_of(world))  # the plan goes up to the platform's own app
+    return Planner(core, SimpleNamespace(events=events, events_at=1e12), H, mirror), told  # a busy window always fresh
 
 
 async def add(world, **fields) -> dict:

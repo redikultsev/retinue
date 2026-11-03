@@ -15,6 +15,7 @@ from retinue.bridge import CARD, NOT_SHOWN, SESSION, UNAVAILABLE, PlatformBridge
 from retinue.channels.telegram import TelegramChannel, TelegramError
 from retinue.config import TelegramConfig
 from retinue.mail import Unavailable
+from retinue.mirror import FAILED_PRESS, Look, Mirror
 from retinue.protocol import Store
 from retinue.speech import SpeechError
 
@@ -42,8 +43,8 @@ class FakePlatform:
             raise Unavailable("unavailable: the platform (ConnectError)")
         return self.answers.get(call, {})
 
-    async def waiting(self, body):
-        return await self.owner("waiting", body)
+    async def publish(self, call, body):
+        return await self.owner(call, body)
 
     async def detail(self, body):
         return await self.owner("waiting/detail", body)
@@ -704,88 +705,26 @@ def test_a_photo_in_reply_to_a_question_card_carries_no_card(tmp_path):
 
 # --- «Waiting for you»: the assistant's digest pushed, and `/wait` -------------------------------------------------------
 
-def test_the_assistants_digest_is_pushed_when_it_changes_and_at_least_hourly(tmp_path, caplog):
-    ch, bridge, platform = make(tmp_path)
-    ch.username = "retinue_bot"
-    digest = [{"id": "chat:1", "kind": "chat", "who": "Мария", "title": "ответить", "since": 1.0, "sphere": None}]
-    bridge.waiting = lambda now: list(digest)
-    platform.answers = {"waiting": {"ok": True}}
-
-    async def run():
-        assert await bridge.push_waiting(1000.0)
-        assert not await bridge.push_waiting(1010.0), "looked at every 30 s, not every pump"
-        assert not await bridge.push_waiting(1100.0), "the same digest is not pushed again"
-        digest.append({**digest[0], "id": "chat:2"})
-        assert await bridge.push_waiting(1200.0)
-        assert await bridge.push_waiting(1200.0 + bridge_module.WAITING_PUSH_S), "an hour later, changed or not"
-        platform.answers = {"waiting": {"error": "the digest is bigger than the platform takes (413)"}}
-        digest.append({**digest[0], "id": "chat:3"})
-        assert await bridge.push_waiting(9000.0)
-        assert not await bridge.push_waiting(9100.0), "a refused digest is not hammered"
-        platform.down = True
-        digest.append({**digest[0], "id": "chat:4"})
-        with pytest.raises(Unavailable):
-            await bridge.push_waiting(9200.0)
-
-    asyncio.run(run())
-    pushed = [body for call, body in platform.calls if call == "waiting"]
-    assert pushed[0] == {"items": digest[:1], "bot": "retinue_bot"} and len(pushed) == 5
-    assert "refused the assistant's digest" in caplog.text
-    assert not asyncio.run(PlatformBridge(FakePlatform(), ch.store).push_waiting(1.0)), "no digest, no push"
-
-
-def test_the_hubs_chips_go_with_the_digest_and_a_change_of_them_is_a_change(tmp_path):
-    ch, bridge, platform = make(tmp_path)
-    chips = [{"key": "backup", "text": "бэкап 1 ч назад", "level": "ok"}]
-    bridge.waiting = lambda now: []
-    bridge.chips = lambda now: list(chips)
-    platform.answers = {"waiting": {"ok": True}}
-
-    async def run():
-        assert await bridge.push_waiting(1000.0)
-        assert not await bridge.push_waiting(1100.0)
-        chips[0] = {**chips[0], "text": "бэкап 2 ч назад"}
-        assert await bridge.push_waiting(1200.0), "the chips changed"
-
-    asyncio.run(run())
-    pushed = [body for call, body in platform.calls if call == "waiting"]
-    assert pushed[0]["chips"] == [{"key": "backup", "text": "бэкап 1 ч назад", "level": "ok"}] and len(pushed) == 2
-
-
 def test_a_hung_push_holds_back_no_card(tmp_path):
     ch, bridge, platform = make(tmp_path, [card(1)])
     stuck = asyncio.Event()
 
-    async def hang(body):
+    async def hang(call, body):
         await stuck.wait()
 
-    platform.waiting = hang
-    bridge.waiting = lambda now: []
+    look = Look([("the assistant's digest", Mirror(hang).snapshot("waiting", lambda now: {"items": []}, "the digest"))])
 
     async def run():
-        pump = asyncio.create_task(bridge.pump())
+        looking, pump = asyncio.create_task(look.run()), asyncio.create_task(bridge.pump())
         for _ in range(50):
             await asyncio.sleep(0.01)
             if platform.confirmed:
                 break
         pump.cancel()
-        bridge._pushing.cancel()
+        looking.cancel()
 
     asyncio.run(run())
     assert platform.confirmed == [1], "the card went out while the push hung"
-
-
-def test_a_digest_too_big_for_the_platform_is_its_refusal_and_a_push_waits_ten_seconds(tmp_path):
-    seen = []
-
-    def answer(request):
-        seen.append(request.extensions["timeout"])
-        return httpx.Response(413, text="<html>too big</html>")
-
-    client = bridge_module.PlatformClient("http://platform:9500", "t", "the platform",
-                                          httpx.AsyncClient(transport=httpx.MockTransport(answer)))
-    said = asyncio.run(client.waiting({"items": []}))
-    assert "413" in said["error"] and seen[0]["read"] == bridge_module.WAITING_TIMEOUT_S
 
 
 WAIT_ROWS = [
@@ -943,19 +882,19 @@ def test_a_press_in_the_app_is_marked_by_the_router_and_never_holds_back_the_car
     ch, bridge, platform = make(tmp_path, notes)
     pressed = []
 
-    def apply(t, action, now):
-        pressed.append((t, action))
-        if t == "c" * 32:
+    async def apply(data, now):
+        pressed.append((data["t"], data["action"]))
+        if data["t"] == "c" * 32:
             raise RuntimeError("the router's tables are locked")
-        return t == "a" * 32
+        return None if data["t"] == "a" * 32 else "The list is out of date."
 
-    bridge.press_waiting, bridge._looked = apply, 1e12
+    bridge.mirror = Mirror(platform.publish)
+    bridge.mirror.on("waiting-press", apply)
     assert asyncio.run(bridge.deliver()) == 5
     assert pressed == [("a" * 32, "done"), ("b" * 32, "done"), ("c" * 32, "done")]
-    assert bridge._looked == 0.0, "applied: the digest goes again at once"
     said = [p["text"] for m, p, _ in ch.sent if m == "sendMessage"]
-    assert said.count(bridge_module.STALE_PRESS) == 1, "the token the router does not know: nothing applied"
-    assert said.count(bridge_module.FAILED_PRESS) == 2, "the fault and the malformed note: told, no details"
+    assert said.count("The list is out of date.") == 1, "what the press came to: said"
+    assert said.count(FAILED_PRESS) == 2, "the fault and the malformed note: told, no details"
     assert said[-1].startswith("Permission"), "the card behind a failed press went out"
     assert platform.confirmed == [5]
 

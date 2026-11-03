@@ -1,19 +1,15 @@
 """«Pages»: the pages' list the router pushes to the platform (`library.clean`, `POST /owner/library`), the
-face's `/api/library` with what the owner opened and finished, the router's side (`Pages.library`,
-`PlatformBridge.push_library`)."""
+face's `/api/library` with what the owner opened and finished, the router's side (`Pages.library`; the mirror pushes
+it, `test_mirror`)."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 
-import httpx
 import pytest
 
-from retinue import bridge as bridge_module
 from retinue import library, pages as pages_mod
 from retinue.config import Sphere
-from test_bridge import make
 from test_config import PLATFORM, load_platform
 from test_face import FaceWorld, faced
 from test_platformd import World, scenario, short_wait  # noqa: F401
@@ -217,49 +213,3 @@ def test_the_pages_list_names_each_page_by_its_full_address_and_no_more(tmp_path
     assert len(service.library()) == 2, "a build status it cannot read refuses nothing"
 
 
-def test_the_pages_list_is_pushed_when_it_changes_and_at_least_hourly(tmp_path, caplog):
-    ch, bridge, platform = make(tmp_path)
-    pages: list[dict] | None = None
-    bridge.library = lambda: pages
-
-    async def library_call(body):
-        return await platform.owner("library", body)
-
-    platform.library = library_call
-    platform.answers = {"library": {"ok": True}}
-
-    async def run():
-        nonlocal pages
-        assert not await bridge.push_library(1000.0), "the router has not read the pages yet"
-        pages = [page()]
-        assert not await bridge.push_library(1010.0), "looked at every 30 s"
-        assert await bridge.push_library(1100.0)
-        assert not await bridge.push_library(1200.0), "the same list is not pushed again"
-        pages = [page(), page("cv")]
-        assert await bridge.push_library(1300.0)
-        assert await bridge.push_library(1300.0 + bridge_module.WAITING_PUSH_S), "an hour later, changed or not"
-        platform.answers = {"library": {"ok": True, "dropped": [{"id": "cv", "why": "url is not the page's address"}]}}
-        pages = [page(), page("cv"), page("y")]
-        assert await bridge.push_library(5000.0)
-        platform.answers = {"library": {"error": "pages: not a list"}}
-        pages = [page("x")]
-        assert await bridge.push_library(9000.0)
-        assert not await bridge.push_library(9100.0), "a refused list is not hammered"
-
-    asyncio.run(run())
-    pushed = [body for call, body in platform.calls if call == "library"]
-    assert pushed[0] == {"pages": [page()]} and len(pushed) == 5
-    assert "refused the pages' list" in caplog.text and "dropped the page cv: url is not the page's address" in caplog.text
-
-
-def test_the_list_goes_to_the_platforms_own_address_with_a_short_wait():
-    seen = []
-
-    def answer(request):
-        seen.append((request.url.path, json.loads(request.content), request.extensions["timeout"]["read"]))
-        return httpx.Response(200, json={"ok": True, "pages": 0})
-
-    client = bridge_module.PlatformClient("http://platform:9500", "t", "платформа",
-                                          httpx.AsyncClient(transport=httpx.MockTransport(answer)))
-    assert asyncio.run(client.library({"pages": []})) == {"ok": True, "pages": 0}
-    assert seen == [("/owner/library", {"pages": []}, bridge_module.WAITING_TIMEOUT_S)]

@@ -938,7 +938,7 @@ you opened it — or “finished”, or “changed since you finished it” when
 
 **Where the list comes from.** The router owns the pages and pushes the list to the platform (`POST /owner/library`,
 the router's token, as the assistant's digest): `{pages: [{id, title, url, updated, section?, minutes?}]}`, replacing
-the one there whole, looked at every 30 s, pushed when it changed and at least hourly (`bridge.push_library`). No
+the one there whole, looked at every 30 s, pushed when it changed and at least hourly (the mirror's `library`, [platform.md](platform.md#the-routers-mirror)). No
 description, no body, no path in the base. The platform checks it again (`library.clean`). A push off its shape
 (not a list of objects) or over a cap (200 pages, 512 KB) is refused whole (400) and the last list stays. A page off
 the contract is dropped, named in the answer's `dropped: [{id, why}]` and in both logs, and the rest go up: an id

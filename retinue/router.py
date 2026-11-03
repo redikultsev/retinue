@@ -30,6 +30,7 @@ from .mail import Collector, MailStore
 from .mailroom import Mailroom
 from .outbox import Neighbour, Outbox, OutboxStore
 from .memory import Memory
+from .mirror import Look, Mirror
 from .proactive import Proactive
 from .protocol import Store
 from .speech import Scribe
@@ -37,7 +38,7 @@ from .plan_layout import Hours
 from .planner import Planner
 from .tasks import Tasks
 from .travel import TravelOps
-from .waiting import chips, counts, detail, digest, press
+from .waiting import detail, pressed, snapshot
 
 
 def build_channels(cfg: RouterConfig, store: Store, loop: asyncio.AbstractEventLoop,
@@ -138,6 +139,45 @@ def build_voice(cfg: RouterConfig, platform: PlatformClient | None, ask) -> Sess
     return SessionVoice(platform, url, cfg.voice.channels, ask)
 
 
+def build_look(cfg: RouterConfig, core: Core, bridge: PlatformBridge, pages: Pages | None,
+               mail: Mailroom | None) -> Look:
+    """The Router's side of what the app shows (`mirror`): its snapshots on the platform, the presses on them, and the
+    look that keeps them in step — every 30 s, in this order."""
+    mirror = bridge.mirror = Mirror(bridge.neighbour.publish)
+    tasks = Tasks(core, mirror)  # the tasks against their rows, a row's task for «Plan», the busy window
+    planner = Planner(core, tasks, Hours(cfg.owner_tz), mirror)  # the day plan; its window is his, set in the app
+    core.planner = planner
+    core.actions.update({"plan-undo": planner.undo_pressed, "plan-busy": planner.busy_pressed})
+    gcal = None
+    if cfg.calwrite_url:  # the plan's blocks in his Google calendar «Retinue», both ways
+        gcal = Gcal(core, planner, Writer(cfg.calwrite_url, cfg.calwrite_token, "the calendar writer"),
+                    f"{cfg.face_url.rstrip('/')}/today?tab=schedule" if cfg.face_url else "")
+        core.actions["gcal-again"] = gcal.again_pressed
+    # What waits in the assistant's world, for the face's «Waiting for you», and the owner's pages for its «Read».
+    waiting = mirror.snapshot("waiting", lambda now: snapshot(core, now, getattr(bridge.channel, "username", "")),
+                              "the assistant's digest")
+    library = mirror.snapshot("library", lambda now: {"pages": listed} if (listed := pages.library()) is not None
+                              else None, "the pages' list") if pages else None
+    look = Look([("the tasks' reconciliation", tasks.reconcile),  # a task closed closes its row before rows are read
+                 ("the busy window", tasks.calendar),  # every 10 minutes: what the plan lays around
+                 ("the plan's look", planner.cycle),
+                 *([("the calendar «Retinue»", gcal.cycle)] if gcal else []),  # a task of its own: Google may be slow
+                 ("the assistant's digest", waiting),
+                 *([("the pages' list", library)] if library else [])])
+
+    async def waiting_pressed(data: dict, now: float) -> str | None:
+        said = pressed(core, data, now)
+        if said is None:
+            look.poke()  # applied: the digest goes again at once
+        return said
+    mirror.on("waiting-press", waiting_pressed)
+    mirror.on("plan-press", planner.press, beside=True)  # a plan reads and writes the collections: the cards don't wait
+    bridge.detail_waiting = lambda ref, token, now: detail(core, ref, token, now)  # a row's sheet, when the app opens it
+    if mail:  # a mark by his Telegram button shows in the app at once too
+        mail.changed = look.poke
+    return look
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Retinue router")
     parser.add_argument("--config", default="/config/router.yaml")
@@ -177,30 +217,13 @@ def main() -> None:
     if session_voice:
         session_voice.attach(core)
     bridge = PlatformBridge(platform, store, cfg.face_url) if platform else None
-    if bridge:  # the week's tally of the platform's sessions, for the weekly review
+    if bridge:  # the collections, and the week's tally of the platform's sessions for the weekly review
         core.platform = bridge.neighbour.owner
-    if bridge:  # what waits in the assistant's world, pushed for the face's «Waiting for you»
-        bridge.waiting = lambda now: digest(core, now)
-        bridge.chips = lambda now: chips(core, now)
-        bridge.counts = lambda now: counts(core, now)
-        bridge.press_waiting = lambda token, action, now: press(core, token, action, now)
-        bridge.detail_waiting = lambda ref, token, now: detail(core, ref, token, now)
-        tasks = Tasks(core)  # the tasks against their rows, a row's task for «Plan», the busy window
-        bridge.cycle = tasks.cycle
-        planner = Planner(core, tasks, Hours(cfg.owner_tz))  # the day plan; its window is his, set in the app
-        tasks.planner = core.planner = bridge.planner = planner
-        core.actions.update({"plan-undo": planner.undo_pressed, "plan-busy": planner.busy_pressed})
-        if cfg.calwrite_url:  # the plan's blocks in his Google calendar «Retinue», both ways
-            tasks.gcal = Gcal(core, planner, Writer(cfg.calwrite_url, cfg.calwrite_token, "the calendar writer"),
-                              f"{cfg.face_url.rstrip('/')}/today?tab=schedule" if cfg.face_url else "")
-            core.actions["gcal-again"] = tasks.gcal.again_pressed
-        if mail:  # a mark by his Telegram button shows in the app at once too
-            mail.changed = bridge.poke
-    if bridge and pages:  # the owner's pages, for the face's «Read»
-        bridge.library = pages.library
+    look = build_look(cfg, core, bridge, pages, mail) if bridge else None
     loop.run_until_complete(core.start(build_channels(cfg, store, loop, bridge)))
     # The tasks are held here for as long as the loop runs: the loop itself keeps only weak references to them.
     notes = loop.create_task(bridge.pump()) if bridge else None  # noqa: F841  the platform's cards and summaries
+    looking = loop.create_task(look.run()) if look else None  # noqa: F841  beside the notes: a hung push holds no card
     if memory_error:
         loop.run_until_complete(core.tell_owner(memory_error))
     ticking = loop.create_task(core.clock())  # noqa: F841  reminders, the morning summary, retries after the limit

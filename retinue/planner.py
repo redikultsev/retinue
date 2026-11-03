@@ -36,6 +36,7 @@ from datetime import date, datetime, timedelta, timezone
 from . import plan_layout as L
 from .coderules import CALL_S, PLAN, Records, mark
 from .courier import line
+from .mirror import Mirror
 
 log = logging.getLogger(__name__)
 
@@ -90,11 +91,13 @@ def _day_hm(ts: float, tz: str) -> str:
 
 
 class Planner:
-    def __init__(self, core, tasks, hours: L.Hours = L.HOURS) -> None:
+    def __init__(self, core, tasks, hours: L.Hours = L.HOURS, mirror: Mirror | None = None) -> None:
         self.core, self.tasks = core, tasks
         self._blocks = Records(core.platform, PLAN, BLOCKS)  # the blocks it lays, as `code:plan`
         self._tasks = Records(core.platform, PLAN, TASKS)    # the tasks it reads
         self._hers = Records(core.platform, "assistant", TASKS, via="assistant")  # her estimates, on his word
+        # The state for the app's Day, whole after each change (`POST /owner/plan`).
+        self._push = mirror.snapshot("plan", self.snapshot, "the plan", every_s=0) if mirror else None
         self.hours = L.Hours.of(self._load(HOURS_KEY, {})) or hours  # `hours`: the day until he sets his own
         kept = [a for a in map(L.Activity.of, self._load(ACTIVITIES_KEY, [])) if a]
         self.activities = tuple(kept) if self.core.store.get(ACTIVITIES_KEY) is not None else L.ACTIVITIES
@@ -194,20 +197,17 @@ class Planner:
                                          "day": known.get("day") or "",
                                          "end": start + int(f.get("minutes") or 0) * 60}
 
-    async def push(self, now: float) -> None:
-        """The plans, the holds and what the last press came to, to the platform, whole, for the app's Day."""
-        if self.core.platform is None:
-            return
+    def snapshot(self, now: float) -> dict:
+        """The plans, the holds and what the last press came to, whole, for the app's Day."""
         plans = self.plans()
-        body = {"at": now, "plans": self._by_day(plans), "recent": self._recent(plans, now), "holds": self.holds(now),
+        return {"at": now, "plans": self._by_day(plans), "recent": self._recent(plans, now), "holds": self.holds(now),
                 "said": self.said, "window": self.hours.shape(),
                 "activities": [a.shape() for a in self.activities], "meals": self.meals(now)}
-        try:
-            answer = await self.core.platform("plan", body, CALL_S)
-            if answer.get("error"):
-                log.warning("the platform refused the plan: %s", answer["error"])
-        except Exception as exc:  # noqa: BLE001 — the platform away: the next change pushes again
-            log.warning("the plan not pushed: %s", exc)
+
+    async def push(self, now: float) -> None:
+        """The state to the platform after a change; the platform away, the next change pushes again."""
+        if self._push is not None:
+            await self._push(now)
 
     # --- what the window holds ------------------------------------------------------------------------------------
 

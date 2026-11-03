@@ -14,12 +14,13 @@ import pytest
 from retinue import collector, feed, plan, waiting
 from retinue.collections import Rejected, Writer
 from retinue.core import _closes
-from retinue.mail import MailStore
+from retinue.mail import MailStore, Unavailable
 from retinue.outbox import OutboxStore
 from retinue.protocol import Store
 from retinue.scheduler import Scheduler
 from retinue.coderules import WAITING as RULE
-from retinue.tasks import Tasks, occurrence
+from retinue.mirror import Mirror
+from retinue.tasks import CALENDAR_S, Tasks, occurrence
 from test_collections_assistant import platform_of
 from test_face import faced
 from test_platformd import ROUTER, short_wait  # noqa: F401 — the fixture is autouse
@@ -386,3 +387,40 @@ def test_a_task_dropped_says_not_a_task_to_its_row_and_a_row_that_ran_out_leaves
         [task] = await tasks_of(world)
         assert task["fields"]["state"] == "open", "a row that ran out is no word of his: the task stays"
     faced(tmp_path, run)
+
+
+def test_the_busy_window_goes_up_as_read_every_ten_minutes_and_again_at_the_next_look_when_the_platform_was_away(
+        tmp_path):
+    async def run(world):
+        now = world.clock.now = time.time()
+        await world.login()
+        core = router(world, tmp_path)
+        meeting = {"status": "confirmed", "summary": "Call with Acme", "start": {"dateTime": _iso(now + 3600)},
+                   "end": {"dateTime": _iso(now + 5400)}}
+        reads = []
+
+        async def agenda(start, end):
+            reads.append(start)
+            return [meeting], []
+        core.mail.collector = SimpleNamespace(agenda=agenda)
+        away = False
+
+        async def publish(call, body):
+            if away:
+                raise Unavailable("unavailable: the platform (ConnectError)")
+            return await platform_of(world)(call, body)
+        side = Tasks(core, Mirror(publish))
+        assert await side.calendar(now)
+        [event] = (await world.get("/api/plan"))["calendar"]["events"]
+        assert (event["title"], event["busy"]) == ("Call with Acme", True) and side.events == [event]
+        assert not await side.calendar(now + 30) and len(reads) == 1, "read every ten minutes, not every look"
+        away = True
+        assert not await side.calendar(now + CALENDAR_S)
+        away, world.clock.now = False, now + CALENDAR_S + 30
+        assert await side.calendar(now + CALENDAR_S + 30) and len(reads) == 3, "the next look reads and pushes again"
+        assert (await world.get("/api/plan"))["calendar"]["at"] == now + CALENDAR_S + 30
+    faced(tmp_path, run)
+
+
+def _iso(ts: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))

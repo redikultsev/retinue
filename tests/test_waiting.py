@@ -505,3 +505,18 @@ def test_a_drafts_sheet_has_its_text_and_its_letter(tmp_path):
     assert "anna@example.org" not in json.dumps(sheet, ensure_ascii=False)
     assert feed.clean_detail(sheet) == sheet
     assert waiting.detail(c, "draft:aaaa0003", "", NOW) is None and waiting.detail(c, "draft:ffff0000", "", NOW) is None
+
+
+def test_the_digest_goes_up_whole_with_the_bots_name_its_chips_and_counts_and_a_press_on_it_is_a_sign(tmp_path):
+    c = core(tmp_path)
+    signs: list[float] = []
+    c.planner = SimpleNamespace(sign=signs.append)
+    put(c.mail.store, asking("pay"))
+    body = waiting.snapshot(c, NOW, "retinue_bot")
+    assert body == {"items": waiting.digest(c, NOW), "bot": "retinue_bot", "chips": [], "closed_today": 0,
+                    "expired_week": 0}, "what `/owner/waiting` takes, whole"
+    assert feed.clean(body, NOW) == (body["items"], "retinue_bot") and feed.clean_counts(body) is not None
+    [row] = body["items"]
+    assert waiting.pressed(c, {"t": "0" * 32, "action": "done"}, NOW) == waiting.STALE_PRESS, "an old list: said"
+    assert waiting.pressed(c, {"t": row["t"], "action": "done"}, NOW + 1) is None, "applied: nothing to say"
+    assert opened(c.mail.store) == [] and signs == [NOW, NOW + 1], "each press in the app: he was there"

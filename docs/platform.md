@@ -108,14 +108,39 @@ by then. Later, «Archived» — the last of the session list's filters (`GET /a
 not listed apart, restoring that one brings it. Its «Restore» is the same call without the main mark: set it again in
 the session's menu.
 
+### The Router's mirror
+
+What the app shows of the router's world — the assistant's digest, the owner's pages, the day plan, the busy window —
+the router keeps on the platform as **snapshots** (`retinue/mirror.py`), and the owner's presses on them come back the
+way every answer to the router does. The platform never calls the router.
+
+- **A snapshot** is one `/owner/*` call and how its body is built: `waiting` (the digest, below), `library` (the
+  pages' list, [face.md](face.md#pages)), `plan` (the day plan), `calendar` (the busy window). Each goes up whole,
+  replacing the one there, when it changed since it last went and at least hourly anyway — the plan and the busy
+  window each time they change. One at a time, with a 10 s wait, so a platform that hangs on it holds back no card. A
+  refusal (400, or 413 for one too big) is logged once and not pushed again until the snapshot changes or the hour is
+  up; what the platform kept but dropped part of (`dropped: [{id, why}]`) is logged item by item; the platform away is
+  logged and the next push tries again.
+- **A press** in the app is journaled as a note of its kind (`waiting-press`, `plan-press`); the bridge pulls it with
+  the cards and hands it to the handler the router named for that kind — a press on «Waiting for you» in the notes'
+  order, a press on the plan beside them, since it reads and writes the collections. A press that fails is logged and
+  you are told it did not apply; its note is confirmed either way.
+- **The look**: every 30 s, in a task of its own beside the notes' pump, the router does in this order — the tasks
+  against their rows (`tasks.Tasks.reconcile`), the busy window when it is due (`tasks.Tasks.calendar`), the plan's
+  look (`planner.Planner.cycle`), the calendar «Retinue» in a task of its own ([calendar.md](calendar.md)), then the
+  digest and the pages' list. Each step on its own: one that fails is logged and the next goes on. A mark by your own
+  hand — a press in the app, a Telegram button — brings the next look forward to within 2 s.
+
+The router's code reads and writes the collections as its rules (`retinue/coderules.py`): `code:plan`, `code:calsync`,
+`code:waiting`, each by a handle bound to one collection. A read takes every page, up to 20 of 200 rows, and says when
+it was cut short; a write is one apply, all or none, under an idem that is the call's own id; a collection it cannot
+read is logged once, then quietly until it can.
+
 ### The assistant's digest
 
 The feed also shows what waits in the assistant's world. The router reads it from its own tables and pushes it to
-the platform (`POST /owner/waiting`, the router's token, as every `/owner/*` call), replacing the one there whole:
-looked at every 30 s, pushed when it changed and at least hourly (`bridge.WAITING_*`), in a task of its own beside
-the notes' pump and with a 10 s wait, so a platform that hangs on it holds back no card. A 413 is a refusal like a
-400: logged, not pushed again until the digest changes or the hour is up. The platform never calls the router.
-What the router counts (`retinue/waiting.py`), each by a rule it already had:
+the platform as the mirror's `waiting` (`POST /owner/waiting`, the router's token, as every `/owner/*` call),
+[above](#the-routers-mirror). What the router counts (`retinue/waiting.py`), each by a rule it already had:
 
 - **letter / chat** — what her judgement said asks you to act (`needs` reply, decide, pay, attend, act; «read» is
   only to know) and is still open (`MailStore.asks`, [mail.md](mail.md#closing-what-waits)): not closed by your
@@ -156,7 +181,7 @@ takes `t` only on a `letter` or a `chat`, and each count as a whole number from 
 **A press in the app** — «Done», «Not a task», «Tomorrow», «Undo» — comes back the way every answer to the router does:
 the face takes `POST /api/waiting/press {t, action}` (`done`, `dismissed`, `later`, `open`), checks only its shape and
 journals a `waiting-press` note; the bridge pulls it with the cards and the router marks the items its own kv names
-for that token (`waiting.press`), then pushes the digest again at once. A token it does not know marks nothing and you
+for that token (`waiting.pressed`), then pushes the digest again at once. A token it does not know marks nothing and you
 get «The press did not apply: the list is out of date.». Applying it is wrapped on its own: a failure is logged, you get
 «The press did not apply: a server error. Try again.», and the note is confirmed, so a press never holds back
 the cards behind it.
@@ -181,7 +206,7 @@ owner's own mailbox — never the letter's text, its quote or the sender's addre
 only while the face's request waits: never written, never logged.
 
 **The busy window.** Beside the digest the router pushes your calendar of today and the next 14 days, read live from
-the collector every 10 minutes (`tasks.Tasks.calendar`): `POST /owner/calendar {events: [{start, end, title, all_day,
+the collector every 10 minutes (`tasks.Tasks.calendar`; the platform away, read and pushed again at the next look): `POST /owner/calendar {events: [{start, end, title, all_day,
 busy}], at, failed}` — each occurrence's moments, its title (cut to 100), whether it is the whole day, and whether it keeps
 you busy (not when it is free time, declined or the whole day). The platform checks it (`plan.clean_calendar`: at most
 400, an end not before its start, nothing further than 40 days) and keeps the last one whole; the face reads it with the

@@ -7,12 +7,13 @@
 import { useEffect, useState } from "react";
 import { Markdown } from "@/components/transcript/item";
 import { Button } from "@/components/ui/button";
+import { paths } from "@/lib/contract";
 import { when } from "@/lib/format";
 import type { OutFile } from "@/lib/types";
 
 const TEXT_LIMIT = 200_000; // characters of a text file shown; the download has the rest
 
-export const fileUrl = (file: Pick<OutFile, "id">) => `/api/files/${encodeURIComponent(file.id)}`;
+export const fileUrl = (file: Pick<OutFile, "id">) => paths.file(file.id);
 
 export type Kind = "image" | "markdown" | "text" | "html" | "pdf" | "audio" | "video" | "other";
 

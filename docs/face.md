@@ -1054,8 +1054,8 @@ in the phone apps and the desktop apps; in Telegram Web, open the app by its lin
 
 `pnpm e2e` opens the face in Chromium against the mock (`face/e2e/`, `face/playwright.config.ts`) at a phone's
 (390 px, touch), a tablet's (768 px) and a desktop's (1280 px) width: the login code opens «Today», a session shows
-its transcript and its summary, its changes their diff, the sessions list and the Spaces open — each with no sideways
-scroll and no error in the page. It starts its own mock and Vite (ports 9611 and 4173), so a `pnpm dev` already
+its transcript and its summary, its changes their diff, the sessions list and the Spaces open, a task plans from its
+menu and «Not working today» says what it came to — each with no sideways scroll and no error in the page. It starts its own mock and Vite (ports 9611 and 4173), so a `pnpm dev` already
 running is never in the way. Once on a new machine: `pnpm exec playwright install chromium`. Run it before a deploy
 that touches the face, beside `typecheck`, `lint` and `test`; it does not replace looking at a new screen yourself.
 

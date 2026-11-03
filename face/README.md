@@ -39,6 +39,17 @@ Mock-only helpers: `POST /api/_mock/approval {"session": "0a1b2c3d"}` adds a sho
 `POST /api/_mock/prune` prunes the event log and ends the streams, so the app gets 410 and reloads its snapshots;
 `POST /api/_mock/collection` moves a deal of the «work» Space a column on (a `collection` event), whose screen has
 made-up views: numbers, «Waiting on me», a pipeline board, a list too short for a board, an empty queue and a broken view.
+`POST /api/_mock/assistant` moves a block as the assistant's plan would, for its lit blocks and «Undo».
+
+The mock answers by the app's own contract, `src/lib/contract.ts`: the paths, the presses of the plan with the fields
+each takes, and the answers' types (`Feed`, `Plan`, `Press`, …), which `tsconfig.mock.json` checks the mock's answers
+against. Its collections (`mock/collections.ts`) keep records with their versions and changes — deals and follow-ups
+in «work», `tasks` and `blocks` in «home» — and every write goes through them: the owner's at the version shown (409
+when it moved on), the Router's as `code:plan`. «Today»'s plan (`mock/plan.ts`) is `GET /api/plan` as
+`retinue/plan.py` reads it, and every press of `POST /api/plan/press` is refused as `clean_press` refuses it or done
+at once as the Router's Planner does it, with its words in `said`: plan, place, undo, busy, free, remove, hours, now,
+activities, off. The assistant's digest (`mock/digest.ts`) is one list, read by «Waiting for you» and the plan alike.
+tests/test_planner.py keeps the contract's presses equal to `retinue/plan.py`'s.
 The mock's cookie is `retinue_mock` without `Secure` (plain http); the real one is `__Host-retinue`.
 
 ## How it works

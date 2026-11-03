@@ -7,13 +7,16 @@
 //   POST /api/_mock/prune                old events are pruned and streams cut: clients get 410 and resync
 //   POST /api/_mock/collection[?quiet=1] a deal of the «work» Space moves a column on (a `collection` event; quiet:
 //                                        none, so the app's next write of that deal meets a conflict)
-import { mockAssistantMove, mockBlocksWrite, mockPlan, mockPlanPress, mockTasksRead, mockTasksWrite } from "./plan.ts";
+//   POST /api/_mock/assistant            the assistant's plan moves the report's block (lit on the grid, with «Undo»)
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import * as fx from "./fixtures.ts";
-import { mockCollections, mockProposals, mockWrite, moveDeal, seedProposals, waitingProposals } from "./collections.ts";
-import { mockBase, mockSpaces } from "./spaces.ts";
+import { type Feed, type FeedRow, paths, type TurnEnding, type WaitingDetail } from "../src/lib/contract.ts";
 import type { Approval, Input, Item, Proposal, Session, Summary } from "../src/lib/types.ts";
+import { type Moved, mockCollections, mockProposals, mockWrite, moveDeal, seedProposals, waitingProposals } from "./collections.ts";
+import { closed, digest, pressRow } from "./digest.ts";
+import * as fx from "./fixtures.ts";
+import { cleanPress, mockAssistantMove, mockPlan, mockPlanPress } from "./plan.ts";
+import { mockBase, mockSpaces } from "./spaces.ts";
 
 const PORT = Number(process.env.MOCK_PORT ?? 9601);
 const CODE = process.env.MOCK_CODE ?? "RTNE7K2QXP";
@@ -24,24 +27,12 @@ const now = () => Date.now() / 1000;
 const SAID =
   "Since April the €12 plan has added three talks on the books you picked, and a month is enough to read what matters.\n\n**Recommend:** one month on the €12 plan, cancel the renewal right after paying\n**Why:** three new talks on the May list; the rest repeats the free part\n**Cost:** €12 and about four evenings\n**Not checked:** whether old posts stay open to new members";
 
-// --- «Waiting for you» (retinue/feed.py): the shown cards, the idle sessions' last summaries, a fixed digest ----------
+// --- «Waiting for you» (retinue/feed.py): the shown cards, the idle sessions' last summaries, the digest --------------
 
-/** «From the assistant»: a person's rows, each with its token `t`; a press hides one until «Undo» (`open`). */
-const ASKS = [
-  { key: "assistant:chat:1", source: "chat", sphere: "travel", sphere_title: "travel", title: "Anna Petrova", since: now() - 6 * 3600, essence: "reply: is an airport transfer needed", ref: "chat:1", t: "a".repeat(32) },
-  { key: "assistant:letter:2", source: "letter", sphere: "home", sphere_title: "home", title: "Acme Hosting", since: now() - 2 * 86400, essence: "pay: the hosting invoice for May · deadline Friday (+2)", ref: "letter:2", t: "b".repeat(32) },
-  { key: "assistant:chat:3", source: "chat", sphere: null, sphere_title: null, title: "Ivan Example", since: now() - 9 * 86400, essence: "decide: which of the two venues to book for the team dinner, the one by the river or the one near the office, before both stop holding the date", ref: "chat:3", t: "c".repeat(32) },
-  { key: "assistant:letter:4", source: "letter", sphere: null, sphere_title: null, title: "Example Bank", since: now() - 4 * 86400, essence: "decide: confirm a sign-in from a new device · deadline today", ref: "letter:4", t: "d".repeat(32) },
-  { key: "assistant:letter:5", source: "letter", sphere: "home", sphere_title: "home", title: "Example Studio", since: now() - 86400, essence: "reply: a second call next week · deadline Monday", ref: "letter:5", t: "e".repeat(32) },
-];
-/** The others of hers: a draft waiting for «Send». */
-const OTHERS = [
-  { key: "assistant:draft:0000000c", source: "draft", sphere: null, sphere_title: null, title: "Anna Petrova", since: now() - 1800, essence: "a reply draft waits for «Send»", ref: "draft:0000000c" },
-];
 const GMAIL = (thread: string) => ({ url: `https://mail.google.com/mail/?authuser=me@example.com#all/${thread}`, label: "Open in Gmail" });
 /** A row's sheet (`/api/waiting/detail`), as the router would say it: a moment later, invented. Ivan's router is
  * silent (504 after a short wait), Example Bank's row is out of date (410). */
-const DETAILS: Record<string, unknown> = {
+const DETAILS: Record<string, WaitingDetail> = {
   "chat:1": { kind: "chat", who: "Anna Petrova", account: "", more: 0, open: { url: "https://t.me/anna_example", label: "Open the chat" },
     asks: [{ need: "reply", text: "Anna asks whether you need a transfer from the airport on Saturday, and if so for how many people.", deadline: "Thursday", at: now() - 6 * 3600 }] },
   "letter:2": { kind: "letter", who: "Acme Hosting", account: "me@example.com", more: 0, open: GMAIL("18c2f0a1b2c3d4e7"),
@@ -58,20 +49,18 @@ const DETAILS: Record<string, unknown> = {
     asks: [{ need: "reply", text: "Anna asks about the flight time.", deadline: "", at: now() - 7200 }],
     draft: { text: "Hi Anna!\n\nThe flight lands at ‹number›, so pick-up at the arrivals hall works.\n\nSee you soon", channel: "telegram", subject: "", expires: now() + 4 * 3600, state: "shown" } },
 };
-const pressed = new Set<string>();
-let closedToday = 1;
 
 /** A turn ending's one line, as the platform says it (retinue/feed.py `_ending_essence`). */
-function endingLine(e: Record<string, unknown>): string {
+function endingLine(e: TurnEnding): string {
   const first = (e.artifact ?? (e.artifacts as unknown[] | undefined)?.[0] ?? {}) as Record<string, string | undefined>;
   const said = { ask: e.context ?? e.why, approve: e.will, look: first.title ?? first.path ?? first.url, step: e.what, done: e.what }[String(e.kind)];
   return String(said ?? e.request ?? "");
 }
 
-function mockFeed() {
-  const row = (s: Session, over: Record<string, unknown>) => ({
+function mockFeed(): Feed {
+  const row = (s: Session, over: Omit<FeedRow, "session" | "track" | "sphere" | "sphere_title" | "sphere_icon" | "title" | "ref" | "action"> & { action?: FeedRow["action"] }): FeedRow => ({
     session: s.id, track: s.track, sphere: null, sphere_title: null, sphere_icon: null, project: s.project ?? (s.sphere === "platform" ? "work/retinue" : (s.sphere ?? null)),
-    title: s.title, ref: s.id, ...over,
+    title: s.title, ref: s.id, action: "read", ...over,
   });
   const cards = [...approvals.values()].filter((a) => (a.kind === "approval" || a.kind === "question") && a.state === "shown");
   const answer = cards.filter((a) => a.kind === "question" && sessions.get(a.session));
@@ -84,28 +73,29 @@ function mockFeed() {
   const offered = [...proposals.values()].filter((p) => p.state === "open" && sessions.get(p.session));
   const writes = waitingProposals().filter((p) => p.session && sessions.get(p.session));
   const last = (id: string) => [...summaries.values()].filter((x) => x.session === id).at(-1);
-  const groups = [
+  const all: Feed["groups"] = [
     { action: "answer", title: "Answer the question", rows: [
       ...answer.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "answer", source: "question", since: a.created, essence: "", approval: a, said: SAID })),
-      ...ended("ask").map((r) => ({ ...r, action: "answer" })),
+      ...ended("ask").map((r) => ({ ...r, action: "answer" as const })),
     ] },
     { action: "decide", title: "Decide", rows: [
-      ...ended("approve").map((r) => ({ ...r, action: "decide" })),
+      ...ended("approve").map((r) => ({ ...r, action: "decide" as const })),
       ...decide.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "decide", source: "approval", since: a.created, essence: "", approval: a })),
-      ...offered.map((p) => row(sessions.get(p.session)!, { key: `proposal:${p.id}`, action: "decide", source: "proposal", since: p.created, essence: `Sub-session: ${p.title}`, proposal: p, hint: "Start it or set it aside in the app." })),
-      ...writes.map((p) => row(sessions.get(p.session!)!, { key: `cproposal:${p.id}`, action: "decide", source: "collection_proposal", since: p.created, essence: `${p.collection}: ${p.changes.length} change${p.changes.length === 1 ? "" : "s"} proposed`, collection_proposal: p, hint: "Apply it or dismiss it in the app." })),
+      ...offered.map((p) => row(sessions.get(p.session)!, { key: `proposal:${p.id}`, action: "decide", source: "proposal", since: p.created, essence: `Sub-session: ${p.title}`, proposal: p })),
+      ...writes.map((p) => row(sessions.get(p.session!)!, { key: `cproposal:${p.id}`, action: "decide", source: "collection_proposal", since: p.created, essence: `${p.collection}: ${p.changes.length} change${p.changes.length === 1 ? "" : "s"} proposed`, collection_proposal: p })),
     ] },
-    { action: "step", title: "Your step", rows: ended("step").map((r) => ({ ...r, action: "step" })) },
+    { action: "step", title: "Your step", rows: ended("step").map((r) => ({ ...r, action: "step" as const })) },
     { action: "read", title: "Read", rows: [
-      ...[...ended("look"), ...ended("done")].map((r) => ({ ...r, action: "read" })),
+      ...[...ended("look"), ...ended("done")].map((r) => ({ ...r, action: "read" as const })),
       ...read.map((s) => row(s, { key: `read:${s.id}`, action: "read", source: "session", since: s.at, essence: last(s.id)?.text.split("\n")[0] ?? "" })),
     ] },
-    { action: "assistant", title: "From the assistant", rows: [
-      ...ASKS.filter((a) => !pressed.has(a.t)).map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, project: null, ...a })),
-      ...OTHERS.map((a) => ({ action: "assistant", session: null, track: null, sphere_icon: null, project: null, ...a })),
-      { key: "assistant:deadline:1", action: "assistant", source: "deadline", session: null, track: null, sphere: "home", sphere_title: "home", sphere_icon: null, project: null, title: "Base", since: now() - 86400, essence: "tomorrow: Pay for the internet — due", ref: "deadline:1" },
-    ] },
-  ].filter((g) => g.rows.length);
+    // her rows as feed.py makes them of the digest: a reminder is the day's, not a queue's
+    { action: "assistant", title: "From the assistant", rows: digest().filter((i) => i.kind !== "reminder" && i.since <= now()).map((i) => ({
+      key: `assistant:${i.id}`, action: "assistant", source: i.kind, session: null, track: null, sphere: i.sphere, sphere_title: i.sphere,
+      sphere_icon: null, project: null, title: i.who, since: i.since, essence: i.title, ref: i.id, ...(i.t ? { t: i.t } : {}),
+    })) },
+  ];
+  const groups = all.filter((g) => g.rows.length);
   const day = (n: number) => new Date(Date.now() + n * 86400_000).toISOString().slice(0, 10);
   const deadlines = [
     { id: "deadline:1", when: day(1), title: "tomorrow: Pay for the internet — due", sphere: "home", sphere_title: "Home", sphere_icon: "🏠", path: "home/journal/2026-05-01-internet.md" },
@@ -117,7 +107,7 @@ function mockFeed() {
     { key: "limit", text: "limit 74 %", level: "warn" },
     { key: "build", text: "pages built", level: "ok" },
   ];
-  return { schema: 1, count: groups.reduce((n, g) => n + g.rows.length, 0), groups, bot: "retinue_mock_bot", assistant_at: now() - 600, deadlines, chips, closed_today: closedToday, expired_week: 2 };
+  return { schema: 1, count: groups.reduce((n, g) => n + g.rows.length, 0), groups, bot: "retinue_mock_bot", assistant_at: now() - 600, deadlines, chips, closed_today: closed(), expired_week: 2 };
 }
 
 // --- state and the event log -----------------------------------------------------------------------------------
@@ -184,6 +174,12 @@ function emit(kind: string, key: string, data: unknown) {
   const event = { id: ++lastId, kind, key, data };
   events.push(event);
   for (const res of streams) send(res, kind, data, event.id);
+}
+
+/** The Router's push after a press: an open «Today» reads its plan again, and each collection its writes moved on. */
+function told(moved: Moved[]) {
+  emit("plan", "plan", { at: now() });
+  for (const m of moved) emit("collection", m.name, m);
 }
 
 function delta(session: string, text: string) {
@@ -342,22 +338,22 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   if (path.startsWith("/api/auth/")) {
     if (now() < lockedUntil) return json(res, 429, { error: "Too many attempts — wait 10 minutes." });
     const b = method === "POST" ? await body(req) : {};
-    if (path === "/api/auth/code" && method === "POST") {
+    if (path === paths.auth("code") && method === "POST") {
       return String(b.code ?? "").toUpperCase() === CODE ? login(res) : failed(res, "The code did not work.");
     }
-    if (path === "/api/auth/telegram" && method === "POST") {
+    if (path === paths.auth("telegram") && method === "POST") {
       // The real platform checks the HMAC, auth_date within 5 minutes and user.id; the mock only the shape.
       const data = new URLSearchParams(String(b.init_data ?? ""));
       return data.get("hash") && data.get("user") ? login(res) : failed(res, "Telegram did not confirm the login.");
     }
-    if (path === "/api/auth/logout" && method === "POST") {
+    if (path === paths.auth("logout") && method === "POST") {
       return json(res, 200, { ok: true }, { "Set-Cookie": `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0` });
     }
     return json(res, 404, { error: "Not found." });
   }
   if (!authed(req)) return json(res, 401, { error: "Log in first." });
 
-  if (path === "/api/meta") return json(res, 200, { schema: 1, owner_ok: true, tracks: fx.tracks, general: "notes", spheres: fx.spheres, face_origin: "http://127.0.0.1:5173", speech: true, voice: "voice" });
+  if (path === paths.meta) return json(res, 200, { schema: 1, owner_ok: true, tracks: fx.tracks, general: "notes", spheres: fx.spheres, face_origin: "http://127.0.0.1:5173", speech: true, voice: "voice" });
 
   // The owner's voice: the recording is read and dropped; a canned transcript per mode (no ElevenLabs here).
   if (path === "/api/speech" && method === "POST") {
@@ -371,55 +367,34 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return json(res, 200, { text: "check the KV cache and make an eval for RAG" });
   }
 
-  if (path === "/api/feed") return json(res, 200, mockFeed());
-  if (path === "/api/stats") return json(res, 200, mockStats());
-  if (path === "/api/plan") return json(res, 200, mockPlan());
-  const taskRead = method === "GET" ? mockTasksRead(path) : null;
-  if (taskRead) return json(res, taskRead.status, taskRead.data);
-  if (path === "/api/plan/press" && method === "POST") {
-    mockPlanPress(await body(req));
-    emit("plan", "plan", { at: now() });
-    emit("collection", "blocks", { name: "blocks", space: "home", rev: "01K" });
+  if (path === paths.feed) return json(res, 200, mockFeed());
+  if (path === paths.stats) return json(res, 200, mockStats());
+  if (path === paths.plan) return json(res, 200, mockPlan());
+  // A press is checked as the platform checks it (retinue/plan.py `clean_press`), then done as the Router does it.
+  if (path === paths.planPress && method === "POST") {
+    const press = cleanPress(await body(req));
+    if (typeof press === "string") return json(res, 400, { error: press });
+    told(mockPlanPress(press).moved);
     return json(res, 200, { ok: true });
   }
   if (path === "/api/_mock/assistant" && method === "POST") {
-    const pid = mockAssistantMove();
-    emit("plan", "plan", { at: now() });
-    emit("collection", "blocks", { name: "blocks", space: "home", rev: "01K" });
-    return json(res, 200, { plan: pid });
+    const { plan, moved } = mockAssistantMove();
+    told(moved);
+    return json(res, 200, { plan });
   }
-  if (path === "/api/c/blocks" && method === "POST") {
-    const wrote = mockBlocksWrite(path, await body(req));
-    if (wrote) {
-      if (wrote.moved) emit("collection", "blocks", wrote.moved);
-      return json(res, wrote.status, wrote.data);
-    }
-  }
-  if (path === "/api/c/tasks" && method === "POST") {
-    const wrote = mockTasksWrite(path, await body(req));
-    if (wrote) {
-      emit("collection", wrote.moved.name, wrote.moved);
-      return json(res, wrote.status, wrote.data);
-    }
-  }
-  if (path === "/api/waiting/press" && method === "POST") {
+  if (path === paths.waitingPress && method === "POST") {
     const { t, action } = (await body(req)) as { t?: string; action?: string };
-    if (typeof t !== "string" || !/^[0-9a-f]{32}$/.test(t) || !["done", "dismissed", "later", "open"].includes(action ?? ""))
+    if (typeof t !== "string" || !/^[0-9a-f]{32}$/.test(t) || (action !== "done" && action !== "dismissed" && action !== "later" && action !== "open"))
       return json(res, 400, { error: "Need t — the row's token — and action: done, dismissed, later or open." });
-    if (action === "open") {
-      if (pressed.delete(t)) closedToday -= 1;
-    } else if (!pressed.has(t)) {
-      pressed.add(t);
-      closedToday += 1;
-    }
+    pressRow(t, action);
     return json(res, 200, { ok: true });
   }
 
-  if (path === "/api/waiting/detail" && method === "POST") {
+  if (path === paths.waitingDetail && method === "POST") {
     const { ref, t } = (await body(req)) as { ref?: string; t?: string };
-    const row = [...ASKS, ...OTHERS].find((r) => r.ref === ref);
+    const row = digest().find((i) => i.id === ref && i.kind !== "reminder" && i.kind !== "deadline");
     if (typeof ref !== "string") return json(res, 400, { error: "Need ref — the row's id — and t, its token, on a person's row." });
-    if (!row || ("t" in row && row.t !== t) || ref === "letter:4")
+    if (!row || (row.t && row.t !== t) || ref === "letter:4")
       return json(res, 410, { error: "The assistant no longer has this row: the list is out of date." });
     if (ref === "chat:3") {
       await new Promise((done) => setTimeout(done, 3000));
@@ -437,7 +412,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return res.end(file.body);
   }
   // «Pages»: synthetic pages on a made-up pages service; `open` and `done` kept in memory like the platform's table.
-  if (path === "/api/library" && method === "GET") return json(res, 200, { schema: 1, origin: MOCK_PAGES, at: now() - 120, pages: [...library.values()] });
+  if (path === paths.library && method === "GET") return json(res, 200, { schema: 1, origin: MOCK_PAGES, at: now() - 120, pages: [...library.values()] });
   const reading = /^\/api\/library\/([a-z0-9-]+)\/(open|done)$/.exec(path);
   if (reading && method === "POST") {
     const page = library.get(reading[1] ?? "");
@@ -510,11 +485,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return res.end(file.bytes ?? Buffer.from(`made-up bytes of ${file.name}\n`));
   }
 
-  if (path === "/api/sessions" && method === "GET") return json(res, 200, { schema: 1, cursor: lastId, sessions: [...sessions.values()] });
-  if (path === "/api/archived" && method === "GET")
+  if (path === paths.sessions && method === "GET") return json(res, 200, { schema: 1, cursor: lastId, sessions: [...sessions.values()] });
+  if (path === paths.archived && method === "GET")
     return json(res, 200, { schema: 1, sessions: [...sessions.values()].filter((s) => s.archived).map((s) => ({ ...s, archived_at: s.at })).sort((a, b) => b.archived_at - a.archived_at) });
 
-  if (path === "/api/sessions" && method === "POST") {
+  if (path === paths.sessions && method === "POST") {
     const b = await body(req);
     const key = String(b.input_id ?? "");
     if (seenInputs.has(key)) return json(res, 200, seenInputs.get(key));

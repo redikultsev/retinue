@@ -3,6 +3,7 @@
 // version the screen showed; one that moved on since comes back as a refusal for the screen to ask about. Here are
 // the calls and the words — who changed what, from what to what — apart from the components that show them.
 import { request } from "./api";
+import { paths } from "./contract";
 import { valueWords } from "./collections";
 import { day } from "./spaces";
 import type {
@@ -18,24 +19,19 @@ import type {
   WriteAnswer,
 } from "./view-types";
 
-const seg = (s: string) => encodeURIComponent(s);
-
 export const editApi = {
-  write: (collection: string, ops: Op[], idem: string) => request<WriteAnswer>(`/api/c/${seg(collection)}`, { ops, idem }),
-  record: (collection: string, id: string) => request<RecordAnswer>(`/api/c/${seg(collection)}/${seg(id)}`),
-  form: (collection: string) => request<FormAnswer>(`/api/c/${seg(collection)}/_form`),
-  changes: (space: string, before?: string) =>
-    request<ChangesAnswer>(`/api/c/_changes?space=${seg(space)}${before ? `&before=${seg(before)}` : ""}`),
+  write: (collection: string, ops: Op[], idem: string) => request<WriteAnswer>(paths.collection(collection), { ops, idem }),
+  record: (collection: string, id: string) => request<RecordAnswer>(paths.record(collection, id)),
+  form: (collection: string) => request<FormAnswer>(paths.form(collection)),
+  changes: (space: string, before?: string) => request<ChangesAnswer>(paths.changes(space, before)),
 };
 
 export type EditApi = typeof editApi;
 
 /** What the agents proposed to write (retinue/colltools.py): those waiting, a Space's alone; the owner's press. */
 export const proposalsApi = {
-  waiting: (space?: string) =>
-    request<{ proposals: CollectionProposal[] }>(`/api/c/_proposals${space ? `?space=${seg(space)}` : ""}`),
-  decide: (id: string, action: "apply" | "dismiss") =>
-    request<ProposalDecided>(`/api/c/_proposals/${seg(id)}/${action}`, {}),
+  waiting: (space?: string) => request<{ proposals: CollectionProposal[] }>(paths.proposals(space)),
+  decide: (id: string, action: "apply" | "dismiss") => request<ProposalDecided>(paths.collectionProposal(id, action), {}),
 };
 
 export type ProposalsApi = typeof proposalsApi;

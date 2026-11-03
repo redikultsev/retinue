@@ -368,6 +368,17 @@ def test_plan_on_a_person_s_row_makes_its_task_and_lays_it_in_one_press(tmp_path
     faced(tmp_path, run)
 
 
+def test_the_app_and_its_mock_press_what_the_platform_takes():
+    """The face's contract (face/src/lib/contract.ts `PRESS_FIELDS`) names the presses the app makes and the mock
+    answers: the same as `PRESSES` here, in the same order — a press added on one side only fails here."""
+    import re
+    from retinue.plan import PRESSES
+    source = (Path(__file__).parent.parent / "face/src/lib/contract.ts").read_text()
+    body = re.search(r"export const PRESS_FIELDS\b[^=]*= \{(.*?)\n\};", source, re.S)
+    assert body, "PRESS_FIELDS not found in contract.ts"
+    assert tuple(re.findall(r"^\s+(\w+): \[", body.group(1), re.M)) == PRESSES
+
+
 def test_a_place_press_names_a_task_a_person_s_row_or_a_reminder_and_nothing_else():
     from retinue.plan import Refusal, clean_press
     assert clean_press({"action": "place", "day": "2026-11-11", "task": "01AAAAAAAAAAAAAAAAAAAAAAAA", "t": "a" * 32}) == \

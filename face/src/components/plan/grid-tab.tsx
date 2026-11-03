@@ -16,7 +16,7 @@ import "./grid.css";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Close } from "@/components/icons";
-import { useEditing } from "@/components/views/edit";
+import type { Schedule } from "@/lib/schedule";
 import { toast } from "@/lib/toast";
 import {
   dayOf,
@@ -32,7 +32,7 @@ import {
 } from "@/lib/plan";
 import { cn } from "@/lib/utils";
 import { HoursButton } from "./hours";
-import { Popover, press, useOwnBlock } from "./shared";
+import { Popover, useSchedule } from "./shared";
 
 const SWATCH = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 const LIT_S = 15 * 60;
@@ -83,8 +83,7 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
   const tz = plan.tz;
   const wide = useWide();
   const dark = useDark();
-  const own = useOwnBlock();
-  const editing = useEditing();
+  const s = useSchedule();
   const calendar = useRef<CalendarRef>(null);
   const [title, setTitle] = useState("");
   // The calendar says its dates while it renders, before this grid has mounted (React refuses that update, at
@@ -132,7 +131,7 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
       const n = all.filter((x) => x.block.fields.plan === p.id).length;
       toast(`The assistant changed the plan: ${n} ${n === 1 ? "block" : "blocks"}, lit on the grid.`, "info", 12000, undefined, {
         label: "Undo",
-        run: () => void press({ action: "undo", plan: p.id }, "Taking it back…"),
+        run: () => void s.undo(p.id, "Taking it back…"),
       });
     }
   });
@@ -186,12 +185,6 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
   ];
 
 
-  const resize = (p: Placed, minutes: number, what: string) =>
-    editing
-      ? editing.write("blocks", [{ op: { op: "set", id: p.block.id, version: p.block.version, fields: { minutes, locked: true } }, target: p.block.id }], what)
-      : Promise.resolve(false);
-  const remove = (p: Placed) => void press({ action: "remove", block: p.block.id }, "Taken off the plan.");
-
   return (
     <div className="flex min-h-0 flex-1 gap-4 px-2 pt-3 pb-4 md:px-6">
       <div className={cn("rt-grid relative flex min-w-0 flex-1 flex-col gap-3", dark && "rt-dark")}>
@@ -236,15 +229,13 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
             const p = info.event.extendedProps.placed as Placed | undefined;
             const start = info.event.start;
             if (!p || !start) return info.revert();
-            const at = start.getTime() / 1000;
-            void own.move(p, at, `Moved to ${dayWords(dayOf(at, tz), today, true)} ${hm(at, tz)}.`).then((ok) => ok || info.revert());
+            void dropped(s, p, start.getTime() / 1000, tz, today).then((ok) => ok || info.revert());
           }}
           eventResize={(info) => {
             const p = info.event.extendedProps.placed as Placed | undefined;
             const { start, end } = info.event;
             if (!p || !start || !end) return info.revert();
-            const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
-            void resize(p, minutes, `${p.task?.fields.title ?? "The block"}: ${duration(minutes)}.`).then((ok) => ok || info.revert());
+            void stretched(s, p, Math.round((end.getTime() - start.getTime()) / 60000)).then((ok) => ok || info.revert());
           }}
           eventClick={(info) => {
             const p = info.event.extendedProps.placed as Placed | undefined;
@@ -273,25 +264,22 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
           }}
         />
       </div>
-      {menu && <BlockMenu menu={menu} close={() => setMenu(null)} resize={resize} remove={remove} tz={tz} />}
+      {menu && <BlockMenu menu={menu} close={() => setMenu(null)} tz={tz} />}
     </div>
   );
 }
 
+/** A block dragged to `at`: the owner's own from then on; false when not written, and the grid puts it back. */
+export const dropped = (s: Schedule, p: Placed, at: number, tz: string, today: string) =>
+  s.move(p.block, at, `Moved to ${dayWords(dayOf(at, tz), today, true)} ${hm(at, tz)}.`);
+
+/** A block's end pulled: its new length, the owner's own too. */
+export const stretched = (s: Schedule, p: Placed, minutes: number) =>
+  s.resize(p.block, minutes, `${p.task?.fields.title ?? "The block"}: ${duration(minutes)}.`);
+
 /** A block's menu — the keyboard's and the phone's way to what the mouse does on the grid: its length, off the plan. */
-function BlockMenu({
-  menu,
-  close,
-  resize,
-  remove,
-  tz,
-}: {
-  menu: { p: Placed; x: number; y: number };
-  close: () => void;
-  resize: (p: Placed, minutes: number, what: string) => Promise<boolean>;
-  remove: (p: Placed) => void;
-  tz: string;
-}) {
+export function BlockMenu({ menu, close, tz }: { menu: { p: Placed; x: number; y: number }; close: () => void; tz: string }) {
+  const s = useSchedule();
   const { p } = menu;
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -324,7 +312,7 @@ function BlockMenu({
             key={m}
             type="button"
             role="menuitem"
-            onClick={() => void resize(p, m, `${title}: ${duration(m)}.`).then(close)}
+            onClick={() => void s.resize(p.block, m, `${title}: ${duration(m)}.`).then(close)}
             className={cn(
               "rounded-md px-1 py-1.5 font-mono text-xs tabular-nums hover:bg-accent focus-visible:bg-accent focus-visible:outline-none",
               p.block.fields.minutes === m && "bg-accent",
@@ -338,7 +326,7 @@ function BlockMenu({
         type="button"
         role="menuitem"
         onClick={() => {
-          remove(p);
+          void s.remove(p.block, "Taken off the plan.");
           close();
         }}
         className="rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
@@ -350,13 +338,14 @@ function BlockMenu({
 }
 
 /** The presses over the grid, and what the last one came to. */
-function PlanBar({ plan, first, today, unplanned, nav }: {
+export function PlanBar({ plan, first, today, unplanned, nav }: {
   plan: Plan;
   first: string;
   today: string;
   unplanned: number;
   nav: { title: string; go: (to: "prev" | "next" | "today") => void };
 }) {
+  const schedule = useSchedule();
   const own = lastOwn(plan);
   const short = [...shorts(plan, today)];
   const s = plan.plan.said;
@@ -368,16 +357,16 @@ function PlanBar({ plan, first, today, unplanned, nav }: {
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => void press({ action: "plan", day: first }, `Planning ${dayWords(first, today).toLowerCase()}…`)}
+          onClick={() => void schedule.plan(first, 1, `Planning ${dayWords(first, today).toLowerCase()}…`)}
           className="h-8 rounded-md bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 max-md:h-10"
         >
           Plan my day
         </button>
-        <button type="button" onClick={() => void press({ action: "plan", day: first, days: 7 }, "Planning the week…")} className={button}>
+        <button type="button" onClick={() => void schedule.plan(first, 7, "Planning the week…")} className={button}>
           Plan my week
         </button>
         {own && (
-          <button type="button" onClick={() => void press({ action: "undo", plan: own.id }, "Taking the plan back…")} className={button}>
+          <button type="button" onClick={() => void schedule.undo(own.id, "Taking the plan back…")} className={button}>
             Undo plan
           </button>
         )}
@@ -423,6 +412,7 @@ function PlanBar({ plan, first, today, unplanned, nav }: {
 /** «Now»: an activity of his from now — a hold of its name and length — or plain «Busy»; the plan's blocks it crosses
  * are laid again after it. «Not working today» holds the rest of the day and moves its blocks on, under «Undo plan». While one runs: its name and end, and × ends it. */
 function BusyMenu({ plan }: { plan: Plan }) {
+  const s = useSchedule();
   const held = plan.plan.holds.find((h) => h.from <= plan.now && h.to > plan.now);
   const item = "flex h-8 items-center justify-between gap-4 rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10";
   const activities = plan.plan.activities ?? [];
@@ -431,7 +421,7 @@ function BusyMenu({ plan }: { plan: Plan }) {
       {held && (
         <button
           type="button"
-          onClick={() => void press({ action: "free" }, "Freeing the time…")}
+          onClick={() => void s.free("Freeing the time…")}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] transition-colors hover:bg-accent max-md:h-10"
         >
           {held.label || "Busy"} till {hm(held.to, plan.tz)}
@@ -448,7 +438,7 @@ function BusyMenu({ plan }: { plan: Plan }) {
               role="menuitem"
               onClick={() => {
                 close();
-                void press({ action: "now", activity: a.title }, `${a.title} for ${duration(a.minutes)}: moving what it crosses…`);
+                void s.now(a.title, `${a.title} for ${duration(a.minutes)}: moving what it crosses…`);
               }}
               className={item}
             >
@@ -464,7 +454,7 @@ function BusyMenu({ plan }: { plan: Plan }) {
               role="menuitem"
               onClick={() => {
                 close();
-                void press({ action: "busy", minutes: m }, `Busy for ${duration(m)}: moving what it crosses…`);
+                void s.busy(m, `Busy for ${duration(m)}: moving what it crosses…`);
               }}
               className={item}
             >
@@ -478,7 +468,7 @@ function BusyMenu({ plan }: { plan: Plan }) {
             role="menuitem"
             onClick={() => {
               close();
-              void press({ action: "off" }, "Not working today: moving the day's tasks on…");
+              void s.off("Not working today: moving the day's tasks on…");
             }}
             className={item}
           >

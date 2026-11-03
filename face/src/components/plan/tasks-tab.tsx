@@ -10,7 +10,7 @@ import { pressAsk, useAsks } from "@/lib/asks";
 import { type FeedRow, useFeed, waited } from "@/lib/feed";
 import { dayOf, dayWords, hm, named, nextBlock, type Plan, type Task, windowDay } from "@/lib/plan";
 import { cn, LIST } from "@/lib/utils";
-import { PlanMenu, Popover, RowPlan, TaskCheck, TaskMeta, useAddTask } from "./shared";
+import { PlanMenu, Popover, RowPlan, TaskCheck, TaskMeta, useSchedule } from "./shared";
 
 const REMINDER_DAYS = 7;
 
@@ -54,7 +54,7 @@ export function TaskRow({ plan, task, today }: { plan: Plan; task: Task; today: 
 }
 
 function AddTask() {
-  const add = useAddTask();
+  const { add } = useSchedule();
   const [title, setTitle] = useState("");
   return (
     <form

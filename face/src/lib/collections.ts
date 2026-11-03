@@ -3,6 +3,7 @@
 // A collection's view is read again when the stream says its `rev` moved on, and all of them after a resync.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, request } from "./api";
+import { paths } from "./contract";
 import { live as theLive, type Live } from "./live";
 import { day } from "./spaces";
 import type { CollectionEvent } from "./types";
@@ -10,11 +11,9 @@ import type { BoardView, CollectionViews, Labels, Moment, OneView, SpaceViews, S
 
 export * from "./view-types";
 
-const seg = (s: string) => encodeURIComponent(s);
-
 export const collectionsApi = {
-  space: (space: string) => request<SpaceViews>(`/api/c/_space?space=${seg(space)}`),
-  view: (collection: string, view: string) => request<OneView>(`/api/c/${seg(collection)}?view=${seg(view)}`),
+  space: (space: string) => request<SpaceViews>(paths.spaceViews(space)),
+  view: (collection: string, view: string) => request<OneView>(paths.collectionView(collection, view)),
 };
 
 // --- in place ---------------------------------------------------------------------------------------------------

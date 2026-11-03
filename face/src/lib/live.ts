@@ -8,6 +8,7 @@
 
 import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
+import { paths } from "./contract";
 import { type Action, initialState, reduce, type State, waitsOnOwner } from "./store";
 import { type Approval, type CollectionEvent, EVENT_KINDS, type Meta, SCHEMA, type StreamEvent } from "./types";
 import type { CollectionProposal } from "./view-types";
@@ -172,7 +173,7 @@ export class Live {
   // --- the stream -------------------------------------------------------------------------------------------------
 
   private url(): string {
-    return `/api/events?since=${this.state.cursor ?? 0}`;
+    return paths.events(this.state.cursor ?? 0);
   }
 
   private open(): void {

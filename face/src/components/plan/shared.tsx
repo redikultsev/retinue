@@ -1,10 +1,11 @@
-// What the three tabs share: a task's check, its line of meta, the menu that plans it, and the writes behind them —
-// each the owner's write of `tasks` through the views' editor, with its «Undo» and its question when the record moved.
-import { useCallback, useEffect, useRef, useState } from "react";
+// What the tabs share: a task's check, its line of meta, the menu that plans it, and the schedule behind them — the
+// owner's verbs (lib/schedule.ts) over the views' editor around, each a write with its «Undo» or a press of the plan.
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type * as React from "react";
 import { useEditing } from "@/components/views/edit";
 import { Check } from "@/components/icons";
+import { type Schedule, schedule } from "@/lib/schedule";
 import { toast } from "@/lib/toast";
 import {
   addDays,
@@ -15,68 +16,31 @@ import {
   goalLabel,
   goalSwatch,
   hm,
-  iso,
   minutesOf,
   moment,
   nextBlock,
-  type Placed,
   type Plan,
-  planApi,
   planDay,
-  type Press,
   shorts,
   type Task,
-  type TaskFields,
 } from "@/lib/plan";
 import { cn } from "@/lib/utils";
 
 export const PLAN_DAYS = 7;
 
-/** The owner's write of one task's fields: true once written. */
-export function useSetTask() {
-  const editing = useEditing();
-  return (task: Task, fields: { [K in keyof TaskFields]?: TaskFields[K] | null }, what: string) =>
-    editing
-      ? editing.write("tasks", [{ op: { op: "set", id: task.id, version: task.version, fields }, target: task.id }], what)
-      : Promise.resolve(false);
-}
+/** A schedule given in place of the editor's — a test's, which asserts the verbs. */
+export const ScheduleContext = createContext<Schedule | null>(null);
 
-export function useAddTask() {
-  const editing = useEditing();
-  return (fields: TaskFields, what: string) =>
-    editing ? editing.write("tasks", [{ op: { op: "add", fields: { state: "open", ...fields } }, target: null }], what) : Promise.resolve(false);
-}
-
-/** The owner's own block: one he put at an exact time or dragged — `locked`, so no plan moves it. */
-export function useOwnBlock() {
-  const editing = useEditing();
-  return {
-    put: (task: Task, start: number, minutes: number, what: string) =>
-      editing
-        ? editing.write("blocks", [{ op: { op: "add", fields: { task: task.id, start: iso(start), minutes, state: "planned", locked: true } }, target: null }], what)
-        : Promise.resolve(false),
-    move: (p: Placed, start: number, what: string) =>
-      editing
-        ? editing.write("blocks", [{ op: { op: "set", id: p.block.id, version: p.block.version, fields: { start: iso(start), locked: true } }, target: p.block.id }], what)
-        : Promise.resolve(false),
-  };
-}
-
-/** A press on the plan: the Router does it within seconds; the stream brings the result. */
-export async function press(body: Press, what: string): Promise<boolean> {
-  try {
-    await planApi.press(body);
-    toast(what);
-    return true;
-  } catch (e) {
-    toast(e instanceof Error ? e.message : "It did not go through.", "error", 6000);
-    return false;
-  }
+/** The owner's verbs on his tasks and his time, over the views' editor around. */
+export function useSchedule(): Schedule {
+  const given = useContext(ScheduleContext);
+  const write = useEditing()?.write ?? null;
+  return useMemo(() => given ?? schedule(write), [given, write]);
 }
 
 /** The circle before a task: a press closes it, or opens it again. */
 export function TaskCheck({ task, className }: { task: Task; className?: string }) {
-  const set = useSetTask();
+  const { set } = useSchedule();
   const done = task.fields.state === "done";
   return (
     <button
@@ -207,7 +171,7 @@ const MENU_ROOM = 420;
  * the meetings and the blocks there — or an exact time, which is the owner's block and stays where he put it
  * (`locked`). A planned task can be taken off its day. */
 export function PlanMenu({ plan, task, today, label = "Plan" }: { plan: Plan; task: Task; today: string; label?: string }) {
-  const own = useOwnBlock();
+  const s = useSchedule();
   const next = nextBlock(plan, task);
   const [exact, setExact] = useState(() => (next ? localInput(next.start, plan.tz) : ""));
   const first = planDay(plan.now, plan.plan.window);
@@ -225,7 +189,7 @@ export function PlanMenu({ plan, task, today, label = "Plan" }: { plan: Plan; ta
                 role="menuitem"
                 onClick={() => {
                   close();
-                  void press({ action: "place", day, task: task.id }, `Planning it for ${dayWords(day, today)}…`);
+                  void s.place(day, task, `Planning it for ${dayWords(day, today)}…`);
                 }}
                 className="flex h-8 items-center rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10"
               >
@@ -241,7 +205,7 @@ export function PlanMenu({ plan, task, today, label = "Plan" }: { plan: Plan; ta
               if (start === null) return toast("Pick a day and a time.", "error");
               close();
               const what = `Planned: ${dayWords(dayOf(start, plan.tz), today)}, ${hm(start, plan.tz)}.`;
-              void (next ? own.move(next, start, what) : own.put(task, start, minutesOf(task), what));
+              void (next ? s.move(next.block, start, what) : s.put(task, start, minutesOf(task), what));
             }}
           >
             <input
@@ -262,7 +226,7 @@ export function PlanMenu({ plan, task, today, label = "Plan" }: { plan: Plan; ta
               role="menuitem"
               onClick={() => {
                 close();
-                void press({ action: "remove", block: next.block.id }, "Taking it off the day…");
+                void s.remove(next.block, "Taking it off the day…");
               }}
               className="flex h-8 items-center rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-foreground max-md:h-10"
             >
@@ -288,6 +252,7 @@ export function fromLocalInput(value: string, tz: string): number | null {
 /** «Plan» on a person's row or a reminder: a day of the next week — the Router makes its task and puts it at the
  * first free time of that day's window. One press: no task is made first by hand. */
 export function RowPlan({ plan, by, what, today }: { plan: Plan; by: { t: string } | { ref: string }; what: string; today: string }) {
+  const s = useSchedule();
   const first = planDay(plan.now, plan.plan.window);
   const days = Array.from({ length: PLAN_DAYS }, (_, n) => addDays(first, n));
   return (
@@ -303,7 +268,7 @@ export function RowPlan({ plan, by, what, today }: { plan: Plan; by: { t: string
                 role="menuitem"
                 onClick={() => {
                   close();
-                  void press({ action: "place", day, ...by }, `Planning it for ${dayWords(day, today)}…`);
+                  void s.place(day, by, `Planning it for ${dayWords(day, today)}…`);
                 }}
                 className="flex h-8 items-center rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10"
               >

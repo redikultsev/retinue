@@ -6,7 +6,7 @@ import { Clock } from "@/components/icons";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import type { Activity, PlanWindow } from "@/lib/plan";
-import { press } from "./shared";
+import { useSchedule } from "./shared";
 
 /** A zone the browser knows: the list has canonical names only (no «UTC» in Chrome, no old aliases), so any name it
  * can format a date in is one too. */
@@ -61,6 +61,7 @@ export function HoursButton({ window: w, activities = [] }: { window: PlanWindow
 }
 
 export function HoursForm({ window: w, done }: { window: PlanWindow; done: () => void }) {
+  const { hours } = useSchedule();
   const [opens, setOpens] = useState(w.opens);
   const [closes, setCloses] = useState(w.closes);
   const [zone, setZone] = useState(w.zone);
@@ -75,7 +76,7 @@ export function HoursForm({ window: w, done }: { window: PlanWindow; done: () =>
       className="flex flex-col gap-4 p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        if (ok && !same) void press({ action: "hours", opens, closes, zone }, `Plan window: ${opens}–${closes}`).then((sent) => sent && done());
+        if (ok && !same) void hours({ opens, closes, zone }, `Plan window: ${opens}–${closes}`).then((sent) => sent && done());
       }}
     >
       <p className="text-[13px] text-muted-foreground">
@@ -125,6 +126,7 @@ const HM = /^\d\d:\d\d$/;
 
 /** His activities: a name and minutes each; a range of starts makes it a meal whose place the plan keeps. */
 export function ActivitiesForm({ activities, done }: { activities: Activity[]; done: () => void }) {
+  const s = useSchedule();
   const [rows, setRows] = useState<Row[]>(() => activities.map((a, key) => ({ ...a, key })));
   const [next, setNext] = useState(activities.length);
   const set = (key: number, change: Partial<Activity>) => setRows((r) => r.map((x) => (x.key === key ? { ...x, ...change } : x)));
@@ -148,7 +150,7 @@ export function ActivitiesForm({ activities, done }: { activities: Activity[]; d
       className="flex flex-col gap-3 border-t p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        if (ok && !same) void press({ action: "activities", activities: shaped() }, "Activities saved").then((sent) => sent && done());
+        if (ok && !same) void s.activities(shaped(), "Activities saved").then((sent) => sent && done());
       }}
     >
       <h3 className="text-[13px] font-medium">Activities</h3>

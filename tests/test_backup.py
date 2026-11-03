@@ -234,6 +234,8 @@ def mac(tmp_path, archive_bytes=None, platform=None, env=""):
 def test_monthly_care_on_the_mac_checks_restores_copies_and_only_then_prunes(tmp_path):
     run, steps, calls = mac(tmp_path)
     assert run.returncode == 0, run.stderr
+    assert steps[0] == "unlock", "the night's stale lock would stop the check: it goes first"
+    calls, steps = calls[1:], steps[1:]
     assert steps == ["check", "restore", "init", "copy", "unlock", "forget", "check"], calls
     assert calls[0] == "check --read-data", "every byte read back: the server's key could overwrite what it wrote"
     assert calls[1].startswith("restore latest --host retinue --tag retinue --target ")
@@ -263,7 +265,7 @@ def test_a_monthly_run_that_went_through_tells_the_server_and_a_broken_one_does_
 
 def test_a_broken_restore_stops_before_anything_is_deleted(tmp_path):
     run, steps, _ = mac(tmp_path, archive_bytes=b"not a database")
-    assert run.returncode != 0 and steps == ["check", "restore"], "no copy, no prune after a failed restore"
+    assert run.returncode != 0 and steps == ["unlock", "check", "restore"], "no copy, no prune after a failed restore"
     assert "archive.sqlite" in run.stderr
     assert not list(tmp_path.glob("retinue-restore.*")), "nor a copy of the archive left in the temporary folder"
 
@@ -271,15 +273,15 @@ def test_a_broken_restore_stops_before_anything_is_deleted(tmp_path):
 def test_with_the_platform_a_snapshot_without_its_collections_or_their_files_fails_the_restore(tmp_path):
     sha = "ab" * 32
     run, steps, _ = mac(tmp_path / "a", platform={"collections": False, "rows": [], "blobs": {}})
-    assert run.returncode != 0 and steps == ["check", "restore"] and "collections.sqlite" in run.stderr, \
+    assert run.returncode != 0 and steps == ["unlock", "check", "restore"] and "collections.sqlite" in run.stderr, \
         "the platform makes the file at its start: a snapshot without it lost it"
     run, steps, _ = mac(tmp_path / "b", platform={"collections": True, "rows": [sha], "blobs": {}, "other": [sha]})
-    assert run.returncode != 0 and steps == ["check", "restore"] and "1 uploaded files" in run.stderr, \
+    assert run.returncode != 0 and steps == ["unlock", "check", "restore"] and "1 uploaded files" in run.stderr, \
         "a row whose file is not there, nor counted from another volume: the uploads were not all taken"
     run, steps, _ = mac(tmp_path / "d", platform={"collections": True, "rows": [sha], "blobs": {sha: b"xy"}})
     assert run.returncode != 0 and "1 uploaded files" in run.stderr, "a file cut short is not the file"
     run, steps, _ = mac(tmp_path / "e", env="RETINUE_PLATFORM=1\n")
-    assert run.returncode != 0 and steps == ["check", "restore"] and "collections.sqlite, platform.sqlite" in run.stderr, \
+    assert run.returncode != 0 and steps == ["unlock", "check", "restore"] and "collections.sqlite, platform.sqlite" in run.stderr, \
         "with the platform on, a snapshot without its whole volume fails too"
     run, steps, _ = mac(tmp_path / "c", platform={"collections": True, "rows": [sha], "blobs": {sha: b"x"}})
     assert run.returncode == 0, run.stderr

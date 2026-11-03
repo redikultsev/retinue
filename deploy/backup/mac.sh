@@ -91,7 +91,8 @@ report() {
 forget() { "$RESTIC" unlock; "$RESTIC" forget "${SNAPSHOTS[@]}" "${KEEP[@]}" --prune; }
 
 case ${1:-} in
-  monthly) check; restore; copy; forget; "$RESTIC" -r "$RETINUE_LOCAL_REPO" check; report ;;
+  # Each night leaves the server's lock behind, and `check` wants the repository to itself: stale ones go first.
+  monthly) "$RESTIC" unlock; check; restore; copy; forget; "$RESTIC" -r "$RETINUE_LOCAL_REPO" check; report ;;
   check | restore | copy | forget) "$1" ;;
   *) echo "usage: $0 monthly | check | restore | copy | forget" >&2; exit 2 ;;
 esac

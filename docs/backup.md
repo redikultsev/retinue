@@ -116,7 +116,8 @@ RETINUE_SSH_HOST=<your server's ssh host>   # where a run that went through repo
 bash deploy/backup/mac.sh monthly
 ```
 
-It stops at the first failure, so nothing is deleted after a bad check or restore:
+It stops at the first failure, so nothing is deleted after a bad check or restore. First `restic unlock` takes off
+the stale locks the server's nightly runs leave (its key may not delete them), which would stop the check; then:
 
 1. `restic check --read-data` — every byte read back;
 2. `restic restore latest` into a temporary folder; every database must pass `integrity_check` and the archive

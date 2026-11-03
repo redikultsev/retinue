@@ -25,6 +25,8 @@ Bundled at build time (direct dependencies, exact versions in package.json / pnp
 - clsx 2.1.1 — MIT, Luke Edwards
 - tailwind-merge 3.7.0 — MIT, Dany Castillo
 - Tailwind CSS 4.3.3 (generates src/index.css output) — MIT, Tailwind Labs, Inc.
+- @fullcalendar/react 7.1.3 (+ @fullcalendar/core, @full-ui/headless-calendar 7.1.3) — MIT, Adam Shaw
+- temporal-polyfill 1.0.6 (+ temporal-utils) — MIT, Adam Shaw; temporal-spec 1.0.1 — Apache-2.0, Adam Shaw
 
 Pulled in by those (transitive, bundled)
 ----------------------------------------

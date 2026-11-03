@@ -23,7 +23,7 @@
   --fc-classic-foreground: var(--foreground);
   --fc-classic-faint-foreground: var(--muted-foreground);
   --fc-classic-muted-foreground: var(--muted-foreground);
-  --fc-classic-border: var(--border);
+  --fc-classic-border: color-mix(in oklch, var(--foreground) 13%, transparent);
   --fc-classic-strong-border: var(--input);
   font-size: 13px;
 }
@@ -35,7 +35,7 @@
 }
 
 .rt-grid .rt-block {
-  background: color-mix(in oklab, var(--fc-event-color) 28%, var(--background)) !important;
+  background: color-mix(in oklab, var(--fc-event-color) 36%, var(--background)) !important;
   border: 0 !important;
   border-left: 3px solid var(--fc-event-color) !important;
   color: var(--foreground) !important;
@@ -58,3 +58,9 @@
   background: transparent !important;
   border-style: dashed !important;
 }
+
+/* Hours read by their lines: the hour's is the border, the half hour's faint. */
+.rt-grid .rt-minor {
+  border-color: color-mix(in oklch, var(--foreground) 5%, transparent) !important;
+}
+

@@ -208,7 +208,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/files/{id}/meta` | `{file}` — one file's row, for the page `/f/<id>` that Telegram's “Open” opens |
 | `GET /api/feed` | `{schema, count, groups: [{action, title, rows}], bot, assistant_at, deadlines, chips, closed_today, expired_week}` — “Waiting for you”, “Deadlines” and the status chips, [below](#the-feed) |
 | `POST /api/waiting/press {t, action: done\|dismissed\|later\|open\|task}` · `{ref, action: task}` | `{ok}`: “Done”, “Not a task”, “Tomorrow”, “Undo” or “Make it a task” on a row of “From the assistant”, by its token — or “Make it a task” on a reminder of the digest, by its id (410 when it is not in the digest any more); the router applies it ([platform.md](platform.md#the-assistants-digest)) |
-| `GET /api/plan` | `{schema, now, tz, zone, tasks: {rows, rev, space, goals, missing, blocks}, calendar: {events, at, failed, stale}, asks, reminders, plan: {at, plans, holds, said}}` — what [Tasks, Day, Week](#tasks-day-week) show: the open tasks, the blocks planned or passed from yesterday to two weeks on (and the closed tasks they name), the busy window and the day plan's state the Router last pushed, the digest's person's rows and reminders |
+| `GET /api/plan` | `{schema, now, tz, zone, tasks: {rows, rev, space, goals, missing, blocks}, calendar: {events, at, failed, stale}, asks, reminders, plan: {at, plans, recent, holds, said}}` — what [Tasks and Plan](#tasks-and-plan) show: the open tasks, the blocks planned or passed from yesterday to two weeks on (and the closed tasks they name), the busy window and the day plan's state the Router last pushed, the digest's person's rows and reminders |
 | `POST /api/plan/press {action, day?, task?, plan?, block?, minutes?}` | `{ok}`: «Plan my day» (`plan`), «Plan» to a day (`place`), «Undo» (`undo`), «Busy now» (`busy`, 30/60/120), its × (`free`), × on a block (`remove`) — a `plan-press` note for the Router ([collections.md](collections.md#blocks)) |
 | `POST /api/waiting/detail {ref, t?}` | `{detail}`: [a row's pane](#her-rows-pane) of “From the assistant” — a person's row by its id and token, a draft by its id — asked of the router and relayed, never kept; 410 when the row is not in the digest any more or the router no longer knows it, 504 when the router said nothing within 12 s, 502 when what it said was off the contract, 429 while 8 already wait |
 | `GET /api/stats` | `{schema, now, weeks: [tally…]}` — the platform's tally (`signals.tally`) of the last eight seven-day spans, the newest first, for “Numbers” ([below](#numbers)) |
@@ -387,8 +387,8 @@ made after what the good chat apps share (studied from public sources):
 
 ### Today
 
-Four tabs under a header of one line, 48 px: «Today», the day, the tabs — «Waiting N» (the feed's count, the same as on
-the sidebar and the header), «Tasks N» (the open ones), «Day», «Week» ([below](#tasks-day-week)), `?tab=` in the
+Three tabs under a header of one line, 48 px: «Today», the day, the tabs — «Waiting N» (the feed's count, the same as on
+the sidebar and the header), «Tasks N» (the open ones), «Plan» ([below](#tasks-and-plan)), `?tab=` in the
 address — and the hub's status at the right: what is fine is one green dot (its words in the tooltip), what is off is
 said («limit 89 %»). On a phone the title gives its room to the tabs, and the week's numbers are an icon.
 
@@ -435,9 +435,9 @@ place. Its top line says where it is from and how long it waits, with «Open the
 J / K or the arrows go down and up the list, E marks her row done — never while you type. On a screen narrower than
 1024 the list takes the screen, a row opens over it, and «All» comes back.
 
-### Tasks, Day, Week
+### Tasks and Plan
 
-What to do, and when ([collections.md](collections.md#tasks)): one read for the three tabs (`GET /api/plan`), again
+What to do, and when ([collections.md](collections.md#tasks)): one read for the two tabs (`GET /api/plan`), again
 once a minute and at once when `tasks` changes; every write is the owner's write of `tasks` through the views' editor —
 its «Undo» in the toast, its question when the record moved on —, and a task's title opens its record in the drawer.
 Days and times are the owner's zone's (the platform's, as the Router last told it).
@@ -449,24 +449,28 @@ Days and times are the owner's zone's (the platform's, as the Router last told i
   day has passed —, where it came from, its next block, and «Plan» («Move» once planned).
 - **«Plan»**: a day of the next seven — the Router puts the task at the first free time of that day's window — or an
   exact time, the owner's own block (`locked`); «Take off the day».
-- **Day** is a window of the plan's ([collections.md](collections.md#blocks)): the owner's day as the router's config
-  sets it, its times shown in his own zone. A strip of seven windows, each with its planned time (amber) or its free time; the plan's card —
-  «X planned of Y free», the split by goal, «Plan my day» or, once there is a plan, «Undo» and «Plan again», what it
-  left out and what the last press came to, «Busy now» (30 min, 1 h, 2 h; «Busy till 21:00 ×» while held); the window
-  in order — the calendar's meetings (a dashed edge for free time), the blocks with their why («overdue») and × to take
-  one off, «counted» on a passed one, the holds, the reminders, and the free stretches, onto which a task or a block is
-  dragged to stand there as the owner's own. At the right (below, on a narrow screen): Needs you, and the open tasks not
-  in this window — dragged from there, or planned by «Plan».
-- **Week**: seven windows from today's, each with its load (planned of free), its whole-day events, its meetings,
-  blocks, holds and reminders in order; a block dragged to another day keeps its time of day there and becomes the
-  owner's; above them the week's planned time by goal. Columns keep 10rem and scroll sideways.
+- **Plan** is the week as an hourly grid — [FullCalendar](https://fullcalendar.io) 7.1.3 (MIT), its own chunk of
+  ~85 kB gzipped fetched when the tab opens; one day on a screen under 768 px. Times are the owner's zone's; the plan's
+  window ([collections.md](collections.md#blocks)) is the lit hours, the hours shown widened to any meeting outside it.
+  Meetings are grey (a dashed edge for free time), whole-day events above the hours, holds shaded, the blocks in their
+  goal's colour, a passed one faded. Over the grid: «Plan my day», «Plan my week» (seven windows from the day's, one
+  plan, one «Undo»), «Undo plan» while the owner's plan is the newest, «Busy now» (30 min, 1 h, 2 h; «Busy till 21:00 ×»
+  while held), what the last press came to, and how old the calendar is when it is old. A block dragged (15-minute
+  steps) is the owner's, `locked`; its end pulled is its new length, `locked` too — the Router counts what he laid
+  himself as the task's time ([collections.md](collections.md#blocks)); nothing is dropped into the past, and a block
+  under way keeps its start but can be made longer. A press on a block opens its menu — the keyboard's and the touch
+  screen's way: its length (30 min, 1, 1.5, 2 h) or «Take off the plan». Tasks get their time on «Tasks» («Plan») or
+  from «Plan my day/week», not by dragging onto the grid: the bar's «Not planned N» counts the open tasks with nothing
+  ahead and opens «Tasks». The plans of the last day come with who asked
+  for each (`recent`): the assistant's of the last quarter-hour are lit with a dashed edge, and one made while the grid
+  is open is said once with its «Undo». Every write's «Undo» is in its toast.
 
-Without the collection the tabs say how it is set up. Dragging is the mouse's; on a touch screen «Plan» and «Move» do it.
+Without the collection the tabs say how it is set up.
 
 ### The look
 
-Compact, calm and dense, after the Code tab of Claude's desktop app. What was taken from where, all as patterns on the face's own stack (native `<details>`,
-no Radix, no icon package, no new dependency; no code copied):
+Compact, calm and dense, after the Code tab of Claude's desktop app. What was taken from where — a ready, licensed package by default (the grid is FullCalendar), a pattern redrawn on
+the face's own stack where none fits (native `<details>`, no Radix, no icon package):
 
 - **Tool calls as one-line steps** — an icon, a verb, the target in monospace, a status only when it is an error or
   still running; a tap opens “Input” and “Result”/“Error”. The shape of [Vercel AI

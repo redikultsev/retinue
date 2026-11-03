@@ -29,7 +29,7 @@ import hashlib
 import json
 import logging
 import secrets
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from . import plan_layout as L
 from .courier import line
@@ -43,6 +43,7 @@ PLANS_KEY = "plan.plans"    # the Router's kv: by plan id — {id, by, at, windo
 HOLDS_KEY = "plan.holds"    # the owner's holds: [{from, to, label}]
 PLANS_KEPT_S = 14 * 86400   # a plan with no block ahead is kept this long after it was made
 PLANS_MAX = 120             # and never more plans than this, the oldest going first
+RECENT = 20                 # the plans of the last day the grid is told about, at most
 CALENDAR_FRESH_S = 30 * 60  # a busy window older than this lays no plan
 HOLD_MAX_S = 24 * 3600      # a hold from a button is at most this long
 CALL_S = 15
@@ -172,6 +173,15 @@ class Planner:
         return out
 
     @staticmethod
+    def _recent(plans: dict, now: float) -> list[dict]:
+        """The plans of the last day, newest first, for the grid: who asked for each, and whether it was taken back —
+        its blocks carry its id in their field `plan`."""
+        recent = [p for p in plans.values() if isinstance(p, dict) and float(p.get("at") or 0) > now - 86400]
+        return [{"id": p["id"], "by": p.get("by") or "owner", "at": float(p.get("at") or 0),
+                 "undone": bool(p.get("undone")), "failed": bool(p.get("failed"))}
+                for p in sorted(recent, key=lambda p: -float(p.get("at") or 0))[:RECENT]]
+
+    @staticmethod
     def _keep(plans: dict, record: dict, before: dict | None = None) -> None:
         """A block this module just wrote, into the plan it belongs to (its field `plan`): its version and span — so
         «Undo» knows it as written; `before` only when this write is the plan's own move of someone else's block."""
@@ -190,7 +200,9 @@ class Planner:
         """The plans, the holds and what the last press came to, to the platform, whole, for the app's Day."""
         if self.core.platform is None:
             return
-        body = {"at": now, "plans": self._by_day(self.plans()), "holds": self.holds(now), "said": self.said,
+        plans = self.plans()
+        body = {"at": now, "plans": self._by_day(plans), "recent": self._recent(plans, now), "holds": self.holds(now),
+                "said": self.said,
                 "window": {"zone": self.hours.zone, "opens": self.hours.opens.strftime("%H:%M"),
                            "closes": self.hours.closes.strftime("%H:%M")}}
         try:
@@ -218,18 +230,26 @@ class Planner:
                     and s + int(b["fields"].get("minutes") or 0) * 60 > window.start and s < window.end]
         done: dict[str, int] = {}
         elsewhere: dict[str, int] = {}
+        locked: dict[str, int] = {}
+        loose: set[str] = set()
         here = {b["id"] for b in standing}
         ids = [t["id"] for t in tasks][:PAGE]
         if ids:
             pieces = await self._rows(BLOCKS, [{"field": "state", "op": "in", "value": ["passed", "planned"]},
                                                {"field": "task", "op": "in", "value": ids}],
-                                      ["task", "minutes", "state"])
+                                      ["task", "minutes", "state", "start", "locked"])
             for b in pieces or []:
                 f = b["fields"]
                 into = done if f.get("state") == "passed" else elsewhere if b["id"] not in here else None
                 if into is not None:
                     into[f["task"]] = into.get(f["task"], 0) + int(f.get("minutes") or 0)
-        return tasks, standing, (done, elsewhere)
+                if f.get("state") == "planned" and self._span(b)[1] > now:
+                    if f.get("locked"):
+                        locked[f["task"]] = locked.get(f["task"], 0) + int(f.get("minutes") or 0)
+                    else:
+                        loose.add(f["task"])
+        owned = {t for t in locked if t not in loose}
+        return tasks, standing, (done, elsewhere, locked, owned)
 
     def _stale(self, now: float) -> bool:
         """No busy window read since the Router started, or one older than CALENDAR_FRESH_S."""
@@ -248,12 +268,12 @@ class Planner:
         return start, start + int(block["fields"].get("minutes") or 0) * 60
 
     @staticmethod
-    def _task(row: dict, counted: tuple[dict[str, int], dict[str, int]]) -> L.Task:
+    def _task(row: dict, counted: tuple) -> L.Task:
         f = row["fields"]
-        done, elsewhere = counted
+        done, elsewhere, locked, owned = counted
         return L.Task(row["id"], f.get("minutes") if isinstance(f.get("minutes"), int) else None,
                       done.get(row["id"], 0), _day(f.get("due")) if f.get("due") else None, float(row.get("created") or 0),
-                      elsewhere.get(row["id"], 0))
+                      elsewhere.get(row["id"], 0), locked.get(row["id"], 0), row["id"] in owned)
 
     @staticmethod
     def _why(task: L.Task, window: L.Window) -> str:
@@ -265,53 +285,81 @@ class Planner:
 
     # --- presses --------------------------------------------------------------------------------------------------
 
-    async def plan(self, now: float, day: date | None = None, only: str | None = None) -> str:
-        """«Plan my day» (or one task's «Plan» to a day): the window's free time filled, in code's order, written in
-        one apply as a plan of its own. What it says back: what went where, what was left out."""
+    async def plan(self, now: float, day: date | None = None, only: str | None = None, days: int = 1) -> str:
+        """«Plan my day» (or one task's «Plan» to a day), «Plan my week» (`days` = 7 windows in a row from the day's):
+        each window's free time filled in code's order, one window's write after another so the next sees what the
+        one before laid, all under one plan id — one «Undo» for the lot. Nothing standing is taken off. What it says
+        back: what went where, what was left out."""
         async with self.lock:
             if self._stale(now):
                 return "Not planned: the calendar has not been read in the last half hour. Try again in a minute."
-            window = L.window_of(day, self.hours) if day else L.window_at(now, self.hours)
-            world = await self._world(window, now)
-            if world is None:
-                return "Not planned: the tasks could not be read. Try again in a minute."
-            tasks, standing, done = world
-            have = {b["fields"]["task"] for b in standing}
-            candidates = [self._task(t, done) for t in tasks if t["id"] not in have and (only is None or t["id"] == only)]
-            if only is not None and not candidates:
-                return "It has a piece in that day already." if only in have else "No such open task."
-            layout = L.lay(window, now, self._busy(window, now),
-                           [self._span(b) for b in standing], candidates)
-            by_id = {t.id: t for t in candidates}
-            titles = {t["id"]: str(t["fields"].get("title") or "") for t in tasks}
+            first = L.window_of(day, self.hours) if day else L.window_at(now, self.hours)
             plan_id = f"p{secrets.token_hex(5)}"
-            key = window.day.isoformat()
-            ops = [{"op": "add", "fields": {"task": task, "start": iso(start), "minutes": minutes, "state": "planned",
-                                            "plan": plan_id, **({"why": w} if (w := self._why(by_id[task], window))
-                                                                else {})}}
-                   for task, start, minutes in layout.placed]
             plans = self.plans()
             # The intent first: a plan cut short by a failure is known, and a second press is a plan of its own.
-            plans[plan_id] = {"id": plan_id, "by": "owner", "at": now, "windows": [key], "blocks": {}, "pending": True,
-                              "left": {key: [{"task": t, "title": line(titles.get(t, ""), 120), "why": why}
-                                             for t, why in layout.left]}}
+            plans[plan_id] = {"id": plan_id, "by": "owner", "at": now, "windows": [], "blocks": {}, "pending": True,
+                              "left": {}}
             self._keep_plans(plans, now)
-            answer = await self._apply(ops, f"plan:{plan_id}")
+            said: list[str] = []
+            failed = False
+            for n in range(max(1, min(days, 7))):
+                window = first if n == 0 else L.window_of(first.day + timedelta(days=n), self.hours)
+                world = await self._world(window, now)
+                if world is None:
+                    failed = True
+                    break
+                tasks, standing, counted = world
+                have = {b["fields"]["task"] for b in standing}
+                candidates = [self._task(t, counted) for t in tasks
+                              if t["id"] not in have and (only is None or t["id"] == only)]
+                if only is not None and not candidates:
+                    self._drop_plan(plan_id, now)
+                    return "It has a piece in that day already." if only in have else "No such open task."
+                layout = L.lay(window, now, self._busy(window, now), [self._span(b) for b in standing], candidates)
+                by_id = {t.id: t for t in candidates}
+                titles = {t["id"]: str(t["fields"].get("title") or "") for t in tasks}
+                key = window.day.isoformat()
+                ops = [{"op": "add", "fields": {"task": task, "start": iso(start), "minutes": minutes,
+                                                "state": "planned", "plan": plan_id,
+                                                **({"why": w} if (w := self._why(by_id[task], window)) else {})}}
+                       for task, start, minutes in layout.placed]
+                answer = await self._apply(ops, f"plan:{plan_id}:{key}") if ops else {"records": []}
+                plans = self.plans()
+                entry = plans.get(plan_id) or {}
+                if answer is None:
+                    failed = True
+                    break
+                entry.setdefault("windows", []).append(key)
+                entry.setdefault("left", {})[key] = [{"task": t, "title": line(titles.get(t, ""), 120), "why": why}
+                                                     for t, why in layout.left]
+                for record in answer.get("records") or []:
+                    if isinstance(record, dict):
+                        self._keep(plans, record)
+                        entry["blocks"][record["id"]]["day"] = key
+                self._keep_plans(plans, now)
+                if days == 1:
+                    said.append(self._said(window, layout, titles))
+                elif layout.placed:
+                    total = sum(m for _, _, m in layout.placed)
+                    said.append(f"{window.day:%a} {len(layout.placed)} ({total // 60} h {total % 60:02d})")
             plans = self.plans()
             entry = plans.get(plan_id) or {}
-            if answer is None:
-                plans[plan_id] = {**entry, "pending": False, "failed": True}
-                self._keep_plans(plans, now)
-                await self.push(now)
-                return "Not planned: the blocks could not be written. Try again."
             entry["pending"] = False
-            for record in answer.get("records") or []:
-                if isinstance(record, dict):
-                    self._keep(plans, record)
-                    entry["blocks"][record["id"]]["day"] = key
+            if failed:
+                entry["failed"] = True
             self._keep_plans(plans, now)
         await self.push(now)
-        return self._said(window, layout, titles)
+        if failed and not entry.get("blocks"):
+            return "Not planned: the blocks could not be written. Try again."
+        if days == 1:
+            return said[0] if said else "Not planned: try again."
+        head = f"Week planned from {first.day:%a %d %b}: " + (", ".join(said) if said else "no open task fits its free time")
+        return head + "." + (" Cut short — try again for the rest." if failed else "")
+
+    def _drop_plan(self, plan_id: str, now: float) -> None:
+        plans = self.plans()
+        plans.pop(plan_id, None)
+        self._keep_plans(plans, now)
 
     def _said(self, window: L.Window, layout: L.Layout, titles: dict[str, str]) -> str:
         tz = self.core.tz
@@ -566,7 +614,8 @@ class Planner:
     async def _pressed(self, data: dict, now: float, at: float) -> str:
         action = data.get("action")
         if action == "plan":
-            return await self.plan(now, _day(data.get("day")) if data.get("day") else None)
+            return await self.plan(now, _day(data.get("day")) if data.get("day") else None,
+                                   days=7 if data.get("days") == 7 else 1)
         if action == "place":
             return await self.plan(now, _day(data.get("day")), only=str(data.get("task") or ""))
         if action == "undo":

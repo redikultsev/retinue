@@ -68,6 +68,7 @@ block(guitar, wall(1, 17, 30), 90, { locked: true });
 block(report, wall(2, 19, 0), 90);
 block(domain, wall(0, 9, 0), 15, { state: "passed" });
 const plans: Record<string, unknown> = {};
+const recent: { id: string; by: "owner" | "assistant"; at: number; undone: boolean; failed: boolean }[] = [];
 const holds: { from: number; to: number; label: string }[] = [];
 let said: { at?: number; text?: string; day?: string } = {};
 
@@ -119,7 +120,7 @@ export function mockPlan() {
     calendar: calendar(),
     asks: ASKS,
     reminders: REMINDERS,
-    plan: { at: now(), plans, holds: holds.filter((h) => h.to > now()), said, window: { zone: "Asia/Dubai", opens: "10:00", closes: "01:00" } },
+    plan: { at: now(), plans, recent: recent.slice(0, 20), holds: holds.filter((h) => h.to > now()), said, window: { zone: "Asia/Dubai", opens: "10:00", closes: "01:00" } },
   };
 }
 
@@ -205,14 +206,13 @@ export function mockAssistantMove(): string {
   const t = now();
   const b = [...blocks.values()].find((x) => x.fields.task === report.id && x.fields.state === "planned");
   if (!b) return "";
-  const pid = `a${Math.random().toString(16).slice(2, 12).padEnd(10, "0")}`;
+  const pid = `p${Math.random().toString(16).slice(2, 12).padEnd(10, "0")}`;
   befores.set(pid, new Map([[b.id, { start: b.fields.start, minutes: b.fields.minutes, plan: b.fields.plan ?? null }]]));
   const from = String(b.fields.start);
   Object.assign(b.fields, { start: iso(wall(1, 20, 0)), minutes: 120, plan: pid });
   b.version += 1;
-  const d = day(1);
-  plans[`${d}:${pid}`] = { id: pid, by: "assistant", at: t, blocks: [b.id], left: [], undone: false, failed: false,
-    moves: [{ block: b.id, title: report.fields.title, from, to: b.fields.start, minutes: 120 }] };
+  recent.unshift({ id: pid, by: "assistant", at: t, undone: false, failed: false });
+  said = { at: t, text: `The assistant moved «${report.fields.title}» from ${from.slice(0, 16)} to tomorrow 20:00, 2 h.` };
   bump();
   return pid;
 }
@@ -223,18 +223,29 @@ export function mockPlanPress(body: Record<string, unknown>): string {
   const planned = new Set([...blocks.values()].filter((b) => b.fields.state === "planned").map((b) => b.fields.task));
   if (body.action === "plan" || body.action === "place") {
     const pid = `p${Math.random().toString(16).slice(2, 12).padEnd(10, "0")}`;
-    const d = String(body.day ?? windowDay(t));
-    let at = Math.max(Date.parse(`${d}T15:00:00Z`) / 1000, Math.ceil(t / 900) * 900);
+    const first = String(body.day ?? windowDay(t));
     const made: string[] = [];
-    for (const task of tasks.values()) {
-      if (task.fields.state !== "open" || planned.has(task.id) || (body.action === "place" && task.id !== body.task)) continue;
-      const m = Math.min(Number(task.fields.minutes ?? 30), 90);
-      made.push(block(task, at, m, { plan: pid }).id);
-      at += m * 60 + 900;
-      if (made.length === 4) break;
+    for (let n = 0; n < (body.days === 7 ? 7 : 1); n++) {
+      const d = new Date(Date.parse(`${first}T12:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
+      let at = Math.max(Date.parse(`${d}T15:00:00Z`) / 1000, Math.ceil(t / 900) * 900);
+      const here: string[] = [];
+      for (const task of tasks.values()) {
+        if (task.fields.state !== "open" || planned.has(task.id) || (body.action === "place" && task.id !== body.task)) continue;
+        const m = Math.min(Number(task.fields.minutes ?? 30), 90);
+        here.push(block(task, at, m, { plan: pid }).id);
+        planned.add(task.id);
+        at += m * 60 + 900;
+        if (here.length === 2) break;
+      }
+      made.push(...here);
+      // What did not fit this window: the open tasks still with nothing planned, as the Router names them.
+      const left = [...tasks.values()]
+        .filter((x) => x.fields.state === "open" && !planned.has(x.id) && body.action === "plan")
+        .map((x) => ({ task: x.id, title: String(x.fields.title), why: "no free 30 min before the window ends" }));
+      plans[d] = { id: pid, at: t, blocks: here, left: body.days === 7 ? [] : left, undone: false, failed: false };
     }
-    plans[d] = { id: pid, at: t, blocks: made, left: [], undone: false, failed: false };
-    said = { at: t, text: `Plan for ${d}: ${made.length} tasks.`, day: d };
+    recent.unshift({ id: pid, by: "owner", at: t, undone: false, failed: false });
+    said = { at: t, text: body.days === 7 ? `Week planned: ${made.length} blocks.` : `Plan for ${first}: ${made.length} tasks.`, day: first };
   } else if (body.action === "undo") {
     const was = befores.get(String(body.plan));
     for (const b of blocks.values()) {
@@ -246,6 +257,7 @@ export function mockPlanPress(body: Record<string, unknown>): string {
       } else b.fields.state = "skipped";
     }
     for (const v of Object.values(plans)) if ((v as { id: string }).id === body.plan) (v as { undone: boolean }).undone = true;
+    for (const v of recent) if (v.id === body.plan) v.undone = true;
     said = { at: t, text: "Taken back." };
   } else if (body.action === "busy") {
     holds.push({ from: t, to: t + Number(body.minutes ?? 60) * 60, label: "Busy" });

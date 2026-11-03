@@ -1,36 +1,35 @@
-// The week as an hourly grid (FullCalendar v7): meetings grey, the plan's blocks in their goal's colour, the plan's
-// window in the owner's zone as the lit hours. A block dragged or stretched is the owner's write of `blocks` — moved
-// blocks are locked, a stretched one keeps its new length; a task from the list dropped on the grid is a new locked
-// block. The assistant's last plans are lit, and a new one says «was → now» with its «Undo». Loaded lazily: FC is
-// ~80 kB gzipped. A prototype for the owner to try (spec: assistant/journal/2026-11-02-plan-grid.md in the Base).
-import FullCalendar from "@fullcalendar/react";
-import interaction, { Draggable } from "@fullcalendar/react/interaction";
+// «Plan»: the week as an hourly grid (FullCalendar v7; a day on a phone) — meetings grey, the plan's blocks in their
+// goal's colour, the plan's window in the owner's zone as the lit hours — under the bar of presses: «Plan my day»,
+// «Plan my week», «Undo» of the last plan, «Busy now», and what the last press came to. A block dragged or stretched
+// is the owner's write of `blocks`, locked: a stretched one is the task's length from then on (the Router's layout
+// counts it). Tasks get their time on «Tasks» («Plan») or from «Plan my day/week»; the bar counts the open ones with
+// nothing ahead and opens «Tasks». The assistant's plans of the last quarter-hour are lit, and a new one is said once
+// with its «Undo». Loaded lazily: FC is ~85 kB gzipped.
+import FullCalendar, { type CalendarRef } from "@fullcalendar/react";
+import interaction from "@fullcalendar/react/interaction";
 import classic from "@fullcalendar/react/themes/classic";
 import timeGrid from "@fullcalendar/react/timegrid";
 import "@fullcalendar/react/skeleton.css";
 import "@fullcalendar/react/themes/classic/theme.css";
 import "./grid.css";
+import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Close } from "@/components/icons";
 import { useEditing } from "@/components/views/edit";
 import { toast } from "@/lib/toast";
 import {
   dayOf,
   dayWords,
   duration,
-  goalLabel,
   hm,
-
-  minutesOf,
-  moment,
   type Placed,
   type Plan,
   placed,
   planDay,
-  type Task,
   windowOf,
 } from "@/lib/plan";
 import { cn } from "@/lib/utils";
-import { press, useOwnBlock } from "./shared";
+import { Popover, press, useOwnBlock } from "./shared";
 
 const SWATCH = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 const LIT_S = 15 * 60;
@@ -66,11 +65,15 @@ function useDark() {
   return dark;
 }
 
-/** The assistant's plans of the last quarter-hour, newest first. */
+/** The assistant's plans of the last quarter-hour not taken back, newest first. */
 function herPlans(plan: Plan) {
-  return Object.values(plan.plan.plans)
-    .filter((p) => p.by === "assistant" && !p.undone && plan.now - p.at < LIT_S)
-    .sort((a, b) => b.at - a.at);
+  return (plan.plan.recent ?? []).filter((p) => p.by === "assistant" && !p.undone && plan.now - p.at < LIT_S);
+}
+
+/** The owner's last plan not taken back, while it is the newest of all: its «Undo». */
+function lastOwn(plan: Plan) {
+  const newest = (plan.plan.recent ?? [])[0];
+  return newest && newest.by === "owner" && !newest.undone && !newest.failed ? newest : null;
 }
 
 export function GridTab({ plan, today }: { plan: Plan; today: string }) {
@@ -79,7 +82,8 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
   const dark = useDark();
   const own = useOwnBlock();
   const editing = useEditing();
-  const list = useRef<HTMLUListElement>(null);
+  const calendar = useRef<CalendarRef>(null);
+  const [title, setTitle] = useState("");
   const [menu, setMenu] = useState<{ p: Placed; x: number; y: number } | null>(null);
   const all = useMemo(() => placed(plan), [plan]);
   const goals = plan.tasks.goals;
@@ -100,26 +104,28 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
   lo = Math.max(0, Math.floor(lo / 60) * 60 - 60);
   hi = Math.min(48 * 60, Math.ceil(hi / 60) * 60 + 60);
 
-  // Her plans: lit, and a new one said once with its «Undo».
+  // Her plans: lit, and one made while the grid is open said once with its «Undo».
   const hers = herPlans(plan);
-  const lit = new Set(hers.flatMap((p) => p.blocks));
+  const ids = new Set(hers.map((p) => p.id));
+  const lit = new Set(all.filter((p) => p.block.fields.plan && ids.has(p.block.fields.plan)).map((p) => p.block.id));
+  const opened = useRef(plan.now);
   const seen = useRef(new Set<string>());
   useEffect(() => {
     for (const p of hers) {
-      if (seen.current.has(p.id)) continue;
+      if (seen.current.has(p.id) || p.at < opened.current - 60) continue;
       seen.current.add(p.id);
-      const words = (p.moves ?? []).map((m) => {
-        const from = moment(m.from) ?? 0;
-        const to = moment(m.to) ?? 0;
-        return `${m.title ?? "A block"}: ${dayWords(dayOf(from, tz), today, true)} ${hm(from, tz)} → ${dayWords(dayOf(to, tz), today, true)} ${hm(to, tz)}, ${duration(m.minutes)}`;
-      });
-      toast(`The assistant moved ${words.join("; ") || "the plan"}`, "info", 12000, undefined, {
+      const n = all.filter((x) => x.block.fields.plan === p.id).length;
+      toast(`The assistant changed the plan: ${n} ${n === 1 ? "block" : "blocks"}, lit on the grid.`, "info", 12000, undefined, {
         label: "Undo",
-        run: () => void press({ action: "undo", plan: p.id }, "Taken back."),
+        run: () => void press({ action: "undo", plan: p.id }, "Taking it back…"),
       });
     }
   });
 
+  // The tasks with nothing ahead on the grid: dragged from the list onto it.
+  const unplanned = plan.tasks.rows.filter(
+    (t) => t.fields.state === "open" && !all.some((p) => p.task?.id === t.id && p.end > plan.now && p.block.fields.state === "planned"),
+  );
   const events = [
     ...plan.calendar.events.map((e, n) => ({
       id: `e${n}`,
@@ -156,24 +162,6 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
     }),
   ];
 
-  // The tasks with nothing ahead on the grid: dragged from the list onto it.
-  const unplanned = plan.tasks.rows.filter(
-    (t) => t.fields.state === "open" && !all.some((p) => p.task?.id === t.id && p.end > plan.now && p.block.fields.state === "planned"),
-  );
-  useEffect(() => {
-    if (!list.current || !wide) return;
-    const d = new Draggable(list.current, {
-      itemSelector: "[data-task]",
-      longPressDelay: 300,
-      eventData: (el: HTMLElement) => ({
-        title: el.dataset.title,
-        duration: { minutes: Number(el.dataset.minutes) },
-        create: false,
-        extendedProps: { task: el.dataset.task },
-      }),
-    });
-    return () => d.destroy();
-  }, [wide]);
 
   const resize = (p: Placed, minutes: number, what: string) =>
     editing
@@ -182,8 +170,11 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
   const remove = (p: Placed) => void press({ action: "remove", block: p.block.id }, "Taken off the plan.");
 
   return (
-    <div className="flex min-h-0 flex-1 gap-4 px-2 pb-4 md:px-6">
-      <div className={cn("rt-grid min-w-0 flex-1", dark && "rt-dark")}>
+    <div className="flex min-h-0 flex-1 gap-4 px-2 pt-3 pb-4 md:px-6">
+      <div className={cn("rt-grid relative flex min-w-0 flex-1 flex-col gap-3", dark && "rt-dark")}>
+        <PlanBar plan={plan} first={first} today={today} unplanned={unplanned.length}
+          nav={{ title, go: (to) => calendar.current?.getApi()[to]() }}
+        />
         <FullCalendar
           plugins={[timeGrid, interaction, classic]}
           colorScheme={dark ? "dark" : "light"}
@@ -194,8 +185,9 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
           timeZone={tz}
           now={new Date(plan.now * 1000)}
           nowIndicator
-          headerToolbar={{ start: "title", end: "today prev,next" }}
-          toolbarTitleClass="text-[15px] font-medium tracking-normal"
+          ref={calendar}
+          headerToolbar={false}
+          datesSet={(info) => setTitle(info.view.title)}
           height="auto"
           allDaySlot
           allDayText=""
@@ -210,10 +202,11 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
           businessHours={{ daysOfWeek: [0, 1, 2, 3, 4, 5, 6], startTime: clock(opens), endTime: clock(closes) }}
           scrollTime={clock(opens)}
           editable
-          droppable
           longPressDelay={300}
           eventLongPressDelay={300}
-          eventMinHeight={18}
+          eventMinHeight={20}
+          slotMinHeight={wide ? 26 : 30}
+          slotLaneClass={(info) => (info.isMinor ? "rt-minor" : "")}
           events={events}
           eventAllow={(span) => span.end.getTime() / 1000 > plan.now}
           eventDrop={(info) => {
@@ -230,14 +223,6 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
             const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
             void resize(p, minutes, `${p.task?.fields.title ?? "The block"}: ${duration(minutes)}.`).then((ok) => ok || info.revert());
           }}
-          drop={(info) => {
-            // `create: false` on the list's items: nothing lands on the grid but the block the write makes.
-            const task = plan.tasks.rows.find((t) => t.id === info.draggedEl.dataset.task) as Task | undefined;
-            if (!task) return;
-            const at = info.date.getTime() / 1000;
-            if (at < plan.now) return;
-            void own.put(task, at, minutesOf(task), `Put on ${dayWords(dayOf(at, tz), today, true)} ${hm(at, tz)}.`);
-          }}
           eventClick={(info) => {
             const p = info.event.extendedProps.placed as Placed | undefined;
             if (!p) return;
@@ -247,42 +232,24 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
           eventContent={(arg) => {
             const p = arg.event.extendedProps.placed as Placed | undefined;
             const { start, end } = arg.event;
-            // Under 45 minutes there is room for one line: the title, then the time after it.
+            // Under 45 minutes there is room for one line: the title, then the time after it; longer, the title
+            // wraps to as many lines as the block has room for, the time under it.
             const short = !!start && !!end && end.getTime() - start.getTime() < 45 * 60_000;
             const meta = `${arg.timeText}${p?.block.fields.locked ? " · yours" : ""}`;
-            return (
-              <div className={cn("flex h-full min-w-0 overflow-hidden px-1.5 leading-tight", short ? "items-center gap-1.5" : "flex-col py-0.5")}>
+            return short ? (
+              <div className="flex h-full min-w-0 items-center gap-1.5 overflow-hidden px-1.5 leading-tight">
                 <span className="max-w-full shrink-0 truncate text-[12px] font-medium">{arg.event.title}</span>
                 <span className="min-w-0 truncate font-mono text-[11px] opacity-70 tabular-nums">{meta}</span>
+              </div>
+            ) : (
+              <div className="flex h-full min-w-0 flex-col overflow-hidden px-1.5 py-1 leading-[1.25]">
+                <span className="text-[12px] font-medium break-words text-pretty">{arg.event.title}</span>
+                <span className="mt-0.5 truncate font-mono text-[11px] opacity-70 tabular-nums">{meta}</span>
               </div>
             );
           }}
         />
       </div>
-      {wide && (
-        <aside className="hidden w-60 shrink-0 flex-col gap-2 lg:flex">
-          <h2 className="px-1 text-[13px] text-muted-foreground">Not on the grid · {unplanned.length}</h2>
-          <ul ref={list} className="flex flex-col gap-1">
-            {unplanned.map((t) => (
-              <li
-                key={t.id}
-                data-task={t.id}
-                data-title={t.fields.title}
-                data-minutes={minutesOf(t)}
-                className="cursor-grab rounded-md border bg-card px-2.5 py-1.5 text-[13px] active:cursor-grabbing"
-              >
-                <span className="block truncate">{t.fields.title}</span>
-                <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
-                  {duration(minutesOf(t))}
-                  {goalLabel(goals, t.fields.goal) ? ` · ${goalLabel(goals, t.fields.goal)}` : ""}
-                  {t.fields.due ? ` · by ${dayWords(t.fields.due, today, true)}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="px-1 text-xs text-muted-foreground">Drag one onto the grid. A block you move or stretch stays where you put it.</p>
-        </aside>
-      )}
       {menu && <BlockMenu menu={menu} close={() => setMenu(null)} resize={resize} remove={remove} tz={tz} />}
     </div>
   );
@@ -358,3 +325,106 @@ function BlockMenu({
     </div>
   );
 }
+
+/** The presses over the grid, and what the last one came to. */
+function PlanBar({ plan, first, today, unplanned, nav }: {
+  plan: Plan;
+  first: string;
+  today: string;
+  unplanned: number;
+  nav: { title: string; go: (to: "prev" | "next" | "today") => void };
+}) {
+  const own = lastOwn(plan);
+  const s = plan.plan.said;
+  const said = s?.text && (s.at ?? 0) > plan.now - 600 ? s.text : null;
+  const age = plan.calendar.at ? Math.round((plan.now - plan.calendar.at) / 60) : null;
+  const button = "h-8 rounded-md border px-3 text-[13px] transition-colors hover:bg-accent max-md:h-10";
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void press({ action: "plan", day: first }, `Planning ${dayWords(first, today).toLowerCase()}…`)}
+          className="h-8 rounded-md bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 max-md:h-10"
+        >
+          Plan my day
+        </button>
+        <button type="button" onClick={() => void press({ action: "plan", day: first, days: 7 }, "Planning the week…")} className={button}>
+          Plan my week
+        </button>
+        {own && (
+          <button type="button" onClick={() => void press({ action: "undo", plan: own.id }, "Taking the plan back…")} className={button}>
+            Undo plan
+          </button>
+        )}
+        <BusyMenu plan={plan} />
+        {unplanned > 0 && (
+          <Link
+            to="/today"
+            search={{ tab: "tasks" }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-warning/15 px-2.5 text-[13px] text-warning-foreground transition-colors hover:bg-warning/25 max-md:h-10 dark:text-warning"
+          >
+            Not planned <span className="font-mono tabular-nums">{unplanned}</span>
+          </Link>
+        )}
+        {plan.calendar.stale && (
+          <span className="text-xs text-muted-foreground">
+            {age === null ? "The calendar has not been read yet" : `Calendar read ${duration(Math.max(age, 1))} ago`}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          <span className="mr-1 text-[13px] font-medium tabular-nums">{nav.title}</span>
+          <button type="button" aria-label="Back" onClick={() => nav.go("prev")} className="h-8 w-8 rounded-md border text-[13px] hover:bg-accent max-md:h-10 max-md:w-10">
+            ‹
+          </button>
+          <button type="button" onClick={() => nav.go("today")} className={button}>
+            Today
+          </button>
+          <button type="button" aria-label="On" onClick={() => nav.go("next")} className="h-8 w-8 rounded-md border text-[13px] hover:bg-accent max-md:h-10 max-md:w-10">
+            ›
+          </button>
+        </div>
+      </div>
+      {said && <p className="text-xs text-muted-foreground">{said}</p>}
+    </div>
+  );
+}
+
+/** «Busy now»: the time from now held, and the plan's blocks it crosses laid again after it. */
+function BusyMenu({ plan }: { plan: Plan }) {
+  const held = plan.plan.holds.find((h) => h.from <= plan.now && h.to > plan.now);
+  if (held)
+    return (
+      <button
+        type="button"
+        onClick={() => void press({ action: "free" }, "Freeing the time…")}
+        className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] transition-colors hover:bg-accent max-md:h-10"
+      >
+        Busy till {hm(held.to, plan.tz)}
+        <Close className="size-3.5" />
+      </button>
+    );
+  return (
+    <Popover label="Busy now" button="Busy now">
+      {(close) => (
+        <div className="flex flex-col text-[13px]">
+          {([30, 60, 120] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                close();
+                void press({ action: "busy", minutes: m }, `Busy for ${duration(m)}: moving what it crosses…`);
+              }}
+              className="flex h-8 items-center rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10"
+            >
+              {duration(m)}
+            </button>
+          ))}
+        </div>
+      )}
+    </Popover>
+  );
+}
+

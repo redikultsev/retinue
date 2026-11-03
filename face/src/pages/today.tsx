@@ -55,9 +55,9 @@ export function Status({ chips }: { chips: Chip[] }) {
 }
 
 export type TodayTab = "waiting" | PlanTab;
-const TABS: [TodayTab, string][] = [["waiting", "Waiting"], ["tasks", "Tasks"], ["day", "Day"], ["week", "Week"]];
+const TABS: [TodayTab, string][] = [["waiting", "Waiting"], ["tasks", "Tasks"], ["plan", "Plan"]];
 
-/** The header's tabs: «Waiting» (the queue), and the tasks, the day and the week. */
+/** The header's tabs: «Waiting» (the queue), the tasks, and the plan — the grid of the week. */
 function Tabs({ tab, onTab, counts }: { tab: TodayTab; onTab: (t: TodayTab) => void; counts: Partial<Record<TodayTab, number>> }) {
   return (
     <div role="tablist" aria-label="Today" className="flex shrink-0 items-stretch self-stretch">

@@ -218,3 +218,38 @@ def test_no_plan_on_a_calendar_not_read_lately_and_old_plans_by_day_are_moved_ov
         moved = planner.plans()["p0123456789"]
         assert moved["windows"] == ["2026-11-10"] and moved["blocks"]["01ABC"]["version"] == 3
     faced(tmp_path, run)
+
+
+def test_a_block_the_owner_stretched_is_the_task_s_length_and_the_next_day_lays_none_of_it(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        homework = await add(world, title="Homework for the lesson", minutes=30)
+        await planner.plan(msk(10, "09:00"))
+        [laid] = await blocks(world)
+        await world.platform.collections.apply(SCREEN, "blocks", [{"op": "set", "id": laid["id"], "version": laid["version"],
+                                                                   "fields": {"minutes": 120, "locked": True}}],
+                                               world.clock.now)
+        said = await planner.plan(msk(10, "09:05"), datetime(2026, 11, 11).date())
+        assert "Nothing planned for Wed 11 Nov" in said, "his two hours are the task's time: nothing left to lay"
+        assert [(b["fields"]["task"], b["fields"]["minutes"]) for b in await blocks(world)] == [(homework["id"], 120)]
+    faced(tmp_path, run)
+
+
+def test_a_week_is_laid_window_after_window_under_one_plan_and_one_undo_takes_it_all_back(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        await add(world, title="Write the report", minutes=600)
+        await add(world, title="Pay the bill", minutes=15)
+        said = await planner.press({"action": "plan", "days": 7, "at": msk(10, "09:00")}, msk(10, "09:00"))
+        assert said.startswith("Week planned from Tue 10 Nov: Tue"), said
+        laid = await blocks(world)
+        assert len({b["fields"]["plan"] for b in laid}) == 1
+        assert sum(b["fields"]["minutes"] for b in laid) == 615, "each window saw what the one before laid: no doubles"
+        assert len({hm(b["fields"]["start"]) + b["fields"]["start"][:10] for b in laid}) == len(laid)
+        [entry] = world.platform.plan.plan_state()["recent"]
+        assert entry["by"] == "owner" and not entry["undone"]
+        assert await planner.undo(laid[0]["fields"]["plan"], msk(10, "09:01")) == f"Taken back: {len(laid)} blocks."
+        assert await blocks(world) == []
+    faced(tmp_path, run)

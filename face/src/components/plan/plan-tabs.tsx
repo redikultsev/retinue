@@ -3,13 +3,12 @@
 import { lazy, Suspense } from "react";
 import { Editor } from "@/components/views/edit";
 import { dayOf, type Plan } from "@/lib/plan";
-import { DayTab } from "./day-tab";
 import { TasksTab } from "./tasks-tab";
 
 // The grid is FullCalendar, ~80 kB gzipped: its own chunk, fetched when the tab opens.
 const GridTab = lazy(() => import("./grid-tab").then((m) => ({ default: m.GridTab })));
 
-export type PlanTab = "tasks" | "day" | "week";
+export type PlanTab = "tasks" | "plan";
 
 export function PlanTabs({ tab, plan, error, reload }: { tab: PlanTab; plan: Plan | null; error: string | null; reload: () => void }) {
   if (!plan) {
@@ -35,8 +34,7 @@ export function PlanTabs({ tab, plan, error, reload }: { tab: PlanTab; plan: Pla
     <Editor today={today} refresh={() => reload()} reload={reload}>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === "tasks" && <TasksTab plan={plan} today={today} reload={reload} />}
-        {tab === "day" && <DayTab plan={plan} today={today} reload={reload} />}
-        {tab === "week" && (
+        {tab === "plan" && (
           <Suspense fallback={<p className="px-4 py-6 text-sm text-muted-foreground md:px-6">Loading the grid…</p>}>
             <GridTab plan={plan} today={today} />
           </Suspense>

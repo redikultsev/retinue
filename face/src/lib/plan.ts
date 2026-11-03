@@ -58,13 +58,17 @@ export interface Block {
 
 export interface DayPlan {
   id: string;
-  /** Who asked for it: the owner's press, or the assistant on his word — her plans are lit on the grid. */
-  by?: "owner" | "assistant";
   at: number;
-  /** What her plan moved, for the line «was → now». */
-  moves?: { block: string; title?: string; from: string; to: string; minutes: number }[];
   left: { task: string; title: string; why: string }[];
   blocks: string[];
+  undone: boolean;
+  failed: boolean;
+}
+
+export interface RecentPlan {
+  id: string;
+  by: "owner" | "assistant";
+  at: number;
   undone: boolean;
   failed: boolean;
 }
@@ -92,6 +96,8 @@ export interface Plan {
   plan: {
     at: number | null;
     plans: Record<string, DayPlan>;
+    /** The plans of the last day, newest first: who asked for each — her plans' blocks are lit on the grid. */
+    recent?: RecentPlan[];
     holds: { from: number; to: number; label: string }[];
     said: { at?: number; text?: string; day?: string };
     window: PlanWindow;
@@ -99,7 +105,7 @@ export interface Plan {
 }
 
 export type Press =
-  | { action: "plan"; day?: string }
+  | { action: "plan"; day?: string; days?: 1 | 7 }
   | { action: "place"; day: string; task: string }
   | { action: "undo"; plan: string }
   | { action: "busy"; minutes: 30 | 60 | 120 }

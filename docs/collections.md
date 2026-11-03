@@ -508,10 +508,15 @@ due today). Only `code:plan` writes them besides the owner, and it never deletes
   so a quarter-hour pause follows it that no short task can slip into;
 - what its passed pieces counted comes off what a task needs — for one with a due date never more than half, until it is
   done; a task whose time is all counted and not done goes on in half hours, with no question.
+- the owner's own pieces ahead (`locked`: put or stretched by him) say how long the task takes when they and what
+  passed come to more than its estimate — a 30-minute task whose block he pulled to two hours needs two — and a task
+  whose pieces ahead are all his own gets none from a plan: he laid its time.
 
-One plan is one apply, all or none, kept in the Router's kv by its id — the windows it laid, its blocks with the version
+«Plan my week» lays seven windows in a row from the day's, one apply a window so each sees what the one before laid,
+all under one plan id — one «Undo» for the week; nothing standing is taken off. One window's plan is one apply, all or none, kept in the Router's kv by its id — the windows it laid, its blocks with the version
 it last wrote and what each was before, what it left out — so a second press, «Plan» on one task or a plan of several
-days never loses the blocks of the one before; the app's Day shows each day's latest plan not taken back. «Undo» puts
+days never loses the blocks of the one before; the app is told each day's latest plan not taken back and the plans of the last day with who asked for each
+(`recent`), which its grid lights. «Undo» puts
 back each of its blocks still at the version it wrote — taken off when the plan added it — and names the ones the owner
 moved since. No plan is laid on a calendar the Router has not read in the last half hour (just after a restart, before
 the first read): the press says so. «Busy» (a hold from the moment of the press) lays again the plan's blocks it

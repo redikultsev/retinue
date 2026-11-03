@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, at, dayOf, dayWords, duration, hm, iso, type Plan, planDay, windowDay, windowOf } from "@/lib/plan";
-import { dayItems, load } from "@/components/plan/day-tab";
+import { addDays, at, dayOf, dayWords, duration, hm, iso, type Plan, placed, planDay, windowDay, windowOf } from "@/lib/plan";
 
 const TZ = "Europe/Berlin";
 const ZONE = "Asia/Dubai"; // the plan's own zone, three hours ahead of the owner's
@@ -40,26 +39,7 @@ describe("the plan's window, in its own zone, shown in the owner's", () => {
   });
 });
 
-describe("a window's items", () => {
-  it("puts meetings, blocks, holds and reminders in order with the free stretches between", () => {
-    const p = plan({
-      calendar: { events: [{ start: at("2026-11-04", 18 * 60, ZONE), end: at("2026-11-04", 19 * 60, ZONE), title: "Lesson", all_day: false, busy: true }], at: NOW, failed: 0, stale: false },
-      tasks: {
-        rows: [{ id: "T1", fields: { title: "Write", state: "open", minutes: 60 }, version: 1, created: NOW, updated: NOW }],
-        rev: null,
-        space: "home",
-        goals: [],
-        missing: false,
-        blocks: [{ id: "B1", fields: { task: "T1", start: iso(at("2026-11-04", 20 * 60, ZONE)), minutes: 60, state: "planned" }, version: 1 }],
-      },
-      reminders: [{ id: "reminder:1", title: "Call", at: at("2026-11-04", 12 * 60, ZONE), when: "2026-11-04", repeat: null }],
-      plan: { at: NOW, plans: {}, holds: [{ from: at("2026-11-04", 22 * 60, ZONE), to: at("2026-11-04", 23 * 60, ZONE), label: "Busy" }], said: {}, window: W },
-    });
-    const items = dayItems(p, "2026-11-04").map((i) => `${i.kind} ${hm(i.start, ZONE)}`);
-    expect(items).toEqual(["free 11:00", "reminder 12:00", "event 18:00", "free 19:00", "block 20:00", "free 21:00", "hold 22:00", "free 23:00"]);
-    expect(load(p, "2026-11-04")).toEqual({ planned: 60, free: 7 * 60 + 60 + 60 + 120 });
-  });
-
+describe("the blocks on the grid", () => {
   it("leaves out the blocks of a task closed since, but keeps its passed ones", () => {
     const rows = [{ id: "T1", fields: { title: "Done", state: "done" as const }, version: 2, created: NOW, updated: NOW }];
     const start = iso(at("2026-11-04", 20 * 60, ZONE));
@@ -76,6 +56,6 @@ describe("a window's items", () => {
         ],
       },
     });
-    expect(dayItems(p, "2026-11-04").filter((i) => i.kind === "block").map((i) => hm(i.start, ZONE))).toEqual(["10:00"]);
+    expect(placed(p).map((x) => hm(x.start, ZONE))).toEqual(["10:00"]);
   });
 });

@@ -126,7 +126,7 @@ const shellRoute = createRoute({
   ),
 });
 
-const todayTab = (v: unknown): TodayTab | undefined => (v === "tasks" || v === "day" || v === "week" ? v : undefined);
+const todayTab = (v: unknown): TodayTab | undefined => (v === "tasks" || v === "plan" ? v : undefined);
 const todayRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: "/today",

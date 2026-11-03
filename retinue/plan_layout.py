@@ -73,6 +73,8 @@ class Task:
     due: date | None = None
     created: float = 0.0
     planned: int = 0       # minutes its pieces still planned in other windows hold
+    locked: int = 0        # minutes of its pieces ahead the owner put or stretched himself, in any window
+    owned: bool = False    # every piece of it ahead is the owner's own: he laid its time, the plan lays none
 
 
 @dataclass
@@ -99,8 +101,9 @@ def window_at(now: float, hours: Hours = HOURS) -> Window:
 
 
 def need_s(task: Task) -> int:
-    """What a task still needs, in seconds."""
-    estimate = (task.minutes or 0) * 60 or DEFAULT_S
+    """What a task still needs, in seconds: its estimate — or what its passed pieces and the owner's own pieces ahead
+    come to, when that is more (a block he stretched to two hours says the task takes two)."""
+    estimate = max((task.minutes or 0) * 60 or DEFAULT_S, (task.done + task.locked) * 60)
     counted = task.done * 60
     if task.due is not None:
         counted = min(counted, estimate // 2)
@@ -109,8 +112,9 @@ def need_s(task: Task) -> int:
 
 
 def left_s(task: Task) -> int:
-    """What is left to lay in this window: what it needs less what other windows already hold; 0 — nothing."""
-    return max(0, need_s(task) - task.planned * 60)
+    """What is left to lay in this window: what it needs less what other windows already hold; 0 — nothing, and
+    nothing for a task whose pieces ahead are all the owner's own."""
+    return 0 if task.owned else max(0, need_s(task) - task.planned * 60)
 
 
 def piece_s(need: int) -> int:

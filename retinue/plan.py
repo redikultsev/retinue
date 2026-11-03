@@ -63,13 +63,18 @@ def clean_press(body: object) -> dict:
         raise Refusal(f"action: one of {', '.join(PRESSES)}")
     action, out = body["action"], {"action": body["action"]}
     shapes = {"day": DAY, "task": ID, "block": ID, "plan": PLAN_ID}
-    takes = {"plan": ("day",), "place": ("day", "task"), "undo": ("plan",), "remove": ("block",), "busy": ("minutes",),
+    takes = {"plan": ("day", "days"), "place": ("day", "task"), "undo": ("plan",), "remove": ("block",), "busy": ("minutes",),
              "free": ()}[action]
     for key in takes:
         value = body.get(key)
         if key == "minutes":
             if value not in (30, 60, 120):
                 raise Refusal("minutes: 30, 60 or 120")
+        elif key == "days":
+            if value is None:
+                continue
+            if value not in (1, 7):
+                raise Refusal("days: 1 or 7")
         elif value is None and key == "day" and action == "plan":
             continue
         elif not isinstance(value, str) or not shapes[key].fullmatch(value):
@@ -95,6 +100,11 @@ def clean_plan(body: object, now: float) -> dict:
         kept[day] = {"id": str(entry.get("id") or "")[:12], "at": float(entry.get("at") or 0), "left": left,
                      "blocks": sorted(k for k in blocks if isinstance(k, str) and ID.fullmatch(k))[:200],
                      "undone": bool(entry.get("undone")), "failed": bool(entry.get("failed"))}
+    recent = [{"id": str(p["id"]), "by": p.get("by") if p.get("by") in ("owner", "assistant") else "owner",
+               "at": float(p.get("at") or 0), "undone": bool(p.get("undone")), "failed": bool(p.get("failed"))}
+              for p in (body.get("recent") or [])[:20]
+              if isinstance(p, dict) and isinstance(p.get("id"), str) and PLAN_ID.fullmatch(p["id"])
+              and type(p.get("at")) in (int, float)] if isinstance(body.get("recent"), list) else []
     if not isinstance(holds, list) or len(holds) > 20:
         raise Refusal("holds: a list")
     held = [{"from": float(h["from"]), "to": float(h["to"]), "label": line(str(h.get("label") or "Busy"), 40)}
@@ -105,7 +115,7 @@ def clean_plan(body: object, now: float) -> dict:
     window = body.get("window") or {}
     shaped = isinstance(window, dict) and isinstance(window.get("zone"), str) and len(window["zone"]) < 64 and \
         all(isinstance(window.get(k), str) and HM.fullmatch(window[k]) for k in ("opens", "closes"))
-    return {"at": float(body["at"]), "plans": kept, "holds": held, "said": told,
+    return {"at": float(body["at"]), "plans": kept, "recent": recent, "holds": held, "said": told,
             **({"window": {k: window[k] for k in ("zone", "opens", "closes")}} if shaped else {})}
 
 
@@ -175,7 +185,8 @@ class Plan:
             state = json.loads(self.platform.store.get(PLAN_KEY) or "{}")
         except ValueError:
             state = {}
-        return {"at": state.get("at"), "plans": state.get("plans") or {}, "holds": state.get("holds") or [],
+        return {"at": state.get("at"), "plans": state.get("plans") or {}, "recent": state.get("recent") or [],
+                "holds": state.get("holds") or [],
                 "said": state.get("said") or {}, "window": state.get("window") or {"zone": self.platform.views.zone(),
                                                                                      "opens": "09:00", "closes": "23:00"}}
 

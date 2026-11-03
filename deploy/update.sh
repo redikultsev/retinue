@@ -106,14 +106,15 @@ IMAGE=${RETINUE_IMAGE:-$(value RETINUE_IMAGE)}
 FROM_IMAGE=$(value RETINUE_IMAGE) FROM=$(value RETINUE_VERSION)
 FROM_IMAGE=${FROM_IMAGE:-retinue} FROM=${FROM:-local}    # neither set: the images built here, retinue*:local
 services=$(compose "$FROM_IMAGE" "$FROM" config --services)
-mapfile -t SERVICES <<< "$services"
+# Arrays by `while read`, not mapfile: bash 3.2 (a Mac's, where the tests run too) has none.
+SERVICES=(); while IFS= read -r line; do SERVICES+=("$line"); done <<< "$services"
 
 step "1/6 health before the update ($FROM)"
 wait_healthy running || die "the stack is not healthy before the update: $LAST — nothing was changed"
 
 step "2/6 pull $TAG"
 images=$(compose "$IMAGE" "$TAG" config --images)
-mapfile -t IMAGES < <(grep -E "^${IMAGE//./\\.}(-[a-z-]+)?:${TAG//./\\.}\$" <<< "$images" | awk '!seen[$0]++')
+IMAGES=(); while IFS= read -r line; do IMAGES+=("$line"); done < <(grep -E "^${IMAGE//./\\.}(-[a-z-]+)?:${TAG//./\\.}\$" <<< "$images" | awk '!seen[$0]++')
 for image in "${IMAGES[@]}"; do
   echo "   $image"
   docker pull "$image" > /dev/null || die "$image could not be pulled (is $TAG published?); nothing was changed"
@@ -121,7 +122,7 @@ done
 
 step "3/6 stop"
 volumes=$(docker volume ls -q --filter label=com.docker.compose.project=retinue)
-mapfile -t VOLUMES < <(grep -vE '_lane-[a-z]+-work$' <<< "$volumes" | sed '/^$/d')   # the lanes' checkouts: no state
+VOLUMES=(); while IFS= read -r line; do VOLUMES+=("$line"); done < <(grep -vE '_lane-[a-z]+-work$' <<< "$volumes" | sed '/^$/d')   # the lanes' checkouts: no state
 SNAP=$SNAPSHOTS/$(date -u +%Y%m%dT%H%M%SZ)-$FROM-to-$TAG
 compose "$FROM_IMAGE" "$FROM" down
 

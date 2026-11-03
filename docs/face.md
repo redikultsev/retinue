@@ -403,7 +403,8 @@ green dot (its words in the tooltip), what is off is said («limit 89 %»). The 
 «By action». On a phone the title gives its room to the tabs, and the week's numbers are an icon.
 
 «Today» is an inbox (`components/inbox.tsx`): the list at the left — 360 px, 400 from 1280 — and the row opened whole at the
-right; nothing opens a dialog. A switch at the top of the list says how it is shown — **By action** (the default),
+right — side by side only where «Today» itself has 820 px (`useRoomFor`): beside the open chat it has less, and the
+row opens over the list, «All» going back, as on a phone; nothing opens a dialog. A switch at the top of the list says how it is shown — **By action** (the default),
 **Operator**, **Map** — and the pick is kept on the device (`localStorage`), so the next visit opens as it was left.
 The tasks are never among what waits: they have their tab. «By project» was a fourth way: it repeated
 the left panel's projects, so a device that kept it opens by action.
@@ -503,7 +504,8 @@ dimension does not help (Cockburn & McKenzie, 2002).
   line — what it needs («Answer: which host», «Allow: publish the post», «Your step: …») or, working, its plan's step
   («3 of 5 · …») with a thin bar. An amber edge is your move, a blue one at work (its dot breathing), a done tile quiet.
 - **A press** opens its card — the operator's own, with its answer box and microphone — in a pane beside the map, which
-  is always there so the map never moves; on a phone the card is a sheet over it. The arrows go from tile to tile,
+  is always there so the map never moves; on a phone, or beside the open chat when the map has under 720 px, the card is
+  a sheet over it. The arrows go from tile to tile,
   Enter opens, Esc closes. «3 — book it» to the header's microphone answers #3 from here too.
 
 ### Tasks and Schedule

@@ -12,13 +12,16 @@ import { Dialog } from "@/components/ui/dialog";
 import type { Feed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { type Area, mapAreas, onMap, type Tile, tileOf } from "@/lib/map";
-import { useWide } from "@/lib/media";
+import { useRoomFor, useWide } from "@/lib/media";
 import { useProjectOf, useProjects, within } from "@/lib/projects";
 import { listed, orderedItems } from "@/lib/store";
 import { latestPlan, planLine } from "@/lib/summary";
 import type { Session, Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { requests } from "@/lib/waiting";
+
+/** A column of tiles (18.75rem) and the card's pane (20rem at least) side by side, with their gaps. */
+const MAP_AND_CARD_PX = 720;
 
 const WORDS = { waits: "waits for you", working: "working", done: "done" } as const;
 
@@ -137,7 +140,9 @@ export function MapView({
   const state = useLiveState();
   const nodes = useProjects();
   const numbers = useOperatorNumbers(feed, now);
-  const wide = useWide();
+  // the card's pane beside the map only where both fit: the open chat takes its room from «Today», not the window's
+  const [room, roomy] = useRoomFor<HTMLDivElement>(MAP_AND_CARD_PX);
+  const wide = useWide() && roomy;
   const [open, setOpen] = useState<string | null>(null);
   const grid = useRef<HTMLElement>(null);
   const of = useProjectOf(spheres);
@@ -185,7 +190,7 @@ export function MapView({
       )
     ) : null;
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div ref={room} className="min-h-0 flex-1 overflow-y-auto">
       <div className={cn("grid gap-5 px-4 pt-3 pb-16 md:px-6", wide && "lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]")}>
         <div className="flex min-w-0 flex-col gap-4">
           {head}

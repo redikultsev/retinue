@@ -25,7 +25,7 @@ import { pressAsk } from "@/lib/asks";
 import { type Deadline, type Feed, type FeedRow, feedSource, herLine, STALE_DIGEST_S, waited } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
-import { useWide } from "@/lib/media";
+import { useRoomFor, useWide } from "@/lib/media";
 import { splitRecord } from "@/lib/pane";
 import { day } from "@/lib/spaces";
 import { endingOf } from "@/lib/operator";
@@ -36,6 +36,9 @@ import { toast } from "@/lib/toast";
 import type { Session, Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { todayRows, waits } from "@/lib/waiting";
+
+/** The list's column (360 px, 400 on a large screen) and a row's pane worth reading beside it. */
+const TWO_PANES_PX = 820;
 
 /** Whose move a row is: a session stands until the owner answers (`agent`), a person or a thing waits (`person`). */
 type Mark = "agent" | "person" | "none";
@@ -422,7 +425,9 @@ export function Inbox({
   }, [feed, running, done, state.items, state.deltas, nodes, spheres, of]);
   const waitingNow = lists.waiting;
   const all = [...waitingNow, ...lists.running, ...lists.done, ...lists.dates];
-  const wide = useWide();
+  // the list and the row side by side only where both fit: the open chat takes its room from «Today», not the window's
+  const [room, roomy] = useRoomFor<HTMLDivElement>(TWO_PANES_PX);
+  const wide = useWide() && roomy;
   const [sel, setSel] = useState<string | null>(null);
   const [opened, setOpened] = useState(false); // a narrow screen: the pane over the list
   const at = useRef(0);
@@ -495,11 +500,16 @@ export function Inbox({
     ) : (
       <div />
     );
-  if (!wide) return opened && current ? pane : list;
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)]">
-      <div className="flex min-h-0 flex-col border-r">{list}</div>
-      {pane}
+    <div ref={room} className="flex min-h-0 flex-1 flex-col">
+      {!wide ? (
+        opened && current ? pane : list
+      ) : (
+        <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)]">
+          <div className="flex min-h-0 flex-col border-r">{list}</div>
+          {pane}
+        </div>
+      )}
     </div>
   );
 }

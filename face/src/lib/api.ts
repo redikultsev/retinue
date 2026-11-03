@@ -19,6 +19,7 @@ import type {
 } from "./types";
 import type { Encoded } from "./attach";
 import type { Press, WaitingDetail } from "./feed";
+import { paths } from "./contract";
 import { inputId } from "./utils";
 
 export class ApiError extends Error {
@@ -67,7 +68,7 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
 /** A recording, as the browser made it, for its text (`/api/speech`, docs/face.md «Voice»). In English the answer
  * also carries `message`: the text as the session gets it, marked «(by voice, verbatim)». */
 export function speech(audio: Blob, mode: "dictate" | "en", signal?: AbortSignal): Promise<{ text: string; message?: string }> {
-  return call(`/api/speech?mode=${mode}`, {
+  return call(paths.speech(mode), {
     method: "POST",
     credentials: "same-origin",
     headers: { Accept: "application/json", "Content-Type": audio.type || "audio/webm", "X-Retinue": "1" },
@@ -99,19 +100,19 @@ async function call<T>(path: string, init: RequestInit): Promise<T> {
 }
 
 export const api = {
-  meta: () => request<Meta>("/api/meta"),
+  meta: () => request<Meta>(paths.meta),
   /** The last eight seven-day spans of the platform's tally, the newest first («Numbers»). */
-  stats: () => request<{ now: number; weeks: Tally[] }>("/api/stats"),
-  sessions: () => request<SessionsSnapshot>("/api/sessions"),
+  stats: () => request<{ now: number; weeks: Tally[] }>(paths.stats),
+  sessions: () => request<SessionsSnapshot>(paths.sessions),
   /** «Archived»: what the owner archived, the latest first. */
-  archived: () => request<{ sessions: ArchivedSession[] }>("/api/archived"),
-  session: (id: string) => request<SessionSnapshot>(`/api/sessions/${encodeURIComponent(id)}`),
-  approval: (id: string) => request<{ approval: Approval }>(`/api/approvals/${encodeURIComponent(id)}`),
-  file: (id: string) => request<{ file: OutFile }>(`/api/files/${encodeURIComponent(id)}/meta`),
-  diff: (id: string) => request<DiffResponse>(`/api/sessions/${encodeURIComponent(id)}/diff`),
+  archived: () => request<{ sessions: ArchivedSession[] }>(paths.archived),
+  session: (id: string) => request<SessionSnapshot>(paths.session(id)),
+  approval: (id: string) => request<{ approval: Approval }>(paths.approval(id)),
+  file: (id: string) => request<{ file: OutFile }>(`${paths.file(id)}/meta`),
+  diff: (id: string) => request<DiffResponse>(paths.sessionDo(id, "diff")),
   /** `project`: a project's folder in the Base — the session runs there. */
   newSession: (track: string, text: string, id = inputId(), sphere: string | null = null, attachments: Encoded[] = [], project?: string) =>
-    request<{ session: string }>("/api/sessions", {
+    request<{ session: string }>(paths.sessions, {
       track,
       ...(sphere ? { sphere } : {}),
       ...(project !== undefined ? { project } : {}),
@@ -121,7 +122,7 @@ export const api = {
     }),
   /** Into the sphere's main session, as `/<sphere> text` in Telegram: a new one, made main, when it has none. */
   toMain: (sphere: string, text: string, id = inputId(), attachments: Encoded[] = []) =>
-    request<{ session: string }>("/api/sessions", {
+    request<{ session: string }>(paths.sessions, {
       sphere,
       main: true,
       text,
@@ -130,73 +131,73 @@ export const api = {
     }),
   input: (session: string, text: string, id = inputId(), attachments: Encoded[] = []) =>
     request<{ say: string }>(
-      `/api/sessions/${encodeURIComponent(session)}/input`,
+      paths.sessionDo(session, "input"),
       attachments.length ? { input_id: id, text, attachments } : { input_id: id, text },
     ),
   /** A picture the owner sent: the platform's own thumbnail of it. */
   thumbUrl: (session: string, input: string, n: number) =>
-    `/api/sessions/${encodeURIComponent(session)}/inputs/${encodeURIComponent(input)}/${n}`,
+    paths.thumb(session, input, n),
   pin: (session: string, pinned: boolean) =>
-    request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/pin`, { pinned }),
+    request<{ session: Session }>(paths.sessionDo(session, "pin"), { pinned }),
   /** «Archive»: the session and its kin end and leave the list; a message to it brings it back. */
   archive: (session: string) =>
-    request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/archive`, {}),
+    request<{ session: Session }>(paths.sessionDo(session, "archive"), {}),
   /** «Undo» under «Archived»: back in the list (its stopped turn stays stopped); `main` — it was the sphere's main one. */
   unarchive: (session: string, main: boolean) =>
-    request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/unarchive`, { main }),
+    request<{ session: Session }>(paths.sessionDo(session, "unarchive"), { main }),
   side: (session: string, text: string, id = inputId()) =>
-    request<{ session: string; say: string }>(`/api/sessions/${encodeURIComponent(session)}/side`, {
+    request<{ session: string; say: string }>(paths.sessionDo(session, "side"), {
       input_id: id,
       text,
     }),
   setSphere: (session: string, sphere: string | null) =>
-    request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/sphere`, { sphere }),
+    request<{ session: Session }>(paths.sessionDo(session, "sphere"), { sphere }),
   setMain: (session: string, main: boolean) =>
-    request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/main`, { main }),
-  seen: (session: string) => request<{ session: Session }>(`/api/sessions/${encodeURIComponent(session)}/seen`, {}),
+    request<{ session: Session }>(paths.sessionDo(session, "main"), { main }),
+  seen: (session: string) => request<{ session: Session }>(paths.sessionDo(session, "seen"), {}),
   fork: (session: string, text: string, id = inputId()) =>
-    request<{ session: string; say: string }>(`/api/sessions/${encodeURIComponent(session)}/fork`, {
+    request<{ session: string; say: string }>(paths.sessionDo(session, "fork"), {
       input_id: id,
       text,
     }),
-  stop: (session: string) => request<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(session)}/stop`, {}),
+  stop: (session: string) => request<{ ok: boolean }>(paths.sessionDo(session, "stop"), {}),
   decide: (approval: Pick<Approval, "id" | "digest">, action: "approve" | "reject") =>
-    request<DecideResponse>(`/api/approvals/${encodeURIComponent(approval.id)}/decide`, {
+    request<DecideResponse>(paths.approvalDo(approval.id, "decide"), {
       action,
       digest: approval.digest,
     }),
   /** «Done» on a courier card: the owner did it himself or will not; it leaves «Waiting for you». */
-  courierDone: (id: string) => request<DecideResponse>(`/api/approvals/${encodeURIComponent(id)}/done`, {}),
+  courierDone: (id: string) => request<DecideResponse>(paths.approvalDo(id, "done"), {}),
   answer: (approval: Pick<Approval, "id" | "digest">, question: number, reply: QuestionReply) =>
-    request<DecideResponse>(`/api/approvals/${encodeURIComponent(approval.id)}/answer`, {
+    request<DecideResponse>(paths.approvalDo(approval.id, "answer"), {
       digest: approval.digest,
       question,
       ...reply,
     }),
   /** The platform's own commit to the Base after a turn: its card, its diff, «Undo». */
-  baseCard: (id: string) => request<{ card: BaseCard }>(`/api/base/${encodeURIComponent(id)}`),
-  baseDiff: (id: string) => request<{ diff: string; truncated: boolean }>(`/api/base/${encodeURIComponent(id)}/diff`),
-  baseUndo: (id: string) => request<BaseResponse>(`/api/base/${encodeURIComponent(id)}/undo`, {}),
+  baseCard: (id: string) => request<{ card: BaseCard }>(paths.base(id)),
+  baseDiff: (id: string) => request<{ diff: string; truncated: boolean }>(`${paths.base(id)}/diff`),
+  baseUndo: (id: string) => request<BaseResponse>(`${paths.base(id)}/undo`, {}),
   /** «Push»: a repository's push card, opened or brought up to date (the same one Telegram shows). */
   pushOpen: (session: string, repo?: string) =>
-    request<PushResponse>(`/api/sessions/${encodeURIComponent(session)}/push`, repo ? { repo } : {}),
-  pushCard: (id: string) => request<{ card: PushCard }>(`/api/push/${encodeURIComponent(id)}`),
-  pushDiff: (id: string) => request<{ diff: string; truncated: boolean }>(`/api/push/${encodeURIComponent(id)}/diff`),
+    request<PushResponse>(paths.sessionDo(session, "push"), repo ? { repo } : {}),
+  pushCard: (id: string) => request<{ card: PushCard }>(paths.push(id)),
+  pushDiff: (id: string) => request<{ diff: string; truncated: boolean }>(`${paths.push(id)}/diff`),
   pushTarget: (id: string, target: string) =>
-    request<PushResponse>(`/api/push/${encodeURIComponent(id)}/target`, { target }),
-  pushTitle: (id: string, title: string) => request<PushResponse>(`/api/push/${encodeURIComponent(id)}/title`, { title }),
-  pushSend: (id: string) => request<PushResponse>(`/api/push/${encodeURIComponent(id)}/send`, {}),
-  pushCancel: (id: string) => request<PushResponse>(`/api/push/${encodeURIComponent(id)}/cancel`, {}),
+    request<PushResponse>(`${paths.push(id)}/target`, { target }),
+  pushTitle: (id: string, title: string) => request<PushResponse>(`${paths.push(id)}/title`, { title }),
+  pushSend: (id: string) => request<PushResponse>(`${paths.push(id)}/send`, {}),
+  pushCancel: (id: string) => request<PushResponse>(`${paths.push(id)}/cancel`, {}),
   /** A sub-session a session proposed: «Start» starts it with its brief, «Not now» sets it aside. */
   proposal: (id: string, action: "start" | "dismiss") =>
-    request<{ proposal: Proposal; say?: string }>(`/api/proposals/${encodeURIComponent(id)}/${action}`, {}),
+    request<{ proposal: Proposal; say?: string }>(paths.proposal(id, action), {}),
   /** A press on her row of «Waiting for you» (`t`, the row's token): the router applies it, and the next digest has it. */
-  waitingPress: (t: string, action: Press) => request<{ ok: boolean }>("/api/waiting/press", { t, action }),
+  waitingPress: (t: string, action: Press) => request<{ ok: boolean }>(paths.waitingPress, { t, action }),
   /** A row of hers opened: what it is about and where it is, asked of the router — a few seconds at most. */
   waitingDetail: (ref: string, t?: string) =>
-    request<{ detail: WaitingDetail }>("/api/waiting/detail", t ? { ref, t } : { ref }),
-  loginCode: (code: string) => request<{ ok?: boolean }>("/api/auth/code", { code }),
-  loginTelegram: (initData: string) => request<{ ok?: boolean }>("/api/auth/telegram", { init_data: initData }),
-  logout: () => request<{ ok?: boolean }>("/api/auth/logout", {}),
+    request<{ detail: WaitingDetail }>(paths.waitingDetail, t ? { ref, t } : { ref }),
+  loginCode: (code: string) => request<{ ok?: boolean }>(paths.auth("code"), { code }),
+  loginTelegram: (initData: string) => request<{ ok?: boolean }>(paths.auth("telegram"), { init_data: initData }),
+  logout: () => request<{ ok?: boolean }>(paths.auth("logout"), {}),
   speech,
 };

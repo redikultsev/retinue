@@ -6,6 +6,7 @@
 
 import { useSyncExternalStore } from "react";
 import { request } from "./api";
+import { paths } from "./contract";
 import type { State } from "./store";
 import type { Approval, Proposal } from "./types";
 import type { CollectionProposal } from "./view-types";
@@ -218,7 +219,7 @@ export interface FeedDeps {
 }
 
 const defaultDeps: FeedDeps = {
-  load: () => request<Feed>("/api/feed"),
+  load: () => request<Feed>(paths.feed),
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (timer) => clearTimeout(timer),
 };

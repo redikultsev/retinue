@@ -1,6 +1,7 @@
 // The Base read in the app (retinue/spaces.py): the Spaces, a Space's Showcase and Records, one Record — and the
 // words a Record's head is shown in. Read only: the Base changes through a session, never here.
 import { ApiError, request } from "./api";
+import { paths } from "./contract";
 import { RECENT_S } from "./store";
 import type { Head, Nature, ProjectNode, RecordRow, RecordView, SpaceRow, SpaceView } from "./space-types";
 import type { Session, Sphere } from "./types";
@@ -35,26 +36,26 @@ export function isAppHref(href: unknown): href is string {
 
 export const spacesApi = {
   /** The grid, and every project at any depth (absent from a platform before it). */
-  list: () => request<{ head: string; spaces: SpaceRow[]; projects?: ProjectNode[] }>("/api/spaces"),
-  space: (name: string) => request<{ head: string; space: SpaceView; sessions?: string[] }>(`/api/spaces/${seg(name)}`),
+  list: () => request<{ head: string; spaces: SpaceRow[]; projects?: ProjectNode[] }>(paths.spaces),
+  space: (name: string) => request<{ head: string; space: SpaceView; sessions?: string[] }>(paths.space(name)),
   /** A project at any depth, by its folder; `sessions`: those started in that folder. */
   project: (path: string) => {
     const at = segs(path);
     return at === null
       ? Promise.reject(new ApiError(404, "No such project."))
-      : request<{ head: string; project: SpaceView; sessions: string[] }>(`/api/projects/${at}`);
+      : request<{ head: string; project: SpaceView; sessions: string[] }>(paths.project(at));
   },
   record: (name: string, path: string) => {
     const at = segs(path);
     return at === null
       ? Promise.reject(new ApiError(404, "The app does not show such a Record."))
-      : request<{ head: string; record: RecordView }>(`/api/spaces/${seg(name)}/r/${at}`);
+      : request<{ head: string; record: RecordView }>(paths.spaceRecord(name, at));
   },
 };
 
 /** Where a project's file is: its bytes (`/api/base/…`) and, for a PDF, its frame (`/api/base-view/…`). */
-export const baseFile = (path: string) => `/api/base/${segs(path) ?? ""}`;
-export const baseView = (path: string) => `/api/base-view/${segs(path) ?? ""}`;
+export const baseFile = (path: string) => paths.baseFile(segs(path) ?? "");
+export const baseView = (path: string) => paths.baseView(segs(path) ?? "");
 
 // --- sessions by Space ------------------------------------------------------------------------------------------
 

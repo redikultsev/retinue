@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { request } from "./api";
+import { paths } from "./contract";
 
 export interface LibraryPage {
   id: string;
@@ -36,10 +37,9 @@ export interface Library {
 }
 
 export const libraryApi = {
-  list: () => request<Library>("/api/library"),
-  open: (id: string) => request<{ page: LibraryPage }>(`/api/library/${encodeURIComponent(id)}/open`, {}),
-  done: (id: string, done: boolean) =>
-    request<{ page: LibraryPage }>(`/api/library/${encodeURIComponent(id)}/done`, { done }),
+  list: () => request<Library>(paths.library),
+  open: (id: string) => request<{ page: LibraryPage }>(paths.libraryPage(id, "open"), {}),
+  done: (id: string, done: boolean) => request<{ page: LibraryPage }>(paths.libraryPage(id, "done"), { done }),
 };
 
 /** The page's address when it is what the platform promised — https, the pages service's origin, a page's id as the

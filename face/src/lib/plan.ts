@@ -5,6 +5,7 @@
 // laid by the Router; the owner's own moves of a block go through the collections' route, as any screen's do.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request } from "./api";
+import { paths } from "./contract";
 import { live as theLive, type Live } from "./live";
 
 export interface TaskFields {
@@ -142,9 +143,9 @@ export type Press =
   | { action: "off" };
 
 export const planApi = {
-  get: () => request<Plan>("/api/plan"),
+  get: () => request<Plan>(paths.plan),
   /** A press on the plan: the Router lays it, and the next read — at once, by the stream — has it. */
-  press: (body: Press) => request<{ ok: boolean }>("/api/plan/press", body),
+  press: (body: Press) => request<{ ok: boolean }>(paths.planPress, body),
 };
 
 const REFRESH_MS = 60_000;

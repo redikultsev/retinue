@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { pressRow, WaitingPane } from "@/components/waiting-sheet";
 import { RecordPage } from "@/pages/spaces";
 import { ApiError, api } from "@/lib/api";
-import { type Deadline, type Feed, type FeedRow, feedSource, herLine, STALE_DIGEST_S, waited } from "@/lib/feed";
+import { type Deadline, type Feed, type FeedRow, feedSource, herLine, personRow, STALE_DIGEST_S, waited } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { useWide } from "@/lib/media";
@@ -59,14 +59,14 @@ export interface InboxLists {
 }
 
 /** The list's four parts, each thing once: a finished turn under «Done» and a base's date under «Dates», not again among
- * what waits. */
+ * what waits; a person's row is Tasks' («From people»), not here. */
 export function inboxLists(feed: Feed | null, running: Session[], done: Session[], deadlines: Deadline[], lines: (s: Session) => string): InboxLists {
   const doneIds = new Set(done.map((s) => s.id));
   const dateIds = new Set(deadlines.map((d) => d.id));
   const rows = (feed?.groups ?? []).flatMap((g) => g.rows);
   return {
     waiting: rows
-      .filter((r) => !(r.action === "read" && r.session && doneIds.has(r.session)) && !(r.source === "deadline" && dateIds.has(r.ref)))
+      .filter((r) => !personRow(r) && !(r.action === "read" && r.session && doneIds.has(r.session)) && !(r.source === "deadline" && dateIds.has(r.ref)))
       .map(feedItem),
     running: running.map((s) => ({ key: `run:${s.id}`, kind: "running", session: s, label: "Runs", title: s.title || s.track, line: lines(s), at: turnStart(s) })),
     done: done.map((s) => ({ key: `done:${s.id}`, kind: "done", session: s, label: "Done", title: s.title || s.track, line: "", at: s.at })),

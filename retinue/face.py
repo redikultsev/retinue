@@ -451,22 +451,13 @@ class Face:
         return web.json_response({"schema": SCHEMA, "now": now, "weeks": weeks})
 
     async def waiting_press(self, request: web.Request) -> web.Response:
-        """«Done», «Not a task», «Tomorrow», «Undo» (`open`) or «Make it a task» (`task`) on a row of «From the
-        assistant» `{t, action}` — or «Make it a task» on a reminder of the digest `{ref, action}`: only its shape is
-        checked here — the router alone knows what the row's token names — and it goes to the router as a note
-        (`waiting-press`), which the bridge pulls like any other."""
+        """«Done», «Not a task», «Tomorrow» or «Undo» (`open`) on a person's row `{t, action}`: only its shape is checked
+        here — the router alone knows what the row's token names — and it goes to the router as a note
+        (`waiting-press`), which the bridge pulls like any other. «Plan» on a row is a plan press (`place` with `t`)."""
         body = await _body(request)
-        token, action, ref = body.get("t"), body.get("action"), body.get("ref")
-        if action == feed.TASK_PRESS and isinstance(ref, str) and feed.REMINDER_ID.fullmatch(ref):
-            items, _, _ = self.platform.feed.digest()
-            if not any(i["id"] == ref for i in items):
-                return _error(410, "This reminder is not in the list any more.")
-            self.store.add_note("waiting-press", "", {"ref": ref, "action": action})
-            return web.json_response({"ok": True})
-        if not isinstance(token, str) or not feed.TOKEN.fullmatch(token) or \
-                action not in (*feed.PRESSES, feed.TASK_PRESS):
-            return _error(400, "Need t — the row's token — and action: done, dismissed, later, open or task; or a "
-                               "reminder's ref and action task.")
+        token, action = body.get("t"), body.get("action")
+        if not isinstance(token, str) or not feed.TOKEN.fullmatch(token) or action not in feed.PRESSES:
+            return _error(400, "Need t — the row's token — and action: done, dismissed, later or open.")
         self.store.add_note("waiting-press", "", {"t": token, "action": action})
         return web.json_response({"ok": True})
 

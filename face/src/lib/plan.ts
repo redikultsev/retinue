@@ -111,6 +111,9 @@ export interface Plan {
 export type Press =
   | { action: "plan"; day?: string; days?: 1 | 7 }
   | { action: "place"; day: string; task: string }
+  /** «Plan» on a person's row (its token) or a reminder (its id): the Router makes its task and lays it. */
+  | { action: "place"; day: string; t: string }
+  | { action: "place"; day: string; ref: string }
   | { action: "undo"; plan: string }
   | { action: "busy"; minutes: 30 | 60 | 120 }
   | { action: "free" }
@@ -120,8 +123,6 @@ export const planApi = {
   get: () => request<Plan>("/api/plan"),
   /** A press on the plan: the Router lays it, and the next read — at once, by the stream — has it. */
   press: (body: Press) => request<{ ok: boolean }>("/api/plan/press", body),
-  /** «Make it a task» on a person's row (its token) or a reminder (its id): the Router makes it, and the next read has it. */
-  task: (by: { t: string } | { ref: string }) => request<{ ok: boolean }>("/api/waiting/press", { ...by, action: "task" }),
 };
 
 const REFRESH_MS = 60_000;
@@ -321,7 +322,7 @@ export function goalLabel(goals: Plan["tasks"]["goals"], goal: string | undefine
   return goals.find((g) => g.value === goal)?.label ?? null;
 }
 
-/** The asks and reminders a task already names: they need no «Make it a task» again. */
+/** The asks and reminders a task already names: «From people» shows them no more. */
 export function named(plan: Plan): Set<string> {
   return new Set(plan.tasks.rows.filter((t) => t.fields.state === "open" && t.fields.ask).map((t) => t.fields.ask as string));
 }

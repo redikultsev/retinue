@@ -10,7 +10,7 @@ What the tabs show is put together here on each read, never kept beside its sour
 - **the calendar** — the occurrences of today and the next fourteen days as the Router last pushed them, with when
   that was: a busy window older than CALENDAR_STALE_S is shown as such, never as the day being free;
 - **the asks and the reminders** — the person's rows and the reminders of the assistant's digest on record (`feed`),
-  each with what «Make it a task» names it by.
+  each with what «Plan» names it by.
 
 The Router pushes the window whole each time it reads the calendar (`tasks.Tasks.calendar`), replacing the one
 before; the platform never calls the Router. Its titles are the owner's calendar's words, for his screen alone: no
@@ -54,6 +54,8 @@ PRESSES = ("plan", "place", "undo", "busy", "free", "remove")
 DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 ID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 PLAN_ID = re.compile(r"p[0-9a-f]{10}")
+TOKEN = re.compile(r"[0-9a-f]{32}")       # a person's row's `t` (`feed.TOKEN`)
+REMINDER = re.compile(r"reminder:\d{1,12}")  # a reminder of the digest (`feed.REMINDER_ID`)
 HM = re.compile(r"[0-2]\d:[0-5]\d")
 
 
@@ -62,9 +64,12 @@ def clean_press(body: object) -> dict:
     if not isinstance(body, dict) or body.get("action") not in PRESSES:
         raise Refusal(f"action: one of {', '.join(PRESSES)}")
     action, out = body["action"], {"action": body["action"]}
-    shapes = {"day": DAY, "task": ID, "block": ID, "plan": PLAN_ID}
+    shapes = {"day": DAY, "task": ID, "block": ID, "plan": PLAN_ID, "t": TOKEN, "ref": REMINDER}
     takes = {"plan": ("day", "days"), "place": ("day", "task"), "undo": ("plan",), "remove": ("block",), "busy": ("minutes",),
              "free": ()}[action]
+    if action == "place" and body.get("task") is None:
+        # «Plan» on a person's row or a reminder: the Router makes its task and lays it — one press, no «make» first.
+        takes = ("day", "t") if body.get("t") is not None else ("day", "ref")
     for key in takes:
         value = body.get(key)
         if key == "minutes":

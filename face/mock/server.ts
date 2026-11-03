@@ -7,7 +7,7 @@
 //   POST /api/_mock/prune                old events are pruned and streams cut: clients get 410 and resync
 //   POST /api/_mock/collection[?quiet=1] a deal of the «work» Space moves a column on (a `collection` event; quiet:
 //                                        none, so the app's next write of that deal meets a conflict)
-import { mockAssistantMove, mockBlocksWrite, mockMakeTask, mockPlan, mockPlanPress, mockTasksRead, mockTasksWrite } from "./plan.ts";
+import { mockAssistantMove, mockBlocksWrite, mockPlan, mockPlanPress, mockTasksRead, mockTasksWrite } from "./plan.ts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as fx from "./fixtures.ts";
@@ -383,12 +383,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     }
   }
   if (path === "/api/waiting/press" && method === "POST") {
-    const { t, action, ref } = (await body(req)) as { t?: string; action?: string; ref?: string };
-    if (action === "task") {
-      if (!mockMakeTask({ t, ref })) return json(res, 410, { error: "This row is not in the list any more." });
-      emit("collection", "tasks", { name: "tasks", space: "home", rev: "01K" });
-      return json(res, 200, { ok: true });
-    }
+    const { t, action } = (await body(req)) as { t?: string; action?: string };
     if (typeof t !== "string" || !/^[0-9a-f]{32}$/.test(t) || !["done", "dismissed", "later", "open"].includes(action ?? ""))
       return json(res, 400, { error: "Need t — the row's token — and action: done, dismissed, later or open." });
     if (action === "open") {

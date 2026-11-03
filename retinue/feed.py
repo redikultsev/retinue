@@ -23,8 +23,8 @@ be closed in the face — «Done», «Not a task», «Tomorrow», «Undo»: the 
 token (`waiting-press`), and only the router knows what the token names. Beside the items, two counts: what closed
 today, what ran out unmarked in the week. A deadline whose time has not come yet (`since`
 ahead) is no one's queue: the face shows it only under «Deadlines». A reminder (its day `when`, its `repeat`) is no
-queue's either: it fires in Telegram, and the face shows it at its time on the day and the week, with «Make it a
-task» — a press that goes back as the same note (`waiting-press`, action `task`, by its id). The same push carries the
+queue's either: it fires in Telegram, and the face shows it at its time on the day and the week, with «Plan» — a
+plan press that makes its task and lays it (`place`, by its id). The same push carries the
 status chips (`chips`: the backup, the limit, the pages' build), for the face's «Today».
 """
 
@@ -63,7 +63,6 @@ DEADLINE_KEYS = {"when", "path"}  # a deadline's own, both optional: its day and
 REMINDER_KEYS = {"when", "repeat"}  # a reminder's own: its day, and how it repeats when it does
 REMINDER_ID = re.compile(r"reminder:\d{1,12}")
 REPEATS = ("daily", "weekdays", "weekly", "monthly")
-TASK_PRESS = "task"         # «Make it a task» on a person's row (by `t`) or a reminder's (by `ref`)
 TOKEN = re.compile(r"[0-9a-f]{32}")  # a person's row's `t`: what a press in the app names the row by (`waiting`)
 PRESSES = ("done", "dismissed", "later", "open")  # «Done», «Not a task», «Tomorrow», «Undo»
 COUNTS = ("closed_today", "expired_week")  # the digest's two numbers

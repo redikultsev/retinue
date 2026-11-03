@@ -1,5 +1,5 @@
 // «Today»'s tasks, day and week, made up: the collection `tasks` in memory, a calendar of the next two weeks, the
-// digest's asks and reminders — `GET /api/plan`, the owner's writes to `tasks`, «Make it a task», and a task's record
+// digest's asks and reminders — `GET /api/plan`, the owner's writes to `tasks`, «Plan» on a row, and a task's record
 // for the drawer. Invented names only.
 
 type Fields = Record<string, unknown>;
@@ -170,16 +170,17 @@ export function mockTasksRead(path: string) {
   return { status: 200, data: { name: "tasks", rev, title: rec.fields.title, fields: FORM, record: rec, changes: [], words: {} } };
 }
 
-/** «Make it a task» on an ask or a reminder: made at once here, as the Router does a moment later. */
-export function mockMakeTask(by: { t?: string; ref?: string }): boolean {
+/** «Plan» on an ask or a reminder: its task, made here as the Router makes it — or the open one there already. */
+function mockMakeTask(by: { t?: string; ref?: string }): string | null {
   const ask = ASKS.find((a) => a.t === by.t);
   const reminder = REMINDERS.find((r) => r.id === by.ref);
-  if (!ask && !reminder) return false;
+  if (!ask && !reminder) return null;
   const name = ask ? ask.id : (reminder as { id: string }).id;
-  if ([...tasks.values()].some((t) => t.fields.ask === name && t.fields.state === "open")) return true;
-  add({ title: ask ? ask.title : reminder?.title, ask: name, ...(reminder?.when ? { due: reminder.when } : {}) });
+  const there = [...tasks.values()].find((t) => t.fields.ask === name && t.fields.state === "open");
+  if (there) return there.id;
+  const rec = add({ title: ask ? ask.title : reminder?.title, ask: name, ...(reminder?.when ? { due: reminder.when } : {}) });
   bump();
-  return true;
+  return rec.id;
 }
 
 /** The plan zone's day a moment's window is (an hour back: 00:30 is the evening before); the zone is UTC+4. */
@@ -226,6 +227,14 @@ export function mockAssistantMove(): string {
 export function mockPlanPress(body: Record<string, unknown>): string {
   const t = now();
   const planned = new Set([...blocks.values()].filter((b) => b.fields.state === "planned").map((b) => b.fields.task));
+  if (body.action === "place" && !body.task) {
+    const made = mockMakeTask({ t: body.t as string | undefined, ref: body.ref as string | undefined });
+    if (!made) {
+      said = { at: t, text: "Not planned: that row is not in the list any more. Look again." };
+      return said.text as string;
+    }
+    body = { ...body, task: made };
+  }
   if (body.action === "plan" || body.action === "place") {
     const pid = `p${Math.random().toString(16).slice(2, 12).padEnd(10, "0")}`;
     const first = String(body.day ?? windowDay(t));

@@ -9,10 +9,10 @@ import { Inbox } from "@/components/inbox";
 import { type PlanTab, PlanTabs } from "@/components/plan/plan-tabs";
 import { Chart } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
-import { type Chip, type Feed, useFeed } from "@/lib/feed";
+import { type Chip, type Feed, useFeed, waitingCount } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { useWide } from "@/lib/media";
-import { type Plan, usePlan } from "@/lib/plan";
+import { named, type Plan, usePlan } from "@/lib/plan";
 import { listed } from "@/lib/store";
 import { finished, running, todayWord, useSince } from "@/lib/today";
 import type { Session, Sphere } from "@/lib/types";
@@ -110,8 +110,10 @@ export function TodayView({
       if (!(s.id in live.getState().floors) && !live.isWatched(s.id)) live.watch(s.id).catch(() => undefined);
   }, [ids]);
   // the same number as the count in the sidebar and the header: what the feed says waits
-  const waiting = feed?.count ?? 0;
-  const open = plan?.plan?.tasks.rows.filter((t) => t.fields.state === "open").length ?? 0;
+  const waiting = waitingCount(feed);
+  const p = plan?.plan;
+  const taken = p ? named(p) : new Set<string>();
+  const open = (p?.tasks.rows.filter((t) => t.fields.state === "open").length ?? 0) + (p?.asks.filter((a) => a.t && !taken.has(a.id)).length ?? 0);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4 md:px-6">

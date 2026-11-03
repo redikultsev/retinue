@@ -30,7 +30,7 @@ test.afterEach(async ({ page }) => {
 test("the login code opens «Today»", async ({ page }) => {
   await login(page);
   await page.goto("/today");
-  await expect(page.getByText("Acme Hosting").first()).toBeVisible();
+  await expect(page.getByText("Reading plan for May").first()).toBeVisible();
   await fits(page);
 });
 
@@ -79,7 +79,7 @@ test("a message with a long unbroken run wraps inside the column", async ({ page
 test("«Today»'s tasks and plan open and fit, and a task plans from its menu", async ({ page }) => {
   await login(page);
   await page.goto("/today?tab=tasks");
-  await expect(page.getByText("Needs you").first()).toBeVisible();
+  await expect(page.getByText("From people").first()).toBeVisible();
   await fits(page);
   await page.getByRole("button", { name: /^Plan: / }).first().click(); // the mock is shared by the widths: any left
   await page.getByRole("menuitem", { name: /Tomorrow/ }).click();

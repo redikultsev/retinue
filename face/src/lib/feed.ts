@@ -334,3 +334,12 @@ export function herLine(essence: string): { verb: string; text: string; due: str
   }
   return { verb, text: text.replace(/ · $/, "").trim(), due };
 }
+
+/** A person's row — a letter's or a chat's ask with its token: its place is Tasks («From people»), not the queue. */
+export const personRow = (row: FeedRow): boolean => !!row.t && row.source !== "draft";
+
+/** What waits in «Waiting» itself: the feed's count less the people's rows Tasks holds. */
+export function waitingCount(feed: Feed | null): number {
+  if (!feed) return 0;
+  return Math.max(0, feed.count - feed.groups.flatMap((g) => g.rows).filter(personRow).length);
+}

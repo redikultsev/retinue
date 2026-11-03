@@ -2,14 +2,15 @@
 collection `tasks` per thing to do, written by whoever took it in — the owner on his screen, the assistant from a
 conversation, a session — and three things only the Router can do, because only it holds what they join.
 
-- **«Make it a task»** on a row of «Waiting for you» — a person's ask or a reminder — is a press in the app
-  (`waiting-press`, action `task`): the Router adds the task as the rule `code:waiting`, its title the row's own masked
-  words, its `ask` the row's digest id (`letter:<hmac>`, `chat:<hmac>`, `reminder:<id>`). A row that has an open task
-  already gets none more.
+- **«Plan»** on a person's row or a reminder in the app's Tasks is a plan press (`place` with the row's `t` or `ref`):
+  the Router adds its task as the rule `code:waiting` — its title the row's own masked words, a reminder's day its
+  due, its `ask` the row's digest id (`letter:<hmac>`, `chat:<hmac>`, `reminder:<id>`) — and the plan
+  lays it on the day. A row that has an open task already gets none more: that one is laid.
 - **Reconciliation**: every look at the digest the Router reads the tasks that name a person's row and compares each
-  pair with how it last left them (its kv, SYNCED_KEY). Whichever side moved since carries the other: a task closed —
-  on the screen, by her on his word, by a session — closes its row as his «Done» would; a row closed — by his press,
-  an answer code saw, a draft that went — closes its task; either opened again opens the other. Acting on what moved,
+  pair with how it last left them (its kv, SYNCED_KEY). Whichever side moved since carries the other: a task done —
+  on the screen, by her on his word, by a session — closes its row as his «Done» would, a task dropped as «Not a task»
+  would; a row closed — by his press, an answer code saw, a draft that went — closes its task, done, or dropped when
+  he said «Not a task»; a row that ran out leaves its task as it is; either opened again opens the other. Acting on what moved,
   never on what merely differs, lets «Undo» on either side stand. A reminder's task is its own: the reminder fires
   as set, and closing the task leaves it.
 - **The busy window**: the calendar's occurrences of today and the next CALENDAR_DAYS, read live from the collector
@@ -46,7 +47,7 @@ CALENDAR_EVENTS = 400         # occurrences pushed at most
 EVENT_TITLE_CHARS = 100
 REMINDER = re.compile(r"reminder:(\d{1,12})")
 PERSON = re.compile(r"(?:letter|chat):[0-9a-f]{16}")
-OPEN, CLOSED = "open", "closed"
+OPEN, DONE, DROPPED = "open", "done", "dropped"
 
 
 class Tasks:
@@ -94,39 +95,46 @@ class Tasks:
             log.warning("tasks not written: %s", line(str(data.get("text") or "no answer"), 300))
         return bool(data.get("ok"))
 
-    # --- «Make it a task» -----------------------------------------------------------------------------------------
+    # --- «Plan» on a row ------------------------------------------------------------------------------------------
 
-    async def press(self, token: str, ref: str, now: float) -> bool:
-        """«Make it a task» on a row in the app: a person's row by its token, a reminder by its id. True when the row
-        is known — its task made now or there already —, False when it is not (an old list, a reminder gone)."""
+    async def make(self, token: str, ref: str, now: float) -> str | None:
+        """«Plan» on a row in the app (`planner.Planner`'s `place`): its task — a person's row by its token, a reminder
+        by its id —, made now or the open one there already; None when the row is not known (an old list, a reminder
+        gone) or the task could not be written."""
         from .waiting import _rows, rows
 
         if self.core.platform is None:
-            return False
+            return None
         if match := REMINDER.fullmatch(ref):
             job = self.core.jobs.get(int(match[1]))
             if job is None or job.kind != "reminder" or job.status != "active":
-                return False
+                return None
             from .waiting import said
             due = clock.local(job.due, self.core.tz).date().isoformat()
             return await self._make(f"reminder:{job.id}", said(job.text), due, now)
         seqs = set(_rows(self.core, now).get(token) or ()) if token else set()
         if not seqs:
-            return False
+            return None
         found = next(((row_id, row) for row_id, row in rows(self.core, now).items() if seqs & set(row["seqs"])), None)
         if found is None:
-            return False
+            return None
         return await self._make(found[0], found[1]["title"], None, now)
 
-    async def _make(self, ask: str, title: str, due: str | None, now: float) -> bool:
+    async def _make(self, ask: str, title: str, due: str | None, now: float) -> str | None:
         named = await self._named()
         if named is None:
-            return False
-        if any(r["fields"].get("ask") == ask and r["fields"].get("state") == OPEN for r in named):
-            return True
+            return None
+        if mine := next((r for r in named if r["fields"].get("ask") == ask and r["fields"].get("state") == OPEN), None):
+            return mine["id"]
         fields = {"title": line(title, TITLE_CHARS) or "Task", "state": OPEN, "ask": ask,
                   **({"due": due} if due else {})}
-        return await self._apply([{"op": "add", "fields": fields}], f"task:{ask}:{int(now // 60)}")
+        idem = f"task:{ask}:{int(now // 60)}"
+        data = await self._call("apply", {"collection": TASKS, "ops": [{"op": "add", "fields": fields}], "idem": idem}, idem)
+        records = (data.get("answer") or {}).get("records") or [] if data.get("ok") else []
+        if not records:
+            log.warning("the task not made: %s", line(str(data.get("text") or "no answer"), 300))
+            return None
+        return records[0].get("id")
 
     # --- the reconciliation ---------------------------------------------------------------------------------------
 
@@ -148,25 +156,24 @@ class Tasks:
             row = known.get(ask) if isinstance(ask, str) and PERSON.fullmatch(ask) else None
             if row is None:  # a reminder's, or a row older than the asks the store still reads: nothing to join
                 continue
-            task = OPEN if state == OPEN else CLOSED
-            side = OPEN if row["state"] in ("open", "later") else CLOSED
+            task = state if state in (DONE, DROPPED) else OPEN
             was_task, was_row = synced.get(record["id"], (None, None))
+            # A row that ran out moved nowhere: the owner did nothing to it, so it carries nothing to its task.
+            side = _side(row) or was_row or task
             if was_task is None and task != side:
                 # The first look at the pair: what is closed wins — a task made from a row the owner then answered,
                 # a row whose task he closed before the Router saw it.
-                was_task, was_row = (OPEN, side) if task == CLOSED else (task, OPEN)
+                was_task, was_row = (OPEN, side) if task != OPEN else (task, OPEN)
             if task != was_task and task != side:
                 # The task moved, and the row is not where the task is now.
-                if task == CLOSED:
-                    self.core.mail.store.mark(row["seqs"], "done", now)
-                    side, changed = CLOSED, changed + 1
+                if task != OPEN:
+                    self.core.mail.store.mark(row["seqs"], "dismissed" if task == DROPPED else "done", now)
+                    side, changed = task, changed + 1
                 elif self.core.mail.store.mark(row["seqs"], "open", now):
-                    side, changed = (OPEN if rows(self.core, now)[ask]["state"] in ("open", "later") else CLOSED,
-                                     changed + 1)
+                    side, changed = _side(rows(self.core, now)[ask]) or OPEN, changed + 1
             elif side != was_row and side != task:
                 # The row moved and the task is not where the row is now.
-                ops = [{"op": "set", "id": record["id"], "version": record["version"],
-                        "fields": {"state": "done" if side == CLOSED else OPEN}}]
+                ops = [{"op": "set", "id": record["id"], "version": record["version"], "fields": {"state": side}}]
                 if await self._apply(ops, f"sync:{record['id']}:{record['version']}"):
                     task, changed = side, changed + 1
             kept[record["id"]] = [task, side]
@@ -177,12 +184,13 @@ class Tasks:
         return changed
 
     def _synced(self) -> dict[str, tuple[str, str]]:
+        """How each pair was last left; `closed` of an older look is «Done»'s."""
         try:
             known = json.loads(self.core.store.get(SYNCED_KEY) or "{}")
         except ValueError:
             return {}
-        return {k: tuple(v) for k, v in known.items() if isinstance(v, list) and len(v) == 2} \
-            if isinstance(known, dict) else {}
+        return {k: tuple(DONE if x == "closed" else x for x in v) for k, v in known.items()
+                if isinstance(v, list) and len(v) == 2} if isinstance(known, dict) else {}
 
     # --- the busy window ------------------------------------------------------------------------------------------
 
@@ -229,6 +237,16 @@ class Tasks:
             await self.planner.cycle(now)
 
 
+def _side(row: dict) -> str | None:
+    """Where a person's row stands for its task: open (or waiting out «Tomorrow»), done, dropped («Not a task»); None
+    when it ran out — no move of the owner's."""
+    if row["state"] in ("open", "later"):
+        return OPEN
+    if row["state"] == "closed":
+        return DROPPED if row.get("how") == "dismissed" else DONE
+    return None
+
+
 def occurrence(event: dict, tz: str) -> dict | None:
     """An occurrence as the face's day shows it: its moments, its title, whether it is the whole day, and whether it
     keeps the owner busy — not when it is free time (`transparent`), declined, cancelled or the whole day."""
@@ -259,7 +277,7 @@ def occurrence(event: dict, tz: str) -> dict | None:
 
 def main(argv: list[str] | None = None) -> int:
     """`python -m retinue.tasks from-reminders <id>… [--title <id>=<words>]…`: each of these reminders gets a task
-    that names it (`ask: reminder:<id>`, its day as `due`), as «Make it a task» would make it — the reminder stays and
+    that names it (`ask: reminder:<id>`, its day as `due`), as «Plan» on it would make it — the reminder stays and
     fires as set. Run inside the router's container once, when the tasks collection is first set up: the owner's
     reminders that were tasks all along. A reminder that has its task already gets none more."""
     import argparse

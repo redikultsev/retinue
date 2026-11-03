@@ -4,17 +4,16 @@
 // in a moment later. Nothing of it is kept: not by the platform, not here once another row is opened. The actions go where
 // the thing is — the Gmail thread, the person's chat, her card in Telegram for a draft's «Send» — and «Ask the
 // assistant» starts a session of its own about the row, its context written into the new task for the owner to add his
-// question to. «Done», «Not a task», «Tomorrow» close the row as on the row itself; «Make it a task» adds a task that names it.
+// question to. «Done», «Not a task», «Tomorrow» close the row as on the row itself.
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AlertCircle, ArrowUpRight, Ban, Check, Clock, ListTodo, SphereMark } from "@/components/icons";
+import { AlertCircle, ArrowUpRight, Ban, Check, Clock, SphereMark } from "@/components/icons";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import { type DetailAsk, type DetailLink, type FeedRow, feedSource, herLine, linkOk, type Press, type WaitingDetail, waited } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { openOutside } from "@/lib/telegram";
 import { startNew } from "@/pages/new";
-import { planApi } from "@/lib/plan";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -49,17 +48,6 @@ export async function pressRow(t: string, action: Press, label: string, press = 
   return true;
 }
 
-/** «Make it a task»: the Router adds a task that names this row, and «Done» on either closes both. The row stays. */
-export async function makeTask(t: string, task = planApi.task): Promise<boolean> {
-  try {
-    await task({ t });
-  } catch {
-    toast(PRESS_FAILED, "error");
-    return false;
-  }
-  toast("Made into a task — see Today › Tasks.", "info", 6000, "/today?tab=tasks");
-  return true;
-}
 
 const NEED_WORDS: Record<string, string> = { reply: "Reply", decide: "Decide", pay: "Pay", attend: "Attend", act: "Do" };
 /** What the owner does about it, by her most pressing ask: one line, the buttons under it do it. */
@@ -344,12 +332,6 @@ export function WaitingPane({
                   {label}
                 </Button>
               ))}
-            {pressable && (
-              <Button variant="outline" onClick={() => void makeTask(row.t!)}>
-                <ListTodo />
-                Make it a task
-              </Button>
-            )}
             <AskButton row={row} detail={detail} primary={false} />
           </>
         )}

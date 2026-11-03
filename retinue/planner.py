@@ -850,7 +850,12 @@ class Planner:
             return await self.plan(now, _day(data.get("day")) if data.get("day") else None,
                                    days=7 if data.get("days") == 7 else 1)
         if action == "place":
-            return await self.plan(now, _day(data.get("day")), only=str(data.get("task") or ""))
+            task = str(data.get("task") or "")
+            if not task:  # «Plan» on a person's row or a reminder: its task first, then laid
+                task = await self.tasks.make(str(data.get("t") or ""), str(data.get("ref") or ""), now) or ""
+                if not task:
+                    return "Not planned: that row is not in the list any more. Look again."
+            return await self.plan(now, _day(data.get("day")), only=task)
         if action == "undo":
             return await self.undo(str(data.get("plan") or ""), now)
         if action == "busy":

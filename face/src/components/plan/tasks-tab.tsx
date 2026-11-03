@@ -2,10 +2,13 @@
 // day yet («To plan»), what has one («Planned») — by when, or by goal. A row opens its record in the drawer.
 import { useMemo, useState } from "react";
 import { useEditing } from "@/components/views/edit";
-import { Bell, Mail, MessageCircle } from "@/components/icons";
-import { dayOf, dayWords, hm, named, nextBlock, type Plan, type Task, windowDay } from "@/lib/plan";
+import { Ban, Bell, Clock, Mail, MessageCircle } from "@/components/icons";
+import { Dialog } from "@/components/ui/dialog";
+import { pressRow, WaitingPane } from "@/components/waiting-sheet";
+import { useFeed, waited } from "@/lib/feed";
+import { dayOf, dayWords, hm, named, nextBlock, type Plan, type PlanAsk, type Task, windowDay } from "@/lib/plan";
 import { cn, LIST } from "@/lib/utils";
-import { MakeTask, PlanMenu, TaskCheck, TaskMeta, useAddTask } from "./shared";
+import { PlanMenu, Popover, RowPlan, TaskCheck, TaskMeta, useAddTask } from "./shared";
 
 const REMINDER_DAYS = 7;
 
@@ -76,24 +79,78 @@ function AddTask() {
   );
 }
 
-export function NeedsYou({ plan, today, reload, compact = false }: { plan: Plan; today: string; reload: () => void; compact?: boolean }) {
+/** A person's row: «Done» closes it, «Plan» makes its task and lays it, «Tomorrow» and «Not a task» are under «⋯»;
+ * its title opens what it is about — her words, the sender, the thread — in a sheet. */
+function AskRow({ plan, ask, today }: { plan: Plan; ask: PlanAsk; today: string }) {
+  const feed = useFeed();
+  const [open, setOpen] = useState(false);
+  const row = feed?.groups.flatMap((g) => g.rows).find((r) => r.t === ask.t) ?? null;
+  const t = ask.t as string;
+  return (
+    <li className="flex min-h-11 items-center gap-3 px-3 py-2">
+      <button
+        type="button"
+        aria-label={`Done: ${ask.title}`}
+        onClick={() => void pressRow(t, "done", "Done.")}
+        className="hit inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border border-muted-foreground/50 transition-colors hover:border-foreground"
+      />
+      <button
+        type="button"
+        disabled={!row}
+        onClick={() => setOpen(true)}
+        className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left disabled:cursor-default"
+      >
+        <span className="max-w-full text-sm break-words">{ask.title}</span>
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          {ask.kind === "chat" ? <MessageCircle className="size-3.5" /> : <Mail className="size-3.5" />}
+          {ask.who}
+          <span aria-hidden>·</span>
+          <span className="tabular-nums">waits {waited(ask.since, plan.now)}</span>
+        </span>
+      </button>
+      <RowPlan plan={plan} by={{ t }} what={ask.title} today={today} />
+      <Popover label={`More: ${ask.title}`} button="⋯">
+        {(close) => (
+          <div className="flex flex-col text-[13px]">
+            {([["later", "Tomorrow", Clock], ["dismissed", "Not a task", Ban]] as const).map(([action, label, Icon]) => (
+              <button
+                key={action}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  close();
+                  void pressRow(t, action, `${label}.`);
+                }}
+                className="flex h-8 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10"
+              >
+                <Icon className="size-4 text-muted-foreground" />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </Popover>
+      {row && (
+        <Dialog open={open} onClose={() => setOpen(false)} title="From people" sheet side>
+          <div className="p-4">
+            <WaitingPane row={row} bot={feed?.bot ?? ""} now={plan.now} />
+          </div>
+        </Dialog>
+      )}
+    </li>
+  );
+}
+
+/** What people asked and the reminders of the week that no open task names yet: each becomes a task by «Plan». */
+export function FromPeople({ plan, today, compact = false }: { plan: Plan; today: string; compact?: boolean }) {
   const taken = named(plan);
   const asks = plan.asks.filter((a) => !taken.has(a.id) && a.t);
   const horizon = plan.now + REMINDER_DAYS * 86400;
   const reminders = plan.reminders.filter((r) => !taken.has(r.id) && r.at <= horizon);
   if (!asks.length && !reminders.length) return null;
   return (
-    <Section title="Needs you" count={asks.length + reminders.length} hint={compact ? undefined : "make a task of what to do"}>
-      {asks.map((a) => (
-        <li key={a.id} className={cn("flex min-h-11 items-center gap-3 px-3 py-2", compact && "flex-wrap")}>
-          {a.kind === "chat" ? <MessageCircle className="size-4 shrink-0 text-muted-foreground" /> : <Mail className="size-4 shrink-0 text-muted-foreground" />}
-          <span className="flex min-w-0 flex-1 flex-col">
-            <span className="text-sm break-words">{a.title}</span>
-            <span className="text-xs text-muted-foreground">{a.who}</span>
-          </span>
-          <MakeTask by={{ t: a.t as string }} what={a.title} onMade={reload} />
-        </li>
-      ))}
+    <Section title="From people" count={asks.length + reminders.length} hint={compact ? undefined : "plan it, or close it"}>
+      {asks.map((a) => <AskRow key={a.id} plan={plan} ask={a} today={today} />)}
       {reminders.map((r) => (
         <li key={r.id} className={cn("flex min-h-11 items-center gap-3 px-3 py-2", compact && "flex-wrap")}>
           <Bell className="size-4 shrink-0 text-muted-foreground" />
@@ -104,7 +161,7 @@ export function NeedsYou({ plan, today, reload, compact = false }: { plan: Plan;
               {r.repeat ? ` · ${r.repeat}` : ""}
             </span>
           </span>
-          <MakeTask by={{ ref: r.id }} what={r.title} onMade={reload} />
+          <RowPlan plan={plan} by={{ ref: r.id }} what={r.title} today={today} />
         </li>
       ))}
     </Section>
@@ -113,7 +170,7 @@ export function NeedsYou({ plan, today, reload, compact = false }: { plan: Plan;
 
 type Grouping = "when" | "goal";
 
-export function TasksTab({ plan, today, reload }: { plan: Plan; today: string; reload: () => void }) {
+export function TasksTab({ plan, today }: { plan: Plan; today: string }) {
   const [by, setBy] = useState<Grouping>("when");
   const open = useMemo(() => plan.tasks.rows.filter((t) => t.fields.state === "open"), [plan]);
   const unplanned = useMemo(
@@ -151,7 +208,7 @@ export function TasksTab({ plan, today, reload }: { plan: Plan; today: string; r
         </span>
       </div>
       <AddTask />
-      <NeedsYou plan={plan} today={today} reload={reload} />
+      <FromPeople plan={plan} today={today} />
       {by === "when" ? (
         <>
           {unplanned.length > 0 && (

@@ -125,9 +125,10 @@ def digest(core, now: float) -> list[dict]:
 
 
 def rows(core, now: float) -> dict[str, dict]:
-    """Every person's row the last ASKS_LOOK_DAYS knew, by its digest id: `{state, seqs, title, kind}` — `open` while
-    an item under it still asks, `later` while one waits out his «Tomorrow», `closed` once every one was closed by his
-    press or by what code saw him do, `expired` when they ran out. The ids are the digest's own (`_people`), so a task
+    """Every person's row the last ASKS_LOOK_DAYS knew, by its digest id: `{state, seqs, title, kind, how}` — `open`
+    while an item under it still asks, `later` while one waits out his «Tomorrow», `closed` once every one was closed
+    by his press or by what code saw him do, `expired` when they ran out; `how` a closed row's — `dismissed` when every
+    item closed by a press was «Not a task» and none by «Done» or an answer, else `done`. The ids are the digest's own (`_people`), so a task
     names its row by the id the app showed it under (`tasks`)."""
     if not core.mail:
         return {}
@@ -141,6 +142,10 @@ def rows(core, now: float) -> dict[str, dict]:
         row["seqs"].append(item["seq"])
         if rank[state] < rank[row["state"]]:
             row["state"] = state
+        if state == "closed":
+            row.setdefault("closes", set()).add("dismissed" if item.get("pressed") == "dismissed" else "done")
+    for row in out.values():
+        row["how"] = "dismissed" if row.pop("closes", set()) == {"dismissed"} else "done"
     return out
 
 

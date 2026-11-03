@@ -474,16 +474,17 @@ is not the owner saying it); sessions and the Mac add and set the same but `ask`
 title, state, ask and due; nobody but the owner deletes. A task has no time of its own: its pieces of time are
 [blocks](#blocks).
 
-**«Make it a task»** on a person's row of «Waiting for you», or on a reminder, is the owner's press in the app
-(`waiting-press`, action `task`): the router adds the task as `code:waiting`, titled with the row's own masked words, its
-`ask` the row's id (a reminder's: its day as `due`) — none when that row has an open task already. The reminder stays and
-fires as set.
+**«Plan»** on a person's row in Tasks' «From people», or on a reminder, is one press in the app — a plan press `place`
+with the row's `t` or the reminder's `ref`: the router adds the task as `code:waiting`, titled with the row's own masked
+words, its `ask` the row's id (a reminder's: its day as `due`) — or takes the open one that row has already — and lays it
+on that day. The reminder stays and fires as set.
 
 **A task and its row are kept in step by state** (`retinue/tasks.py`): at each look at the digest (every 30 s) the
 router reads the tasks that name a person's row and compares each pair with how it last left them (its kv
-`tasks.synced`). Whichever side moved carries the other — a task closed anywhere closes its row as «Done» would; a row
-closed by a press, an answer or a draft that went closes its task; either opened again («Undo») opens the other. At the
-first look at a pair, what is closed wins. Acting on what moved, not on what differs, lets «Undo» on either side stand. A
+`tasks.synced`). Whichever side moved carries the other — a task done anywhere closes its row as «Done» would, a task
+dropped as «Not a task» would; a row closed by «Done», an answer or a draft that went makes its task done, one closed by
+«Not a task» drops it; a row that ran out unmarked leaves its task as it is; either opened again («Undo») opens the
+other. At the first look at a pair, what is closed wins. Acting on what moved, not on what differs, lets «Undo» on either side stand. A
 reminder's task is its own: closing it leaves the reminder.
 
 Reminders that were tasks all along are made into tasks once, from the router's container: `python -m retinue.tasks

@@ -119,8 +119,7 @@ def main() -> None:
         bridge.counts = lambda now: counts(core, now)
         bridge.press_waiting = lambda token, action, now: press(core, token, action, now)
         bridge.detail_waiting = lambda ref, token, now: detail(core, ref, token, now)
-        tasks = Tasks(core)  # the tasks against their rows, «Make it a task», the busy window
-        bridge.task_waiting = tasks.press
+        tasks = Tasks(core)  # the tasks against their rows, a row's task for «Plan», the busy window
         bridge.cycle = tasks.cycle
         planner = Planner(core, tasks, Hours.parse(cfg.plan_hours, cfg.plan_zone or cfg.owner_tz))  # the day plan
         tasks.planner = core.planner = bridge.planner = planner

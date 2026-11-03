@@ -337,3 +337,42 @@ def test_a_task_with_no_later_than_is_laid_before_it_and_what_does_not_fit_is_sa
         assert task["fields"]["by"] == iso(msk(12, "18:00"))
         assert not (await planner.estimate("t3", homework["id"], None, "", msk(10, "17:05"), "Thursday"))[0]
     faced(tmp_path, run)
+
+
+def test_plan_on_a_person_s_row_makes_its_task_and_lays_it_in_one_press(tmp_path):
+    async def run(world):
+        world.clock.now = time.time()
+        planner, _ = await setup(world, tmp_path)
+        made: list[tuple] = []
+
+        async def make(token, ref, now):
+            made.append((token, ref))
+            return (await add(world, title="reply: is a transfer needed", ask="letter:0123456789abcdef"))["id"] \
+                if token == "a" * 32 else None
+        planner.tasks.make = make
+        said = await planner.press({"action": "place", "day": "2026-11-11", "t": "a" * 32, "at": msk(10, "17:00")},
+                                   msk(10, "17:00"))
+        assert said.startswith("Plan for Wed 11 Nov: 1 task"), said
+        [laid] = await blocks(world)
+        assert hm(laid["fields"]["start"]) == "10:00" and laid["fields"]["start"].startswith("2026-11-11")
+        said = await planner.press({"action": "place", "day": "2026-11-11", "t": "b" * 32, "at": msk(10, "17:00")},
+                                   msk(10, "17:00"))
+        assert said == "Not planned: that row is not in the list any more. Look again."
+        assert made == [("a" * 32, ""), ("b" * 32, "")]
+    faced(tmp_path, run)
+
+
+def test_a_place_press_names_a_task_a_person_s_row_or_a_reminder_and_nothing_else():
+    from retinue.plan import Refusal, clean_press
+    assert clean_press({"action": "place", "day": "2026-11-11", "task": "01AAAAAAAAAAAAAAAAAAAAAAAA", "t": "a" * 32}) == \
+        {"action": "place", "day": "2026-11-11", "task": "01AAAAAAAAAAAAAAAAAAAAAAAA"}, "a task wins: its row is not read"
+    assert clean_press({"action": "place", "day": "2026-11-11", "t": "a" * 32}) == \
+        {"action": "place", "day": "2026-11-11", "t": "a" * 32}
+    assert clean_press({"action": "place", "day": "2026-11-11", "ref": "reminder:7"})["ref"] == "reminder:7"
+    for bad in ({"action": "place", "day": "2026-11-11", "t": "nope"}, {"action": "place", "day": "2026-11-11"},
+                {"action": "place", "day": "2026-11-11", "ref": "letter:1"}):
+        try:
+            clean_press(bad)
+        except Refusal:
+            continue
+        raise AssertionError(bad)

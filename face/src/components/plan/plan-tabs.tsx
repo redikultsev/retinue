@@ -33,7 +33,7 @@ export function PlanTabs({ tab, plan, error, reload }: { tab: PlanTab; plan: Pla
   return (
     <Editor today={today} refresh={() => reload()} reload={reload}>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === "tasks" && <TasksTab plan={plan} today={today} reload={reload} />}
+        {tab === "tasks" && <TasksTab plan={plan} today={today} />}
         {tab === "plan" && (
           <Suspense fallback={<p className="px-4 py-6 text-sm text-muted-foreground md:px-6">Loading the grid…</p>}>
             <GridTab plan={plan} today={today} />

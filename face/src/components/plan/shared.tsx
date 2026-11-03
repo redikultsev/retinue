@@ -285,30 +285,34 @@ export function fromLocalInput(value: string, tz: string): number | null {
   return m?.[1] ? at(m[1], Number(m[2]) * 60 + Number(m[3]), tz) : null;
 }
 
-/** «Make it a task» on an ask or a reminder: the Router makes it within a few seconds, and the list has it. */
-export function MakeTask({ by, what, onMade }: { by: { t: string } | { ref: string }; what: string; onMade: () => void }) {
-  const [busy, setBusy] = useState(false);
+/** «Plan» on a person's row or a reminder: a day of the next week — the Router makes its task and puts it at the
+ * first free time of that day's window. One press: no task is made first by hand. */
+export function RowPlan({ plan, by, what, today }: { plan: Plan; by: { t: string } | { ref: string }; what: string; today: string }) {
+  const first = planDay(plan.now, plan.plan.window);
+  const days = Array.from({ length: PLAN_DAYS }, (_, n) => addDays(first, n));
   return (
-    <button
-      type="button"
-      disabled={busy}
-      aria-label={`Make it a task: ${what}`}
-      onClick={() => {
-        setBusy(true);
-        planApi.task(by).then(
-          () => {
-            toast("Making it a task…");
-            setTimeout(onMade, 4000);
-          },
-          (e: unknown) => {
-            setBusy(false);
-            toast(e instanceof Error ? e.message : "Not made.", "error", 6000);
-          },
-        );
-      }}
-      className="inline-flex h-8 shrink-0 items-center rounded-md border bg-background px-2.5 text-[13px] transition-colors hover:bg-accent disabled:opacity-50 max-md:h-11"
-    >
-      {busy ? "Making…" : "Make it a task"}
-    </button>
+    <Popover label={`Plan: ${what}`} button="Plan">
+      {(close) => (
+        <div className="flex flex-col gap-2 text-[13px]">
+          <p className="px-2 text-xs text-muted-foreground">Becomes a task at the first free time of the day</p>
+          <div className="flex flex-col">
+            {days.map((day) => (
+              <button
+                key={day}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  close();
+                  void press({ action: "place", day, ...by }, `Planning it for ${dayWords(day, today)}…`);
+                }}
+                className="flex h-8 items-center rounded-md px-2 text-left transition-colors hover:bg-accent max-md:h-10"
+              >
+                {dayWords(day, today)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </Popover>
   );
 }

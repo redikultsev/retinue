@@ -207,7 +207,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/files/{id}/view` | a handed-over HTML file, for the app's sandboxed frame — see below |
 | `GET /api/files/{id}/meta` | `{file}` — one file's row, for the page `/f/<id>` that Telegram's “Open” opens |
 | `GET /api/feed` | `{schema, count, groups: [{action, title, rows}], bot, assistant_at, deadlines, chips, closed_today, expired_week}` — “Waiting for you”, “Deadlines” and the status chips, [below](#the-feed) |
-| `POST /api/waiting/press {t, action: done\|dismissed\|later\|open\|task}` · `{ref, action: task}` | `{ok}`: “Done”, “Not a task”, “Tomorrow”, “Undo” or “Make it a task” on a row of “From the assistant”, by its token — or “Make it a task” on a reminder of the digest, by its id (410 when it is not in the digest any more); the router applies it ([platform.md](platform.md#the-assistants-digest)) |
+| `POST /api/waiting/press {t, action: done\|dismissed\|later\|open}` | `{ok}`: “Done”, “Not a task”, “Tomorrow” or “Undo” on a person's row, by its token; the router applies it ([platform.md](platform.md#the-assistants-digest)). “Plan” on a row is a plan press: `place` with its `t`, or a reminder's `ref` |
 | `GET /api/plan` | `{schema, now, tz, zone, tasks: {rows, rev, space, goals, missing, blocks}, calendar: {events, at, failed, stale}, asks, reminders, plan: {at, plans, recent, holds, said}}` — what [Tasks and Plan](#tasks-and-plan) show: the open tasks, the blocks planned or passed from yesterday to two weeks on (and the closed tasks they name), the busy window and the day plan's state the Router last pushed, the digest's person's rows and reminders |
 | `POST /api/plan/press {action, day?, task?, plan?, block?, minutes?}` | `{ok}`: «Plan my day» (`plan`), «Plan» to a day (`place`), «Undo» (`undo`), «Busy now» (`busy`, 30/60/120), its × (`free`), × on a block (`remove`) — a `plan-press` note for the Router ([collections.md](collections.md#blocks)) |
 | `POST /api/waiting/detail {ref, t?}` | `{detail}`: [a row's pane](#her-rows-pane) of “From the assistant” — a person's row by its id and token, a draft by its id — asked of the router and relayed, never kept; 410 when the row is not in the digest any more or the router no longer knows it, 504 when the router said nothing within 12 s, 502 when what it said was off the contract, 429 while 8 already wait |
@@ -427,7 +427,8 @@ place. Its top line says where it is from and how long it waits, with «Open the
   buttons;
 - **a session waiting for your message, or a turn to read**: its last summary, and a box whose text goes into it as
   your next message;
-- **her row**: [what it asks](#her-rows-pane), «Done» first, «Make it a task» among the rest;
+- **her draft**: [what it answers and its text](#her-rows-pane), «Send in Telegram»; a person's row is not in this
+  list — it is Tasks' «From people»;
 - **“Working”**: «Now» — its last line — and the lines before it, «Open the session», «Stop»;
 - **“Done since you looked”**: its last summary and a reply box;
 - **a date**: its day, and the Record itself under it — the same view as in Spaces, with «Discuss».
@@ -442,8 +443,10 @@ once a minute and at once when `tasks` changes; every write is the owner's write
 its «Undo» in the toast, its question when the record moved on —, and a task's title opens its record in the drawer.
 Days and times are the owner's zone's (the platform's, as the Router last told it).
 
-- **Tasks**: «By when» or «By goal»; a box that adds a task by its title; **Needs you** — a person's ask the digest
-  carries, or a reminder of the next seven days, that no open task names yet, each with «Make it a task»; **To plan** —
+- **Tasks**: «By when» or «By goal»; a box that adds a task by its title; **From people** — a person's ask the digest
+  carries, or a reminder of the next seven days, that no open task names yet: the circle is «Done», «Plan» a day of
+  the week (the Router makes its task and lays it, one press), «⋯» «Tomorrow» and «Not a task»; its title opens what it
+  is about — her words, the sender, «Open in Gmail» — in a sheet; **To plan** —
   the open tasks with no block ahead, the due soonest first; **Planned** — those with one, the soonest first; **Done
   today**. A row: the circle that closes it (or opens it again), its title, its goal, how long, by when — its «no later than» with
   the time if it has one, red once passed —, «short 1 h» in red while a plan says that much does not fit before the

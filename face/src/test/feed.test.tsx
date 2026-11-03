@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Inbox } from "@/components/inbox";
 import { Toaster } from "@/components/toaster";
+import { WaitingPane } from "@/components/waiting-sheet";
 import { ApiError, api } from "@/lib/api";
 import { DEBOUNCE_MS, type Feed, type FeedRow, FeedSource, feedSource, herLine, POLL_MS, PRESSED_HIDE_S, type WaitingDetail, waited } from "@/lib/feed";
 import { live } from "@/lib/live";
@@ -168,6 +169,7 @@ describe("Her row", () => {
     groups: [{ action: "assistant", title: "From the assistant", rows }],
     ...over,
   });
+  const pane = (r: FeedRow) => <WaitingPane row={r} bot="" now={NOW} />;
   const letter = row({ key: "w", action: "assistant", source: "letter", session: null, track: null, title: "Acme Hosting", essence: "pay: the invoice ‹number›", ref: "letter:1", t: T, sphere_title: "Home" });
   const detail: WaitingDetail = {
     kind: "letter",
@@ -188,13 +190,12 @@ describe("Her row", () => {
     const unhide = vi.spyOn(feedSource, "unhide");
     mount(
       <>
-        {inbox(hers([letter]))}
+        {pane(letter)}
         <Toaster />
       </>,
     );
-    fireEvent.click(await rowNamed(/Acme Hosting/));
-    const pane = await screen.findByRole("region", { name: "Acme Hosting" });
-    fireEvent.click(within(pane).getByRole("button", { name: "Done" }));
+    const open = await screen.findByRole("region", { name: "Acme Hosting" });
+    fireEvent.click(within(open).getByRole("button", { name: "Done" }));
     await waitFor(() => expect(press).toHaveBeenCalledWith(T, "done"));
     expect(hide).toHaveBeenCalledWith(T);
     const toast = await screen.findByRole("status");
@@ -202,6 +203,13 @@ describe("Her row", () => {
     fireEvent.click(within(toast).getByRole("button", { name: "Undo" }));
     await waitFor(() => expect(press).toHaveBeenLastCalledWith(T, "open"));
     await waitFor(() => expect(unhide).toHaveBeenCalledWith(T));
+  });
+
+  it("leaves a person's row to Tasks: the queue shows the draft, not the ask", async () => {
+    const draft = row({ key: "d", action: "assistant", source: "draft", session: null, track: null, title: "Anna Petrova", essence: "a reply draft waits for «Send»", ref: "draft:0000000c" });
+    mount(inbox(hers([letter, draft])));
+    expect(await rowNamed(/Anna Petrova/)).toBeTruthy();
+    expect(screen.queryAllByTestId("inbox-row").map((r) => r.textContent).join()).not.toContain("Acme Hosting");
   });
 
   it("counts what closed and what ran out under the list", async () => {
@@ -212,30 +220,28 @@ describe("Her row", () => {
   it("opens with what the list says, then fills in what only the router has, and goes where the letter is", async () => {
     let answer: (value: { detail: WaitingDetail }) => void = () => undefined;
     const load = vi.spyOn(api, "waitingDetail").mockReturnValue(new Promise((done) => (answer = done)));
-    mount(inbox(hers([letter])));
-    fireEvent.click(await rowNamed(/Acme Hosting/));
-    const pane = await screen.findByRole("region", { name: "Acme Hosting" });
+    mount(pane(letter));
+    const open = await screen.findByRole("region", { name: "Acme Hosting" });
     expect(load).toHaveBeenCalledWith("letter:1", T);
-    expect(within(pane).getByText("the invoice ‹number›")).toBeTruthy();
-    expect(within(pane).getByRole("status").textContent).toBe("Asking the assistant…");
+    expect(within(open).getByText("the invoice ‹number›")).toBeTruthy();
+    expect(within(open).getByRole("status").textContent).toBe("Asking the assistant…");
     answer({ detail });
-    const gmail = await within(pane).findByRole("link", { name: /Open in Gmail/ });
+    const gmail = await within(open).findByRole("link", { name: /Open in Gmail/ });
     expect(gmail.getAttribute("href")).toBe(GMAIL);
     expect(gmail.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(within(pane).getByText("What they ask (3)")).toBeTruthy();
-    expect(within(pane).getByText(/The invoice for May\./).textContent).toBe("The invoice for May.\nBy Friday.");
-    expect(within(pane).getByText("And 1 older — in Telegram.")).toBeTruthy();
-    expect(within(pane).getByText(/to me@example.com/)).toBeTruthy();
+    expect(within(open).getByText("What they ask (3)")).toBeTruthy();
+    expect(within(open).getByText(/The invoice for May\./).textContent).toBe("The invoice for May.\nBy Friday.");
+    expect(within(open).getByText("And 1 older — in Telegram.")).toBeTruthy();
+    expect(within(open).getByText(/to me@example.com/)).toBeTruthy();
   });
 
   it("asks the assistant in a session of its own: the row's context waits in a new task, in the row's sphere", async () => {
     vi.spyOn(api, "waitingDetail").mockResolvedValue({ detail });
     sessionStorage.clear();
-    mount(inbox(hers([{ ...letter, sphere: "home" }])));
-    fireEvent.click(await rowNamed(/Acme Hosting/));
-    const pane = await screen.findByRole("region", { name: "Acme Hosting" });
-    await within(pane).findByRole("link", { name: /Open in Gmail/ });
-    fireEvent.click(within(pane).getByRole("button", { name: "Ask the assistant" }));
+    mount(pane({ ...letter, sphere: "home" }));
+    const open = await screen.findByRole("region", { name: "Acme Hosting" });
+    await within(open).findByRole("link", { name: /Open in Gmail/ });
+    fireEvent.click(within(open).getByRole("button", { name: "Ask the assistant" }));
     expect(await screen.findByText("new task")).toBeTruthy();
     expect(sessionStorage.getItem("retinue-new-draft")).toBe(
       "About a letter from Acme Hosting in «Waiting for you»:\n> pay: the invoice ‹number›\n> The invoice for May. By Friday.\n" +
@@ -247,8 +253,7 @@ describe("Her row", () => {
   it("puts it off from the pane too", async () => {
     vi.spyOn(api, "waitingDetail").mockResolvedValue({ detail });
     const press = vi.spyOn(api, "waitingPress").mockResolvedValue({ ok: true });
-    mount(inbox(hers([letter])));
-    fireEvent.click(await rowNamed(/Acme Hosting/));
+    mount(pane(letter));
     fireEvent.click(await screen.findByRole("button", { name: "Tomorrow" }));
     await waitFor(() => expect(press).toHaveBeenCalledWith(T, "later"));
   });
@@ -256,11 +261,10 @@ describe("Her row", () => {
   it("draws no link of a shape the router does not make", async () => {
     const odd = { ...detail, open: { url: "javascript:alert(1)", label: "Open in Gmail" }, asks: [{ ...detail.asks[0]!, open: { url: "https://evil.example", label: "Open the chat" } }] };
     vi.spyOn(api, "waitingDetail").mockResolvedValue({ detail: odd as WaitingDetail });
-    mount(inbox(hers([letter])));
-    fireEvent.click(await rowNamed(/Acme Hosting/));
-    const pane = await screen.findByRole("region", { name: "Acme Hosting" });
-    await within(pane).findByText(/The invoice for May/);
-    expect(within(pane).queryByRole("link", { name: /Gmail|chat/ })).toBeNull();
+    mount(pane(letter));
+    const open = await screen.findByRole("region", { name: "Acme Hosting" });
+    await within(open).findByText(/The invoice for May/);
+    expect(within(open).queryByRole("link", { name: /Gmail|chat/ })).toBeNull();
   });
 
   it("says a silent router plainly and asks again on «Try again»; an outdated row refreshes the list", async () => {
@@ -269,14 +273,13 @@ describe("Her row", () => {
       .mockRejectedValueOnce(new ApiError(504, "The assistant's side did not answer in time."))
       .mockRejectedValueOnce(new ApiError(410, "The assistant no longer has this row."));
     const refresh = vi.spyOn(feedSource, "refresh").mockResolvedValue();
-    mount(inbox(hers([letter])));
-    fireEvent.click(await rowNamed(/Acme Hosting/));
-    const pane = await screen.findByRole("region", { name: "Acme Hosting" });
-    expect((await within(pane).findByRole("alert")).textContent).toContain("did not answer");
-    fireEvent.click(within(pane).getByRole("button", { name: "Try again" }));
+    mount(pane(letter));
+    const open = await screen.findByRole("region", { name: "Acme Hosting" });
+    expect((await within(open).findByRole("alert")).textContent).toContain("did not answer");
+    fireEvent.click(within(open).getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
-    expect((await within(pane).findByText(/out of date/)).textContent).toContain("refreshed");
-    expect(within(pane).queryByRole("button", { name: "Done" })).toBeNull();
+    expect((await within(open).findByText(/out of date/)).textContent).toContain("refreshed");
+    expect(within(open).queryByRole("button", { name: "Done" })).toBeNull();
     expect(refresh).toHaveBeenCalled();
   });
 
@@ -288,11 +291,11 @@ describe("Her row", () => {
     const draft = row({ key: "d", action: "assistant", source: "draft", session: null, track: null, title: "Anna Petrova", essence: "a reply draft waits for «Send»", ref: "draft:0000000c" });
     mount(inbox(hers([draft])));
     fireEvent.click(await rowNamed(/Anna Petrova/));
-    const pane = await screen.findByRole("region", { name: "Anna Petrova" });
+    const open = await screen.findByRole("region", { name: "Anna Petrova" });
     expect(load).toHaveBeenCalledWith("draft:0000000c", undefined);
-    expect((await within(pane).findByText(/Hello Anna/)).textContent).toBe("Hello Anna,\n\nYes, Friday.");
-    expect(within(pane).getAllByRole("link").map((a) => a.textContent)).toEqual(["Send in Telegram", "Open the thread"]);
-    expect(within(pane).queryByRole("button", { name: "Done" })).toBeNull();
+    expect((await within(open).findByText(/Hello Anna/)).textContent).toBe("Hello Anna,\n\nYes, Friday.");
+    expect(within(open).getAllByRole("link").map((a) => a.textContent)).toEqual(["Send in Telegram", "Open the thread"]);
+    expect(within(open).queryByRole("button", { name: "Done" })).toBeNull();
   });
 
   it("opens a base's date with its Record in the pane, asking the router nothing", async () => {

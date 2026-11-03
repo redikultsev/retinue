@@ -99,7 +99,7 @@ def test_a_moment_is_kept_in_utc_and_matched_between_two(tmp_path):
     faced(tmp_path, run)
 
 
-def test_make_it_a_task_names_its_row_and_a_second_press_makes_none_more(tmp_path):
+def test_a_row_s_task_names_its_row_and_a_second_plan_makes_none_more(tmp_path):
     async def run(world):
         world.clock.now = time.time()
         await define(world)
@@ -107,12 +107,13 @@ def test_make_it_a_task_names_its_row_and_a_second_press_makes_none_more(tmp_pat
         put(core.mail.store, asking("pay", ts=world.clock.now - 3600, at=world.clock.now - 3600))
         [row] = waiting.digest(core, world.clock.now)
         side = Tasks(core)
-        assert await side.press(row["t"], "", world.clock.now)
-        assert await side.press(row["t"], "", world.clock.now + 120), "known — its task is there already"
+        made = await side.make(row["t"], "", world.clock.now)
+        assert made and await side.make(row["t"], "", world.clock.now + 120) == made, "its task is there already"
         [task] = await tasks_of(world)
+        assert task["id"] == made
         assert task["fields"]["ask"] == row["id"] and task["fields"]["state"] == "open"
         assert task["fields"]["title"] == row["title"], "the row's own masked words"
-        assert not await side.press("0" * 32, "", world.clock.now), "a token the Router never showed"
+        assert await side.make("0" * 32, "", world.clock.now) is None, "a token the Router never showed"
         [change] = await world.platform.collections.history("tasks", task["id"])
         assert (change["actor"], change["via"]) == (RULE, "code")
     faced(tmp_path, run)
@@ -126,7 +127,7 @@ def test_closing_either_closes_the_other_and_undo_on_either_stands(tmp_path):
         put(core.mail.store, asking("reply", ts=now - 3600, at=now - 3600))
         [row] = waiting.digest(core, now)
         side = Tasks(core)
-        await side.press(row["t"], "", now)
+        await side.make(row["t"], "", now)
         assert await side.reconcile(now) == 0, "both open: nothing to carry"
         [task] = await tasks_of(world)
         await world.platform.collections.apply(SCREEN, "tasks", [
@@ -144,6 +145,12 @@ def test_closing_either_closes_the_other_and_undo_on_either_stands(tmp_path):
         assert await side.reconcile(now + 180) == 1
         [task] = await tasks_of(world)
         assert task["fields"]["state"] == "done", "«Done» on the row closes the task"
+
+        assert waiting.press(core, row["t"], "open", now + 190) and await side.reconcile(now + 200) == 1
+        assert waiting.press(core, row["t"], "dismissed", now + 210)
+        assert await side.reconcile(now + 240) == 1
+        [task] = await tasks_of(world)
+        assert task["fields"]["state"] == "dropped", "«Not a task» on the row drops the task"
         changes = await world.owner("collections/changes", {"since": 0, "exclude_actors": ["code:plan",
                                                                                            "code:calsync"]})
         assert {c["actor"] for c in changes["changes"]} == {RULE}, "the evening list names the rule's changes"
@@ -168,7 +175,7 @@ def test_the_first_look_lets_what_is_closed_win(tmp_path):
         assert await Tasks(core).reconcile(now + 30) == 2
         assert core.mail.store.asks(now + 30) == [], "the done task closed its row"
         assert {r["fields"]["title"]: r["fields"]["state"] for r in await tasks_of(world)} == \
-            {"decide": "done", "pay": "done"}, "the row he closed closed its task"
+            {"decide": "done", "pay": "dropped"}, "the row he said is not a task dropped its task"
     faced(tmp_path, run)
 
 
@@ -186,11 +193,11 @@ def test_a_reminder_is_in_the_digest_off_the_queue_and_becomes_a_task_it_outlive
         items, _ = feed.clean({"items": [reminder]}, now)
         world.platform.feed.keep(items, "", now)
         assert world.platform.feed.rows(now + 3 * 86400) == [], "a reminder is no queue's"
-        assert await Tasks(core).press("", reminder["id"], now)
+        assert await Tasks(core).make("", reminder["id"], now)
         [task] = await tasks_of(world)
         assert task["fields"]["ask"] == reminder["id"] and task["fields"]["due"] == reminder["when"]
         assert core.jobs.get(int(reminder["id"].split(":")[1])).status == "active", "the reminder stays"
-        assert not await Tasks(core).press("", "reminder:999", now)
+        assert await Tasks(core).make("", "reminder:999", now) is None
         with pytest.raises(feed.Refused):
             feed.clean({"items": [{**reminder, "id": "letter:1234"}]}, now)
     faced(tmp_path, run)
@@ -253,3 +260,32 @@ def test_she_closes_a_task_only_by_an_add_or_set_that_says_so():
     assert _closes([{"op": "add", "fields": {"title": "x", "state": "dropped"}}])
     assert not _closes([{"op": "set", "id": "x", "version": 1, "fields": {"title": "done"}}])
     assert not _closes("done") and not _closes([{"op": "delete", "id": "x", "version": 1}])
+
+
+def test_a_task_dropped_says_not_a_task_to_its_row_and_a_row_that_ran_out_leaves_its_task(tmp_path):
+    async def run(world):
+        now = world.clock.now = time.time()
+        await define(world)
+        core = router(world, tmp_path)
+        put(core.mail.store, asking("reply", ts=now - 3600, at=now - 3600))
+        [row] = waiting.digest(core, now)
+        side = Tasks(core)
+        await side.make(row["t"], "", now)
+        await side.reconcile(now)
+        [task] = await tasks_of(world)
+        await world.platform.collections.apply(SCREEN, "tasks", [
+            {"op": "set", "id": task["id"], "version": task["version"], "fields": {"state": "dropped"}}], now)
+        assert await side.reconcile(now + 30) == 1
+        [found] = waiting.rows(core, now + 30).values()
+        assert (found["state"], found["how"]) == ("closed", "dismissed"), "dropped is «Not a task» on the row"
+
+        waiting.press(core, row["t"], "open", now + 60)
+        await side.reconcile(now + 90)
+        [task] = await tasks_of(world)
+        assert task["fields"]["state"] == "open"
+        later = now + 10 * 86400  # every ask under the row ran out unmarked
+        assert waiting.rows(core, later)[row["id"]]["state"] == "expired"
+        assert await side.reconcile(later) == 0
+        [task] = await tasks_of(world)
+        assert task["fields"]["state"] == "open", "a row that ran out is no word of his: the task stays"
+    faced(tmp_path, run)

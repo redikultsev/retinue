@@ -628,6 +628,7 @@ class MailStore:
         mine = None  # his own letters, read once when one is needed
         for row in rows:
             item, (action, until, pressed) = self._item(row[:-3]), row[-3:]
+            item["pressed"] = action  # «Done» or «Not a task» behind a `closed`: the row's task follows which
             need = item["card"].get("needs_now")
             due = float(item["card"].get("judged") or item["at"]) + DUE_DAYS.get(need, ASK_DAYS) * 86400
             if action:

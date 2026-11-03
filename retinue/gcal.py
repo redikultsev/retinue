@@ -19,11 +19,11 @@ deleted out, so a block it lacks is asked about by its own write — the writer 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import time
 
+from .coderules import CALSYNC, Records, mark
 from .core import Button
 from .courier import line
 from .mail import Unavailable
@@ -34,7 +34,6 @@ log = logging.getLogger(__name__)
 KEY = "gcal.sync"       # the Router's kv: {calendar, token, events: {block: {etag, start, minutes, title, busy}},
                         # dropped: {block: start} — events taken off whose block may come back, gone: {block: start}
                         # — passed blocks he deleted in Google, told: {dead?, gone?}}
-RULE = "code:calsync"   # the Router's writer of his moves in Google onto the blocks
 BLOCKS, TASKS = "blocks", "tasks"
 SYNC_S = 60
 SPAN_DAYS = 30          # a block this far ahead gets its event
@@ -42,7 +41,6 @@ SEEN_DAYS = 400         # and one that has an event is followed this far — his
 BACK_S = 86400          # blocks begun this long ago are followed; older ones are left in Google as they are
 PUTS = 40               # events written in one look at most: a first sync of a full month goes over a few looks
 BUDGET_S = 50           # and no longer than this: the next look goes on
-PAGES = 20              # pages of 200 read at most: a read cut short takes nothing off Google
 MINUTES_MAX = 24 * 60
 CALL_S = 30
 STOP = ("invalid_grant", "calendar deleted", "its state is unreadable", "no calendar key")
@@ -65,6 +63,8 @@ class Writer(Neighbour):
 class Gcal:
     def __init__(self, core, planner, writer: Writer, link: str = "") -> None:
         self.core, self.planner, self.writer, self.link = core, planner, writer, link
+        self._blocks = Records(core.platform, CALSYNC, BLOCKS)  # his moves in Google onto the blocks
+        self._tasks = Records(core.platform, CALSYNC, TASKS)
         self._at = 0.0
         self._task: asyncio.Task | None = None
         self.lock = asyncio.Lock()  # a sync and «Make it again» never interleave
@@ -166,7 +166,7 @@ class Gcal:
         self._calendar(state, str(answer.get("calendar") or ""))
         state["told"].pop("dead", None)
         known: dict[str, dict] = state["events"]
-        blocks = await self._blocks(now)
+        blocks = await self._read(now)
         if blocks is None:
             return
         rows, complete = blocks
@@ -228,34 +228,18 @@ class Gcal:
         from .planner import moment
         return moment((row.get("fields") or {}).get("start")) or 0.0
 
-    async def _read(self, collection: str, filter: list[dict], fields: list[str] | None = None
-                    ) -> tuple[list[dict], bool] | None:
-        """Up to PAGES pages, and whether that was all of it. None: unread."""
-        rows, after = [], None
-        for page in range(PAGES):
-            arguments = {"collection": collection, "filter": filter, **({"fields": fields} if fields else {}),
-                         **({"after": after} if after else {})}
-            data = await self.planner._call("query", arguments, f"q/{collection}/gcal/{page}/{time.time_ns()}")
-            answer = data.get("answer") if data.get("ok") else None
-            if not isinstance(answer, dict):
-                log.warning("%s not read: %s", collection, line(str(data.get("text") or "no answer"), 300))
-                return None
-            rows += [r for r in answer.get("rows") or [] if isinstance(r, dict)]
-            if not (after := answer.get("next")):
-                return rows, True
-        return rows, False
-
-    async def _blocks(self, now: float) -> tuple[dict[str, dict], bool] | None:
+    async def _read(self, now: float) -> tuple[dict[str, dict], bool] | None:
+        """The blocks it follows, each with its task's title, and whether that was all of them. None: unread."""
         from .planner import iso
-        read = await self._read(BLOCKS, [{"field": "state", "op": "in", "value": ["planned", "passed"]},
+        read = await self._blocks.query([{"field": "state", "op": "in", "value": ["planned", "passed"]},
                                          {"field": "start", "op": "between",
                                           "value": [iso(now - BACK_S), iso(now + SEEN_DAYS * 86400)]}])
         # The open tasks' titles: a closed task's block keeps the title it was written with (`_push`).
-        tasks = await self._read(TASKS, [{"field": "state", "op": "eq", "value": "open"}], ["title"])
+        tasks = await self._tasks.query([{"field": "state", "op": "eq", "value": "open"}], ["title"])
         if read is None or tasks is None:
             return None
-        titles = {t["id"]: str(t["fields"].get("title") or "") for t in tasks[0]}
-        return {r["id"]: {**r, "title": titles.get(r["fields"].get("task"), "")} for r in read[0]}, read[1]
+        titles = {t["id"]: str(t["fields"].get("title") or "") for t in tasks}
+        return {r["id"]: {**r, "title": titles.get(r["fields"].get("task"), "")} for r in read}, read.complete
 
     @staticmethod
     def _carry(rows: dict[str, dict], moved: dict[str, tuple[str, int]], removed: set[str]) -> list[dict]:
@@ -285,15 +269,7 @@ class Gcal:
     async def _apply(self, ops: list[dict]) -> dict | None:
         """The writes as `code:calsync`, all or none; the idem is the writes' own, so a retry of the same is the
         same call and different writes are never refused as a repeat."""
-        idem = "gcal:" + hashlib.sha256(json.dumps(ops, sort_keys=True).encode()).hexdigest()[:40]
-        body = {"actor": RULE, "via": "code", "foreign": [], "call": idem,
-                "arguments": {"collection": BLOCKS, "ops": ops, "idem": idem}}
-        data = await self.core.platform("collections/apply", body, CALL_S)
-        if not data.get("ok"):
-            log.warning("his calendar's changes not written to the blocks: %s",
-                        line(str(data.get("text") or "no answer"), 300))
-            return None
-        return data.get("answer") or {}
+        return await self._blocks.apply(ops, "gcal:" + mark(ops, 40))
 
     async def _push(self, state: dict, rows: dict[str, dict], complete: bool, now: float) -> list[dict]:
         """Each block's event as the block is now, each write kept as it is made; returns the writes of the blocks

@@ -34,12 +34,12 @@ import secrets
 from datetime import date, datetime, timedelta, timezone
 
 from . import plan_layout as L
+from .coderules import CALL_S, PLAN, Records, mark
 from .courier import line
 
 log = logging.getLogger(__name__)
 
 TASKS, BLOCKS = "tasks", "blocks"
-RULE = "code:plan"
 PLANS_KEY = "plan.plans"    # the Router's kv: by plan id — {id, by, at, windows, blocks: {id: {version, before, day, end}},
                             # left: {day: [{task, title, why}]}, pending?, failed?, undone?}
 HOLDS_KEY = "plan.holds"    # the owner's holds: [{from, to, label}]
@@ -57,7 +57,6 @@ HOLD_AHEAD_S = 14 * 86400   # a hold she sets on his word starts at most this fa
 HOLD_BACK_S = 15 * 60       # and at the earliest this long ago («I went for lunch ten minutes ago»)
 OFF_DAYS = 7                # «Not working today» moves the day's blocks into the next this many windows
 HELD_S = 36 * 3600          # an ended hold is kept this long: longer than any window, so its meal stays eaten
-CALL_S = 15
 PAGE = 200
 BUSY_MINUTES = (30, 60, 120)
 
@@ -93,6 +92,9 @@ def _day_hm(ts: float, tz: str) -> str:
 class Planner:
     def __init__(self, core, tasks, hours: L.Hours = L.HOURS) -> None:
         self.core, self.tasks = core, tasks
+        self._blocks = Records(core.platform, PLAN, BLOCKS)  # the blocks it lays, as `code:plan`
+        self._tasks = Records(core.platform, PLAN, TASKS)    # the tasks it reads
+        self._hers = Records(core.platform, "assistant", TASKS, via="assistant")  # her estimates, on his word
         self.hours = L.Hours.of(self._load(HOURS_KEY, {})) or hours  # `hours`: the day until he sets his own
         kept = [a for a in map(L.Activity.of, self._load(ACTIVITIES_KEY, [])) if a]
         self.activities = tuple(kept) if self.core.store.get(ACTIVITIES_KEY) is not None else L.ACTIVITIES
@@ -101,37 +103,6 @@ class Planner:
         self.said: dict = {}        # what the last press came to, for the app: {at, text}
         self.turn_plans: dict[str, str] = {}  # her turn's id → the one plan its moves go under
         self._migrate()
-
-    # --- the platform ---------------------------------------------------------------------------------------------
-
-    async def _call(self, name: str, arguments: dict, call: str, actor: str = RULE) -> dict:
-        body = {"actor": actor, "via": "code" if actor == RULE else actor, "foreign": [], "call": call,
-                "arguments": arguments}
-        return await self.core.platform(f"collections/{name}", body, CALL_S)
-
-    async def _rows(self, collection: str, filter: list[dict], fields: list[str] | None = None) -> list[dict] | None:
-        rows, after = [], None
-        for page in range(5):
-            arguments = {"collection": collection, "filter": filter, **({"fields": fields} if fields else {}),
-                         **({"after": after} if after else {})}
-            data = await self._call("query", arguments, f"q/{collection}/{page}/{secrets.token_hex(4)}")
-            answer = data.get("answer") if data.get("ok") else None
-            if not isinstance(answer, dict):
-                log.warning("%s not read: %s", collection, line(str(data.get("text") or "no answer"), 300))
-                return None
-            rows += [r for r in answer.get("rows") or [] if isinstance(r, dict)]
-            if not (after := answer.get("next")):
-                return rows
-        return rows
-
-    async def _apply(self, ops: list[dict], idem: str) -> dict | None:
-        if not ops:
-            return {"records": [], "change_ids": []}
-        data = await self._call("apply", {"collection": BLOCKS, "ops": ops, "idem": idem}, idem)
-        if not data.get("ok"):
-            log.warning("blocks not written: %s", line(str(data.get("text") or "no answer"), 300))
-            return None
-        return data.get("answer") or {"records": [], "change_ids": []}
 
     # --- the state ------------------------------------------------------------------------------------------------
 
@@ -243,9 +214,9 @@ class Planner:
     async def _world(self, window: L.Window, now: float):
         """The open tasks, the window's blocks, the minutes each task's passed pieces counted and the minutes its
         pieces planned in other windows hold. None: unread."""
-        tasks = await self._rows(TASKS, [{"field": "state", "op": "eq", "value": "open"}],
+        tasks = await self._tasks.query([{"field": "state", "op": "eq", "value": "open"}],
                                  ["title", "minutes", "due", "by"])
-        blocks = await self._rows(BLOCKS, [{"field": "state", "op": "in", "value": ["planned", "passed"]},
+        blocks = await self._blocks.query([{"field": "state", "op": "in", "value": ["planned", "passed"]},
                                            {"field": "start", "op": "between",
                                             "value": [iso(window.start - 86400), iso(window.end)]}])
         if tasks is None or blocks is None:
@@ -261,7 +232,7 @@ class Planner:
         here = {b["id"] for b in standing}
         ids = [t["id"] for t in tasks][:PAGE]
         if ids:
-            pieces = await self._rows(BLOCKS, [{"field": "state", "op": "in", "value": ["passed", "planned"]},
+            pieces = await self._blocks.query([{"field": "state", "op": "in", "value": ["passed", "planned"]},
                                                {"field": "task", "op": "in", "value": ids}],
                                       ["task", "minutes", "state", "start", "locked"])
             for b in pieces or []:
@@ -372,7 +343,7 @@ class Planner:
                                                 "state": "planned", "plan": plan_id,
                                                 **({"why": w} if (w := self._why(by_id[task], window, now)) else {})}}
                        for task, start, minutes in layout.placed]
-                answer = await self._apply(ops, f"plan:{plan_id}:{key}") if ops else {"records": []}
+                answer = await self._blocks.apply(ops, f"plan:{plan_id}:{key}") if ops else {"records": []}
                 plans = self.plans()
                 entry = plans.get(plan_id) or {}
                 if answer is None:
@@ -455,7 +426,7 @@ class Planner:
             if not isinstance(entry, dict) or entry.get("undone"):
                 return "That plan is not known any more: nothing taken back."
             written = entry.get("blocks") or {}
-            rows = await self._rows(BLOCKS, [{"field": "state", "op": "in", "value": ["planned", "skipped"]}])
+            rows = await self._blocks.query([{"field": "state", "op": "in", "value": ["planned", "skipped"]}])
             if rows is None:
                 return "Not taken back: the blocks could not be read. Try again."
             ops, kept = [], 0
@@ -471,7 +442,7 @@ class Planner:
                 fields = {"state": "skipped"} if not before else \
                     {k: v for k, v in before.items() if k in ("start", "minutes", "state", "plan") and v is not None}
                 ops.append({"op": "set", "id": b["id"], "version": b["version"], "fields": fields})
-            answer = await self._apply(ops, f"undo:{plan_id}:{len(ops)}")
+            answer = await self._blocks.apply(ops, f"undo:{plan_id}:{len(ops)}")
             if answer is None:
                 return "Not taken back: the blocks could not be written. Try again."
             plans = self.plans()
@@ -494,21 +465,19 @@ class Planner:
             return 0
         since = min(float(e.get("at") or 0) for e in estimates) - 5
         try:
-            data = await self.core.platform("collections/changes", {"since": since, "limit": 200}, CALL_S)
+            changes = await self._hers.changes(since)
         except Exception as exc:  # noqa: BLE001 — said as not taken back
             log.warning("her estimates not read back: %s", exc)
             return 0
         done = 0
-        for change in reversed(data.get("changes") or []):
-            if change.get("collection") != TASKS or change.get("actor") != "assistant" or change.get("reverted") \
-                    or change.get("op") == "revert":
+        for change in reversed(changes):
+            if change.get("reverted") or change.get("op") == "revert":
                 continue
             if not any(e.get("task") == change.get("id") and abs(float(change.get("ts") or 0) - float(e.get("at") or 0)) < 30
                        for e in estimates):
                 continue
             try:
-                answer = await self.core.platform("collections/revert", {"change_id": change["change_id"]}, CALL_S)
-                done += bool(answer.get("ok"))
+                done += await self._hers.revert(change["change_id"])
             except Exception as exc:  # noqa: BLE001
                 log.warning("her estimate not taken back: %s", exc)
         return done
@@ -592,7 +561,7 @@ class Planner:
                         late.append(b)
             ops += [{"op": "set", "id": b["id"], "version": b["version"],
                      "fields": {"state": "skipped", "why": "not working that day", "plan": plan_id}} for b in left]
-            answer = await self._apply(ops, f"off:{plan_id}") if ops else {"records": []}
+            answer = await self._blocks.apply(ops, f"off:{plan_id}") if ops else {"records": []}
             if answer is None:
                 self._drop_plan(plan_id, now)
                 return "Not done: the blocks could not be written. Try again."
@@ -679,11 +648,11 @@ class Planner:
     async def remove(self, block_id: str, now: float) -> str:
         """× on a block: it is skipped; nothing else moves."""
         async with self.lock:
-            rows = await self._rows(BLOCKS, [{"field": "state", "op": "eq", "value": "planned"}])
+            rows = await self._blocks.query([{"field": "state", "op": "eq", "value": "planned"}])
             block = next((b for b in rows or [] if b["id"] == block_id), None)
             if block is None:
                 return "That block is not planned any more."
-            ok = await self._apply([{"op": "set", "id": block_id, "version": block["version"],
+            ok = await self._blocks.apply([{"op": "set", "id": block_id, "version": block["version"],
                                      "fields": {"state": "skipped"}}], f"remove:{block_id}:{block['version']}")
         await self.push(now)
         return "Taken off the day." if ok is not None else "Not taken off: try again."
@@ -742,7 +711,7 @@ class Planner:
             if isinstance(span, str):
                 return False, span
             world = await self._world(window, now)
-            pieces = await self._rows(BLOCKS, [{"field": "state", "op": "eq", "value": "planned"},
+            pieces = await self._blocks.query([{"field": "state", "op": "eq", "value": "planned"},
                                                {"field": "task", "op": "eq", "value": task_id}])
             if world is None or pieces is None:
                 return False, "Not moved: the plan could not be read. Try again."
@@ -788,7 +757,7 @@ class Planner:
                                               "state": "planned", "plan": plan_id}}
                 said = f"{title}: {self._when(start)}, {length // 60} min"
             self._keep_plans(plans, now)
-            answer = await self._apply([op], f"move:{plan_id}:{_hash([op])}")
+            answer = await self._blocks.apply([op], f"move:{plan_id}:{mark([op])}")
             if answer is None:
                 return False, "Not moved: the block could not be written. Try again."
             plans = self.plans()
@@ -823,18 +792,16 @@ class Planner:
             if by_ts <= now:
                 return False, f"by {by} has passed."
         async with self.lock:
-            rows = await self._rows(TASKS, [{"field": "state", "op": "eq", "value": "open"}],
-                                    ["title", "minutes", "due", "by"])
+            rows = await self._tasks.query([{"field": "state", "op": "eq", "value": "open"}],
+                                           ["title", "minutes", "due", "by"])
             row = next((t for t in rows or [] if t["id"] == task_id), None)
             if row is None:
                 return False, "No such open task: take its id from collection_query on tasks."
             fields = {**({"minutes": minutes} if minutes is not None else {}), **({"due": due} if due else {}),
                       **({"by": iso(by_ts)} if by_ts is not None else {})}
-            data = await self._call("apply", {"collection": TASKS, "ops": [
-                {"op": "set", "id": task_id, "version": row["version"], "fields": fields}]},
-                f"{turn_id}/estimate/{_hash([fields, task_id])}", actor="assistant")
-            if not data.get("ok"):
-                return False, str(data.get("text") or "Not written: try again.")[:300]
+            if await self._hers.apply([{"op": "set", "id": task_id, "version": row["version"], "fields": fields}],
+                                      f"{turn_id}/estimate/{mark([fields, task_id])}") is None:
+                return False, (self._hers.refused or "Not written: try again.")[:300]
             f = row["fields"]
             title = line(str(f.get("title") or ""), 40)
             parts = ([f"{f.get('minutes') or 30} → {minutes} min"] if minutes is not None else []) + \
@@ -872,12 +839,12 @@ class Planner:
             snapshot = await self._settle(now)
             if snapshot is None:
                 return
-            mark = hashlib.sha256(json.dumps([getattr(self.tasks, "events", None) or [], self.held(now), snapshot,
+            seen = hashlib.sha256(json.dumps([getattr(self.tasks, "events", None) or [], self.held(now), snapshot,
                                               [a.shape() for a in self.activities],
                                               L.window_at(now, self.hours).day.isoformat()],
                                              sort_keys=True).encode()).hexdigest()
-            if mark != self._seen and await self._relay(now) is not None:
-                self._seen = mark
+            if seen != self._seen and await self._relay(now) is not None:
+                self._seen = seen
                 await self.push(now)  # the meals' places follow the calendar, the holds and the day: the grid too
         except Exception:
             log.exception("the plan's look failed")
@@ -917,8 +884,8 @@ class Planner:
         time goes back to its task. Till then it stays planned, in the past: the plan holds its time. What the look saw
         of the blocks and the tasks after it, for the mark; None when they could not be read."""
         async with self.lock:
-            rows = await self._rows(BLOCKS, [{"field": "state", "op": "eq", "value": "planned"}])
-            tasks = await self._rows(TASKS, [{"field": "state", "op": "eq", "value": "open"}],
+            rows = await self._blocks.query([{"field": "state", "op": "eq", "value": "planned"}])
+            tasks = await self._tasks.query([{"field": "state", "op": "eq", "value": "open"}],
                                      ["title", "minutes", "due"])
             if rows is None or tasks is None:
                 return None
@@ -947,7 +914,7 @@ class Planner:
                         unseen.append((b["fields"]["task"], start))
                 elif b["fields"].get("task") not in open_ids and start > now:
                     ops.append({"op": "set", "id": b["id"], "version": b["version"], "fields": {"state": "skipped"}})
-            written = bool(ops) and await self._apply(ops, f"settle:{_hash(ops)}") is not None
+            written = bool(ops) and await self._blocks.apply(ops, f"settle:{mark(ops)}") is not None
             if written:
                 changed = {o["id"] for o in ops}
                 rows = [b for b in rows if b["id"] not in changed]
@@ -1031,7 +998,7 @@ class Planner:
                            and due <= window.day and window.day == today.day]
             if not ops:
                 return ""
-            answer = await self._apply(ops, f"relay:{_hash(ops)}")
+            answer = await self._blocks.apply(ops, f"relay:{mark(ops)}")
             if answer is None:
                 return None
             plans = self.plans()
@@ -1147,7 +1114,3 @@ def _now() -> float:
     import time
     return time.time()
 
-
-def _hash(ops: list[dict]) -> str:
-    """An idem of a write by what it writes: two different writes in one look never share one."""
-    return hashlib.sha256(json.dumps(ops, sort_keys=True).encode()).hexdigest()[:16]

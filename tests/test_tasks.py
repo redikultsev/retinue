@@ -18,7 +18,8 @@ from retinue.mail import MailStore
 from retinue.outbox import OutboxStore
 from retinue.protocol import Store
 from retinue.scheduler import Scheduler
-from retinue.tasks import RULE, Tasks, occurrence
+from retinue.coderules import WAITING as RULE
+from retinue.tasks import Tasks, occurrence
 from test_collections_assistant import platform_of
 from test_face import faced
 from test_platformd import ROUTER, short_wait  # noqa: F401 — the fixture is autouse

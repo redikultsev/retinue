@@ -2,10 +2,10 @@
 the platform's volume, and the files he uploads, kept by their SHA-256 in `attachments/` beside it.
 
 One thread, one connection. Every read and every write goes through a single dedicated thread that opened the file
-itself; the loop only awaits it. The platform's other databases live on the loop's thread, and SQLite's busy
-handler sleeps where it is called: a writer that waited on the loop would hold up the hooks, the gate and the face
-with it. Here a lock that does not come within 2 s (the night's backup copy, an import) is `Refused` at once, for
-the caller to say «try again», never waited out for 30 s.
+itself; the loop only awaits it, and the connection refuses any other thread (`_db`). The platform's other
+databases live on the loop's thread, and SQLite's busy handler sleeps where it is called: a writer that waited on the
+loop would hold up the hooks, the gate and the face with it. Here a lock that does not come within 2 s (the night's
+backup copy, an import) is `Refused` at once, for the caller to say «try again», never waited out for 30 s.
 
 The file uses a rollback journal, like every database the backup copies (deploy/backup/retinue-backup.py). It holds
 `files`, and the records: `schemas` (a collection's form, rights and views), `records` (each one's current state, a JSON document),
@@ -731,7 +731,7 @@ class Collections:
         else:
             self.blobs = Path(path).parent / BLOBS
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="collections")
-        self._db: sqlite3.Connection | None = None
+        self._conn: sqlite3.Connection | None = None  # the thread's alone: reached through `_db`
         self.thread: int | None = None  # the writer's thread, once it has opened the file
         self._ulids = Ulids()
         self._seen = 0  # the file's data_version this connection last looked at (`_fresh`)
@@ -755,7 +755,7 @@ class Collections:
         return await asyncio.get_running_loop().run_in_executor(self._pool, self._call, work, args)
 
     def _call(self, work: Callable[..., T], args: tuple) -> T:
-        if self._db is None:
+        if self._conn is None:
             self._connect()
         try:
             return work(*args)
@@ -776,7 +776,15 @@ class Collections:
         self.blobs.mkdir(parents=True, exist_ok=True)
         for part in self.blobs.glob(".*.part"):  # a blob a crash cut while it was written: never named by a row
             part.unlink(missing_ok=True)
-        self._db, self.thread = db, threading.get_ident()
+        self._conn, self.thread = db, threading.get_ident()
+
+    @property
+    def _db(self) -> sqlite3.Connection:
+        """The file's one connection, on the thread that opened it — anywhere else a RuntimeError, not a statement
+        that would make the loop wait on SQLite's lock."""
+        if self._conn is None or threading.get_ident() != self.thread:
+            raise RuntimeError("the collections' connection is their thread's alone: read through `read`")
+        return self._conn
 
     @contextmanager
     def _write(self):
@@ -804,9 +812,9 @@ class Collections:
             self._ulids.see(_newest(db))
 
     def _close(self) -> None:
-        if self._db is not None:
-            self._db.close()
-            self._db = None
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
 
     async def open(self) -> None:
         """The file and the folder made, if they are not there yet."""

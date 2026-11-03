@@ -14,8 +14,9 @@ platform's loop only awaits it. SQLite's busy handler sleeps on the thread that 
 the hooks, the gate and the app: a writer that waited there would stall them all. The thread waits at most 2 s for a
 lock — the night's backup copy holds one while it copies — and then refuses at once: the app answers 503 “The store is
 busy (an import or the night's backup copy) — try again in a moment.” and nothing was written. The file uses a
-rollback journal, like every database the backup copies. No module but the store names a table: the screen's views,
-the agents' tools and the events read what they need through it, in one transaction of that thread.
+rollback journal, like every database the backup copies. The connection answers no other thread, and no other module
+names a table: the screen's views, the agents' tools and the events read what they need through the store, in one
+transaction of that thread.
 
 The commands on the server's terminal are the one other writer: they open the file from their own process and take
 its lock the same way. At each write the thread asks SQLite whether another connection has committed since

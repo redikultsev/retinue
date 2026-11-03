@@ -168,8 +168,7 @@ def test_no_token_a_wrong_one_or_a_revoked_one_opens_nothing_and_the_file_keeps_
         await collections(world)
         store = world.platform.collections
         token = await store.add_device("laptop", "write", world.clock.now)
-        db = store._db
-        assert await store.read(lambda: db.execute("SELECT token_sha256 FROM devices").fetchall()) == [
+        assert await store._run(lambda: store._db.execute("SELECT token_sha256 FROM devices").fetchall()) == [
             (hashlib.sha256(token.encode()).hexdigest(),)]
         listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
         for headers in ({}, {"Authorization": "Bearer nope"}, {"Authorization": token}, {"Authorization": "Bearer "}):

@@ -31,14 +31,13 @@ import decimal
 import json
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiohttp import web
 
 from . import pagesd
-from .collections import (CHANGE_COLUMNS, HISTORY, NAME, RECORD_COLUMNS, SPACE, ULID, Collections, Refused, Rejected,
-                          Writer, _change, _json, _path, _record)
+from .collections import HISTORY, NAME, SPACE, ULID, UPDATED, Reader, Refused, Rejected, Writer, shown_fields
 
 if TYPE_CHECKING:
     from .platformd import Platform
@@ -51,7 +50,6 @@ CHART_WEEKS = 8             # the weeks a chart counts by default, this one amon
 MONTHS = 12                 # the months a `months` view sums by default, this one among them
 NO_FRAME = "'none'"         # who may frame a view in code when the app has no origin: no one
 RELATED_MAX = 30            # records of other collections that name a record, its sheet lists
-IDS_CHUNK = 500             # ids in one statement's IN (…)
 ZONE_KEY = "collections.zone"  # the platform's kv: the zone the Router last told
 NOT_FOUND = "field not found"
 NO_STAT = "no such stat"
@@ -134,33 +132,16 @@ def _conditions(form: dict, view: dict) -> list:
     return conditions
 
 
-def _after(field: str) -> str:
-    """A field's value as a change made it, as SQL: like `collections._path`, only a name the form declared."""
-    if not NAME.fullmatch(field):
-        raise ValueError(field)
-    return f"json_extract(after, '$.{field}')"
-
-
-def _changed(store: Collections, collection: str, form: dict, conditions: list, field: str, to: list,
+def _changed(reader: Reader, collection: str, conditions: list, field: str, to: list,
              span: tuple[dt.date, dt.date] | None, when: When) -> int:
     """How many records the filter matches now whose `field` a change gave a value (one of `to`, when it names
-    some) within `span`: a change dated by its `as_of`, else by the day it was made, here. A change taken back, and
-    the revert that took it, move nothing: a drag and its «Undo» count none."""
-    where, params = store._where(collection, form, conditions or None, False)
-    sql = [f"SELECT count(DISTINCT id) FROM changes WHERE collection = ? AND {_after(field)} IS NOT NULL",
-           "AND reverts IS NULL AND change_id NOT IN (SELECT reverts FROM changes WHERE collection = ? AND reverts IS "
-           f"NOT NULL) AND id IN (SELECT id FROM records WHERE {where})"]
-    values: list[Any] = [collection, collection, *params]
-    if to:
-        sql.append(f"AND {_after(field)} IN ({', '.join('?' * len(to))})")
-        values += to
-    if span is not None:
-        sql.append("AND (as_of BETWEEN ? AND ? OR as_of IS NULL AND ts >= ? AND ts < ?)")
-        values += [span[0].isoformat(), span[1].isoformat(), when.start(span[0]), when.start(span[1] + DAY)]
-    return store._db.execute(" ".join(sql), values).fetchone()[0]
+    some) within `span`: a change dated by its `as_of`, else by the day it was made, here (`Reader.changed`)."""
+    moments = None if span is None else (span[0].isoformat(), span[1].isoformat(), when.start(span[0]),
+                                         when.start(span[1] + DAY))
+    return reader.changed(collection, conditions or None, field, to, moments)
 
 
-def _stat(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+def _stat(reader: Reader, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     count, kind = view.get("count", "records"), view.get("window")
     goal = None
     if "goal" in view:
@@ -175,13 +156,13 @@ def _stat(store: Collections, collection: str, form: dict, view: dict, when: Whe
         def value(span: tuple[dt.date, dt.date] | None) -> int:
             dated = [] if span is None else [{"field": view["date"], "op": "between",
                                               "value": [span[0].isoformat(), span[1].isoformat()]}]
-            return store._count(collection, conditions + dated or None, None)
+            return reader.count(collection, conditions + dated or None, None)
     else:
         spec = _field(form, view["field"])
-        to = [store._value(view["field"], spec, v, probe=True) for v in view.get("to", [])]
+        to = [reader.probe(view["field"], spec, v) for v in view.get("to", [])]
 
         def value(span: tuple[dt.date, dt.date] | None) -> int:
-            return _changed(store, collection, form, conditions, view["field"], to, span, when)
+            return _changed(reader, collection, conditions, view["field"], to, span, when)
     if kind is None:
         return {"value": value(None), "goal": goal, "previous": None, "window": None, "first": None, "last": None}
     first, last = window(kind, when.today)
@@ -204,93 +185,35 @@ def _shown(form: dict, view: dict) -> list[str] | None:
     return view.get("fields") or None
 
 
-def _said(store: Collections, collection: str | None, ids) -> dict[str, str]:
-    """The words of these records of `collection`: the first `text` field of its form, as each has it now — so a ref
-    reads «Acme», not an id. A deleted record, or one without that field, is not among them."""
-    ids = sorted({i for i in ids if isinstance(i, str)})
-    target = store._db.execute("SELECT form FROM schemas WHERE collection = ?",
-                               (collection,)).fetchone() if ids else None
-    text = next((k for k, s in json.loads(target[0])["fields"].items() if s["type"] == "text"),
-                None) if target else None
-    said: dict[str, str] = {}
-    if text is None:
-        return said
-    for at in range(0, len(ids), IDS_CHUNK):
-        chunk = ids[at:at + IDS_CHUNK]
-        said.update(store._db.execute(
-            f"SELECT id, {_path(text)} FROM records WHERE collection = ? AND id IN ({', '.join('?' * len(chunk))})"
-            f" AND deleted IS NULL AND {_path(text)} IS NOT NULL", (collection, *chunk)).fetchall())
-    return said
-
-
-def _file_names(store: Collections, shas) -> dict[str, str]:
-    """The names the owner's device gave these uploaded files: a `file` field reads «acme-invoice.pdf»."""
-    shas = sorted({s for s in shas if isinstance(s, str)})
-    named: dict[str, str] = {}
-    for at in range(0, len(shas), IDS_CHUNK):
-        chunk = shas[at:at + IDS_CHUNK]
-        named.update(store._db.execute(f"SELECT sha256, name FROM files WHERE sha256 IN ({', '.join('?' * len(chunk))})",
-                                       chunk).fetchall())
-    return named
-
-
-def _refs(store: Collections, form: dict, records: list[dict], fields: list[str] | None) -> dict:
-    """For each record, the `ref` fields a view shows by the words of what they name (`_said`); a deleted record, or
-    one without such words: none, and the row shows the id."""
+def _refs(reader: Reader, form: dict, records: list[dict], fields: list[str] | None) -> dict:
+    """For each record, the `ref` fields a view shows by the words of what they name (`Reader.words`), a `file` by its
+    name; a deleted record, or one without such words: none, and the row shows the id."""
     words: dict = {}
     for name in fields or form["fields"]:
         spec = form["fields"][name]
         if spec["type"] == "file":  # an uploaded file by its name, never its sha256
-            said = _file_names(store, (r["fields"].get(name) for r in records))
+            said = reader.file_names(r["fields"].get(name) for r in records)
         elif spec["type"] != "ref":
             continue
         else:
-            said = _said(store, spec["to"], (r["fields"].get(name) for r in records))
+            said = reader.words(spec["to"], (r["fields"].get(name) for r in records))
         for record in records:
             if record["fields"].get(name) in said:
                 words.setdefault(record["id"], {})[name] = said[record["fields"][name]]
     return words
 
 
-def _title(store: Collections, form: dict, fields: dict, parts: int = 2) -> str | None:
-    """A record in a few words, for a list of changes or a ref to pick: its first `parts` text or ref fields that have
-    a value, in the form's order, a ref by its record's words — «Acme · Backend». None when it has none."""
-    words = []
-    for name, spec in form["fields"].items():
-        value = fields.get(name)
-        if spec["type"] == "text" and isinstance(value, str):
-            words.append(value)
-        elif spec["type"] == "ref" and (said := _said(store, spec["to"], [value]).get(value)):
-            words.append(said)
-        if len(words) == parts:
-            break
-    return " · ".join(words) or None
-
-
-def _records(store: Collections, collection: str, form: dict, conditions: list) -> tuple[list[dict], int]:
+def _records(reader: Reader, collection: str, conditions: list) -> tuple[list[dict], int]:
     """The records the filter matches, the oldest RECORDS_MAX of them, and how many it matches in all."""
-    where, params = store._where(collection, form, conditions or None, False)
-    total = store._db.execute(f"SELECT count(*) FROM records WHERE {where}", params).fetchone()[0]
-    return [_record(row) for row in store._db.execute(
-        f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} ORDER BY id LIMIT ?", (*params, RECORDS_MAX))], total
+    return (reader.records(collection, conditions or None, limit=RECORDS_MAX),
+            reader.count(collection, conditions or None))
 
 
-def _marks(store: Collections, collection: str, ids: list[str], field: str | None, when: When) -> tuple[dict, dict]:
+def _marks(reader: Reader, collection: str, ids: list[str], field: str | None, when: When) -> tuple[dict, dict]:
     """For each of these records: the day its last change was made — of `field`, when one is named (its `as_of`,
-    else the day it was made, here) — and the `src` of its last change that had one. Only their own changes are read,
-    by the index on a record's changes."""
-    if field is not None and not NAME.fullmatch(field):
-        raise ValueError(field)
-    touched = f"json_type(after, '$.{field}') IS NOT NULL" if field is not None else "1"
-    days, srcs = {}, {}
-    for at in range(0, len(ids), IDS_CHUNK):
-        chunk = ids[at:at + IDS_CHUNK]
-        last = (f"SELECT id, {{}} FROM changes WHERE seq IN (SELECT max(seq) FROM changes WHERE collection = ? AND id "
-                f"IN ({', '.join('?' * len(chunk))}) AND {{}} GROUP BY id)")
-        for rid, as_of, ts in store._db.execute(last.format("as_of, ts", touched), (collection, *chunk)):
-            days[rid] = dt.date.fromisoformat(as_of) if as_of else when.date(ts)
-        srcs.update(store._db.execute(last.format("src", "src IS NOT NULL"), (collection, *chunk)).fetchall())
-    return days, srcs
+    else the day it was made, here) — and the `src` of its last change that had one."""
+    last, srcs = reader.marks(collection, ids, field)
+    return {rid: dt.date.fromisoformat(as_of) if as_of else when.date(ts) for rid, (as_of, ts) in last.items()}, srcs
 
 
 def _row(record: dict, fields: list[str] | None, refs: dict, since: dt.date | None, src: str | None, when: When,
@@ -301,7 +224,7 @@ def _row(record: dict, fields: list[str] | None, refs: dict, since: dt.date | No
            "fields": {k: v for k, v in record["fields"].items() if fields is None or k in fields},
            "refs": refs.get(record["id"], {}), "src": src, "days": days,
            "rotten": rot is not None and days is not None and days > rot, **(extra or {})}
-    size = len(_json(row).encode()) + 1
+    size = len(json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode()) + 1
     if size > budget[0]:
         return None
     budget[0] -= size
@@ -313,19 +236,19 @@ def _longest(days: dict):
     return lambda record: (record["id"] not in days, days.get(record["id"], dt.date.max), record["id"])
 
 
-def _board(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+def _board(reader: Reader, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     group = view["group"]
     spec, fields, rot = _field(form, group, "enum"), _shown(form, view), _rot(form, view)
     if lost := [v for v in view.get("folded", []) if v not in spec["values"]]:
         raise Rejected(f"{group!r} has no value {', '.join(map(repr, lost))}")
     conditions = _conditions(form, view)
-    records, _ = _records(store, collection, form, conditions)
-    days, srcs = _marks(store, collection, [r["id"] for r in records], group, when)
+    records, _ = _records(reader, collection, conditions)
+    days, srcs = _marks(reader, collection, [r["id"] for r in records], group, when)
     columns: dict = {value: [] for value in spec["values"]}
     for record in records:
         columns.setdefault(record["fields"].get(group), []).append(record)
-    counts = {c["value"]: c["count"] for c in store._count(collection, conditions or None, group)}
-    refs = _refs(store, form, records, fields)
+    counts = {c["value"]: c["count"] for c in reader.count(collection, conditions or None, group)}
+    refs = _refs(reader, form, records, fields)
     folded = set(view.get("folded", []))
     shown, dropped = {}, sum(counts.values()) - len(records)  # past RECORDS_MAX: never read, counted
     for value in sorted(columns, key=lambda v: (v in folded, v is None)):  # what is folded takes what is left
@@ -351,18 +274,18 @@ def _sorted(field: str | None, days: dict):
     return lambda record: (record["fields"].get(field) is None, record["fields"].get(field), longest(record))
 
 
-def _queue(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+def _queue(reader: Reader, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     fields, rot, since, sort = _shown(form, view), _rot(form, view), view.get("since"), view.get("sort")
     if since is not None:
         _field(form, since, "date")
     if sort is not None:
         _field(form, sort, "int", "date", "text", "enum")
-    records, total = _records(store, collection, form, _conditions(form, view))
-    days, srcs = _marks(store, collection, [r["id"] for r in records], None, when)
+    records, total = _records(reader, collection, _conditions(form, view))
+    days, srcs = _marks(reader, collection, [r["id"] for r in records], None, when)
     if since is not None:
         days = {r["id"]: dt.date.fromisoformat(r["fields"][since]) for r in records if since in r["fields"]}
-    rows, dropped, refs = [], total - len(records), _refs(store, form, records, fields)
-    latest = _latest(store, collection, view["latest"], [r["id"] for r in records]) if "latest" in view else {}
+    rows, dropped, refs = [], total - len(records), _refs(reader, form, records, fields)
+    latest = _latest(reader, collection, view["latest"], [r["id"] for r in records]) if "latest" in view else {}
     for record in sorted(records, key=_sorted(sort, days)):
         extra = {"latest": latest[record["id"]]} if record["id"] in latest else None
         row = _row(record, fields, refs, days.get(record["id"]), srcs.get(record["id"]), when, rot, budget, extra)
@@ -374,11 +297,11 @@ def _queue(store: Collections, collection: str, form: dict, view: dict, when: Wh
             "dropped": dropped, "mark": view.get("mark", "act"), "latest": "latest" in view}
 
 
-def _latest(store: Collections, collection: str, spec: dict, ids: list[str]) -> dict[str, dict]:
+def _latest(reader: Reader, collection: str, spec: dict, ids: list[str]) -> dict[str, dict]:
     """A queue's `latest`: for each of its records, the newest record of `spec["collection"]` whose ref names it — by
     that form's first date field — as `{date, value, label, arrow}`: its day, its enum `field`'s value, the form's
     words for it and the arrow the view draws it as. A record nothing names has none."""
-    form = store._form(spec["collection"])
+    form = reader.form(spec["collection"])
     if form is None:
         raise Rejected(f"no collection {spec['collection']!r}")
     ref = next((f for f, s in form["fields"].items() if s["type"] == "ref" and s["to"] == collection), None)
@@ -387,19 +310,14 @@ def _latest(store: Collections, collection: str, spec: dict, ids: list[str]) -> 
         raise Rejected(f"{spec['collection']!r} has no ref to {collection!r} and a date field to go by")
     labels = _field(form, spec["field"], "enum").get("labels", {})
     arrows, out = spec.get("arrows", {}), {}
-    for rid in ids:
-        where, params = store._where(spec["collection"], form, [{"field": ref, "op": "ref_is", "value": rid}], False)
-        found = store._db.execute(f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} AND {_path(date)} IS NOT NULL "
-                                  f"ORDER BY {_path(date)} DESC, id DESC LIMIT 1", params).fetchone()
-        if found:
-            fields = _record(found)["fields"]
-            value = fields.get(spec["field"])
-            out[rid] = {"date": fields[date], "value": value, "label": labels.get(value) if value else None,
-                        "arrow": arrows.get(value) if value else None}
+    for rid, fields in reader.latest(spec["collection"], ref, date, ids).items():
+        value = fields.get(spec["field"])
+        out[rid] = {"date": fields[date], "value": value, "label": labels.get(value) if value else None,
+                    "arrow": arrows.get(value) if value else None}
     return out
 
 
-def _agenda(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+def _agenda(reader: Reader, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     """The records whose `date` falls from today to the last of `days`, the soonest first; each row's `days` below
     zero, today's zero."""
     date, fields = view["date"], _shown(form, view)
@@ -407,8 +325,8 @@ def _agenda(store: Collections, collection: str, form: dict, view: dict, when: W
     shown = fields + [date] if fields and date not in fields else fields  # a row always says its day
     last = when.today + (view.get("days", AGENDA_DAYS) - 1) * DAY
     span = [{"field": date, "op": "between", "value": [when.today.isoformat(), last.isoformat()]}]
-    records, total = _records(store, collection, form, _conditions(form, view) + span)
-    refs, rows, dropped = _refs(store, form, records, fields), [], total - len(records)
+    records, total = _records(reader, collection, _conditions(form, view) + span)
+    refs, rows, dropped = _refs(reader, form, records, fields), [], total - len(records)
     for record in sorted(records, key=lambda r: (r["fields"][date], r["id"])):
         row = _row(record, shown, refs, dt.date.fromisoformat(record["fields"][date]), None, when, None, budget)
         if row is None:
@@ -419,7 +337,7 @@ def _agenda(store: Collections, collection: str, form: dict, view: dict, when: W
             "last": last.isoformat(), "count": total, "rows": rows, "dropped": dropped}
 
 
-def _chart(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+def _chart(reader: Reader, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     """The records the filter matches counted by the week (Monday to Sunday) their `date` falls in, the last `weeks`
     of them, this one last — each split by the enum `group` names, when it names one."""
     date, group = view["date"], view.get("group")
@@ -432,9 +350,9 @@ def _chart(store: Collections, collection: str, form: dict, view: dict, when: Wh
     for first in weeks:
         span = [{"field": date, "op": "between", "value": [first.isoformat(), (first + 6 * DAY).isoformat()]}]
         if group:
-            counts = {c["value"]: c["count"] for c in store._count(collection, conditions + span, group)}
+            counts = {c["value"]: c["count"] for c in reader.count(collection, conditions + span, group)}
         else:
-            counts = {None: store._count(collection, conditions + span, None)}
+            counts = {None: reader.count(collection, conditions + span, None)}
         counted.append({"first": first.isoformat(), "counts": [{"value": v, "count": n} for v, n in counts.items()]})
     return {"date": date, "group": group, "values": values, "weeks": counted}
 
@@ -449,20 +367,12 @@ def _summed(form: dict, view: dict) -> tuple[str | None, str | None]:
     return name, spec.get("currency")
 
 
-def _sums(store: Collections, collection: str, form: dict, conditions: list, date: str, total: str | None,
+def _sums(reader: Reader, collection: str, conditions: list, date: str, total: str | None,
           group: str | None, first: dt.date, last: dt.date) -> dict[tuple[str, str | None], decimal.Decimal]:
     """The records the filter matches whose `date` falls from `first` to `last`, added up by their month
     (`YYYY-MM`) and `group`'s value: their `total` field — exactly, an amount in cents — or one each."""
     span = [{"field": date, "op": "between", "value": [first.isoformat(), last.isoformat()]}]
-    where, params = store._where(collection, form, conditions + span, False)
-    value = _path(total) if total else "1"
-    split = _path(group) if group else "NULL"
-    sums: dict[tuple[str, str | None], decimal.Decimal] = {}
-    for month, part, amount in store._db.execute(
-            f"SELECT substr({_path(date)}, 1, 7), {split}, {value} FROM records WHERE {where}", params):
-        if amount is not None:
-            sums[month, part] = sums.get((month, part), decimal.Decimal(0)) + decimal.Decimal(str(amount))
-    return sums
+    return reader.sums(collection, conditions + span, date, total, group)
 
 
 def _said_sum(amount: decimal.Decimal, unit: str | None) -> str | int:
@@ -477,7 +387,7 @@ def _month(day: dt.date, back: int) -> dt.date:
     return dt.date(n // 12, n % 12 + 1, 1)
 
 
-def _months(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+def _months(reader: Reader, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     """Sums by month: the records the filter matches added up by the month their `date` falls in — their `sum`
     field, else one each — the last `months` months, this one last, each split by the enum `group` names."""
     date, group = view["date"], view.get("group")
@@ -487,7 +397,7 @@ def _months(store: Collections, collection: str, form: dict, view: dict, when: W
     count = view.get("months", MONTHS)
     firsts = [_month(when.today, n) for n in range(count - 1, -1, -1)]
     last = _month(when.today, -1) - DAY
-    sums = _sums(store, collection, form, _conditions(form, view), date, total, group, firsts[0], last)
+    sums = _sums(reader, collection, _conditions(form, view), date, total, group, firsts[0], last)
     months = []
     for first in firsts:
         key = first.isoformat()[:7]
@@ -499,7 +409,7 @@ def _months(store: Collections, collection: str, form: dict, view: dict, when: W
     return {"date": date, "sum": total, "unit": unit, "group": group, "values": values, "months": months}
 
 
-def _year(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+def _year(reader: Reader, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     """A year's line: the records the filter matches added up month by month through this year — their `sum`, else
     one each — each month with the running total to its end, beside the same line of the year before; `through`
     the month that holds today."""
@@ -509,7 +419,7 @@ def _year(store: Collections, collection: str, form: dict, view: dict, when: Whe
     conditions = _conditions(form, view)
 
     def line(year: int) -> list[dict]:
-        sums = _sums(store, collection, form, conditions, date, total, None, dt.date(year, 1, 1), dt.date(year, 12, 31))
+        sums = _sums(reader, collection, conditions, date, total, None, dt.date(year, 1, 1), dt.date(year, 12, 31))
         running, out = decimal.Decimal(0), []
         for month in range(1, 13):
             amount = sums.get((f"{year:04d}-{month:02d}", None), decimal.Decimal(0))
@@ -539,20 +449,20 @@ def code_csp(face_origin: str) -> str:
             f"frame-ancestors {face_origin or NO_FRAME}; sandbox {pagesd.SANDBOX[True]}")
 
 
-def _code_views(store: Collections, space: str) -> dict[str, list[dict]]:
+def _code_views(reader: Reader, space: str) -> dict[str, list[dict]]:
     """The views in code of the project `space` names, by their collection: as its description keeps them."""
-    found = store._project(space)
+    found = reader.project(space)
     out: dict[str, list[dict]] = {}
     for view in found["description"].get("views", []) if found else []:
         out.setdefault(view["collection"], []).append(view)
     return out
 
 
-def _code(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+def _code(reader: Reader, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     """A view in code: where its page is, and the data the app gives it by message — the collection's fields and
     their words, and its records (the oldest RECORDS_MAX the answer can hold), each with its ref fields in words."""
-    records, total = _records(store, collection, form, [])
-    refs, rows, dropped = _refs(store, form, records, None), [], total - len(records)
+    records, total = _records(reader, collection, [])
+    refs, rows, dropped = _refs(reader, form, records, None), [], total - len(records)
     for record in records:
         row = _row(record, None, refs, None, None, when, None, budget)
         if row is None:
@@ -560,19 +470,19 @@ def _code(store: Collections, collection: str, form: dict, view: dict, when: Whe
         else:
             rows.append(row)
     return {"src": f"/api/c/{collection}/_code/{view['name']}", "sandbox": pagesd.SANDBOX[True],
-            "fields": _fields(form), "labels": _labels(form), "count": total, "rows": rows, "dropped": dropped}
+            "fields": shown_fields(form), "labels": _labels(form), "count": total, "rows": rows, "dropped": dropped}
 
 
-def _done(store: Collections, form: dict, view: dict) -> dict | None:
+def _done(reader: Reader, form: dict, view: dict) -> dict | None:
     """A queue's press on a row, its field found in the form and its value one the field takes."""
     if "done" not in view:
         return None
     done = view["done"]
-    value = store._value(done["field"], _field(form, done["field"]), done["value"], probe=True)
+    value = reader.probe(done["field"], _field(form, done["field"]), done["value"])
     return {"field": done["field"], "value": value, "label": done["label"]}
 
 
-def _add(store: Collections, form: dict, view: dict) -> dict | None:
+def _add(reader: Reader, form: dict, view: dict) -> dict | None:
     """A view's «add»: the fields its sheet asks for — the view's, else every one of the form — and those it starts
     with, each found in the form and of its type."""
     if "add" not in view:
@@ -581,42 +491,36 @@ def _add(store: Collections, form: dict, view: dict) -> dict | None:
     fields = add.get("fields") or list(form["fields"])
     for name in fields:
         _field(form, name)
-    values = {name: store._value(name, _field(form, name), value, probe=True)
-              for name, value in add.get("values", {}).items()}
+    values = {name: reader.probe(name, _field(form, name), value) for name, value in add.get("values", {}).items()}
     return {"label": add["label"], "fields": fields, "values": values}
 
 
-def _view(store: Collections, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
+def _view(reader: Reader, collection: str, form: dict, view: dict, when: When, budget: list[int]) -> dict:
     shown = {"name": view["name"], "kind": view["kind"], "title": view.get("title", view["name"]),
              **({"tab": view["tab"]} if "tab" in view else {})}
     try:
-        shown.update({**KINDS, "code": _code}[view["kind"]](store, collection, form, view, when, budget))
+        shown.update({**KINDS, "code": _code}[view["kind"]](reader, collection, form, view, when, budget))
         if view["kind"] == "queue":
-            shown["done"] = _done(store, form, view)
+            shown["done"] = _done(reader, form, view)
         if view["kind"] in ("board", "queue"):
-            shown["add"] = _add(store, form, view)
+            shown["add"] = _add(reader, form, view)
     except Rejected as exc:  # a field the form lacks, a value its enum does not have: this view only
         shown = {k: shown[k] for k in ("name", "kind", "title", "tab") if k in shown} | {"error": exc.reason}
     return shown
 
 
-def _schemas(store: Collections, space: str) -> list[tuple[str, dict, list]]:
-    return [(name, json.loads(form), json.loads(views)) for name, form, views in store._db.execute(
-        "SELECT collection, form, views FROM schemas WHERE space = ? ORDER BY collection", (space,)).fetchall()]
-
-
-def space_views(store: Collections, space: str, when: When) -> dict:
+def space_views(reader: Reader, space: str, when: When) -> dict:
     """A Space's collections, each with its rev and its views: `{space, tz, today, at, collections: [{name, rev,
     views}]}` — the stats of every collection first, then the rest, within one VIEW_MAX."""
-    budget, made, code = [ROWS_MAX], {}, _code_views(store, space)
-    schemas = [(name, form, views + code.get(name, [])) for name, form, views in _schemas(store, space)]
+    budget, made, code = [ROWS_MAX], {}, _code_views(reader, space)
+    schemas = [(s["name"], s["form"], s["views"] + code.get(s["name"], [])) for s in reader.schemas(space)]
     for first in (True, False):  # every number made before any rows: a long board never crowds a stat out
         for name, form, views in schemas:
             for n, view in enumerate(views):
                 if (view["kind"] in ("stat", "months", "year")) == first:
-                    made[name, n] = _view(store, name, form, view, when, budget)
+                    made[name, n] = _view(reader, name, form, view, when, budget)
     return {"space": space, **when.shown(), "collections": [
-        {"name": name, "rev": store._rev(name), "labels": _labels(form),
+        {"name": name, "rev": reader.rev(name), "labels": _labels(form),
          "views": [made[name, n] for n in range(len(views))]}
         for name, form, views in schemas]}
 
@@ -627,18 +531,18 @@ def _labels(form: dict) -> dict[str, dict[str, str]]:
     return {name: dict(spec.get("labels", {})) for name, spec in form["fields"].items() if spec["type"] == "enum"}
 
 
-def one_view(store: Collections, collection: str, name: str, when: When) -> dict | None:
+def one_view(reader: Reader, collection: str, name: str, when: When) -> dict | None:
     """One view of a collection: `{name, rev, tz, today, at, view}`, or None when there is no such view."""
-    row = store._db.execute("SELECT form, views, space FROM schemas WHERE collection = ?", (collection,)).fetchone()
-    views = json.loads(row[1]) + _code_views(store, row[2]).get(collection, []) if row else []
+    schema = reader.schema(collection)
+    views = schema["views"] + _code_views(reader, schema["space"]).get(collection, []) if schema else []
     view = next((v for v in views if v["name"] == name), None)
     if view is None:
         return None
-    return {"name": collection, "rev": store._rev(collection), **when.shown(),
-            "view": _view(store, collection, json.loads(row[0]), view, when, [ROWS_MAX])}
+    return {"name": collection, "rev": reader.rev(collection), **when.shown(),
+            "view": _view(reader, collection, schema["form"], view, when, [ROWS_MAX])}
 
 
-def stats(store: Collections, named: list[tuple[str, str]], when: When) -> dict:
+def stats(reader: Reader, named: list[tuple[str, str]], when: When) -> dict:
     """The numbers the Router names, `(collection, view)` each, as it says them: `{tz, today, at, stats: [{collection,
     name, title, value, goal, previous, window, first, last}]}` in its order — `error` for one, and «no such stat»
     for a name that is not one of a collection's `stat` views."""
@@ -646,111 +550,69 @@ def stats(store: Collections, named: list[tuple[str, str]], when: When) -> dict:
     said = []
     for collection, name in named:
         if collection not in forms:
-            row = store._db.execute("SELECT form, views FROM schemas WHERE collection = ?", (collection,)).fetchone()
-            forms[collection] = (json.loads(row[0]), json.loads(row[1])) if row else (None, [])
+            schema = reader.schema(collection)
+            forms[collection] = (schema["form"], schema["views"]) if schema else (None, [])
         form, views = forms[collection]
         view = next((v for v in views if v["name"] == name and v["kind"] == "stat"), None)
-        said.append({"collection": collection, **(_view(store, collection, form, view, when, [0]) if view else
+        said.append({"collection": collection, **(_view(reader, collection, form, view, when, [0]) if view else
                                                   {"name": name, "kind": "stat", "title": name, "error": NO_STAT})})
     return {**when.shown(), "stats": said}
 
 
-def _fields(form: dict) -> dict:
-    """A form's fields as the screen asks for them: each one's type, and its values, labels, `to`, `currency`,
-    `required` and `hide` — a field kept for the agents, which a record's sheet leaves out."""
-    return {name: {k: v for k, v in spec.items()
-                   if k in ("type", "values", "labels", "to", "currency", "required", "hide")}
-            for name, spec in form["fields"].items()}
-
-
-def _ref_words(store: Collections, form: dict, values) -> dict[str, str]:
-    """The words of every id among `values` (dicts of fields) that one of the form's ref fields names."""
-    words: dict[str, str] = {}
-    for name, spec in form["fields"].items():
-        if spec["type"] == "ref":
-            words.update(_said(store, spec["to"], (v.get(name) for v in values if isinstance(v, dict))))
-    return words
-
-
-def record_view(store: Collections, collection: str, rid: str) -> dict | None:
+def record_view(reader: Reader, collection: str, rid: str) -> dict | None:
     """One record, a deleted one included, with its newest HISTORY changes: `{name, rev, title, fields, record,
     changes, words}` — its form's fields to show it by and `words` for the ids its refs name, now and in the changes —
     or None."""
-    record, form = store._record(collection, rid), store._form(collection)
+    record, form = reader.record(collection, rid), reader.form(collection)
     if record is None or form is None:
         return None
-    changes = store._history(collection, rid, HISTORY)
+    changes = reader.history(collection, rid, HISTORY)
     values = [record["fields"], *(c["before"] for c in changes), *(c["after"] for c in changes)]
-    return {"name": collection, "rev": store._rev(collection), "title": _title(store, form, record["fields"]),
-            "fields": _fields(form), "record": record, "changes": changes, "words": _ref_words(store, form, values),
-            "related": _related(store, collection, rid)}
+    return {"name": collection, "rev": reader.rev(collection), "title": reader.title(form, record["fields"]),
+            "fields": shown_fields(form), "record": record, "changes": changes,
+            "words": reader.ref_words(form, values), "related": _related(reader, collection, rid)}
 
 
-def _related(store: Collections, collection: str, rid: str) -> list[dict]:
+def _related(reader: Reader, collection: str, rid: str) -> list[dict]:
     """The records of the Space's other collections whose ref names this one — the touches of a deal, its rounds —
     each collection's newest RELATED_MAX by their first date field: `[{name, fields, date, records}]`."""
-    space = store._db.execute("SELECT space FROM schemas WHERE collection = ?", (collection,)).fetchone()
+    schema = reader.schema(collection)
     related = []
-    for name, form, _ in _schemas(store, space[0]) if space else []:
+    for other in reader.schemas(schema["space"]) if schema else []:
+        name, form = other["name"], other["form"]
         refs = [f for f, spec in form["fields"].items() if spec["type"] == "ref" and spec["to"] == collection]
         if not refs:
             continue
         date = next((f for f, spec in form["fields"].items() if spec["type"] == "date"), None)
-        where, params = store._where(name, form, [{"field": refs[0], "op": "ref_is", "value": rid}], False)
-        order = f"{_path(date)} DESC, id DESC" if date else "id DESC"
-        records = [_record(row) for row in store._db.execute(
-            f"SELECT {RECORD_COLUMNS} FROM records WHERE {where} ORDER BY {order} LIMIT ?", (*params, RELATED_MAX))]
+        records = reader.records(name, [{"field": refs[0], "op": "ref_is", "value": rid}], limit=RELATED_MAX, by=date,
+                                 newest=True)
         if records:
-            related.append({"name": name, "fields": _fields(form), "date": date, "ref": refs[0], "records": records})
+            related.append({"name": name, "fields": shown_fields(form), "date": date, "ref": refs[0],
+                            "records": records})
     return related
 
 
-def form_view(store: Collections, collection: str) -> dict | None:
+def form_view(reader: Reader, collection: str) -> dict | None:
     """What a sheet that adds a record asks for: `{name, rev, fields, options}` — the form's fields, and for each ref
     field the records it may name, `[{id, title}]`, the OPTIONS_MAX newest changed of those not deleted. None for no
     such collection."""
-    form = store._form(collection)
+    form = reader.form(collection)
     if form is None:
         return None
     options = {}
     for name, spec in form["fields"].items():
         if spec["type"] != "ref":
             continue
-        target = store._form(spec["to"])
-        rows = store._db.execute(f"SELECT {RECORD_COLUMNS} FROM records WHERE collection = ? AND deleted IS NULL "
-                                 "ORDER BY updated DESC, id DESC LIMIT ?", (spec["to"], OPTIONS_MAX)) if target else []
-        options[name] = [{"id": r["id"], "title": _title(store, target, r["fields"]) or r["id"]}
-                         for r in map(_record, rows)]
-    return {"name": collection, "rev": store._rev(collection), "fields": _fields(form), "options": options}
+        target = reader.form(spec["to"])
+        rows = reader.records(spec["to"], limit=OPTIONS_MAX, by=UPDATED, newest=True) if target else []
+        options[name] = [{"id": r["id"], "title": reader.title(target, r["fields"]) or r["id"]} for r in rows]
+    return {"name": collection, "rev": reader.rev(collection), "fields": shown_fields(form), "options": options}
 
 
-def space_changes(store: Collections, space: str, before: str | None) -> dict:
-    """The newest CHANGES_SHOWN changes to the records of a Space's collections — before the change `before`, when
-    one is named — each with its record's title, version and deleted state now, for its «Undo», and whether a revert
-    took it back already: `{space, changes, next, words}`, `next` the change to read on from."""
-    forms = {name: json.loads(form) for name, form in store._db.execute(
-        "SELECT collection, form FROM schemas WHERE space = ? ORDER BY collection", (space,)).fetchall()}
-    if not forms:
-        return {"space": space, "changes": [], "next": None, "words": {}}
-    sql = (f"SELECT {CHANGE_COLUMNS} FROM changes WHERE collection IN ({', '.join('?' * len(forms))}) "
-           "AND id IS NOT NULL")
-    params: list[Any] = list(forms)
-    if before is not None:
-        sql += " AND seq < coalesce((SELECT seq FROM changes WHERE change_id = ?), 0)"
-        params.append(before)
-    rows = [_change(r) for r in store._db.execute(sql + " ORDER BY seq DESC LIMIT ?", (*params, CHANGES_SHOWN + 1))]
-    shown, words = [], {}
-    taken = {r[0] for r in store._db.execute(
-        f"SELECT reverts FROM changes WHERE reverts IN ({', '.join('?' * len(rows))})",
-        [c["change_id"] for c in rows])} if rows else set()
-    for change in rows[:CHANGES_SHOWN]:
-        form, record = forms[change["collection"]], store._record(change["collection"], change["id"])
-        words.update(_ref_words(store, form, [change["before"], change["after"]]))
-        shown.append({**change, "title": _title(store, form, record["fields"]) if record else None,
-                      "version": record["version"] if record else None,
-                      "deleted": record["deleted"] if record else None, "reverted": change["change_id"] in taken})
-    return {"space": space, "changes": shown, "words": words,
-            "next": shown[-1]["change_id"] if len(rows) > CHANGES_SHOWN else None}
+def space_changes(reader: Reader, space: str, before: str | None) -> dict:
+    """The newest CHANGES_SHOWN changes to the records of a Space's collections, before the change `before` when one
+    is named (`Reader.space_changes`): `{space, changes, next, words}`."""
+    return {"space": space, **reader.space_changes(space, before, CHANGES_SHOWN)}
 
 
 # --- the routes --------------------------------------------------------------------------------------------------
@@ -781,7 +643,7 @@ class Views:
     async def _answer(self, work, *args) -> web.Response:
         store = self.platform.collections
         try:
-            data = await store.read(lambda: work(store, *args))
+            data = await store.read(lambda reader: work(reader, *args))
         except Refused as exc:
             return web.json_response({"error": str(exc)}, status=503)
         if data is None:
@@ -815,9 +677,9 @@ class Views:
         collection, name = request.match_info["collection"], request.match_info["view"]
         store = self.platform.collections
 
-        def page() -> str | None:
-            row = store._db.execute("SELECT space FROM schemas WHERE collection = ?", (collection,)).fetchone()
-            found = _code_views(store, row[0]).get(collection, []) if row else []
+        def page(reader: Reader) -> str | None:
+            schema = reader.schema(collection)
+            found = _code_views(reader, schema["space"]).get(collection, []) if schema else []
             return next((v["html"] for v in found if v["name"] == name), None)
         try:
             text = await store.read(page)
@@ -873,7 +735,7 @@ class Views:
             return web.json_response({"error": f"views: 1 to {STATS_NAMED} of <collection>/<view>; tz: an IANA time "
                                                "zone"}, status=400)
         screen = self.zone()
-        return await self._answer(lambda store, *args: {**stats(store, *args), "screen_tz": screen}, pairs,
+        return await self._answer(lambda reader, *args: {**stats(reader, *args), "screen_tz": screen}, pairs,
                                   self._when(tz))
 
 

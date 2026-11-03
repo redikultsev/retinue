@@ -31,13 +31,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from .collections import (NAME, SPACE, Collections, Refused, Rejected, Writer, _check_writer, _json, _plain,
+from .collections import (NAME, SPACE, Collections, Logging, Refused, Rejected, Writer, check_writer, plain,
                           writer_class)
 
 if TYPE_CHECKING:
@@ -108,25 +107,24 @@ class Events:
 
     async def after(self, collection: str, change_ids: list[str], depth: int) -> list[dict]:
         """The events these changes of `collection` fire, each logged once and its reactions run: their outcomes."""
-        fired = await self.store.write(lambda db: self._fired(db, collection, change_ids, depth))
+        fired = await self.store.write(lambda log: self._fired(log, collection, change_ids, depth))
         return [await self._run(event) for event in fired]
 
-    def _fired(self, db: sqlite3.Connection, collection: str, change_ids: list[str], depth: int) -> list[dict]:
-        """On the collections' thread, in one write: the events declared on the collection that these changes match,
-        each logged by its change — one logged already (the same change told again) is not fired again."""
-        store = self.store
-        space = db.execute("SELECT space FROM schemas WHERE collection = ?", (collection,)).fetchone()
-        declared = [(p["project"], name, event) for p in store._projects() if space and p["project"] == space[0]
+    def _fired(self, log: Logging, collection: str, change_ids: list[str], depth: int) -> list[dict]:
+        """In one write: the events declared on the collection that these changes match, each logged by its change —
+        one logged already (the same change told again) is not fired again."""
+        schema = log.schema(collection)
+        declared = [(p["project"], name, event) for p in log.projects() if schema and p["project"] == schema["space"]
                     for name, event in p["description"].get("events", {}).items()
                     if event["collection"] == collection and "when" in event]
         fired = []
         for cid in change_ids if declared else []:
-            change = store._change_of(cid)
+            change = log.change(cid)
             if change is None or change["id"] is None or change["op"] not in ("add", "set"):
                 continue
             for project, name, event in declared:
                 if _matches(event["when"], change):
-                    made = self._log(db, f"change:{cid}", project, name, collection, change["id"], depth,
+                    made = self._log(log, f"change:{cid}", project, name, collection, change["id"], depth,
                                      self._marks(change))
                     if made is not None:
                         fired.append(made)
@@ -135,19 +133,16 @@ class Events:
     @staticmethod
     def _marks(change: dict) -> tuple[str, ...]:
         """The marks of foreign text behind a change, as its reactions write with them: its writer's own, and a
-        session's or a Mac's, which carry none of their own (`colltools._foreign`)."""
+        session's or a Mac's, which carry none of their own (`Reader.foreign`)."""
         cls = writer_class(change["actor"])
         return tuple(sorted({*change["foreign"], *((cls,) if cls in ("session", "mac") else ())}))
 
-    def _log(self, db: sqlite3.Connection, source: str, project: str, name: str, collection: str | None,
+    def _log(self, log: Logging, source: str, project: str, name: str, collection: str | None,
              record: str | None, depth: int, foreign: tuple[str, ...]) -> dict | None:
-        eid = self.store._ulids.next(self.clock())
-        made = db.execute("INSERT OR IGNORE INTO events (id, source, project, name, collection, record, depth, at) "
-                          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                          (eid, source, project, name, collection, record, depth, self.clock())).rowcount
-        if not made:
+        eid = log.log_event(source, project, name, collection, record, depth, self.clock())
+        if eid is None:
             return None
-        found = self.store._record(collection, record) if collection and record else None
+        found = log.record(collection, record) if collection and record else None
         return {"id": eid, "source": source, "project": project, "name": name, "collection": collection,
                 "record": record, "fields": found["fields"] if found else {}, "depth": depth, "foreign": foreign}
 
@@ -158,8 +153,8 @@ class Events:
         if not isinstance(project, str) or not SPACE.fullmatch(project) or not isinstance(name, str) \
                 or not NAME.fullmatch(name):
             raise Rejected("project and event: a project's name and one of its events")
-        _check_writer(writer)
-        if not _plain(idem, IDEM_MAX):
+        check_writer(writer)
+        if not plain(idem, IDEM_MAX):
             raise Rejected(f"idem names the call, 1 to {IDEM_MAX} plain characters")
         found = await self.store.project(project)
         event = (found["description"].get("events", {}) if found else {}).get(name)
@@ -174,8 +169,8 @@ class Events:
             if got is None or got["deleted"] is not None:
                 raise Rejected(f"{event['collection']} has no record {record!r}")
 
-        def log(db: sqlite3.Connection) -> dict | None:
-            return self._log(db, f"call:{writer.actor}/{idem}", project, name, event["collection"], record, 0,
+        def log(into: Logging) -> dict | None:
+            return self._log(into, f"call:{writer.actor}/{idem}", project, name, event["collection"], record, 0,
                              tuple(sorted(writer.foreign)))
         made = await self.store.write(log)
         return {"event": made["id"] if made else None, "outcome": await self._run(made) if made else None}
@@ -196,16 +191,14 @@ class Events:
             await self._keep(event, outcome)
             return outcome
         on = f"{event['project']}/{event['name']}"
-        reactions = [(p["project"], n, r) for p in await self.store.read(self.store._projects)
+        reactions = [(p["project"], n, r) for p in await self.store.read(lambda reader: reader.projects())
                      for n, r in enumerate(p["description"].get("reactions", [])) if r["on"] == on]
         outcome = {"reactions": [await self._react(project, n, reaction, event) for project, n, reaction in reactions]}
         await self._keep(event, outcome)
         return outcome
 
     async def _keep(self, event: dict, outcome: dict) -> None:
-        def keep(db: sqlite3.Connection) -> None:
-            db.execute("UPDATE events SET outcome = ? WHERE id = ?", (_json([outcome]), event["id"]))
-        await self.store.write(keep)
+        await self.store.write(lambda log: log.keep_outcome(event["id"], outcome))
 
     async def _react(self, project: str, n: int, reaction: dict, event: dict) -> dict:
         """One reaction, as the reacting project: `{project, reaction, do, …}` with what it made — `change_ids` and
@@ -237,7 +230,7 @@ class Events:
         fields = {name: value for name, given in reaction["fields"].items()
                   if (value := _value(given, event)) is not None}
         if reaction["do"] == "task":
-            form = await self.store.read(lambda: self.store._form(TASKS))
+            form = await self.store.read(lambda reader: reader.form(TASKS))
             if form is not None and form["fields"].get("project", {}).get("type") == "text":
                 fields.setdefault("project", project)  # filed under the project that reacted, when tasks say so
         op: dict = {"op": "add", "fields": fields}
@@ -254,14 +247,7 @@ class Events:
     async def log(self, project: str | None = None, limit: int = 50) -> list[dict]:
         """The newest events, a project's alone when one is named: each `{id, source, project, name, collection,
         record, depth, at, outcome}`."""
-        def work() -> list[dict]:
-            sql, args = "SELECT id, source, project, name, collection, record, depth, at, outcome FROM events", []
-            if project is not None:
-                sql, args = sql + " WHERE project = ?", [project]
-            rows = self.store._db.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
-            keys = ("id", "source", "project", "name", "collection", "record", "depth", "at", "outcome")
-            return [dict(zip(keys, row[:-1] + (json.loads(row[-1]),))) for row in rows]
-        return await self.store.read(work)
+        return await self.store.read(lambda reader: reader.events(project, limit))
 
 
 # --- in the platform ---------------------------------------------------------------------------------------------------

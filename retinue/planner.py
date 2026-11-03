@@ -764,8 +764,9 @@ class Planner:
 
     async def cycle(self, now: float) -> None:
         """Pieces whose time is over passed, closed tasks' future pieces skipped; then, when anything changed since the
-        last look — the calendar, a hold, a block, a task — the plans laid again where something crosses them. The
-        look is seen only once that went through: a refused write is tried again at the next one."""
+        last look — the calendar, a hold, a block, a task, his activities, the day — the plans laid again where
+        something crosses them, and the state pushed to the app. The look is seen only once that went through: a
+        refused write is tried again at the next one."""
         if self.core.platform is None:
             return
         try:
@@ -773,10 +774,12 @@ class Planner:
             if snapshot is None:
                 return
             mark = hashlib.sha256(json.dumps([getattr(self.tasks, "events", None) or [], self.held(now), snapshot,
-                                              [a.shape() for a in self.activities]],
+                                              [a.shape() for a in self.activities],
+                                              L.window_at(now, self.hours).day.isoformat()],
                                              sort_keys=True).encode()).hexdigest()
             if mark != self._seen and await self._relay(now) is not None:
                 self._seen = mark
+                await self.push(now)  # the meals' places follow the calendar, the holds and the day: the grid too
         except Exception:
             log.exception("the plan's look failed")
 

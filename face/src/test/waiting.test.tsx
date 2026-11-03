@@ -121,14 +121,14 @@ describe("the one count", () => {
     });
   }
 
-  it("says «Today N» — the feed's count less the people's asks — on the tab, in the header, the tab bar, the title and the badge", async () => {
+  it("says «Today N» — the feed's count less the people's asks — on the tab, the tab bar, the title and the badge — none in the header", async () => {
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }));
     const badge = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { ...navigator, setAppBadge: badge, clearAppBadge: vi.fn().mockResolvedValue(undefined) });
     feedSource.feed = feedOf([row("r"), look, ask]);
     await open("/today");
-    expect(await screen.findByLabelText("Waiting for you: 2")).toBeTruthy(); // the header
-    expect(screen.getByLabelText("2 waiting")).toBeTruthy(); // the tab bar
+    expect(await screen.findByLabelText("2 waiting")).toBeTruthy(); // the tab bar
+    expect(screen.queryByLabelText(/^Waiting for you: /)).toBeNull(); // the header carries no count
     expect(within(screen.getByRole("tablist", { name: "Today" })).getByRole("tab", { name: /^Today/ }).textContent).toBe("Today2");
     await waitFor(() => expect(document.title).toBe("(2) Retinue"));
     expect(badge).toHaveBeenLastCalledWith(2);
@@ -138,7 +138,6 @@ describe("the one count", () => {
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }));
     live.dispatch({ type: "list", snapshot: { schema: 1, cursor: 1, sessions: [session("w", { state: "waiting", waiting: 2 }), session("x", { state: "waiting" }), session("a")] } });
     await open("/today");
-    expect(await screen.findByLabelText("Waiting for you: 3")).toBeTruthy();
     await waitFor(() => expect(document.title).toBe("(3) Retinue"));
   });
 });

@@ -1,4 +1,3 @@
-import { FeedCount } from "@/components/feed";
 import { LogOut } from "@/components/icons";
 import { ChatToggle, HeaderVoice } from "@/components/talk";
 import { Button } from "@/components/ui/button";
@@ -26,7 +25,6 @@ export function AppHeader() {
           title={connection === "live" ? "online" : WORDS[connection]}
         />
         {WORDS[connection] && <span className="truncate text-xs text-muted-foreground">{WORDS[connection]}</span>}
-        <FeedCount />
       </div>
       {/* speak to the cards or to Retinue; the chat with Retinue beside every screen */}
       <HeaderVoice />

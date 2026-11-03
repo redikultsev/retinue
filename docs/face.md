@@ -696,7 +696,7 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
 
 - **Home: “Today”** ([above](#today)), with the feed “Waiting for you” ([below](#the-feed)). Its count, «Today N» — the
   feed's count less the people's asks (`lib/waiting.ts`; the cards the sessions wait on until the feed is in) —, is on
-  the tab, in the header, the left column, the tab title, the app badge and on «New». The platform's `count` stays
+  the tab, the left column, the tab title, the app badge and on «New». The platform's `count` stays
   every row's: `/wait` in Telegram, which has no «Tasks», counts the asks too.
 - <a id="projects-and-their-sessions"></a>**The list is the projects and their sessions** (of the prototypes,
   «4 · Projects with sessions»): each project is a place — its row, its mark and its name, opens its page
@@ -1096,7 +1096,7 @@ that touches the face, beside `typecheck`, `lint` and `test`; it does not replac
    script's effect; `curl -sI` of `/api/files/<id>/view` from the phone's tunnel shows one `Content-Security-Policy`
    ending in `frame-ancestors https://<face host>` and no `X-Frame-Options`; of `/api/files/<id>`, the app's policy,
    `default-src 'none'; sandbox` and `Content-Disposition: attachment`.
-9. “Waiting for you”: with a card waiting, the app's home lists it under “Decide” and the header shows the count; `/wait` in
+9. “Waiting for you”: with a card waiting, the app's home lists it under “Decide” and «Today» in the left column shows the count; `/wait` in
    the chat names the same row, and a reply to that line goes into the session. Within a minute of the router's start
    the platform has her digest: a letter or a chat she judged to need you shows under “From the assistant”, and “Open
    in Telegram” opens the bot's chat; `docker compose logs router | grep "assistant's digest"` is empty (no refusal).

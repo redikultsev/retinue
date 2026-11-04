@@ -1,6 +1,6 @@
 # Installed by deploy/setup.sh (BACKUP=1). Run by hand: systemctl start retinue-backup; log: journalctl -u retinue-backup
 [Unit]
-Description=Retinue backup: consistent SQLite copies, restic to S3, status for the morning summary
+Description=Retinue backup: restic to S3 in two passes, the second with the containers paused
 Wants=network-online.target
 After=network-online.target docker.service
 
@@ -9,6 +9,8 @@ Type=oneshot
 Environment=RETINUE_ROOT=/srv/retinue
 EnvironmentFile=/srv/retinue/backup.env
 ExecStart=/usr/bin/python3 /usr/local/lib/retinue/retinue-backup.py
+# Whatever ends the run — a kill, the timeout below, a crash — nothing it paused stays paused.
+ExecStopPost=/usr/bin/python3 /usr/local/lib/retinue/retinue-backup.py --unpause
 Nice=10
 IOSchedulingClass=idle
 TimeoutStartSec=2h

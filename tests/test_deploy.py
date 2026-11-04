@@ -442,7 +442,7 @@ def test_the_base_is_mounted_for_both_and_its_repository_for_the_router_only():
     assert "/srv/retinue/memory/git:/kb-git" in router and "memory/git" not in assistant and "hub" not in assistant
     assert SERVICES["assistant"]["environment"]["RETINUE_MEMORY"] == "${RETINUE_MEMORY:-}"
     assert "apt-get install -y --no-install-recommends git" in (ROOT / "Dockerfile").read_text(), "the router commits"
-    assert "str(ROOT)]" in (ROOT / "deploy/backup/retinue-backup.py").read_text(), \
+    assert "[ROOT, *data]" in (ROOT / "deploy/backup/retinue-backup.py").read_text(), \
         "the hub and the working copy live under /srv/retinue: the nightly backup takes them with it"
 
 

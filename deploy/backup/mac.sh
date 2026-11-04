@@ -24,9 +24,11 @@ SNAPSHOTS=(--host "$HOST" --tag retinue)
 # Time-based, so that many fake snapshots made at once cannot push the real ones out by count. The durations count
 # back from the newest snapshot, not from now: one snapshot dated in the future would put every real one out of
 # range — `trusted` refuses to go on while there is one.
-KEEP=(--keep-within-daily 7d --keep-within-weekly 1m --keep-within-monthly 6m)
+# Grouped by host and tags, not by paths: the host's scope reads every bind-mounted folder, so a night's paths change
+# with the apps, and a group per set of paths would keep its last snapshot for ever.
+KEEP=(--group-by host,tags --keep-within-daily 7d --keep-within-weekly 1m --keep-within-monthly 6m)
 # The copy on this computer outlives the remote one: two years.
-LOCAL_KEEP=(--keep-within-daily 7d --keep-within-weekly 1m --keep-within-monthly 24m)
+LOCAL_KEEP=(--group-by host,tags --keep-within-daily 7d --keep-within-weekly 1m --keep-within-monthly 24m)
 VERIFIED=$(dirname "$ENV_FILE")/verified-snapshot
 RESTIC_SERIES=0.19   # the series whose output this script reads (snapshots --json)
 SNAPSHOT=
@@ -38,7 +40,8 @@ trap 'rm -rf ${RESTORED:+"$RESTORED"}' EXIT   # the restored copy holds the arch
 
 check() { "$RESTIC" check --read-data; }
 
-# The newest snapshot, as long as none is dated more than an hour ahead of this computer's clock. The server writes
+# The newest `data` snapshot (the one a night takes with the containers paused: docs/backup.md), as long as none is
+# dated more than an hour ahead of this computer's clock. The server writes
 # the time it likes: a snapshot from the future is a forged one or a broken clock, and either way nothing may be
 # deleted on its account. Sets SNAPSHOT.
 trusted() {
@@ -60,22 +63,47 @@ if future:
     short, time = future[0]["short_id"], future[0]["time"]
     sys.exit(f"snapshot {short} is dated {time}, in the future: forged or a broken clock on the server. "
              f"Nothing is deleted while it is there; look at it (restic snapshots) before removing it by hand")
-if not snapshots:
-    sys.exit("no snapshots")
-print(max(snapshots, key=lambda s: when(s["time"]))["id"])
+data = [s for s in snapshots if "data" in (s.get("tags") or [])]
+if not data:
+    sys.exit("no data snapshot yet: the first night after updating the server makes one")
+print(max(data, key=lambda s: when(s["time"]))["id"])
 ')
 }
 
 restore() {
   RESTORED=$(mktemp -d "${TMPDIR:-/tmp}/retinue-restore.XXXXXX")
-  "$RESTIC" restore "$SNAPSHOT" --target "$RESTORED"
-  # The restore counts when every database opens whole and the archive has last night's events.
+  # Not the whole server: its secrets have no place on this disk, and its file names may differ only in case. The
+  # databases with their journals, the uploaded files, and the staging folder (inventory, Dokploy's database).
+  "$RESTIC" restore "$SNAPSHOT" --target "$RESTORED" --include '*.sqlite*' --include '*.db' --include '*.db-*' \
+    --include attachments --include staging
+  # The restore counts when every SQLite database opens whole (found by its header: wg-easy.db, jobs.db), the archive
+  # has last night's events, and Dokploy's database and key are there when the server runs it.
   "$PYTHON" - "$RESTORED" <<'PY'
 import os, sqlite3, sys, time
 from pathlib import Path
 
 root = Path(sys.argv[1])
-found = {p.name: p for p in root.rglob("*.sqlite") if "staging" in p.parts}
+
+def is_sqlite(path):
+    try:
+        with open(path, "rb") as file:
+            return file.read(16) == b"SQLite format 3\x00"
+    except OSError:
+        return False
+
+databases = [p for p in root.rglob("*") if p.is_file() and not p.name.endswith(("-journal", "-wal", "-shm"))
+             and is_sqlite(p)]
+for path in sorted(databases):
+    try:  # read-write: a database paused mid-transaction rolls its journal back on open, as after a crash
+        result = sqlite3.connect(path).execute("PRAGMA integrity_check").fetchone()[0]
+    except sqlite3.DatabaseError as exc:
+        result = str(exc)
+    if result != "ok":
+        sys.exit(f"restore: {path.relative_to(root)}: {result}")
+found = {}
+for path in sorted(databases):
+    if "retinue_" in str(path.relative_to(root)):
+        found.setdefault(path.name, path)
 # With the platform on (RETINUE_PLATFORM=1 in backup.env, or its database in the snapshot), its collections too:
 # the platform makes the file at its start, uploads or not.
 platform = os.environ.get("RETINUE_PLATFORM") == "1" or "platform.sqlite" in found
@@ -83,27 +111,24 @@ wanted = {"router.sqlite", "archive.sqlite", "agent.sqlite"} | ({"platform.sqlit
 missing = wanted - set(found)
 if missing:
     sys.exit(f"restore: not in the snapshot: {', '.join(sorted(missing))}")
-for name, path in sorted(found.items()):
-    try:
-        result = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True).execute("PRAGMA integrity_check").fetchone()[0]
-    except sqlite3.DatabaseError as exc:
-        result = str(exc)
-    if result != "ok":
-        sys.exit(f"restore: {name}: {result}")
 if "collections.sqlite" in found:  # every uploaded file its row names, whole, in its own volume (by its SHA-256)
-    staged = found["collections.sqlite"]
-    db = sqlite3.connect(f"{staged.as_uri()}?mode=ro", uri=True)
-    rows = db.execute("SELECT sha256, size FROM files").fetchall()
-    volume = staged.parent.name
-    kept = {p.name: p.stat().st_size for p in root.rglob("attachments/*")
-            if "staging" not in p.parts and volume in p.parts and p.is_file()}
+    collections = found["collections.sqlite"]
+    rows = sqlite3.connect(collections).execute("SELECT sha256, size FROM files").fetchall()
+    kept = {p.name: p.stat().st_size for p in (collections.parent / "attachments").glob("*") if p.is_file()}
     if lost := [sha for sha, size in rows if kept.get(sha) != size]:
         sys.exit(f"restore: {len(lost)} uploaded files not in the snapshot or not whole, e.g. {lost[0][:12]}")
-last = sqlite3.connect(f"{found['archive.sqlite'].as_uri()}?mode=ro", uri=True).execute(
-    "SELECT max(ts) FROM events").fetchone()[0]
+dumps = list(root.rglob("staging/dokploy/dokploy.dump"))
+for dump in dumps:  # pg_dump's custom format opens with PGDMP
+    if dump.read_bytes()[:5] != b"PGDMP":
+        sys.exit("restore: Dokploy's database dump is not a pg_dump archive")
+    secret = dump.parent / "auth_secret"
+    if not secret.exists() or not secret.read_bytes().strip():
+        sys.exit("restore: Dokploy's encryption secret is not in the snapshot")
+last = sqlite3.connect(found["archive.sqlite"]).execute("SELECT max(ts) FROM events").fetchone()[0]
 if not last or time.time() - last > 2 * 86400:
     sys.exit("restore: archive.sqlite has no events from the last two days")
-print(f"integrity ok: {', '.join(sorted(found))}; last archive event {round((time.time() - last) / 3600)} h ago")
+print(f"integrity ok: {len(databases)} databases ({', '.join(sorted(found))}){', Dokploy' if dumps else ''}; "
+      f"last archive event {round((time.time() - last) / 3600)} h ago")
 PY
 }
 

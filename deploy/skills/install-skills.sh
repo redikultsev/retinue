@@ -22,14 +22,24 @@ old="$parent/.skills-old.$$"
 trap 'rm -rf "$new" "$old"' EXIT
 install -d -m 755 "$new/skills"
 if [[ $src != --empty ]]; then
+  copied=0
   for dir in "$src"/*/; do
+    [[ -d $dir ]] || continue
     name=$(basename "$dir")
     if [[ -f $dir/SKILL.md ]]; then
       cp -R -P "${dir%/}" "$new/skills/$name"        # a link stays a link, and the check refuses it
+      copied=$((copied + 1))
     else
       echo "skipped $name: no SKILL.md"
     fi
   done
+  # No skill at all is a wrong folder, not an empty set (that is --empty): the installed set stays.
+  if (( copied == 0 )); then
+    where="a folder of skill folders, each with a SKILL.md, as ~/.claude/skills"
+    [[ -d $src/skills ]] && where="the skills are one level down: give $src/skills/"
+    echo "no skill in $src: nothing installed ($where)" >&2
+    exit 1
+  fi
 fi
 python3 -I "$REPO/retinue/instructions.py" prune-skills "$new"   # one refused skill costs only itself
 chmod -R u=rwX,go=rX "$new"

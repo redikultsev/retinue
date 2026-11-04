@@ -147,7 +147,8 @@ app or the CLI rather than kept in a folder is not there to send.
 The install script copies each folder that holds a `SKILL.md` (anything else is skipped, named), takes out each skill
 the check refuses (named), makes the rest root's and world-readable, checks them with the server's own `python3` and
 swaps `/srv/retinue/skills/skills` in whole; a set with no skill left, or over the bounds, is refused and leaves the
-installed one as it was. The next run of a session sees the new set — no restart. `--empty` removes them all.
+installed one as it was; so is a folder with no skill folder in it at all (the skills one level down, in its `skills/`,
+are named as such). The next run of a session sees the new set — no restart. `--empty` removes them all.
 `setup.sh` creates the empty `/srv/retinue/skills` once.
 
 A skill written for the Mac may name Mac paths (`~/Desktop/…`, your own folders): on the server those are not there, and

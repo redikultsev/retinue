@@ -193,6 +193,26 @@ def test_setup_without_matrix(tmp_path, monkeypatch):
     assert RouterConfig.load(target / "router.yaml").owner_tz == "Asia/Tokyo", "a run without OWNER_TZ keeps the zone"
 
 
+def test_the_platform_says_times_in_the_zone_the_router_has(tmp_path):
+    """One zone for the owner: platform.yaml is written once from the example (`owner_tz: UTC`), so the zone given
+    then or on a later run reaches it as it reaches router.yaml; a run without OWNER_TZ keeps it; the line's comment
+    and the rest of his file stay."""
+    def zone(target):
+        return yaml.safe_load((target / "platform" / "platform.yaml").read_text())["owner_tz"]
+
+    target, _ = setup(tmp_path, TELEGRAM_OWNER_ID="42", PLATFORM="1", OWNER_TZ="Asia/Tokyo")
+    assert zone(target) == "Asia/Tokyo", "the first run's zone, not the example's UTC"
+    path = target / "platform" / "platform.yaml"
+    path.write_text(path.read_text().replace("max_sessions: 12  ", "max_sessions: 7  ", 1))
+    setup(tmp_path, TELEGRAM_OWNER_ID="42", PLATFORM="1", OWNER_TZ="Europe/Berlin")
+    assert zone(target) == "Europe/Berlin", "a later run's zone too"
+    setup(tmp_path, TELEGRAM_OWNER_ID="42", PLATFORM="1")
+    assert zone(target) == "Europe/Berlin", "a run without OWNER_TZ keeps it"
+    text = path.read_text()
+    assert "max_sessions: 7  " in text and "owner_tz: Europe/Berlin " in text and "# your IANA zone" in text, \
+        "his edits and the line's comment stay"
+
+
 def test_setup_with_matrix(tmp_path, monkeypatch):
     target, printed = setup(tmp_path, MATRIX_SERVER_NAME="matrix.example.com", MATRIX_OWNER="alice")
     assert printed["COMPOSE_PROFILES"] == "matrix" and printed["MATRIX_SERVER_NAME"] == "matrix.example.com"

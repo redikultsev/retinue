@@ -79,8 +79,8 @@ and `base` (the root of the Base) and `code` (your repositories, [code.md](code.
   6 hours in all (`CLAUDE_CODE_RETRY_WATCHDOG_MAX_WAIT_MS`). While it waits, the session stays «working» and holds its
   room on the lane; you get «Subscription limit — waiting for the reset at HH:MM» once per wait (from the CLI's `system/api_retry`
   line: a 429 waited longer than the watchdog's 5-minute backoff; a wait that is not a finite number is ignored, and
-one past the CLI's 6-hour cap is read as 6 hours), the time in `owner_tz` of `platform.yaml` (default
-  `UTC`). The watchdog also retries other transient API errors longer (about 3 hours). The CLI's recheck of a
+one past the CLI's 6-hour cap is read as 6 hours), the time in `owner_tz` of `platform.yaml` (`deploy/setup.sh`
+  writes there the zone `router.yaml` has, `UTC` by default). The watchdog also retries other transient API errors longer (about 3 hours). The CLI's recheck of a
   limit lifted early (`…_USAGE_LIMIT_RECHECK_MS`) came in 2.1.305 and is not used: the pin is 2.1.304, and the lanes'
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` turns those checks off anyway.
 - **A side question** from the app starts a session of its own beside the one it is about and never writes into it

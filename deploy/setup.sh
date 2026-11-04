@@ -422,6 +422,9 @@ if [[ $PLATFORM_ON == 1 ]]; then
   install -d -m 755 "$PLATFORM_DIR"
   [[ -f $PLATFORM_DIR/platform.yaml ]] || \
     install -m 644 "$REPO/deploy/platform/platform.example.yaml" "$PLATFORM_DIR/platform.yaml"
+  # One zone for the owner, router.yaml's: the example says UTC and is copied once, so its line follows on every run
+  # (its comment and the rest of the file stay his).
+  sed -i -E "s|^owner_tz: *[^ #]+( *#.*)?$|owner_tz: $OWNER_TZ\1|" "$PLATFORM_DIR/platform.yaml"
   # The owner's skills, read-only in the room: empty until deploy/skills/install-skills.sh fills it.
   install -d -m 755 "$ROOT/skills"
   # The owner's memory snapshot, read-only in lane-private: empty until deploy/memory/install-owner-memory.sh fills it.

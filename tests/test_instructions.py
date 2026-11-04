@@ -338,6 +338,12 @@ def test_the_install_script_copies_checks_and_swaps_the_skills_in_whole(tmp_path
     assert done.returncode == 1 and "every skill was taken out" in done.stderr
     assert sorted(os.listdir(dest / "skills")) == ["write-ru"], "nothing left: the installed set stays as it was"
     assert sorted(os.listdir(dest.parent)) == ["skills"], "no staging left behind"
+    wrapped = tmp_path / "wrapped"
+    skill(wrapped, "kept-out")                          # wrapped/skills/kept-out: the skills one level too deep
+    done = install(str(wrapped))
+    assert done.returncode == 1 and f"no skill in {wrapped}" in done.stderr and "skills/" in done.stderr, \
+        "a folder with no skill in it is not an empty set: it is refused, and says where the skills are"
+    assert sorted(os.listdir(dest / "skills")) == ["write-ru"], "the installed set stays as it was"
     assert install("--empty").returncode == 0 and os.listdir(dest / "skills") == []
 
 

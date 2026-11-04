@@ -161,6 +161,9 @@ def test_the_platforms_collections_and_uploaded_files_go_in_with_its_volume(tmp_
 MAC = ROOT / "deploy" / "backup" / "mac.sh"
 FAKE_MAC_RESTIC = """#!/bin/bash
 echo "$*" >> "$FAKE_LOG"
+[[ $1 != version ]] || { echo "${FAKE_VERSION:-restic 0.19.1 compiled with go1.26 on darwin/arm64}"; exit 0; }
+[[ $1 != snapshots ]] || { echo "$FAKE_SNAPSHOTS"; exit 0; }
+[[ $1 != -r || $3 != init ]] || { mkdir -p "$2" && touch "$2/config"; }
 if [[ $1 == restore ]]; then
   target=${@: -1}
   mkdir -p "$target/var/backups/retinue" && cp -R "$FAKE_RESTORE" "$target/var/backups/retinue/staging"
@@ -174,7 +177,7 @@ echo "$* <<< $(cat)" >> "$FAKE_SSH_LOG"
 """
 
 
-def mac(tmp_path, archive_bytes=None, platform=None, env=""):
+def mac(tmp_path, archive_bytes=None, platform=None, env="", **fake):
     """The owner's Mac: an env file with the deleting key, a fake restic whose `restore` lays out last night's copies.
     `platform`: the platform's volume too — `{"collections": bool, "rows": [sha…], "blobs": {sha: bytes}}`, and
     `"other"`: blobs in another volume's `attachments/`. `env`: more lines for backup.env."""
@@ -225,7 +228,10 @@ def mac(tmp_path, archive_bytes=None, platform=None, env=""):
                          env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), "TMPDIR": str(tmp_path),
                               "RETINUE_BACKUP_ENV": str(env_file), "RESTIC": str(restic), "PYTHON": sys.executable,
                               "SSH": str(ssh), "FAKE_SSH_LOG": str(tmp_path / "ssh.log"),
-                              "FAKE_LOG": str(tmp_path / "restic.log"), "FAKE_RESTORE": str(snapshot), **volumes})
+                              "FAKE_LOG": str(tmp_path / "restic.log"), "FAKE_RESTORE": str(snapshot), **volumes,
+                              "FAKE_SNAPSHOTS": json.dumps([{"id": "a1b2c3d4e5f6", "short_id": "a1b2c3d4",
+                                                             "time": "2026-01-01T03:30:01.123456789+01:00"}]),
+                              **fake})
     calls = (tmp_path / "restic.log").read_text().splitlines() if (tmp_path / "restic.log").exists() else []
     steps = [call.split()[2] if call.startswith("-r ") else call.split()[0] for call in calls]  # -r <local repo> <command>
     return run, steps, calls
@@ -235,10 +241,11 @@ def test_monthly_care_on_the_mac_checks_restores_copies_and_only_then_prunes(tmp
     run, steps, calls = mac(tmp_path)
     assert run.returncode == 0, run.stderr
     assert steps[0] == "unlock", "the night's stale lock would stop the check: it goes first"
-    calls, steps = calls[1:], steps[1:]
-    assert steps == ["check", "restore", "init", "copy", "unlock", "forget", "check"], calls
+    assert calls[1:3] == ["version", "snapshots --json --host retinue --tag retinue"], "the snapshot to prove is chosen first"
+    calls, steps = calls[3:], steps[3:]
+    assert steps == ["check", "restore", "init", "copy", "unlock", "forget", "forget", "check"], calls
     assert calls[0] == "check --read-data", "every byte read back: the server's key could overwrite what it wrote"
-    assert calls[1].startswith("restore latest --host retinue --tag retinue --target ")
+    assert calls[1].startswith("restore a1b2c3d4e5f6 --target "), "the snapshot chosen, not `latest`"
     assert calls[2] == f"-r {tmp_path / 'local-repo'} init --from-repo s3:https://s3.example/bucket/retinue " \
                        "--copy-chunker-params", "the copy on the Mac is made once, deduplicating like the original"
     assert calls[3] == f"-r {tmp_path / 'local-repo'} copy --from-repo s3:https://s3.example/bucket/retinue " \
@@ -246,7 +253,10 @@ def test_monthly_care_on_the_mac_checks_restores_copies_and_only_then_prunes(tmp
     assert calls[4] == "unlock", "the server's key cannot delete its own locks; forget needs them gone"
     assert calls[5] == ("forget --host retinue --tag retinue --keep-within-daily 7d --keep-within-weekly 1m "
                         "--keep-within-monthly 6m --prune")
-    assert calls[6] == f"-r {tmp_path / 'local-repo'} check"
+    assert calls[6] == (f"-r {tmp_path / 'local-repo'} forget --host retinue --tag retinue --keep-within-daily 7d "
+                        "--keep-within-weekly 1m --keep-within-monthly 24m --prune"), "the copy here is kept too, longer"
+    assert calls[7] == f"-r {tmp_path / 'local-repo'} check"
+    assert (tmp_path / "verified-snapshot").read_text() == "a1b2c3d4e5f6\n", "a restore elsewhere starts from it"
     assert "integrity ok: agent.sqlite, archive.sqlite, router.sqlite" in run.stdout
     assert not list(tmp_path.glob("retinue-restore.*")), "the restored copy is removed"
     assert not (tmp_path / "ssh.log").exists() and "set RETINUE_SSH_HOST" in run.stderr, "no host named: said, not failed"
@@ -257,6 +267,7 @@ def test_a_monthly_run_that_went_through_tells_the_server_and_a_broken_one_does_
     assert run.returncode == 0, run.stderr
     [told] = (tmp_path / "ssh.log").read_text().splitlines()
     assert told.startswith("server.example sudo tee /srv/retinue/status/restore.json >/dev/null <<< {\"checked\": ")
+    assert told.endswith(', "snapshot": "a1b2c3d4e5f6"}'), "the server's summary names the proven snapshot"
     broken = tmp_path / "broken"
     broken.mkdir()
     run, _, _ = mac(broken, archive_bytes=b"not a database", env="RETINUE_SSH_HOST=server.example\n")
@@ -265,7 +276,7 @@ def test_a_monthly_run_that_went_through_tells_the_server_and_a_broken_one_does_
 
 def test_a_broken_restore_stops_before_anything_is_deleted(tmp_path):
     run, steps, _ = mac(tmp_path, archive_bytes=b"not a database")
-    assert run.returncode != 0 and steps == ["unlock", "check", "restore"], "no copy, no prune after a failed restore"
+    assert run.returncode != 0 and steps[3:] == ["check", "restore"], "no copy, no prune after a failed restore"
     assert "archive.sqlite" in run.stderr
     assert not list(tmp_path.glob("retinue-restore.*")), "nor a copy of the archive left in the temporary folder"
 
@@ -273,16 +284,33 @@ def test_a_broken_restore_stops_before_anything_is_deleted(tmp_path):
 def test_with_the_platform_a_snapshot_without_its_collections_or_their_files_fails_the_restore(tmp_path):
     sha = "ab" * 32
     run, steps, _ = mac(tmp_path / "a", platform={"collections": False, "rows": [], "blobs": {}})
-    assert run.returncode != 0 and steps == ["unlock", "check", "restore"] and "collections.sqlite" in run.stderr, \
+    assert run.returncode != 0 and steps[3:] == ["check", "restore"] and "collections.sqlite" in run.stderr, \
         "the platform makes the file at its start: a snapshot without it lost it"
     run, steps, _ = mac(tmp_path / "b", platform={"collections": True, "rows": [sha], "blobs": {}, "other": [sha]})
-    assert run.returncode != 0 and steps == ["unlock", "check", "restore"] and "1 uploaded files" in run.stderr, \
+    assert run.returncode != 0 and steps[3:] == ["check", "restore"] and "1 uploaded files" in run.stderr, \
         "a row whose file is not there, nor counted from another volume: the uploads were not all taken"
     run, steps, _ = mac(tmp_path / "d", platform={"collections": True, "rows": [sha], "blobs": {sha: b"xy"}})
     assert run.returncode != 0 and "1 uploaded files" in run.stderr, "a file cut short is not the file"
     run, steps, _ = mac(tmp_path / "e", env="RETINUE_PLATFORM=1\n")
-    assert run.returncode != 0 and steps == ["unlock", "check", "restore"] and "collections.sqlite, platform.sqlite" in run.stderr, \
+    assert run.returncode != 0 and steps[3:] == ["check", "restore"] and "collections.sqlite, platform.sqlite" in run.stderr, \
         "with the platform on, a snapshot without its whole volume fails too"
     run, steps, _ = mac(tmp_path / "c", platform={"collections": True, "rows": [sha], "blobs": {sha: b"x"}})
     assert run.returncode == 0, run.stderr
     assert "integrity ok: agent.sqlite, archive.sqlite, collections.sqlite, platform.sqlite, router.sqlite" in run.stdout
+
+
+def test_a_snapshot_dated_in_the_future_stops_the_month_before_anything_is_deleted(tmp_path):
+    """--keep-within* counts back from the newest snapshot: one dated 2099 by a compromised server would put every
+    real snapshot out of range, and forget --prune would delete them all."""
+    forged = ('[{"id": "a1", "short_id": "a1", "time": "2026-01-01T03:30:01.5+01:00"},'
+              ' {"id": "f0", "short_id": "f0f0f0f0", "time": "2099-01-01T00:00:00Z"}]')
+    run, steps, _ = mac(tmp_path, FAKE_SNAPSHOTS=forged)
+    assert run.returncode != 0 and steps == ["unlock", "version", "snapshots"], steps
+    assert "snapshot f0f0f0f0 is dated 2099-01-01T00:00:00Z, in the future" in run.stderr
+    assert not (tmp_path / "verified-snapshot").exists()
+
+
+def test_another_restic_series_is_named_but_does_not_stop_the_month(tmp_path):
+    run, _, _ = mac(tmp_path, FAKE_VERSION="restic 0.20.0 compiled with go1.27 on darwin/arm64")
+    assert run.returncode == 0, run.stderr
+    assert "warning: restic 0.20.0" in run.stderr

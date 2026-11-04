@@ -117,19 +117,26 @@ bash deploy/backup/mac.sh monthly
 ```
 
 It stops at the first failure, so nothing is deleted after a bad check or restore. First `restic unlock` takes off
-the stale locks the server's nightly runs leave (its key may not delete them), which would stop the check; then:
+the stale locks the server's nightly runs leave (its key may not delete them), which would stop the check. Then it
+picks the newest snapshot and refuses to go on if any snapshot is dated more than an hour ahead of the computer's
+clock: the server writes the time it likes, and `--keep-within*` counts back from the newest snapshot, so one forged
+snapshot dated in the future would put every real one out of range and `forget --prune` would delete them all. Look
+at such a snapshot (`restic snapshots`) and remove it by hand. Then:
 
 1. `restic check --read-data` — every byte read back;
-2. `restic restore latest` into a temporary folder; every database must pass `integrity_check` and the archive
+2. `restic restore <that snapshot>` into a temporary folder; every database must pass `integrity_check` and the archive
    must have events from the last two days; with the platform on (`RETINUE_PLATFORM=1`, or `platform.sqlite` is in
    it), `platform.sqlite` and `collections.sqlite` must be there too and every file its rows name must be in the
    platform's volume at its size; the folder is removed;
 3. `restic copy` into the local repository (created on first use with the same chunker parameters and your
    password);
 4. `restic forget --keep-within-daily 7d --keep-within-weekly 1m --keep-within-monthly 6m --prune` — time-based,
-   so that fake snapshots made by a compromised server cannot push the real ones out;
+   so that many fake snapshots made at once cannot push the real ones out by count — and the same in the local
+   repository, monthly ones kept for 24 months;
 5. `restic check` of the local repository;
-6. the server is told when (`/srv/retinue/status/restore.json`, over ssh to `RETINUE_SSH_HOST`). The morning's
+6. the snapshot it proved is kept beside `backup.env` (`verified-snapshot`): a restore onto a new server starts from
+   it rather than from `latest`, which a compromised server could have written;
+7. the server is told when and which (`/srv/retinue/status/restore.json`, over ssh to `RETINUE_SSH_HOST`). The morning's
    health line says «restore never checked» until the first report, and «restore not checked for N d» once the last
    one is 35 days old; otherwise it says nothing of it. A run that failed reports nothing.
 
@@ -137,7 +144,7 @@ the stale locks the server's nightly runs leave (its key may not delete them), w
 
 ```bash
 sudo TELEGRAM_OWNER_ID=123456789 BACKUP=1 bash /opt/retinue/deploy/setup.sh   # fill backup.env, stack.env
-sudo bash -c 'set -a; . /srv/retinue/backup.env; restic restore latest --host retinue --tag retinue --target /var/restore'
+sudo bash -c 'set -a; . /srv/retinue/backup.env; restic restore <verified-snapshot from your computer> --target /var/restore'
 cd /opt/retinue && sudo docker compose -p retinue --env-file /srv/retinue/stack.env -f deploy/compose.yml create
 V=/var/lib/docker/volumes S=/var/restore/var/backups/retinue/staging
 # With travel or the platform on (TRAVEL=1, PLATFORM=1 on the setup.sh line too), add retinue_travel-data:10001,

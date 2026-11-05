@@ -1426,7 +1426,9 @@ characters the model reads it in the result; at 120 000 the CLI saves it under `
 2 KB and the path, the gate lets `Read` of that path through, and the Read brings the end.
 
 One pins the whole list of tools the CLI offers (`CLI_TOOLS`), so a bump that adds one fails: since 2.1.224 the CLI had
-`SendMessage` and `ListAgents`, which no probe named, and a list by name would not have shown them.
+`SendMessage` and `ListAgents`, which no probe named, and a list by name would not have shown them. It is the list against
+the fake API with no login. In the room, with the real login, 2.1.304 also offers `Glob`, `Grep` and `TaskCreate`,
+`TaskGet`, `TaskList`, `TaskUpdate`: the init line in `raw` shows what a real run got.
 
 Two of them answer what the room's sessions rely on. [Subagents](#subagents): they run, in the foreground, their
 calls reach the gate marked by `agent_id`, and a deferral inside one is lost. And nested rules: under

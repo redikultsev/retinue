@@ -127,8 +127,9 @@ def test_the_argv_cliengine_builds_is_the_one_the_pinned_cli_runs(lane, api):
     assert {h.authorization for h in api.hooks} == {f"Bearer {HOOK_TOKEN}"}
 
 
-# Every tool the pinned CLI offers a run with no rule against it. A bump that adds or drops one fails here, so a new tool
-# is a decision and not a surprise: the gate and `approvals.BASE_DENY` are written for this list.
+# Every tool the pinned CLI offers a run with no rule against it, against the fake API with no login. A bump that adds or
+# drops one fails here, so a new tool is a decision and not a surprise: the gate and `approvals.BASE_DENY` are written for
+# this list. The real login offers more (docs/platform.md, «Probes»): only a run on the server can show that.
 CLI_TOOLS = {"AskUserQuestion", "Bash", "CronCreate", "CronDelete", "CronList", "Edit", "EnterPlanMode", "EnterWorktree",
              "ExitPlanMode", "ExitWorktree", "ListAgents", "NotebookEdit", "Read", "ReportFindings", "ScheduleWakeup",
              "SendMessage", "Skill", "Task", "TaskStop", "ToolSearch", "WebFetch", "WebSearch", "Workflow", "Write"}

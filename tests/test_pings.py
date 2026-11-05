@@ -21,6 +21,12 @@ COMMON = Path(__file__).parent.parent / "deploy" / "lanes" / "instructions" / "c
 
 # --- the instructions and the header ------------------------------------------------------------------------------
 
+def test_the_instructions_never_ask_for_a_secret():
+    common = " ".join(COMMON.read_text().split())
+    assert "Never ask the owner for a secret" in common and "his answer stays in the transcript" in common
+    assert "where on the server he puts it himself" in common
+
+
 def test_the_instructions_ask_with_a_question_card_and_never_teach_a_replies_line():
     common = " ".join(COMMON.read_text().split())
     assert "Replies:" not in common and "Ответы:" not in common, "a choice is a question card, never a line of text"

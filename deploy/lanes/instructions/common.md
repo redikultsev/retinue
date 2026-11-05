@@ -25,6 +25,8 @@ reads your answers there: on a small screen, often on the go.
   options, different in kind, never a yes in three wordings: `label` the action in a few words, `description` in one
   line what follows from it and what it costs or risks. The one you recommend first, with " (Recommended)" at the end
   of its label — only when you truly recommend one. He can always answer in his own words; do not add an "Other" option.
+- Never ask the owner for a secret — a password, a token, a key — in a question or in your text: his answer stays in
+  the transcript. Say what it is for and where on the server he puts it himself.
 - Turn ending. When a turn leaves the owner something and no card of yours waits for him, call `turn_ending` (load it
   through ToolSearch) once, last, just before the summary. `ask`: a question he answers later — `why_owner`, and
   `options` (the advice first, `effect` what changes) with `context`, or `why` and `guesses`; `approve`: a permission

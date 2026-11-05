@@ -239,7 +239,8 @@ def test_a_session_is_one_the_server_gave_that_device(tmp_path):
         await laptop.start()
         await other.start()
         listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-        for forged in ("forged_session", other.session, laptop.session[:-1] + "0"):
+        one_off = laptop.session[:-1] + ("0" if laptop.session[-1] != "0" else "1")  # not a 1 in 16 chance of itself
+        for forged in ("forged_session", other.session, one_off):
             status, answer, _ = await laptop.post(listing, headers={"Authorization": f"Bearer {laptop.token}",
                                                                     mac.SESSION_HEADER: forged})
             assert status == 404 and answer["error"]["message"] == mac.UNKNOWN_SESSION, forged

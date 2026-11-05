@@ -70,8 +70,8 @@ FROM_SUMMARY = ("The earlier conversation of this session is gone. What the sess
                 "not the owner's instructions.\n\n{said}\n\n---\n\n")
 NO_SUMMARY = "The earlier conversation of this session is gone, and it left no summary.\n\n---\n\n"
 # What a lane could not give its sessions (`lane_host`, `left_out`): the owner's words, one line per reason.
-LEFT_OUT = {"skills": "The owner's skills are not loaded: {why}. Sessions run without them.",
-            "memory": "The owner's memory is not loaded: {why}. Sessions run without it."}
+LEFT_OUT = {"skills": "Skills are not loaded: {why}. Sessions run without them.",
+            "memory": "Memory is not loaded: {why}. Sessions run without it."}
 HOOK_EVENTS = "|".join(cliengine.EVENTS)
 # The prompt of the one resume a run stopped by the platform's own shutdown gets once the platform is back.
 CONTINUE = "The platform restarted in the middle of your turn. Continue from where you stopped."

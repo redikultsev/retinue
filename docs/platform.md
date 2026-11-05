@@ -1242,7 +1242,7 @@ its header line, «Answered in the app.» and an «Open» button to the session.
 its turns come there in full again.
 
 **What you would not otherwise know** comes as one line, once per reason and not once per session. A skills folder or a
-memory snapshot the lane refuses: «The owner's skills are not loaded: <why>. Sessions run without them» (the lane host
+memory snapshot the lane refuses: «Skills are not loaded: <why>. Sessions run without them» (the lane host
 says it with the run's `started`, as `left_out`); once it loads again, a new refusal is said again. A session that ran on
 another model than `cliengine.MODEL`: «A session ran on <model>, not on <asked>. Its CLI gave no reason», read from the init
 line and from each answer of the main conversation, so a subagent's own model and the CLI's `<synthetic>` messages do not

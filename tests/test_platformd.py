@@ -1511,7 +1511,7 @@ async def a_turn(world: World, input_id: str, *lines: str) -> str:
 
 def test_a_refused_skills_folder_is_one_line_for_all_sessions_and_a_new_reason_or_a_new_break_one_more(tmp_path):
     async def body(world: World):
-        said = "The owner's skills are not loaded: {}. Sessions run without them."
+        said = "Skills are not loaded: {}. Sessions run without them."
         await a_turn(world, "tg:1", started(("skills", "a skill's hooks")))
         await a_turn(world, "tg:2", started(("skills", "a skill's hooks")))
         assert told(world) == [said.format("a skill's hooks")], "one line, not one per session"
@@ -1522,7 +1522,7 @@ def test_a_refused_skills_folder_is_one_line_for_all_sessions_and_a_new_reason_o
         await a_turn(world, "tg:5", started(("skills", "a link")))
         assert told(world)[-1] == said.format("a link") and len(told(world)) == 3, "broken again: said again"
         await a_turn(world, "tg:6", started(("memory", "MEMORY.md: not UTF-8 text")))
-        assert told(world)[-1] == "The owner's memory is not loaded: MEMORY.md: not UTF-8 text. Sessions run without it."
+        assert told(world)[-1] == "Memory is not loaded: MEMORY.md: not UTF-8 text. Sessions run without it."
 
     scenario(tmp_path, body)
 

@@ -2,7 +2,8 @@
 rests on — defer, resume, rules, marker hooks, settings that do not load — so a CLI bump that changes it fails here.
 
 Run them with the pinned binary (`bash deploy/lanes/fetch-cli.sh <dir>`, then `RETINUE_LANE_CLI=<dir>/claude
-pytest -m probe`); without it they are skipped. No credential is used except by the login probe, which needs
+pytest -m probe`); without it they are skipped, except in CI's `probes` job, where a skip is red (tests/conftest.py). No
+credential is used except by the login probe, which needs
 `CLAUDE_CODE_OAUTH_TOKEN`. The CLI's environment is `cliengine.env` with two test-only substitutions that never go
 through `check_env`: the fake API's key and address instead of the token, and the env scrub off — it needs
 bubblewrap, which the lane image has and a developer's machine may not.

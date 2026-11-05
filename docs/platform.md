@@ -1341,7 +1341,8 @@ probes that run the pinned binary against a local fake Messages API (no credenti
 
 ```bash
 bash deploy/lanes/fetch-cli.sh ~/.cache/retinue-cli            # the pinned CLI, integrity checked
-RETINUE_LANE_CLI=~/.cache/retinue-cli/claude uv run --locked --with pytest pytest -q -m probe tests
+RETINUE_LANE_CLI=~/.cache/retinue-cli/claude uv run --frozen --with pytest pytest -q -m probe tests \
+  --ignore=tests/test_lane_container.py
 ```
 
 They run in auto, as the lanes do, with the stdio prompt tool: AskUserQuestion is offered only with it, deferred and
@@ -1349,9 +1350,20 @@ answered on resume with `updatedInput.answers` (an `allow` without them asks aga
 no hook decides is denied by a real lane host, the run ending instead of waiting. The fake API gives the classifier no verdict it can read, so the classifier
 blocks every call it is asked about (a file command inside the working directory never reaches it): that pins the
 whole path of a block — `PermissionDenied`, the retry, the repeat as a card with the reason, the grant after both
-processes restarted, one run past the classifier. Without `RETINUE_LANE_CLI` they are skipped. The login probe also
-needs `CLAUDE_CODE_OAUTH_TOKEN`. Run them before
+processes restarted, one run past the classifier. Run them before
 bumping the version in `deploy/lanes/cli.lock` (together with `cliengine.CLI_VERSION` and `tests/test_pins.py`).
+
+**Where a skip is a failure.** CI's `probes` job runs them on every push and pull request, in the container below, with
+`RETINUE_PROBES_REQUIRED=1` (`.github/workflows/ci.yml`): there a probe that did not run is red, whatever the reason
+(`tests/conftest.py`). On a developer's machine without `RETINUE_LANE_CLI` they are skipped. Two need the owner's login,
+which a public repository's CI does not hold, so they run on the server before a CLI bump and CI does not hold what they
+pin: `test_the_lane_cli_is_logged_in_with_the_owners_token`, the one probe allowed to skip there, and
+`tests/test_lane_container.py`, which the job does not collect.
+
+**A ratchet on the format** (`tests/test_engine_contract.py`). The words only Claude's format has — `hookSpecificOutput`,
+`deferred_tool_use`, `updatedInput`, `stream_event`, `AskUserQuestion` and the like — may appear only in the modules
+listed there. A new module that holds one fails the suite, and a listed module that no longer holds any must come off:
+the list only shrinks.
 
 Five pin [a turn's end and its loops](#a-turns-end-and-its-loops): a Stop the hook blocks sends the model on with
 the reason, and the next Stop carries `stop_hook_active`; a turn that ends by deferring a call fires no Stop; a command
@@ -1360,10 +1372,10 @@ model; and `continue: false` on PreToolUse ends the turn without running the cal
 developer's Mac runs the pinned Linux CLI in a container:
 
 ```bash
-docker run --rm -v "$PWD":/src:ro ghcr.io/astral-sh/uv:python3.12-bookworm-slim bash -c 'cp -r /src /w && cd /w \
+docker run --rm -v "$PWD":/src:ro ghcr.io/astral-sh/uv:0.6.12-python3.12-bookworm-slim bash -c 'cp -r /src /w && cd /w \
   && apt-get update -qq && apt-get install -y -qq curl git bubblewrap socat >/dev/null \
-  && bash deploy/lanes/fetch-cli.sh /cli && RETINUE_LANE_CLI=/cli/claude uv run --with pytest --with pytest-asyncio \
-  pytest -q -m probe tests/test_probes.py'
+  && bash deploy/lanes/fetch-cli.sh /cli && RETINUE_LANE_CLI=/cli/claude uv run --frozen --with pytest \
+  pytest -q -m probe tests --ignore=tests/test_lane_container.py'
 ```
 
 Three pin the API failing: overloaded twice (529), rate limited (429, `retry-after`), a stream cut mid-message —

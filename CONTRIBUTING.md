@@ -15,7 +15,8 @@ that will not land.
 
 GitHub runs these checks on every pull request and every push to main
 ([.github/workflows/ci.yml](.github/workflows/ci.yml)): the same commands, on Linux, where the tests that need Docker
-run too. Run them yourself first.
+run too, plus the probes on the pinned CLI, where a skip is a failure ([docs/platform.md](docs/platform.md#probes)). Run
+them yourself first.
 
 ```bash
 uv run --frozen --with pytest pytest -q
@@ -33,6 +34,9 @@ pnpm -C face typecheck && pnpm -C face lint && pnpm -C face test
 - **Security code comes with a test that shows the refusal.** The gate (`retinue/gate.py`, `retinue/approvals.py`),
   the guards (`retinue/exfil.py`, `retinue/sniguard.py`), the egress lists (`deploy/egress/`) and the lane settings
   (`deploy/lanes/`) decide what leaves the server. A pull request that widens any of them says so in its title.
+- **A rule of the contract with the CLI moves with its code and its test, in one commit.** A numbered rule in
+  [docs/platform.md](docs/platform.md#probes), the code, and a test that names the number and was seen failing when
+  written. A refusal is checked by a call, not by a saved setting.
 - **No real personal data, anywhere.** Fixtures and examples use `example.com`, `example.org`, `acme`, `<owner-id>`,
   `123456789`, documentation IP ranges (`203.0.113.0/24`) and made-up names. No real mail, chats, notes, hostnames,
   tokens or paths from your own machine.

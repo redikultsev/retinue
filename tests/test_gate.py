@@ -230,6 +230,23 @@ def test_an_input_with_an_anthropic_token_in_it_is_denied_on_any_tool_before_any
     assert store.approvals() == [], "never a card holding the token"
 
 
+@pytest.mark.parametrize("to", ["worker-3f", "worker [3fa9c1]", "uds:/tmp/cc-socks/8.sock", "bridge:session_01abc",
+                                "main", "ae00720a7b804d3a", "ae00720a7b804d3a10", "AE00720A7B804D3A1", "", None, 7])
+def test_a_message_to_anything_but_a_subagents_id_is_denied_before_any_rule(setup, to):
+    """The CLI's own channel between sessions: past the platform's records and limits, so no card can open it."""
+    store, the_gate, _, _ = setup
+    answer = hook(the_gate, "PreToolUse", call(tool="SendMessage", tool_input={"to": to, "message": "hello"}))
+    assert decision(answer) == "deny" and reason(answer) == approvals.NOT_A_SUBAGENT
+    assert store.approvals() == []
+    subagent = {**call(tool="SendMessage", tool_input={"to": to, "message": "hello"}), "agent_id": "ae00720a7b804d3a1"}
+    assert reason(hook(the_gate, "PreToolUse", subagent)) == approvals.NOT_A_SUBAGENT, "a subagent's send is its session's"
+
+
+def test_a_message_to_a_subagent_by_its_id_is_left_to_the_usual_path():
+    assert approvals.refusal("SendMessage", {"to": "ae00720a7b804d3a1", "message": "hello"}, "/work/repo", "/work") == ""
+    assert approvals.refusal("Read", {"file_path": "/work/repo/a.md", "to": "worker"}, "/work/repo", "/work") == ""
+
+
 def test_a_token_written_with_percent_escapes_is_denied_and_a_mention_of_the_prefix_is_not(setup):
     _, the_gate, _, _ = setup
     escaped = "https://example.com/?t=sk%2Dant%2Doat01%2D" + "a" * 40

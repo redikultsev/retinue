@@ -268,12 +268,22 @@ def test_settings_off_that_shape_are_refused():
     assert refused(check, _with_hook(**{"if": "Bash(ls\n)"}), HOOK_URL) == "settings: PreToolUse — if is not a rule"
     for extra in ({"permissions": {"allow": ["Bash"]}}, {"env": {"X": "1"}}):
         assert refused(check, {**cliengine.settings(HOOK_URL, 30, []), **extra}, HOOK_URL) == \
-            "settings: the top level is only hooks and cleanupPeriodDays"
-    assert refused(check, {"hooks": {"SessionStart": []}, "cleanupPeriodDays": 30}, HOOK_URL) == \
+            "settings: the top level is only hooks, cleanupPeriodDays and crossSessionInbound"
+    assert refused(check, {"hooks": {"SessionStart": []}, "cleanupPeriodDays": 30, **cliengine.INBOUND}, HOOK_URL) == \
         "settings: events not among PreToolUse, PermissionRequest, PermissionDenied, PostToolUse, PostToolUseFailure, Stop"
     regex = cliengine.settings(HOOK_URL, 30, [])
     regex["hooks"]["PreToolUse"][0]["matcher"] = "Bash|Write"
     assert refused(check, regex, HOOK_URL) == "settings: PreToolUse — not the expected entry"
+
+
+def test_a_run_always_refuses_other_sessions_messages():
+    check = cliengine.check_settings
+    assert cliengine.settings(HOOK_URL, 30, [])["crossSessionInbound"] == "refuse"
+    for value in ("accept", "hold", None):
+        assert refused(check, {**cliengine.settings(HOOK_URL, 30, []), "crossSessionInbound": value}, HOOK_URL) == \
+            "settings: without {'crossSessionInbound': 'refuse'}"
+    without = {k: v for k, v in cliengine.settings(HOOK_URL, 30, []).items() if k != "crossSessionInbound"}
+    assert refused(check, without, HOOK_URL).startswith("settings: the top level is only")
 
 
 def test_a_user_line_is_one_stream_json_message_and_the_version_is_the_pin():

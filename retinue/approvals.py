@@ -92,8 +92,10 @@ BASE_CARD: list[str] = []
 # `Skill` loads a skill's text and runs nothing (inline shell is off in the managed settings; docs/instructions.md).
 BASE_ALLOW = ["Read", "Grep", "Glob", "TodoWrite", "Skill"]
 # The plan tools came with the stdio prompt tool (`cliengine.PREFIX`), not wanted: a plan's approval is a card of its own,
-# not built yet, and EnterPlanMode would take a run out of auto.
-BASE_DENY = ["CronCreate", "CronDelete", "ScheduleWakeup", "RemoteTrigger", "EnterPlanMode", "ExitPlanMode"]
+# not built yet, and EnterPlanMode would take a run out of auto. ListAgents shows the other sessions a CLI can reach:
+# they are the platform's to show (`cliengine.INBOUND`, `MESSAGE`, docs/platform.md).
+BASE_DENY = ["CronCreate", "CronDelete", "ScheduleWakeup", "RemoteTrigger", "EnterPlanMode", "ExitPlanMode",
+             "ListAgents"]
 # The web tools: denied on every lane but one whose proxy is open to the public web (`LaneRef.web`: the room,
 # docs/platform.md). Its managed settings are the lock; this is the second one. There, the gate's exfil guard cards a
 # call that looks like it carries data (`exfil`).
@@ -226,6 +228,14 @@ SECRET = ("Denied: the call's input holds what looks like an Anthropic token (sk
           "an address, a search, a command or a file.")
 OUTSIDE = ("Denied: file tools work only inside /work, and this path leads outside — by itself or through a link. "
            "Outside are the CLI's environment, its settings and the lane's records; keep your files in the work folder.")
+# SendMessage is one tool for two things. To a subagent, by the id its Agent call returned, it stays: the CLI itself
+# tells the model to use it when a subagent ends without its report. To anything else — a session's name, its `uds:`
+# address, a session on another machine — it would go past the platform's records and limits, so it is refused. The
+# id's form is pinned by tests/test_probes.py; a bare rule cannot tell the two apart, the input can.
+MESSAGE = "SendMessage"
+SUBAGENT_ID = re.compile(r"a[0-9a-f]{16}")
+NOT_A_SUBAGENT = ("Denied: SendMessage here reaches only a subagent of this session, by the agentId its Agent call "
+                  "returned. Another session is reached through the platform's tools, when this session has them.")
 HOME = "/lane/config"  # the CLI's HOME in every lane: `~` in a path is here
 SPILL = re.compile(r"/lane/config/claude/projects/[^/]+/[^/]+/tool-results/[^/]+")
 SPILL_TOOLS = {"Read", "Grep"}
@@ -326,6 +336,8 @@ def refusal(tool: str, tool_input: dict, cwd: str, work_mount: str, skills_mount
     """Why the gate refuses this call whatever the rules and the owner say; empty when it does not."""
     if _token_in(tool_input):
         return SECRET
+    if tool == MESSAGE and not (isinstance(to := tool_input.get("to"), str) and SUBAGENT_ID.fullmatch(to)):
+        return NOT_A_SUBAGENT
     for key in PATHS.get(tool, ()):
         if isinstance(path := tool_input.get(key), str) and path and \
                 not _confined(_absolute(path, cwd), tool, work_mount, skills_mount, memory_mount):

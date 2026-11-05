@@ -2,8 +2,8 @@
 Standard library only — a lane host imports it to build each run and to check it again before it spawns anything.
 
 What is built here is checked here too, strictly: an argv is the fixed prefix plus the few options a run may vary,
-an environment is built from scratch, a settings file holds only HTTP hooks back to the platform. Anything else is
-refused, never repaired. The CLI facts this rests on are pinned by `tests/test_probes.py` against `CLI_VERSION`.
+an environment is built from scratch, a settings file holds only HTTP hooks back to the platform, how long transcripts
+stay and the refusal of other sessions' messages. Anything else is refused, never repaired. The CLI facts this rests on are pinned by `tests/test_probes.py` against `CLI_VERSION`.
 """
 
 from __future__ import annotations
@@ -120,6 +120,11 @@ SECRET_ENV = (HOOK_TOKEN, TOKEN_FD, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KE
 HOOK_FIELDS = {"type": "http", "timeout": HOOK_TIMEOUT_S, "onFailure": "block",
                "headers": {"Authorization": f"Bearer ${HOOK_TOKEN}"}, "allowedEnvVars": [HOOK_TOKEN]}
 TOOL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+# The CLI's own messages between sessions (2.1.224+, on with nothing to enable): every running CLI binds a socket
+# under /tmp/cc-socks, and one lane's sessions share that /tmp, so they would see and write to each other past the
+# platform's records and limits. Each session drops what arrives there, from SendMessage or from anything that writes
+# to the socket; what a session may send is the gate's (`approvals.MESSAGE`). Pinned by tests/test_probes.py.
+INBOUND = {"crossSessionInbound": "refuse"}
 
 
 class Refused(ValueError):
@@ -276,19 +281,21 @@ def _hook(url: str, rule: str | None = None) -> dict:
 
 def settings(hook_url: str, cleanup_days: int, marks: Sequence[str]) -> dict:
     """The run's `--settings`: one general hook per event, and before them in PreToolUse one marker hook per rule
-    (`<hook_url>/mark/<n>`) that the CLI fires only when its own matcher says the call falls under rule n."""
+    (`<hook_url>/mark/<n>`) that the CLI fires only when its own matcher says the call falls under rule n; `INBOUND`."""
     def mark(n: int, rule: str) -> dict:
         name, specifier = rule.partition("(")[::2]
         return {"matcher": name, "hooks": [_hook(f"{hook_url}/mark/{n}", rule if specifier else None)]}
 
     hooks = {event: [{"matcher": "*", "hooks": [_hook(f"{hook_url}/{event}")]}] for event in EVENTS}
     hooks["PreToolUse"] = [*(mark(n, rule) for n, rule in enumerate(marks)), *hooks["PreToolUse"]]
-    return {"hooks": hooks, "cleanupPeriodDays": cleanup_days}
+    return {"hooks": hooks, "cleanupPeriodDays": cleanup_days, **INBOUND}
 
 
 def check_settings(data: object, hook_url: str) -> dict:
-    if not isinstance(data, dict) or set(data) != {"hooks", "cleanupPeriodDays"}:
-        raise Refused("settings: the top level is only hooks and cleanupPeriodDays")
+    if not isinstance(data, dict) or set(data) != {"hooks", "cleanupPeriodDays", *INBOUND}:
+        raise Refused(f"settings: the top level is only hooks, cleanupPeriodDays and {', '.join(INBOUND)}")
+    if any(data[key] != value for key, value in INBOUND.items()):
+        raise Refused(f"settings: without {INBOUND}")
     days = data["cleanupPeriodDays"]
     if type(days) is not int or days < 1:
         raise Refused("settings: cleanupPeriodDays is not a whole number of days")

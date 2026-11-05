@@ -16,6 +16,8 @@ import os
 import re
 import socket
 import subprocess
+import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,7 +26,7 @@ from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
 
 from fakeapi import FakeApi
-from retinue import cliengine, gate, instructions, lane_host, subs
+from retinue import approvals, cliengine, gate, instructions, lane_host, subs
 from retinue.config import LaneHostConfig, LaneRef, PlatformConfig, Track
 from retinue.lane_host import LaneHost
 from retinue.platformd import Platform
@@ -304,6 +306,112 @@ def test_marker_hooks_let_the_clis_rules_decide_and_defer_the_rest(lane, api, co
     assert not api.events("PermissionRequest"), "auto never asks"
     if not ran and not deferred:
         assert [d["tool_name"] for d in run.result["permission_denials"]] == ["Bash"]
+
+
+HOLDER, SENDER = "PROBE-HOLDER", "PROBE-SENDER"
+
+
+class Holder:
+    """A running session of the lane, its inbox's socket bound, in a Bash call until it is told to come out."""
+
+    def __init__(self, lane: Lane, api: FakeApi, settings: dict) -> None:
+        self.api, self.release = api, lane.cwd.parent / f"release-{uuid.uuid4().hex}"
+        api.scripts[HOLDER] = [[bash(f"until [ -e {self.release} ]; do sleep 0.1; done")]]
+        path = lane.cwd.parent / "holder.json"
+        path.write_text(json.dumps(settings))
+        self.proc = subprocess.Popen(cliengine.argv(str(path), [], [], None), cwd=lane.cwd, env=lane.env(),
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.proc.stdin.write(cliengine.user_line(HOLDER))
+        self.proc.stdin.flush()
+        self.socket = next(line["messaging_socket_path"] for line in self._lines() if line.get("subtype") == "init")
+        for _ in range(TIMEOUT_S * 10):
+            if any(h.tool == "Bash" for h in api.events("PreToolUse")):
+                return
+            time.sleep(0.1)
+        raise AssertionError("the holder did not reach its Bash call")
+
+    def _lines(self):
+        return (json.loads(raw) for raw in self.proc.stdout if raw.startswith(b"{"))
+
+    def told(self) -> str:
+        """Comes out, ends its turn: everything its model was sent after that."""
+        self.release.touch()
+        next(line for line in self._lines() if line.get("type") == "result")
+        self.proc.stdin.close()
+        assert self.proc.wait(TIMEOUT_S) == 0
+        return "\n".join(text for text in (json.dumps(body["messages"], ensure_ascii=False)
+                                           for body in self.api.requests) if HOLDER in text)
+
+
+def write_to_socket(path: str, text: str) -> None:
+    """A message as the CLI itself puts it on the socket, from anything that can reach it: no token, no handshake."""
+    line = {"msgV": 1, "msg_id": str(uuid.uuid4()), "type": "user", "priority": "next",
+            "message": {"role": "user", "content": text}, "from": "uds:/tmp/cc-socks/1.sock"}
+    with socket.socket(socket.AF_UNIX) as s:
+        s.connect(path)
+        s.sendall((json.dumps(line) + "\n").encode())
+        time.sleep(0.5)
+
+
+def test_the_clis_own_channel_between_sessions_is_open_unless_the_run_refuses_it(lane, api):
+    """Without `cliengine.INBOUND`, two running sessions of a lane see each other in ListAgents and each one's message
+    reaches the other's model, from SendMessage and from a plain write to its socket, past the platform. With it, the
+    socket is still bound and the same two messages are dropped. A CLI bump that changes either fails here."""
+    def send(path: str) -> list[list[tuple[str, dict]]]:
+        return [[("ToolSearch", {"query": "select:ListAgents,SendMessage", "max_results": 5})], [("ListAgents", {})],
+                [("SendMessage", {"to": f"uds:{path}", "message": "PROBE-MAIL", "summary": "probe"})]]
+    api.mode = "allow"
+    settings = cliengine.settings(api.hook_url, 30, [])
+    holder = Holder(lane, api, {k: v for k, v in settings.items() if k not in cliengine.INBOUND})
+    api.scripts[SENDER] = send(holder.socket)
+    assert lane.run(SENDER).rc == 0
+    assert "Peer sessions (1)" in json.dumps(api.tool_results()), "it sees the other session"
+    write_to_socket(holder.socket, "PROBE-WRITTEN")
+    told = holder.told()
+    assert "PROBE-MAIL" in told and "PROBE-WRITTEN" in told
+
+    api.requests, api.hooks = [], []
+    holder = Holder(lane, api, settings)
+    api.scripts[SENDER] = send(holder.socket)
+    assert lane.run(SENDER).rc == 0
+    write_to_socket(holder.socket, "PROBE-WRITTEN")
+    told = holder.told()
+    assert "PROBE-MAIL" not in told and "PROBE-WRITTEN" not in told
+
+
+def test_the_gate_keeps_a_session_from_sending_to_another_and_lets_it_send_to_its_subagent(lane, api):
+    """A bare name reaches a peer with ListAgents gone, so the send is the gate's to refuse (`approvals.refusal`), and
+    ListAgents is the CLI's own deny (`BASE_DENY`). A subagent stays reachable by the id its Agent call returned — the
+    form `approvals.SUBAGENT_ID` allows — and the CLI's own advice for a subagent that ended without a report is to
+    message it, which is why SendMessage is not denied outright."""
+    def decide(body: dict) -> str:
+        why = approvals.refusal(body["tool_name"], body["tool_input"], body["cwd"], str(lane.cwd))
+        return f"deny:{why}" if why else "allow"
+    api.decide = decide
+    holder = Holder(lane, api, cliengine.settings(api.hook_url, 30, []))
+
+    spawned = [("Agent", {**agent(f"SUB-{kind}")[1], "subagent_type": kind}) for kind in ("general-purpose", "claude")]
+    api.scripts[SENDER] = [[call] for call in spawned]
+    run = lane.run(SENDER, disallowed=approvals.BASE_DENY)
+    assert run.rc == 0, run.stderr
+    assert "ListAgents" not in run.init["tools"] and "SendMessage" in run.init["tools"]
+    told = json.dumps(api.tool_results(), ensure_ascii=False)
+    ids = sorted(set(re.findall(r"agentId: ([^ \\\"]+)", told)))
+    assert len(ids) == 2 and all(approvals.SUBAGENT_ID.fullmatch(i) for i in ids), ids
+    assert "Send the agent a message (SendMessage)" in told
+
+    refused = [f"uds:{holder.socket}", "probe-peer", "main"]
+    api.scripts[SENDER] = [*[[call] for call in spawned], [("ToolSearch", {"query": "select:SendMessage", "max_results": 5})],
+                           *[[("SendMessage", {"to": to, "message": "PROBE-MAIL", "summary": "probe"})]
+                             for to in [*refused, ids[0]]]]
+    resumed = lane.run("дальше", resume=run.result["session_id"], disallowed=approvals.BASE_DENY)
+    assert resumed.rc == 0, resumed.stderr
+    answers = {block["tool_use_id"]: json.dumps(block["content"]) for block in api.tool_results()}
+    sends = [h for h in api.events("PreToolUse") if h.tool == "SendMessage"]
+    assert [h.input["to"] for h in sends] == [*refused, ids[0]]
+    assert [approvals.NOT_A_SUBAGENT in answers[h.tool_use_id] for h in sends] == [True, True, True, False]
+    assert "Resumed agent" in answers[sends[-1].tool_use_id]
+    assert "PROBE-MAIL" not in holder.told()
 
 
 def test_a_deferred_call_whose_tool_is_gone_at_resume_ends_unavailable(lane, api):

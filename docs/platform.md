@@ -406,6 +406,26 @@ subagent you can address, not a session: it lives in the parent's `-p` process, 
 cannot open or answer it, and it cannot wait on a card. The docs agree: teammates are not spawned under `-p`, the team
 dies with its session, `claude --bg` is interactive only.
 
+**The CLI's own messages between sessions are closed.** Since 2.1.224 every running session binds a socket
+(`/tmp/cc-socks/<pid>.sock`) and is offered `ListAgents` and `SendMessage`, with nothing to enable, and one lane's
+sessions share that `/tmp`. Probed with our argv in the lane's image, under its managed settings and profiles: two running
+sessions list each other, and one's message reaches the other's model as a system message, past the platform's records
+and limits. Three things close it, in both directions:
+
+- **Nothing is taken in.** Every run's settings say `crossSessionInbound: refuse` (`cliengine.INBOUND`; `check_settings`
+  refuses a run without it). The socket stays bound and drops what arrives, from `SendMessage` or from anything that
+  writes to it: a plain write needs no token. A command in a lane cannot make that write anyway, since the sandbox refuses
+  it an `AF_UNIX` socket, though it sees the socket's path and `CLAUDE_CODE_MESSAGING_TOKEN` in its environment.
+- **Nothing is listed.** `ListAgents` is a deny rule (`approvals.BASE_DENY`).
+- **Nothing is sent but to a subagent.** `SendMessage` is one tool for both jobs, and the CLI tells the model to use it
+  when a subagent ended without its report, so it is not denied. The gate refuses every call whose `to` is not a
+  subagent's id, the `agentId` its `Agent` call returned (`approvals.refusal`, `SUBAGENT_ID`): a session's name, its
+  `uds:` address, `main`, a session elsewhere. No rule or card can let such a call through.
+
+What the channel shows under the real login — the CLI's docs add the account's cloud and Remote Control sessions — is
+not probed; the gate's rule does not depend on it. The platform's own channel, `message_subsession` and the reports
+above, is untouched.
+
 ### A session's own name
 
 A session you started names itself, as the desktop app titles a session within seconds: while it has no title, the
@@ -1026,7 +1046,7 @@ is retired…».
 Rules in Claude Code's own syntax (`Bash(make test:*)`, `Edit`, `Read(src/**)`), matched by the CLI itself:
 
 - in code: `BASE_ALLOW` (`Read`, `Grep`, `Glob`, `TodoWrite`, `Skill`) and `BASE_DENY` (`CronCreate`, `CronDelete`,
-  `ScheduleWakeup`, `RemoteTrigger`, and `EnterPlanMode` and `ExitPlanMode`, which came with the prompt tool of
+  `ScheduleWakeup`, `RemoteTrigger`, `ListAgents` ([Sub-sessions](#sub-sessions)), and `EnterPlanMode` and `ExitPlanMode`, which came with the prompt tool of
   [Questions](#questions) and have no card yet) in `retinue/approvals.py`, and `WEB` (`WebSearch`, `WebFetch`) on every lane
   but one with `web: true` in `platform.yaml` (the room) — whatever that lane's `deny` and a track's `allow` say;
 - per lane: `deny` and `card` in `platform.yaml`;
@@ -1349,6 +1369,11 @@ docker run --rm -v "$PWD":/src:ro ghcr.io/astral-sh/uv:python3.12-bookworm-slim 
 Three pin the API failing: overloaded twice (529), rate limited (429, `retry-after`), a stream cut mid-message —
 the CLI's retry watchdog (`cliengine.WATCHDOG`) tries again and the turn ends with its answer, no error result
 (`FakeApi.faults`).
+
+Two pin [the CLI's own messages between sessions](#sub-sessions): without `crossSessionInbound: refuse` two running
+sessions of a lane list each other and each one's message reaches the other's model, from `SendMessage` and from a
+plain write to its socket, and with it neither does; `ListAgents` is gone, a send to anything but a subagent's id is
+refused by the gate, and a subagent's id still resumes it.
 
 Two of them answer what the room's sessions rely on. [Subagents](#subagents): they run, in the foreground, their
 calls reach the gate marked by `agent_id`, and a deferral inside one is lost. And nested rules: under

@@ -1360,6 +1360,27 @@ which a public repository's CI does not hold, so they run on the server before a
 pin: `test_the_lane_cli_is_logged_in_with_the_owners_token`, the one probe allowed to skip there, and
 `tests/test_lane_container.py`, which the job does not collect.
 
+**The engine's contract.** A session with the Base runs only on an engine that gives these outcomes, whatever its
+mechanism; no rule asks for a mechanism only Claude Code has. `tests/test_engine_contract.py` holds which probe holds each
+rule for each engine in `SESSION_ENGINES`: an engine with a rule nothing holds, or an entry naming no probe, fails the
+suite, so silence means the engine does not give the rule. A new probe of a rule says its number in its name
+(`test_d4_…`).
+
+| Rule | The outcome | Claude Code's way |
+|---|---|---|
+| D1 | The platform sees every call before it runs (tool, input, id, whose) and refuses it with a text the model reads. A file's write too | `PreToolUse` |
+| D2 | The platform did not answer: the call did not pass | `onFailure: block` |
+| D3 | A call waits for the owner's decision; a decision an hour and two restarts later leads to that call, once | `defer`, `--resume`, a hash |
+| D4 | The conversation goes on by its id after its process died; a transcript gone is an outcome of its own | `--resume` |
+| D5 | Only the platform sets the configuration; what an agent writes never becomes it | `--setting-sources ""`, `--settings`, `--strict-mcp-config` |
+| D6 | No command of the agent sees the login | a pipe, `sandbox.credentials` |
+| D7 | The engine and its commands go out only through the lane's proxy | the container and its network, not the engine |
+| D8 | Before the first call the platform knows the session's id, the model and the mode; a substitute model shows | the init line, each answer's `model` |
+| D9 | Lines reach the session's context past its messages | `additionalContext` |
+
+CI does not hold D7 or the container half of D6: they need the login, so they run on the server (`server:` in the
+registry, `tests/test_lane_container.py`).
+
 **A ratchet on the format** (`tests/test_engine_contract.py`). The words only Claude's format has — `hookSpecificOutput`,
 `deferred_tool_use`, `updatedInput`, `stream_event`, `AskUserQuestion` and the like — may appear only in the modules
 listed there. A new module that holds one fails the suite, and a listed module that no longer holds any must come off:
@@ -1390,6 +1411,9 @@ refused by the gate, and a subagent's id still resumes it.
 One pins a long result of the platform's own tool, as [`read_subsession`](#sub-sessions) gives a whole report: at 30 000
 characters the model reads it in the result; at 120 000 the CLI saves it under `tool-results/`, hands over a preview of
 2 KB and the path, the gate lets `Read` of that path through, and the Read brings the end.
+
+One pins the whole list of tools the CLI offers (`CLI_TOOLS`), so a bump that adds one fails: since 2.1.224 the CLI had
+`SendMessage` and `ListAgents`, which no probe named, and a list by name would not have shown them.
 
 Two of them answer what the room's sessions rely on. [Subagents](#subagents): they run, in the foreground, their
 calls reach the gate marked by `agent_id`, and a deferral inside one is lost. And nested rules: under

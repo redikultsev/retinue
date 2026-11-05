@@ -127,6 +127,50 @@ def test_the_argv_cliengine_builds_is_the_one_the_pinned_cli_runs(lane, api):
     assert {h.authorization for h in api.hooks} == {f"Bearer {HOOK_TOKEN}"}
 
 
+# Every tool the pinned CLI offers a run with no rule against it. A bump that adds or drops one fails here, so a new tool
+# is a decision and not a surprise: the gate and `approvals.BASE_DENY` are written for this list.
+CLI_TOOLS = {"AskUserQuestion", "Bash", "CronCreate", "CronDelete", "CronList", "Edit", "EnterPlanMode", "EnterWorktree",
+             "ExitPlanMode", "ExitWorktree", "ListAgents", "NotebookEdit", "Read", "ReportFindings", "ScheduleWakeup",
+             "SendMessage", "Skill", "Task", "TaskStop", "ToolSearch", "WebFetch", "WebSearch", "Workflow", "Write"}
+
+
+def test_the_whole_list_of_the_clis_tools_is_pinned(lane, api):
+    assert set(lane.run("go").init["tools"]) == CLI_TOOLS
+    assert set(lane.run("go", disallowed=approvals.BASE_DENY).init["tools"]) == CLI_TOOLS - set(approvals.BASE_DENY)
+
+
+def test_d4_a_resume_with_no_transcript_is_its_own_error_and_reaches_no_model(lane, api):
+    """The transcript gone, its days over or its volume lost: no init line, one error result that says so, nothing
+    asked of the model."""
+    session = lane.run("hello").result["session_id"]
+    assert [path.unlink() for path in lane.config.rglob(f"{session}*") if path.is_file()]
+    asked = len(api.requests)
+    run = lane.run("again", resume=session)
+    assert run.rc == 1 and len(api.requests) == asked
+    [line] = run.lines
+    assert line["type"] == "result" and line["is_error"] and line["subtype"] == "error_during_execution"
+    assert line["errors"] == [f"No conversation found with session ID: {session}"] and "result" not in line
+
+
+def test_d8_the_init_line_names_the_session_the_model_and_the_mode_and_an_answer_names_its_own_model(lane, api):
+    """Before the first call the platform knows the session, the model it asked for — with its `[1m]` — and the mode.
+    What really answered is in each `assistant` line, without the `[1m]`: a substitute shows only there."""
+    def answered(run: Run) -> set[str]:
+        return {line["message"]["model"] for line in run.lines if line.get("type") == "assistant"}
+
+    api.tools, api.mode = [bash("true")], "allow"
+    run = lane.run("go")
+    kinds = [line.get("type") for line in run.lines]
+    assert kinds.index("system") < kinds.index("assistant")
+    assert run.init["model"] == cliengine.MODEL == "claude-opus-5-5[1m]" and run.init["permissionMode"] == "auto"
+    assert cliengine.UUID4.fullmatch(run.init["session_id"])
+    assert answered(run) == {api.requests[0]["model"]} == {"claude-opus-5-5"}
+
+    api.answer_model = "claude-sonnet-5-5"
+    swapped = lane.run("go")
+    assert swapped.init["model"] == cliengine.MODEL and answered(swapped) == {"claude-sonnet-5-5"}
+
+
 def test_a_deferred_call_runs_exactly_once_on_resume_and_never_again(lane, api):
     marker = lane.cwd.parent / "ran"
     api.tools, api.mode = [bash(f"echo ran >> {marker}")], "defer"
@@ -994,6 +1038,16 @@ def test_a_failures_additional_context_reaches_the_model(lane, api):
     run = lane.run("go")
     assert run.rc == 0, run.stderr
     assert "PROBE-LOOP-WARNING" in json.dumps(api.requests[-1])
+
+
+def test_d9_a_successful_calls_additional_context_reaches_the_model(lane, api):
+    """Lines into the session's context past its messages, on a call that went well: after it and with its `allow`."""
+    api.tools, api.mode, api.pre_context = [bash("true")], "allow", "PROBE-BEFORE"
+    api.after = lambda body: {"hookSpecificOutput": {"hookEventName": body["hook_event_name"],
+                                                     "additionalContext": "PROBE-AFTER"}}
+    assert lane.run("go").rc == 0
+    told = json.dumps(api.requests[-1])
+    assert "PROBE-BEFORE" in told and "PROBE-AFTER" in told
 
 
 def test_continue_false_on_pre_tool_use_ends_the_turn_without_running_the_call(lane, api):

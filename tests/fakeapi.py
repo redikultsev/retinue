@@ -83,6 +83,8 @@ class FakeApi:
         self.mcp: list[tuple[dict, str | None]] = []  # every MCP message, with its Authorization
         self.mcp_instructions = "PROBE-MCP-INSTRUCTIONS"
         self.mcp_text: str | None = None  # what every `tools/call` answers, instead of the tool's name and the call's id
+        self.answer_model: str | None = None  # the model a response says it came from; None: the one asked for
+        self.pre_context: str | None = None   # an `allow` on PreToolUse carries it as `additionalContext`
         self._lock = threading.Lock()
         self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.url = f"http://127.0.0.1:{self._server.server_port}"
@@ -123,7 +125,7 @@ class FakeApi:
         usage = {"input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
         events = [("message_start", {"type": "message_start", "message": {
             "id": "msg_" + uuid.uuid4().hex[:12], "type": "message", "role": "assistant",
-            "model": body.get("model", "x"), "content": [], "stop_reason": None, "stop_sequence": None,
+            "model": self.answer_model or body.get("model", "x"), "content": [], "stop_reason": None, "stop_sequence": None,
             "usage": usage}})]
         if called or not tools or not {name for name, _ in tools} <= offered:
             events += _block(0, {"type": "text", "text": ""}, {"type": "text_delta", "text": "done"})
@@ -177,6 +179,8 @@ class FakeApi:
         out = {"hookEventName": event, "permissionDecision": mode, "permissionDecisionReason": "probe"}
         if mode == "allow" and self.updated is not None:
             out["updatedInput"] = self.updated
+        if mode == "allow" and self.pre_context is not None:
+            out["additionalContext"] = self.pre_context
         return {"hookSpecificOutput": out}
 
     def serve_mcp(self, body: dict, authorization: str | None) -> tuple[int, dict | None]:

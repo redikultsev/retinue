@@ -408,15 +408,23 @@ def prune_skills(root: str | Path, strip: bool = False) -> tuple[list[str], list
     return kept, lines
 
 
-def usable_skills(root: str) -> str | None:
-    """`root` when it is a skills folder to load, None when there is none or it is refused (said in the log)."""
+def skills_refusal(root: str) -> str:
+    """Why a skills folder that is there will not load (said in the log too); '' when it does or there is none."""
     if not os.path.isdir(root) or not os.path.isdir(os.path.join(root, "skills")):
-        return None
+        return ""
     try:
-        return root if check_skills(root) else None
+        check_skills(root)
     except SkillsRefused as exc:
         log.error("the owner's skills are not loaded: %s", exc)
+        return str(exc)
+    return ""
+
+
+def usable_skills(root: str) -> str | None:
+    """`root` when it is a skills folder to load, None when there is none or it is refused."""
+    if skills_refusal(root) or not os.path.isdir(os.path.join(root, "skills")):
         return None
+    return root if os.listdir(os.path.join(root, "skills")) else None
 
 
 # --- the owner's memory ------------------------------------------------------------------------------------------
@@ -508,15 +516,23 @@ def _memory_text(path: Path, cap: int) -> str:
     return text
 
 
-def usable_memory(root: str) -> str | None:
-    """`root` when it holds a memory snapshot to read, None when there is none or it is refused (said in the log)."""
+def memory_refusal(root: str) -> str:
+    """Why a memory snapshot that is there will not be read (said in the log too); '' when it will or there is none."""
     if not os.path.isdir(os.path.join(root, "memory")):
-        return None
+        return ""
     try:
-        return root if check_memory(root) else None
+        check_memory(root)
     except MemoryRefused as exc:
         log.error("the owner's memory is not read: %s", exc)
+        return str(exc)
+    return ""
+
+
+def usable_memory(root: str) -> str | None:
+    """`root` when it holds a memory snapshot to read, None when there is none or it is refused."""
+    if memory_refusal(root) or not os.path.isdir(os.path.join(root, "memory")):
         return None
+    return root if os.listdir(os.path.join(root, "memory")) else None
 
 
 def owner_memory(root: str, nonce: str | None = None) -> str:

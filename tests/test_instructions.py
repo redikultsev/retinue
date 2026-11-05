@@ -583,3 +583,16 @@ def test_the_memory_check_runs_as_a_plain_script_with_the_hosts_python(tmp_path)
     done = subprocess.run(["python3", "-I", str(ROOT / "retinue" / "instructions.py"), "check-memory", str(tmp_path)],
                           capture_output=True, text=True)
     assert done.returncode == 0 and done.stdout.strip() == "2 memory files"
+
+
+def test_a_refusal_names_its_reason_and_having_none_is_no_refusal(tmp_path):
+    assert instructions.skills_refusal(str(tmp_path / "absent")) == "" and instructions.memory_refusal(str(tmp_path)) == ""
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "hooks").mkdir()
+    assert "only skills/ may be here, not hooks" in instructions.skills_refusal(str(tmp_path))
+    assert instructions.usable_skills(str(tmp_path)) is None
+    memory = tmp_path / "root"
+    (memory / "memory").mkdir(parents=True)
+    (memory / "memory" / "a.md").write_text("x")
+    assert f"no {instructions.MEMORY_INDEX}" in instructions.memory_refusal(str(memory))
+    assert instructions.usable_memory(str(memory)) is None

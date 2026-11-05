@@ -94,7 +94,7 @@ A plugin folder can bring more than skills, and under `--setting-sources ""` the
 plugin's `hooks/hooks.json`, a skill's own `hooks` in its frontmatter — command hooks outside the sandbox — and MCP
 servers, agents and commands. So the folder is a plugin with nothing but skills, checked by `check_skills` in the
 install script before it is in place and by the lane host again before every run (refused: run without skills, the
-reason in the lane's log). The install script takes out each skill the check refuses, names it and installs the rest;
+reason in the lane's log and [one line in your feed](platform.md#pings)). The install script takes out each skill the check refuses, names it and installs the rest;
 the lane host cannot: the CLI loads the mounted folder as one plugin, every skill in it, so a refused skill left there
 would load with its hooks — there the whole folder is refused:
 
@@ -191,7 +191,7 @@ write to each other.
   through its own mount, only while the folder passes the check below, and only for a path that, its links followed
   there, stays inside (`approvals.OWNER_MEMORY`, the same rule as the skills).
 - **The check** (`instructions.check_memory`), by the install script before the snapshot is in place and by the lane
-  host and the gate again for every use (refused: no memory, the reason in the lane's log): `memory/` and nothing
+  host and the gate again for every use (refused: no memory, the reason in the lane's log and one line in your feed): `memory/` and nothing
   else at the top; in it only plain files named `*.md` (`A-Z a-z 0-9 . _ -`), `MEMORY.md` among them — no link, no
   folder, no FIFO; at most 500 files, 64 KiB each, `MEMORY.md` 32 KiB (it rides in every prompt), 2 MiB in all;
   UTF-8 without a NUL; and no file holding what looks like a credential (an Anthropic, GitHub, GitLab, Slack or

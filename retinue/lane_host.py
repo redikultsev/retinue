@@ -25,7 +25,7 @@ import shutil
 import stat
 import subprocess
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiohttp import web
@@ -138,6 +138,7 @@ class Live:
     proc: asyncio.subprocess.Process
     settings: Path
     cwd: Path  # where the owner's files of a later message go (`save_inbox`)
+    left_out: dict[str, str] = field(default_factory=dict)  # `skills`, `memory`: what the run goes without, and why
 
 
 def _size(n: int) -> str:
@@ -451,13 +452,16 @@ class LaneHost:
             raise Refused(f"cwd: no such folder in {self.cfg.work}")
         return path
 
-    def _notes(self, cwd: Path) -> str:
+    def _notes(self, cwd: Path, left_out: dict[str, str]) -> str:
         """The owner's memory index, then the repository's rules. A repository that breaks the reading never fails
-        the run: it runs without them and is told so; a memory that cannot be read is left out, said in the log."""
+        the run: it runs without them and is told so; a memory that cannot be read is left out, said in `left_out`."""
         try:
+            if why := instructions.memory_refusal(cliengine.owner_memory_dir()):
+                left_out["memory"] = why
             memory = instructions.owner_memory(cliengine.owner_memory_dir())
         except Exception as exc:  # noqa: BLE001 — the run goes on without it
             log.error("the owner's memory was not read: %s", type(exc).__name__)
+            left_out["memory"] = type(exc).__name__
             memory = ""
         try:
             rules = instructions.compose(cwd, Path(self.cfg.work))
@@ -505,7 +509,8 @@ class LaneHost:
                 return _refused(str(exc))
             self.live[session] = live
         self.journal.started(session, run, live.proc.pid)
-        self.journal.event(session, run, "started", pid=live.proc.pid)
+        self.journal.event(session, run, "started", pid=live.proc.pid, **({"left_out": live.left_out} if live.left_out
+                                                                           else {}))
         self._spawn_later(self._pump(live))
         return web.json_response({"status": "started"})
 
@@ -543,7 +548,10 @@ class LaneHost:
         # The owner's memory, the repository's rules and his skills, read again for every run the platform asks them
         # for — the room's too; only the retired lane-web's host (RETINUE_LANE_WEB=1) refuses them.
         context = body.get("instructions") is True and not self.cfg.web
-        notes = self._notes(cwd) if context else ""
+        left_out: dict[str, str] = {}  # what the run goes without, and why: told to the platform with `started`
+        notes = self._notes(cwd, left_out) if context else ""
+        if context and (why := instructions.skills_refusal(cliengine.skills_dir())):
+            left_out["skills"] = why
         skills = context and instructions.usable_skills(cliengine.skills_dir()) is not None
         argv = self._argv(body, path, bool(notes), skills)
         self._env(hook_token, 0)  # refused here, before anything is written, not at the spawn
@@ -577,7 +585,7 @@ class LaneHost:
             proc.stdin.close()  # a resume after a decision: the CLI settles the deferred call and goes on alone
         else:
             proc.stdin.write(cliengine.user_line(prompt))
-        return Live(session, run, proc, path, cwd)
+        return Live(session, run, proc, path, cwd, left_out)
 
     async def _pump(self, live: Live) -> None:
         """Journal the process's stdout to its end; its input closes with its first `result`. However the pump ends,

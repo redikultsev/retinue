@@ -46,6 +46,7 @@ UUID4 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9
 # names another model with another CLI release) with its million-token context, at extra-high effort. Without them a
 # headless CLI takes its own default, a smaller model.
 MODEL, EFFORT = "claude-opus-5-5[1m]", "xhigh"
+MODEL_ID = MODEL.partition("[")[0]  # what an answer's line says it came from: the init line alone carries the `[1m]`
 PREFIX = ("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
           "--include-hook-events", "--include-partial-messages", "--forward-subagent-text", "--setting-sources", "",
           "--model", MODEL, "--effort", EFFORT,

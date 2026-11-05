@@ -236,6 +236,16 @@ def context_tokens(line: dict) -> int | None:
     return sum(n for n in counts if type(n) is int and n > 0)
 
 
+def answered_by(line: dict) -> str:
+    """The model that wrote an answer of the main conversation; '' for any other line, for a subagent's, which may run
+    on another model, and for the CLI's own `<synthetic>` messages."""
+    if line.get("type") != "assistant" or line.get("parent_tool_use_id"):
+        return ""
+    message = line.get("message")
+    model = message.get("model") if isinstance(message, dict) else None
+    return model if isinstance(model, str) and model != "<synthetic>" else ""
+
+
 def conversation_gone(line: dict) -> bool:
     """The result of a resume that found no transcript: no init line before it, no model asked (probed,
     `test_d4_a_resume_with_no_transcript_is_its_own_error_and_reaches_no_model`)."""

@@ -17,7 +17,7 @@ from aiohttp import web
 from PIL import Image
 from aiohttp.test_utils import TestClient, TestServer
 
-from retinue import gate, platformd, sessions
+from retinue import cliengine, gate, platformd, sessions
 from retinue.config import LaneRef, PlatformConfig, Track
 from retinue.platformd import Platform
 from retinue.sessions import PlatformStore
@@ -1492,5 +1492,67 @@ def test_a_decision_that_finds_no_transcript_says_so_and_nothing_is_sent_again(t
         await world.owner("input", {"input_id": "tg:9", "session": session, "text": "начнём заново"})
         run = world.lanes["code"].runs()[-1]
         assert run["cli_session"] is None and run["prompt"].endswith("начнём заново")
+
+    scenario(tmp_path, body)
+
+
+# --- what the owner would not know: what a lane left out, the model that really ran ---------------------------------
+
+def started(*left_out: tuple[str, str]) -> str:
+    return lane_event("started", pid=1, **({"left_out": dict(left_out)} if left_out else {}))
+
+
+async def a_turn(world: World, input_id: str, *lines: str) -> str:
+    session = (await world.owner("new", {"input_id": input_id, "track": "retinue", "text": "почини"}))["session"]
+    world.lanes["code"].add(session, world.lanes["code"].runs()[-1]["run"], *lines)
+    await world.poll()
+    return session
+
+
+def test_a_refused_skills_folder_is_one_line_for_all_sessions_and_a_new_reason_or_a_new_break_one_more(tmp_path):
+    async def body(world: World):
+        said = "The owner's skills are not loaded: {}. Sessions run without them."
+        await a_turn(world, "tg:1", started(("skills", "a skill's hooks")))
+        await a_turn(world, "tg:2", started(("skills", "a skill's hooks")))
+        assert told(world) == [said.format("a skill's hooks")], "one line, not one per session"
+        await a_turn(world, "tg:3", started(("skills", "a link")))
+        assert told(world)[-1] == said.format("a link")
+        await a_turn(world, "tg:4", started())
+        assert len(told(world)) == 2, "it loads again"
+        await a_turn(world, "tg:5", started(("skills", "a link")))
+        assert told(world)[-1] == said.format("a link") and len(told(world)) == 3, "broken again: said again"
+        await a_turn(world, "tg:6", started(("memory", "MEMORY.md: not UTF-8 text")))
+        assert told(world)[-1] == "The owner's memory is not loaded: MEMORY.md: not UTF-8 text. Sessions run without it."
+
+    scenario(tmp_path, body)
+
+
+def answer(model: str, **fields) -> str:
+    return json.dumps({"type": "assistant", "message": {"role": "assistant", "model": model, "content": []}, **fields})
+
+
+def init(model: str) -> str:
+    return json.dumps({"type": "system", "subtype": "init", "session_id": CLI_SESSION, "permissionMode": "auto",
+                       "model": model})
+
+
+def test_a_session_on_another_model_is_one_line_per_model_for_all_sessions(tmp_path):
+    async def body(world: World):
+        await a_turn(world, "tg:1", init(cliengine.MODEL), answer(cliengine.MODEL_ID))
+        assert told(world) == [], "the asked one, the init line with its `[1m]` and the answer without"
+        await a_turn(world, "tg:2", init("claude-sonnet-5-5"), answer("claude-sonnet-5-5"))
+        await a_turn(world, "tg:3", init("claude-sonnet-5-5"))
+        assert told(world) == [f"A session ran on claude-sonnet-5-5, not on {cliengine.MODEL}. Its CLI gave no reason."]
+        await a_turn(world, "tg:4", init(cliengine.MODEL), answer("claude-haiku-5-5"))
+        assert told(world)[-1].startswith("A session ran on claude-haiku-5-5,") and len(told(world)) == 2, \
+            "an answer that came from another model, past an init line that named the asked one"
+
+    scenario(tmp_path, body)
+
+
+def test_a_subagents_model_and_the_clis_own_messages_are_no_substitution(tmp_path):
+    async def body(world: World):
+        await a_turn(world, "tg:1", answer("claude-haiku-5-5", parent_tool_use_id="toolu_1"), answer("<synthetic>"))
+        assert told(world) == []
 
     scenario(tmp_path, body)

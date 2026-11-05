@@ -256,6 +256,36 @@ def test_a_run_in_a_repository_with_rules_gets_them_and_the_owners_skills_beside
     assert os.listdir(lane.cfg.run_dir) == [], "the rules go with the process, as its settings"
 
 
+def test_a_refused_skills_folder_or_memory_is_told_with_started_and_a_good_one_is_not(lane, tmp_path, monkeypatch):
+    skills, memory = tmp_path / "skills", tmp_path / "memory-root"
+    (skills / "skills" / "write-ru").mkdir(parents=True)
+    (skills / "skills" / "write-ru" / "SKILL.md").write_text("---\nname: write-ru\ndescription: x\n---\nbody\n")
+    (memory / "memory").mkdir(parents=True)
+    (memory / "memory" / "MEMORY.md").write_text("- [Заметка](a.md) — о чём\n")
+    monkeypatch.setenv("RETINUE_LANE_SKILLS", str(skills))
+    monkeypatch.setenv("RETINUE_LANE_OWNER_MEMORY", str(memory))
+
+    async def scenario(host, client, post, items, until, event):
+        def started(run: str) -> dict:
+            return next(line for line in map(json.loads, (i["line"] for i in host.journal.look(200)))
+                        if line.get("event") == "started" and line.get("pid") == pids[run])
+
+        pids = {}
+        for run, breaking in (("r1", lambda: None), ("r2", lambda: (skills / "hooks").mkdir()),
+                              ("r3", lambda: (memory / "memory" / "x.txt").write_text("x"))):
+            breaking()
+            assert await post("/run", run_body(run=run, instructions=True)) == (200, {"status": "started"})
+            pids[run] = host.live["0a1b2c3d"].proc.pid
+            await event("exited")
+            await until(lambda: "0a1b2c3d" not in host.live)
+        assert "left_out" not in started("r1")
+        assert list(started("r2")["left_out"]) == ["skills"] and "only skills/ may be here" in started("r2")["left_out"]["skills"]
+        assert sorted(started("r3")["left_out"]) == ["memory", "skills"]
+        assert "x.txt" in started("r3")["left_out"]["memory"]
+
+    served(lane, scenario)
+
+
 @pytest.mark.parametrize("asked, web", [(False, False), (None, False), (True, True)])
 def test_a_web_lane_or_a_run_the_platform_did_not_ask_it_for_reads_no_rules_and_no_skills(lane, tmp_path, monkeypatch,
                                                                                          asked, web):

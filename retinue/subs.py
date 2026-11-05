@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
 OPEN_MAX = 10           # a parent's open sub-sessions: working, waiting on a card or queued
 AUTO_MAX = 30           # automatic child<->parent exchanges in a row without the owner: then reports wait for him
-REPORT_CHARS = 8000     # what a report, and `read_subsession`, carry of the child's summary
+REPORT_CHARS = 8000     # what a report carries of the child's summary; it says so, and `read_subsession` gives it whole
 PROPOSALS_MAX = 5       # a parent's proposals waiting for the owner
 PROPOSAL_S = 7 * 86400  # a proposal waits this long for his press, then it is gone
 BATCH_WAIT_S = 20 * 60  # a report waits this long for its siblings, so one resume of the parent takes them all
@@ -459,7 +459,7 @@ class Subs:
         head = f'Sub-session {child["id"]} "{child.get("title") or ""}" · {state.get(child["state"], child["state"])}'
         if not text:
             return f"{head}\nNo report yet.", False
-        return f"{head}\n{text if len(text) <= REPORT_CHARS else text[:REPORT_CHARS - 1] + '…'}", False
+        return f"{head}\n{text}", False
 
     # --- proposals: what the session would start, put to the owner ----------------------------------------------
 
@@ -613,7 +613,8 @@ class Subs:
             return
         run = run or f"turn:{row.get('turn')}"  # a refusal before any run: keyed all the same, so a replay adds none
         body = text.strip() or "(no text)"
-        cut = body if len(body) <= REPORT_CHARS else body[:REPORT_CHARS - 1] + "…"
+        cut = body if len(body) <= REPORT_CHARS else (f"{body[:REPORT_CHARS]}\n[Shown {REPORT_CHARS} of {len(body)} "
+                                                      f"characters. The rest: {READ}.]")
         said = f'Sub-session "{row.get("title") or ""}" ({row["id"]}){" — turn cut short" if failed else ""}: {cut}'
         self.store.db.execute("INSERT OR IGNORE INTO sub_reports (parent, child, text, at, run) VALUES (?, ?, ?, ?, ?)",
                               (row["sub_of"], row["id"], said, self.platform.clock(), run))

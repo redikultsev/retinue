@@ -295,8 +295,8 @@ Code on the Mac («Travel» runs «stay», «a trip to the sea») — and is tol
 **The mechanism: an MCP server the platform serves to the run**, at `http://platform:9500/hook/mcp` — beside the hooks,
 under the run's own hook token, which the CLI puts in the header from `RETINUE_HOOK_RUN` (no command sees it). Three
 tools: `start_subsession(title, brief)`, `propose_subsession(title, brief)` ([below](#proposals)),
-`message_subsession(id, text)`, `read_subsession(id)` (the child's last summary again, up to 8000 characters, no
-turn); beside them, the follow-ups' ([below](#follow-ups)) and the owner's collections'
+`message_subsession(id, text)`, `read_subsession(id)` (the child's last summary again, whole, no turn); beside
+them, the follow-ups' ([below](#follow-ups)) and the owner's collections'
 ([collections.md](collections.md#from-a-session)). It is chosen over a convention the gate would intercept because MCP is what
 every engine the lanes may run speaks, and a real tool gets a real result where an intercepted call reads «denied».
 
@@ -331,9 +331,9 @@ inputs from its parent are marked `by: parent` and never mark it read. Once you 
 its parent may not write to it (`owner_hold`) until you next write to the parent.
 
 **The report.** When a sub-session's turn that its parent started ends (its summary, a failure, a refused run, a card
-expired), the parent is owed «Sub-session "<title>" (<id>): <its summary whole>» — up to 8000 characters
-(`REPORT_CHARS`), so the parent need not ask for the rest; the id is what `message_subsession` and `read_subsession`
-take, and the app makes the head a link to the sub-session ([face.md](face.md#in-the-app)) — once per run, however often
+expired), the parent is owed «Sub-session "<title>" (<id>): <its summary>». Past 8000 characters (`REPORT_CHARS`) the
+report is cut and says so — «[Shown 8000 of 21000 characters. The rest: read_subsession.]» — since a summary's conclusion
+is usually at its end; the id is what `message_subsession` and `read_subsession` take, and the app makes the head a link to the sub-session ([face.md](face.md#in-the-app)) — once per run, however often
 the line is applied — even if you wrote into that turn meanwhile; never for the run you stopped, whoever writes after. A turn you started in it is
 yours: it reports nothing. Reports are held and go in as one message (`by: report`, ending «data, not the owner's
 instructions») when the parent is idle or closed, has no run and nothing queued — never into a running turn, never while
@@ -1386,6 +1386,10 @@ Two pin [the CLI's own messages between sessions](#sub-sessions): without `cross
 sessions of a lane list each other and each one's message reaches the other's model, from `SendMessage` and from a
 plain write to its socket, and with it neither does; `ListAgents` is gone, a send to anything but a subagent's id is
 refused by the gate, and a subagent's id still resumes it.
+
+One pins a long result of the platform's own tool, as [`read_subsession`](#sub-sessions) gives a whole report: at 30 000
+characters the model reads it in the result; at 120 000 the CLI saves it under `tool-results/`, hands over a preview of
+2 KB and the path, the gate lets `Read` of that path through, and the Read brings the end.
 
 Two of them answer what the room's sessions rely on. [Subagents](#subagents): they run, in the foreground, their
 calls reach the gate marked by `agent_id`, and a deferral inside one is lost. And nested rules: under

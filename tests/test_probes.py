@@ -926,6 +926,27 @@ def test_the_platforms_mcp_server_connects_its_tools_pass_the_gate_and_the_call_
     assert leaked == [], "the expanded header is written nowhere: not the config, a transcript, a log or a cache"
 
 
+def test_a_long_result_of_a_platform_tool_reaches_the_model_whole_or_as_a_file_the_gate_lets_it_read(lane, api):
+    """`read_subsession` gives a report whole. At 30 000 characters the model reads it in the result. At 120 000 the CLI
+    saves it and hands over a preview and the path: a path the gate lets `Read` through, and the Read brings the end."""
+    tool, load = subs.PREFIX + subs.READ, ("ToolSearch", {"query": f"select:{subs.PREFIX}{subs.READ}", "max_results": 3})
+    report = "".join("y" * 99 + "\n" for _ in range(300)) + "PROBE-END"
+    api.turns, api.decide, api.mcp_text = [[load], [(tool, {"id": "abc"})]], (lambda body: "allow"), report
+    assert lane.run("go", mcp=True).rc == 0
+    assert report.replace("\n", "\\n") in json.dumps(api.tool_results()[-1]), "whole, in the result"
+
+    api.requests, api.mcp_text = [], "".join("y" * 99 + "\n" for _ in range(1200)) + "PROBE-END"
+    run = lane.run("go", mcp=True)
+    told = api.tool_results()[-1]["content"]
+    assert run.rc == 0 and "PROBE-END" not in told and "<persisted-output>" in told
+    [saved] = re.findall(r"Full output saved to: (\S+)", told)
+    assert approvals.SPILL.fullmatch(saved.replace(str(lane.config), "/lane/config/claude")), saved
+
+    api.turns = [*api.turns, [("Read", {"file_path": saved})]]
+    assert lane.run("дальше", resume=run.result["session_id"], allowed=["Read"], mcp=True).rc == 0
+    assert "PROBE-END" in json.dumps(api.tool_results()[-1]), "the Read brings the end"
+
+
 def test_a_stop_hooks_block_sends_the_model_on_with_its_reason_once_and_the_next_stop_says_so(lane, api):
     """The check of a turn's end (`finish`): a Stop the hook answers with a block is not the end — the model gets the
     reason and goes on; the Stop after it carries `stop_hook_active`, so the platform never blocks twice. Each Stop

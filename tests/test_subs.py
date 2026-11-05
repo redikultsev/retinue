@@ -213,7 +213,7 @@ def test_a_report_goes_to_the_parent_when_it_is_free_once_per_child_turn_and_as_
         assert row["turn_by"] == "report" and row["hops"] == 1
         assert world.store.face_inputs(parent)[-1]["by"] == "report"
         said, error = await world.tool(parent, subs.READ, {"id": child}, "toolu_read")
-        assert not error and said.endswith("x" * 600), "the report whole, up to READ_CHARS"
+        assert not error and said.endswith("x" * 600), "the report whole"
         said, error = await world.tool(parent, subs.START, {"title": "ещё", "brief": "b"}, "toolu_r")
         assert (said, error) == (DEFERRED, True), "a report-started turn's start is the owner's to decide"
         said, error = await world.tool(parent, subs.PROPOSE, {"title": "ещё", "brief": "b"}, "toolu_rp")
@@ -545,14 +545,25 @@ def test_a_refusal_or_an_expiry_without_a_run_is_reported_once_however_often_it_
     subs_scenario(tmp_path, body)
 
 
-def test_a_long_report_is_cut_at_report_chars(tmp_path):
+def test_a_long_report_says_it_is_cut_and_read_subsession_gives_it_to_the_end(tmp_path):
     async def body(world: SubsWorld):
         parent = await world.parent()
         child = await world.start_child(parent, "а", "toolu_a")
-        await world.turn(child, "y" * (subs.REPORT_CHARS + 50))
+        summary = "y" * 20_950 + " the conclusion comes last"
+        await world.turn(child, summary)
         [(_, text, _)] = world.platform.subs.held_for(parent)
-        head, cut = text.split(": ", 1)
-        assert head == f'Sub-session "а" ({child})' and len(cut) == subs.REPORT_CHARS and cut.endswith("y…")
+        head, report = text.split(": ", 1)
+        assert head == f'Sub-session "а" ({child})' and report.startswith("y" * subs.REPORT_CHARS)
+        assert report.endswith(f"[Shown {subs.REPORT_CHARS} of {len(summary)} characters. The rest: {subs.READ}.]")
+        assert "the conclusion" not in report
+        said, error = await world.tool(parent, subs.READ, {"id": child}, "toolu_read")
+        assert not error and said.endswith(summary), "the parent reads it to the end"
+
+        await world.platform.write("tg:2", parent, "короче")
+        await world.turn(parent, "Ок.")
+        await world.tool(parent, subs.MESSAGE, {"id": child, "text": "ещё"}, "toolu_m")
+        await world.turn(child, "y" * subs.REPORT_CHARS)
+        assert world.platform.subs.held_for(parent)[-1][1].endswith("y"), "a report that fits says nothing"
     subs_scenario(tmp_path, body)
 
 

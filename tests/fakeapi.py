@@ -19,8 +19,8 @@ Subagents: a conversation whose first message holds a key of `api.scripts` follo
 messages (as `turns`), so a main agent and its subagents each play their part; `api.decide`, when set, gives each
 PreToolUse its own mode (`allow`, `defer`, a `deny` reason as `deny:<reason>`, `none`) from the hook's body.
 
-MCP: `<hook_url>/mcp` is the platform's sub-sessions server as `retinue.subs.rpc` speaks it — `api.mcp_tools` names
-what `tools/call` answers, every message is kept (`api.mcp`), with its Authorization.
+MCP: `<hook_url>/mcp` is the platform's sub-sessions server as `retinue.subs.rpc` speaks it — `tools/call` answers with
+the tool's name and the call's id, or `api.mcp_text` when set; every message is kept (`api.mcp`), with its Authorization.
 """
 
 from __future__ import annotations
@@ -82,6 +82,7 @@ class FakeApi:
         self.faults: list[str] = []
         self.mcp: list[tuple[dict, str | None]] = []  # every MCP message, with its Authorization
         self.mcp_instructions = "PROBE-MCP-INSTRUCTIONS"
+        self.mcp_text: str | None = None  # what every `tools/call` answers, instead of the tool's name and the call's id
         self._lock = threading.Lock()
         self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.url = f"http://127.0.0.1:{self._server.server_port}"
@@ -182,7 +183,7 @@ class FakeApi:
         from retinue import subs
 
         async def call(name: str, arguments: dict, params: dict) -> tuple[str, bool]:
-            return f"probe {name} {subs.call_id_of(params)}", False
+            return (self.mcp_text if self.mcp_text is not None else f"probe {name} {subs.call_id_of(params)}"), False
         with self._lock:
             self.mcp.append((body, authorization))
         return asyncio.run(subs.rpc(body, self.mcp_instructions, call))

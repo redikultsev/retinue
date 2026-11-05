@@ -54,9 +54,10 @@ MACHINE_CARDS = {subs.PREFIX + subs.START: subs.FROM_REPORT_CARD,  # what a mach
 
 MARK_WAIT_S = 1.0     # how long the general PreToolUse waits for the call's marker hooks
 BRIEF_WAIT_S = 2.0    # how long a question's PreToolUse waits for its call to be in the transcript, to read the brief
-# Retries the gate lets one run make after classifier blocks. The CLI aborts a headless run after 3 classifier denials
-# in a row or 20 in all; a retry the gate allows is deferred, never denied, so it adds none — the cap keeps it so even
-# for a model that tries one blocked call after another.
+# Retries the gate lets one run make after classifier blocks. The CLI's own limit on blocks ends no lane's run: under the
+# stdio prompt tool the third block in a row becomes an ask, the lane host denies it (`cliengine.deny_control`), and the
+# turn goes on and ends `success` (probed, `test_the_clis_limit_on_classifier_blocks_does_not_end_a_lanes_run`). So the
+# CLI never stops a model that tries one blocked call after another: only this cap holds how many of them it may retry.
 RETRIES_PER_RUN = 2
 CALL_KEEP_S = 3600.0  # how long a call's marks are remembered: a late mark, the same call fired again on resume
 

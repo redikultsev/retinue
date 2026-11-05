@@ -6,7 +6,7 @@ asking, when a sub-session's turn is over for its parent, and that a turn beginn
   (`queued`), a card decided (`decided`), a run the lane took (`started`). From idle, closed or new it is a new turn
   (`turn_started`); from waiting it is the same turn resumed, which moves only `at`.
 - **waiting** — the run ended on a deferred call whose card the owner was shown (`deferred`).
-- **idle** — the turn is over (`turn_ended`), or its run is gone without an end (`run_ended`): it waits for him.
+- **idle** — the turn is over (`turn_ended`), or he stopped its run (`run_ended`): it waits for him.
 - **closed** — a code session's summary, any turn of a sub-session (a message opens it again), the owner's stop of a
   sub-session (`owner_stopped`), a halt (`halt`, `archive`), a week idle (`tick`).
 
@@ -89,9 +89,9 @@ class Lifecycle:
         self._move(session, "waiting" if shown else "idle", now)
 
     def turn_ended(self, session: dict, text: str, now: float, failed: bool = False, run: str | None = None) -> None:
-        """The turn is over, however it ended — its summary, an error, a refusal, a card expired, a tool gone: idle,
-        and a code session closed on its summary. A sub-session closes on any end (a message opens it again), and its
-        parent is owed `text` as a report when the turn was the parent's doing (`Subs.turn_ended`)."""
+        """The turn is over, however it ended — its summary, an error, its process dead, a refusal, a card expired, a
+        tool gone: idle, and a code session closed on its summary. A sub-session closes on any end (a message opens it
+        again), and its parent is owed `text` as a report when the turn was the parent's doing (`Subs.turn_ended`)."""
         if session.get("sub_of"):
             self.subs.turn_ended(session, text, failed, run)
             self._move(session["id"], "closed", now)
@@ -99,9 +99,9 @@ class Lifecycle:
             self._move(session["id"], "closed" if session["kind"] == "code" and not failed else "idle", now)
 
     def run_ended(self, session: str, now: float) -> None:
-        """The run's process is gone with the turn not over — a crash, a kill, the owner's stop, a restart before the
-        CLI named the session: a working session goes idle and waits for him. A waiting one keeps its card; a
-        finished one has said so."""
+        """The run's process is gone with the turn not over and the owner knows — his stop, a restart before the CLI
+        named the session: a working session goes idle and waits for him. A waiting one keeps its card; a finished one
+        has said so. A process that died unasked is a failed turn (`turn_ended`)."""
         if self.working(session):
             self._move(session, "idle", now)
 

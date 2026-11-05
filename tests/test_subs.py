@@ -389,6 +389,23 @@ def test_the_brief_carries_the_owners_last_word_to_the_parent_quoted_and_framed(
     subs_scenario(tmp_path, body)
 
 
+def test_a_sub_session_whose_process_died_reports_to_its_parent_and_rings(tmp_path):
+    async def body(world: SubsWorld):
+        parent = await world.parent()
+        child = await world.start_child(parent, "а", "toolu_a")
+        await world.turn(parent, "Жду.")
+        init = {"type": "system", "subtype": "init", "session_id": CLI, "cwd": "/work", "permissionMode": "auto"}
+        world.lanes["private"].add(child, world.run_of(child)["run"], json.dumps(init),
+                                   json.dumps({"type": "lane", "event": "exited", "code": -9}))
+        await world.poll()
+        [line] = [n["data"] for n in world.notes("summary") if "its process" in n["data"]["text"]]
+        assert line["kind"] == pings.FAILED and pings.loud(line), "a turn not the owner's rings when it dies"
+        [(text,)] = world.store.db.execute("SELECT text FROM sub_reports").fetchall()
+        assert "turn cut short" in text and "exited with code -9" in text
+        assert world.store.session(child)["state"] == "closed"
+    subs_scenario(tmp_path, body)
+
+
 def test_a_turn_the_parent_started_still_reports_when_the_owner_wrote_into_it_but_not_when_he_stopped_it(tmp_path):
     async def body(world: SubsWorld):
         parent = await world.parent()

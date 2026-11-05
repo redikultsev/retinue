@@ -17,7 +17,7 @@ from aiohttp import web
 from PIL import Image
 from aiohttp.test_utils import TestClient, TestServer
 
-from retinue import cliengine, gate, platformd, sessions
+from retinue import cliengine, gate, pings, platformd, sessions
 from retinue.config import LaneRef, PlatformConfig, Track
 from retinue.platformd import Platform
 from retinue.sessions import PlatformStore
@@ -885,6 +885,112 @@ def test_a_failed_turn_is_told_as_a_failure_and_the_code_session_stays_open(tmp_
         await world.poll()
         [summary] = world.notes("summary")
         assert summary["data"]["text"] == "Turn ended with an error: error_max_turns"
+        assert world.store.session(session)["state"] == "idle"
+
+    scenario(tmp_path, body)
+
+
+@pytest.mark.parametrize(("errors", "said"), [
+    (["The disk is full", "No space left"], "The disk is full; No space left"),
+    (["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"], "error_during_execution"),
+])
+def test_a_failed_turn_with_no_text_is_told_what_its_errors_say_and_not_the_clis_own_diagnostic(tmp_path, errors, said):
+    async def body(world: World):
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
+        [run] = world.lanes["code"].runs()
+        failed = {"type": "result", "subtype": "error_during_execution", "is_error": True, "stop_reason": None,
+                  "errors": errors}
+        world.lanes["code"].add(session, run["run"], DEFERRED[0], json.dumps(failed))
+        await world.poll()
+        [summary] = world.notes("summary")
+        assert summary["data"]["text"] == f"Turn ended with an error: {said}"
+
+    scenario(tmp_path, body)
+
+
+def run_errors(world: World) -> int:
+    return world.store.db.execute("SELECT COUNT(*) FROM signals WHERE kind = 'run_error'").fetchone()[0]
+
+
+@pytest.mark.parametrize(("end", "said"), [
+    (lane_event("exited", code=-9), "its process exited with code -9"),
+    (lane_event("exited", code=137), "its process exited with code 137"),
+    (lane_event("exited", code=0), "its process exited with code 0"),  # a clean exit, but the CLI began and left no end
+    (lane_event("restarted", pid=7), "its lane restarted"),
+])
+def test_a_run_gone_with_no_result_and_no_stop_is_one_line_with_its_ring_and_a_run_error(tmp_path, end, said):
+    async def body(world: World):
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
+        [run] = world.lanes["code"].runs()
+        world.lanes["code"].add(session, run["run"], DEFERRED[0], end)
+        await world.poll()
+        [summary] = world.notes("summary")
+        assert summary["data"]["text"] == f"Turn ended with an error: {said} before the turn was over. Write to the " \
+                                          "session to go on."
+        assert summary["data"]["kind"] == pings.FAILED and pings.loud(summary["data"])
+        assert world.store.session(session)["state"] == "idle" and run_errors(world) == 1
+        for line in world.lanes["code"].journal:  # given again after a crash: said once
+            line["given"] = False
+        await world.poll()
+        assert len(world.notes("summary")) == 1 and run_errors(world) == 1
+
+    scenario(tmp_path, body)
+
+
+def test_a_process_that_dies_before_its_first_line_is_a_failure_and_a_clean_exit_with_no_line_is_not(tmp_path):
+    """The CLI writes nothing at all on a bare resume with nothing left to settle
+    (`test_a_deferred_call_runs_exactly_once_on_resume_and_never_again`): exit 0 is no death there, any other code is."""
+    async def body(world: World):
+        dead = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "почини"}))["session"]
+        [run] = world.lanes["code"].runs()
+        world.lanes["code"].add(dead, run["run"], lane_event("exited", code=1))
+        await world.poll()
+        assert [n["data"]["kind"] for n in world.notes("summary")] == [pings.FAILED] and run_errors(world) == 1
+
+        nothing = (await world.owner("new", {"input_id": "tg:2", "track": "retinue", "text": "почини"}))["session"]
+        [_, run] = world.lanes["code"].runs()
+        world.lanes["code"].exited(nothing, run["run"])
+        await world.poll()
+        assert len(world.notes("summary")) == 1 and run_errors(world) == 1
+        assert world.store.session(nothing)["state"] == "idle"
+
+    scenario(tmp_path, body)
+
+
+def test_an_exit_after_a_result_or_a_stop_is_no_failure_even_with_a_new_turn_queued(tmp_path):
+    async def body(world: World):
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "x"}))["session"]
+        [run] = world.lanes["private"].runs()
+        world.lanes["private"].answers["/answer"] = "not_running"
+        world.lanes["private"].add(session, run["run"], DEFERRED[0], lane_event("stopped"))
+        await world.poll()
+        assert world.store.session(session)["state"] == "idle"
+        await world.owner("input", {"input_id": "tg:2", "session": session, "text": "y"})
+        assert world.store.session(session)["state"] == "active", "his message waits for the run to end"
+        world.lanes["private"].add(session, run["run"], lane_event("exited", code=-15))
+        await world.poll()
+        [_, second] = world.lanes["private"].runs()
+        assert world.notes("summary") == [] and run_errors(world) == 0
+
+        world.lanes["private"].add(session, second["run"], *fixture("reads"))
+        await world.poll()
+        await world.owner("input", {"input_id": "tg:3", "session": session, "text": "z"})
+        world.lanes["private"].add(session, second["run"], lane_event("exited", code=1))
+        await world.poll()
+        assert [n["data"]["text"] for n in world.notes("summary")] == ["done"] and run_errors(world) == 0
+
+    scenario(tmp_path, body)
+
+
+def test_a_stop_the_lane_found_no_run_for_is_his_stop_when_the_exit_comes_in(tmp_path):
+    async def body(world: World):
+        session = (await world.owner("new", {"input_id": "tg:1", "track": "notes", "text": "x"}))["session"]
+        [run] = world.lanes["private"].runs()
+        world.lanes["private"].answers["/stop"] = "not_running"
+        await world.platform.stop(session)
+        world.lanes["private"].add(session, run["run"], DEFERRED[0], lane_event("exited", code=-9))
+        await world.poll()
+        assert world.notes("summary") == [] and run_errors(world) == 0
         assert world.store.session(session)["state"] == "idle"
 
     scenario(tmp_path, body)

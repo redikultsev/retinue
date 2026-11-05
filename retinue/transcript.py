@@ -253,6 +253,16 @@ def conversation_gone(line: dict) -> bool:
     return isinstance(errors, list) and any(str(error).startswith("No conversation found") for error in errors)
 
 
+def failure_of(line: dict) -> str:
+    """What a failed `result` says went wrong: its text, else its `errors` (a run that ended before an answer has no
+    `result` field), else its subtype. Empty when it says nothing. The CLI's own `[ede_diagnostic]` line, which is all
+    `errors` holds after an interrupt, is no reason (probed, `test_a_run_the_owner_stopped_in_the_middle_…`)."""
+    errors = line.get("errors")
+    said = [str(error) for error in errors if not str(error).startswith("[ede_diagnostic]")] \
+        if isinstance(errors, list) else []
+    return str(line.get("result") or "") or "; ".join(said) or str(line.get("subtype") or "")
+
+
 def usage_limit_wait(line: dict) -> float | None:
     """Seconds the CLI will wait for a subscription limit to reset, from its `system/api_retry` line: a 429 the retry
     watchdog (`CLAUDE_CODE_RETRY_WATCHDOG`) waits out to the reset time the API gave. A shorter wait is its ordinary

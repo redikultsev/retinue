@@ -520,6 +520,17 @@ class PlatformStore:
                                "WHERE r.ended IS NULL ORDER BY r.started")
         return [{"run": run, "session": session, "lane": lane} for run, session, lane in rows]
 
+    def run_said_its_end(self, session: str, run: str) -> bool:
+        """A line of the run says how it ended: the CLI's `result`, or the lane's `stopped`."""
+        return self.db.execute("SELECT 1 FROM raw WHERE session = ? AND run = ? AND json_valid(line) AND (json_extract("
+                               "line, '$.type') = 'result' OR (json_extract(line, '$.type') = 'lane' AND json_extract("
+                               "line, '$.event') = 'stopped'))", (session, run)).fetchone() is not None
+
+    def cli_spoke(self, session: str, run: str) -> bool:
+        """The CLI wrote a line in this run; the lane's own events do not count."""
+        return self.db.execute("SELECT 1 FROM raw WHERE session = ? AND run = ? AND (NOT json_valid(line) OR "
+                               "json_extract(line, '$.type') IS NOT 'lane')", (session, run)).fetchone() is not None
+
     def interrupt(self, run: str, now: float) -> None:
         """`run` was stopped by the platform's own shutdown, not by the owner; a second stop changes nothing."""
         self.db.execute("INSERT OR IGNORE INTO interrupted (run, at) VALUES (?, ?)", (run, now))

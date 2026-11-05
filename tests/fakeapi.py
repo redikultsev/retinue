@@ -6,7 +6,8 @@ calls `api.tools` — a list of (name, input), all in one message — and then i
 model that makes a blocked call again. The hook endpoint (`api.hook_url`) records every request and answers
 PreToolUse with `api.mode` (an `allow` with `api.updated` as its `updatedInput` when set); PermissionRequest is
 denied — or, with `api.ask = "none"`, left undecided, so the ask goes on to the host over stdio — and PermissionDenied
-gets no retry. Every Messages request's body is kept (`api.requests`): what the model was offered and told.
+gets no retry. Every Messages request's body is kept (`api.requests`): what the model was offered and told. With
+`api.hang`, a streamed request is kept and never answered: the run stays in the middle of its turn.
 
 In auto, the classifier's request to this API gets no verdict it can read, so every call the classifier evaluates
 is blocked («Auto mode could not evaluate this action…») and fires PermissionDenied — a classifier that blocks
@@ -80,6 +81,7 @@ class FakeApi:
         # The next streamed Messages requests fail, one fault each, in order: "429" (a rate limit, `retry-after: 1`),
         # "529" (overloaded), "cut" (the stream starts and the connection closes mid-message).
         self.faults: list[str] = []
+        self.hang = False  # the model never answers: its handler thread, a daemon, waits for good
         self.mcp: list[tuple[dict, str | None]] = []  # every MCP message, with its Authorization
         self.mcp_instructions = "PROBE-MCP-INSTRUCTIONS"
         self.mcp_text: str | None = None  # what every `tools/call` answers, instead of the tool's name and the call's id
@@ -245,7 +247,10 @@ class FakeApi:
                     self.end_headers()
                     self.wfile.write(raw)
                 elif self.path.startswith("/v1/messages") and body.get("stream"):
-                    self._send(200, api.reply(body), "text/event-stream")
+                    data = api.reply(body)
+                    if api.hang:
+                        threading.Event().wait()
+                    self._send(200, data, "text/event-stream")
                 elif self.path.startswith("/v1/messages"):
                     self._send(200, json.dumps({
                         "id": "msg_x", "type": "message", "role": "assistant", "model": "x",

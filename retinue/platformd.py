@@ -1182,8 +1182,19 @@ class Platform:
                 return
             if event in ("exited", "restarted") and self.store.resume_interrupted(run, now):
                 self._continue(session, now)
+            elif event in ("exited", "restarted") and self._died(session, run, line):
+                gone = f"its process exited with code {line.get('code')}" if event == "exited" else "its lane restarted"
+                self._turn_failed(session, run, f"{gone} before the turn was over. Write to the session to go on.", now)
             elif event in ("stopped", "restarted", "exited") and not self.store.interrupted(run):
                 self.life.run_ended(session["id"], now)
+
+    def _died(self, session: dict, run: str, line: dict) -> bool:
+        """The run's process is gone with nothing to say how: no `result` of the CLI, and no stop, the owner's or a
+        shutdown's. A kill -9, the kernel out of memory, a lane that went down hard. A clean exit with no line of the CLI
+        at all is not that: it is a bare resume with nothing left to settle."""
+        if self.store.interrupted(run) or run in self._stopped_runs or self.store.run_said_its_end(session["id"], run):
+            return False
+        return line.get("event") != "exited" or line.get("code") != 0 or self.store.cli_spoke(session["id"], run)
 
     def _left_out(self, session: dict, told: object, run: str) -> None:
         """What the lane says this run goes without. One line per reason, whichever session meets it first, not one per
@@ -1232,14 +1243,7 @@ class Platform:
         elif self._failed(line) and self.store.interrupted(run):
             pass  # the shutdown's own interrupt: the run's end resumes the session (`_continue`)
         elif self._failed(line):
-            why = str(line.get("result") or "") or str(line.get("subtype") or "") or "no description"
-            signals.add(self.store, signals.RUN_ERROR, session["id"], now, key=f"run:{run}")
-            if run not in self._stopped_runs:
-                episodes.mark(self.store, session["id"], episodes.RUN_ERROR, now, run=run)
-            episodes.ended(self.store, session["id"], run, f"Turn ended with an error: {why}")
-            self._summary(session, f"Turn ended with an error: {why}", pings.FAILED, run)
-            self._owe_look(session)
-            self.life.turn_ended(session, f"Turn ended with an error: {why}", now, failed=True, run=run)
+            self._turn_failed(session, run, transcript.failure_of(line) or "no description", now)
         else:
             text = str(line.get("result") or "") or "Turn finished without text."
             checked = citecheck.ended(self.store, session["id"], text)  # a source check's own end: rings on a flag
@@ -1254,6 +1258,17 @@ class Platform:
             episodes.ended(self.store, session["id"], run, text)  # the turn's summary, for a mark before or after
             self._owe_look(session)
             self.life.turn_ended(session, text, now, run=run)
+
+    def _turn_failed(self, session: dict, run: str, why: str, now: float) -> None:
+        """The turn is over in an error: the owner's line and its ring, the count, and a parent's report."""
+        said = f"Turn ended with an error: {why}"
+        signals.add(self.store, signals.RUN_ERROR, session["id"], now, key=f"run:{run}")
+        if run not in self._stopped_runs:
+            episodes.mark(self.store, session["id"], episodes.RUN_ERROR, now, run=run)
+        episodes.ended(self.store, session["id"], run, said)
+        self._summary(session, said, pings.FAILED, run)
+        self._owe_look(session)
+        self.life.turn_ended(session, said, now, failed=True, run=run)
 
     def _cite_check(self, session: dict, run: str, text: str, now: float) -> None:
         """A turn that ended on several cited addresses: a side session that checks them is queued (`citecheck`)."""

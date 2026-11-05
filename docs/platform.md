@@ -69,8 +69,12 @@ and `base` (the root of the Base) and `code` (your repositories, [code.md](code.
   its own stop as such (`stopped` with `by: shutdown`), and when such a run's end comes in, the session is resumed
   once with «The platform restarted in the middle of your turn. Continue from where you stopped.», and its
   summary says «Turn cut off: the platform restarted…». If you wrote to the session meanwhile, your message goes
-  next instead, alone. A session waiting on a card keeps its card; a run stopped any other way (a crash, a kill)
-  goes idle and waits for you.
+  next instead, alone. A session waiting on a card keeps its card.
+- A run gone with no `result` and no stop (a kill -9, the kernel out of memory, a lane that went down hard) is a failed
+  turn: «Turn ended with an error: its process exited with code -9 before the turn was over. Write to the session to go
+  on.», or «its lane restarted», one ⚠️ ping in a turn of any kind, a parent's report for a sub-session's, and the session
+  idle. A clean exit with no line of the CLI at all is no failure: it is what the CLI does on a bare resume with nothing
+  left to settle.
 - At most 12 sessions run in the room and 12 in all, one place always kept for your own message; the rest wait
   their turn.
 - **The subscription's limit.** A run that hits it waits for the reset instead of failing: the lanes run the CLI with
@@ -1205,7 +1209,7 @@ is told it went unanswered. A reply to a question that no longer asks is a messa
 ## Pings
 
 The end of every turn comes to you as a ping (`retinue/pings.py`): a header `<icon> <sphere or track> · <title> ·
-<took>`, then the text — ✅ done, ❓ waits on you (a question or an approval card of the session is shown), ⚠️ broke (an error, the subscription's limit, a turn a restart cut, a run its lane refused). `<took>` is the
+<took>`, then the text — ✅ done, ❓ waits on you (a question or an approval card of the session is shown), ⚠️ broke (an error, a process that died mid-turn, the subscription's limit, a turn a restart cut, a run its lane refused). `<took>` is the
 time since you last acted on the session: your last message, or the start of the run that ended (a run starts on your
 message or on your decision on a card; one that waited for room on its lane counts from its start). A long text is
 split as before; a reply to any of its messages goes into the session.
@@ -1420,6 +1424,13 @@ Two pin [the CLI's own messages between sessions](#sub-sessions): without `cross
 sessions of a lane list each other and each one's message reaches the other's model, from `SendMessage` and from a
 plain write to its socket, and with it neither does; `ListAgents` is gone, a send to anything but a subagent's id is
 refused by the gate, and a subagent's id still resumes it.
+
+Three pin how a run ends: kill -9 in the middle of a turn writes no `result` and exits -9, and you hear [one
+line](#tracks-and-sessions); «Stop» is SIGINT and exit 0, with or without a `result` whose `errors` holds only the CLI's
+`[ede_diagnostic]`, never told as a death; a bare resume with nothing to settle exits 0 and writes no line. One pins the
+CLI's limit on classifier blocks: under the stdio prompt tool it ends no run. Past two blocks in a row each block is an
+ask the lane host denies, and the turn goes on and ends `success`, so only the gate holds a model that keeps running into
+them (`gate.RETRIES_PER_RUN`).
 
 One pins a long result of the platform's own tool, as [`read_subsession`](#sub-sessions) gives a whole report: at 30 000
 characters the model reads it in the result; at 120 000 the CLI saves it under `tool-results/`, hands over a preview of

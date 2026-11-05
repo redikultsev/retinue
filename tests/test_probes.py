@@ -27,7 +27,7 @@ from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
 
 from fakeapi import FakeApi
-from retinue import approvals, cliengine, gate, instructions, lane_host, platformd, subs
+from retinue import approvals, cliengine, gate, instructions, lane_host, pings, platformd, subs
 from retinue.config import LaneHostConfig, LaneRef, PlatformConfig, Track
 from retinue.lane_host import LaneHost
 from retinue.platformd import Platform
@@ -189,8 +189,9 @@ def test_a_deferred_call_runs_exactly_once_on_resume_and_never_again(lane, api):
     assert resumed.result["stop_reason"] != "tool_deferred"
     assert marker.read_text() == "ran\n"
 
-    lane.run(None, resume=session)
+    further = lane.run(None, resume=session)
     assert marker.read_text() == "ran\n", "a further resume does not run it again"
+    assert further.rc == 0 and further.lines == [], "nothing to settle: a clean exit with no line, no failure to tell"
 
 
 def test_a_call_is_blocked_when_the_hook_endpoint_is_down_even_under_an_allow_rule(lane, api):
@@ -772,6 +773,38 @@ class Stack:
     def results(self) -> list[dict]:
         return [line for line in self.lines() if line.get("type") == "result"]
 
+    async def unhooked_run(self) -> list[dict]:
+        """A run straight on the lane host, with no platform: its hooks answered by the fake API. Its journal once its
+        process has ended."""
+        async with ClientSession() as http:
+            body = {"session": "0a1b2c3d", "run": "r1", "cli_session": None, "cwd": "repo",
+                    "settings": cliengine.settings(self.api.hook_url, 30, []), "allowed": [], "disallowed": [],
+                    "prompt": "go", "hook_token": "probe-hook-token", "oauth_token": "probe-login"}
+            async with http.post(f"{self.cfg.lanes['code'].url}/run", json=body,
+                                 headers={"Authorization": "Bearer lane-token"}) as response:
+                assert (await response.json())["status"] == "started"
+        for _ in range(TIMEOUT_S * 10):
+            if not self.host.live:
+                break
+            await asyncio.sleep(0.1)
+        assert not self.host.live, "the run waited on an ask nobody answered"
+        return [json.loads(i["line"]) for i in self.host.journal.look(200)]
+
+    async def mid_turn(self) -> str:
+        """Both up and a new session's run in the middle of its turn: the model was asked and has not answered."""
+        await self.lane_up()
+        self.platform_object()
+        await self.platform_listening()
+        session = (await self.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "go"}))["session"]
+        for _ in range(TIMEOUT_S * 10):
+            if self.api.requests:
+                return session
+            await asyncio.sleep(0.1)
+        raise AssertionError("the model was never asked")
+
+    def run_errors(self) -> int:
+        return self.store.db.execute("SELECT COUNT(*) FROM signals WHERE kind = 'run_error'").fetchone()[0]
+
 
 @pytest.fixture
 def stack(tmp_path, api, monkeypatch):
@@ -898,22 +931,82 @@ def test_an_ask_no_hook_decides_is_denied_by_the_lane_host_and_the_run_ends(stac
 
     async def go():
         await stack.lane_up()
-        async with ClientSession() as http:
-            body = {"session": "0a1b2c3d", "run": "r1", "cli_session": None, "cwd": "repo",
-                    "settings": cliengine.settings(api.hook_url, 30, []), "allowed": [], "disallowed": [],
-                    "prompt": "go", "hook_token": "probe-hook-token", "oauth_token": "probe-login"}
-            async with http.post(f"{stack.cfg.lanes['code'].url}/run", json=body,
-                                 headers={"Authorization": "Bearer lane-token"}) as response:
-                assert (await response.json())["status"] == "started"
-        for _ in range(TIMEOUT_S * 10):
-            if not stack.host.live:
-                break
-            await asyncio.sleep(0.1)
-        assert not stack.host.live, "the run waited on an ask nobody answered"
-        lines = [json.loads(i["line"]) for i in stack.host.journal.look(200)]
+        lines = await stack.unhooked_run()
         [ask] = [line for line in lines if line.get("type") == "control_request"]
         assert ask["request"]["subtype"] == "can_use_tool" and ask["request"]["tool_name"] == "AskUserQuestion"
         assert api.tool_results()[-1]["content"].startswith("This call asks for permission")
+        await stack.lane_down()
+
+    asyncio.run(go())
+
+
+def test_the_clis_limit_on_classifier_blocks_does_not_end_a_lanes_run(stack, api):
+    """Five calls in a row, each blocked by the classifier: past two of them the CLI asks its host instead of saying
+    `permission_denied`, the lane host denies the ask, and the turn goes on and ends `success`. Under the stdio prompt
+    tool nothing but the gate stops a model that keeps running into blocks (`gate.RETRIES_PER_RUN`)."""
+    api.turns = [[bash(f"curl -s https://example.com/{n}")] for n in range(5)]
+    api.mode, api.ask = "none", "none"
+    stack.lane_cfg.hook_url = api.hook_url
+
+    async def go():
+        await stack.lane_up()
+        lines = await stack.unhooked_run()
+        blocked = [line for line in lines if line.get("subtype") == "permission_denied"]
+        asked = [line for line in lines if line.get("type") == "control_request"]
+        [result] = [line for line in lines if line.get("type") == "result"]
+        assert result["subtype"] == "success" and result["is_error"] is False and result["result"] == "done", result
+        assert (len(blocked), len(asked)) == (2, 3), (blocked, asked)
+        assert len(result["permission_denials"]) == 5
+        await stack.lane_down()
+
+    asyncio.run(go())
+
+
+def test_a_run_killed_in_the_middle_of_its_turn_is_one_line_to_the_owner_and_a_ring(stack, api):
+    """kill -9 or the kernel out of memory: the CLI writes no `result`, the lane host journals `exited` with the
+    signal's code, and the owner hears it. The session waits for him, and his next message goes on."""
+    api.hang = True
+
+    async def go():
+        session = await stack.mid_turn()
+        stack.host.live[session].proc.kill()
+        await stack.settled()
+        assert stack.results() == []
+        [exited] = [line for line in stack.lines() if line.get("event") == "exited"]
+        assert exited["code"] == -9
+        [note] = stack.notes("summary")
+        assert note["data"]["text"] == "Turn ended with an error: its process exited with code -9 before the turn " \
+                                       "was over. Write to the session to go on."
+        assert note["data"]["kind"] == pings.FAILED and pings.loud(note["data"])
+        assert stack.store.session(session)["state"] == "idle" and stack.run_errors() == 1
+
+        api.hang = False
+        await stack.owner("input", {"input_id": "tg:2", "session": session, "text": "again"})
+        await stack.settled()
+        await stack.platform.drain()  # killed this early it may leave no transcript: a new conversation takes the message
+        await stack.settled()
+        assert stack.notes("summary")[-1]["data"]["text"] == "done" and stack.run_errors() == 1
+        await stack.platform_down()
+        await stack.lane_down()
+
+    asyncio.run(go())
+
+
+def test_a_run_the_owner_stopped_in_the_middle_of_its_turn_is_not_told_as_its_process_dying(stack, api):
+    """«Stop»: SIGINT to the real CLI, which exits 0, with or without a `result` (`errors` holds only its own diagnostic
+    line then). The lane journals `stopped` first, so the exit that follows is his stop."""
+    api.hang = True
+
+    async def go():
+        session = await stack.mid_turn()
+        assert await stack.platform.stop(session)
+        await stack.settled()
+        assert [line.get("event") for line in stack.lines() if line.get("type") == "lane"] == \
+            ["started", "stopped", "exited"]
+        said = [n["data"]["text"] for n in stack.notes("summary")]
+        assert not [text for text in said if "its process" in text or "ede_diagnostic" in text], said
+        assert stack.store.session(session)["state"] == "idle"
+        await stack.platform_down()
         await stack.lane_down()
 
     asyncio.run(go())

@@ -663,7 +663,7 @@ def test_a_side_questions_run_never_leaves_a_call_to_the_classifier(setup):
     store.add_run(side, the_gate.token_hash("side-token"), [], 0.0)
     answer = hook(the_gate, "PreToolUse", auto(call(tool="Glob", tool_input={"pattern": "*.py"})), token="side-token")
     assert decision(answer) == "defer" and store.approvals(session=side)
-    assert {"EnterWorktree", "ExitWorktree", "Workflow", "Bash", "Edit"} <= set(approvals.READ_ONLY_DENY)
+    assert {"Bash", "Edit"} <= set(approvals.READ_ONLY_DENY)
 
 
 SKILL_READS = [

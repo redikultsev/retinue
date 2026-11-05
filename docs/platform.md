@@ -1056,8 +1056,8 @@ is retired…».
 Rules in Claude Code's own syntax (`Bash(make test:*)`, `Edit`, `Read(src/**)`), matched by the CLI itself:
 
 - in code: `BASE_ALLOW` (`Read`, `Grep`, `Glob`, `TodoWrite`, `Skill`) and `BASE_DENY` (`CronCreate`, `CronDelete`,
-  `ScheduleWakeup`, `RemoteTrigger`, `ListAgents` ([Sub-sessions](#sub-sessions)), and `EnterPlanMode` and `ExitPlanMode`, which came with the prompt tool of
-  [Questions](#questions) and have no card yet) in `retinue/approvals.py`, and `WEB` (`WebSearch`, `WebFetch`) on every lane
+  `ScheduleWakeup`, `RemoteTrigger`, `ListAgents` ([Sub-sessions](#sub-sessions)), `EnterPlanMode` and `ExitPlanMode`, which came with the prompt tool of
+  [Questions](#questions) and have no card yet, and [the tools a lane does not get](#tools-a-lane-does-not-get)) in `retinue/approvals.py`, and `WEB` (`WebSearch`, `WebFetch`) on every lane
   but one with `web: true` in `platform.yaml` (the room) — whatever that lane's `deny` and a track's `allow` say;
 - per lane: `deny` and `card` in `platform.yaml`;
 - per track: `allow`, `deny` and `card` in `platform.yaml`.
@@ -1077,6 +1077,24 @@ the places outside it the read-only file tools reach.
 There is no button that writes a rule: always rules are edited in `platform.yaml`, never derived from a pressed
 card.
 
+### Tools a lane does not get
+
+What the pinned CLI offers and a lane has no use for, or cannot hold, by probes on 2.1.304 (`tests/test_probes.py`). A deny rule
+takes each from the model and from its subagents alike: not offered, not found by `ToolSearch`.
+
+| Tool | What it does in a lane | Why it is denied |
+|---|---|---|
+| `Workflow` | Runs a script of subagents. The classifier judges the launch; each agent's call passes the gate as a subagent's. The script has no `process`, `require`, `fetch`, `import()` or `eval` | It runs in the background whatever `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` says, with as many agents as the script asks (30 in a probe, 63 API requests). Stop fires while they work, so the gate forgets the turn's checks, and a run writes two `result`s |
+| `EnterWorktree` | `name`: a branch and `.claude/worktrees/<name>` inside the folder, and the CLI's cwd moves there. `path` (an existing worktree): the CLI asks, and an ask is denied | No classifier and no card. The cwd stays moved on a resume, away from the folder the platform recorded |
+| `ExitWorktree` | Leaves the worktree. `remove` with `discard_changes` deletes its folder and branch, uncommitted work too | No classifier and no card, on the tool's word alone. With no way in, it has nothing to do |
+| `CronList` | Answers «No scheduled jobs.» | `CronCreate` is denied, so the list is always empty |
+| `TaskStop` | Stops a background task | Without background tasks and `Workflow` it has nothing to stop |
+| `ReportFindings` | Answers «1 finding reported.», and that is all. No classifier | It feeds a host's panel no lane has. Every level of the CLI's own `code-review` says not to call it |
+
+`TaskCreate`, `TaskGet`, `TaskList` and `TaskUpdate` stay: a session's own list, a JSON file per task under
+`<config>/tasks/<session>/`, no classifier, nothing outside the CLI's own folder. The face shows such a call as a plain tool
+call. The main agent has them only with the real login; a subagent has them without one too.
+
 ## Approvals
 
 Every run is `claude -p --model claude-opus-5-5[1m] --effort xhigh --permission-mode auto` (a resume too: the CLI
@@ -1088,8 +1106,8 @@ first, then the rules, then auto's **classifier**:
 - **The gate's refusals** (a token-shaped input, a file path out of `/work`) — denied, before anything else.
 - **The never list** — denied, and a courier card ([below](#the-never-list-and-the-courier-card)).
 - **A deny rule** — the CLI denies it; no card. A side question's session stays read-only this way: `Edit`,
-  `Write`, `MultiEdit`, `NotebookEdit`, `Bash`, `EnterWorktree`, `ExitWorktree`, `Workflow` and `AskUserQuestion`
-  (it never waits on a question) are deny rules of its runs. And its runs never leave a call to the classifier: whatever no rule names is a card, as in the fallback below.
+  `Write`, `MultiEdit`, `NotebookEdit`, `Bash` and `AskUserQuestion`
+  (it never waits on a question) are deny rules of its runs, on top of `BASE_DENY`. And its runs never leave a call to the classifier: whatever no rule names is a card, as in the fallback below.
 - **A web call that looks like it carries data** — a `WebFetch` address or a `WebSearch` query past the exfil
   guard's thresholds — deferred to you as a card «Looks like data leaving: …», before any allow rule
   ([The exfil guard](#the-exfil-guard)).
@@ -1439,7 +1457,10 @@ characters the model reads it in the result; at 120 000 the CLI saves it under `
 One pins the whole list of tools the CLI offers (`CLI_TOOLS`), so a bump that adds one fails: since 2.1.224 the CLI had
 `SendMessage` and `ListAgents`, which no probe named, and a list by name would not have shown them. It is the list against
 the fake API with no login. In the room, with the real login, 2.1.304 also offers `Glob`, `Grep` and `TaskCreate`,
-`TaskGet`, `TaskList`, `TaskUpdate`: the init line in `raw` shows what a real run got.
+`TaskGet`, `TaskList`, `TaskUpdate`: the init line in `raw` shows what a real run got. A fake OAuth token does not
+bring them to the main agent, so what decides is not known; a subagent has them either way, which is how a probe reaches them.
+Three more pin [the tools a lane does not get](#tools-a-lane-does-not-get): gone with `BASE_DENY`, from a subagent too; a
+workflow against a run's one turn; a worktree past the classifier.
 
 Two of them answer what the room's sessions rely on. [Subagents](#subagents): they run, in the foreground, their
 calls reach the gate marked by `agent_id`, and a deferral inside one is lost. And nested rules: under

@@ -87,6 +87,7 @@ class FakeApi:
         self.mcp_text: str | None = None  # what every `tools/call` answers, instead of the tool's name and the call's id
         self.answer_model: str | None = None  # the model a response says it came from; None: the one asked for
         self.pre_context: str | None = None   # an `allow` on PreToolUse carries it as `additionalContext`
+        self.any_tool = False                 # the model calls a tool it was not offered, instead of answering text
         self._lock = threading.Lock()
         self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.url = f"http://127.0.0.1:{self._server.server_port}"
@@ -129,7 +130,7 @@ class FakeApi:
             "id": "msg_" + uuid.uuid4().hex[:12], "type": "message", "role": "assistant",
             "model": self.answer_model or body.get("model", "x"), "content": [], "stop_reason": None, "stop_sequence": None,
             "usage": usage}})]
-        if called or not tools or not {name for name, _ in tools} <= offered:
+        if called or not tools or not (self.any_tool or {name for name, _ in tools} <= offered):
             events += _block(0, {"type": "text", "text": ""}, {"type": "text_delta", "text": "done"})
             stop = "end_turn"
         else:

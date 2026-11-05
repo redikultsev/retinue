@@ -88,6 +88,14 @@ def test_marks_cover_every_rule_once_strictest_first():
                                                             *LANE.deny, *TRACK.allow, *TRACK.deny}
 
 
+def test_no_lane_or_track_gets_the_tools_a_session_cannot_use_safely():
+    denied = ["Workflow", "EnterWorktree", "ExitWorktree", "CronList", "TaskStop", "ReportFindings"]
+    track = Track(name="retinue", lane="code", kind="code", cwd="retinue", allow=denied, card=denied)
+    kind = {m.rule: m.kind for m in approvals.marks_for(track, LANE)}
+    assert {kind[tool] for tool in denied} == {"deny"}
+    assert not {"TaskCreate", "TaskGet", "TaskList", "TaskUpdate"} & set(approvals.BASE_DENY), "a session's own list stays"
+
+
 def test_a_track_cannot_allow_what_is_denied_or_never():
     track = Track(name="retinue", lane="code", kind="code", cwd="retinue",
                   allow=["WebSearch", "Bash(curl:*)", "Bash(git push:*)"])

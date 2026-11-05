@@ -140,6 +140,94 @@ def test_the_whole_list_of_the_clis_tools_is_pinned(lane, api):
     assert set(lane.run("go", disallowed=approvals.BASE_DENY).init["tools"]) == CLI_TOOLS - set(approvals.BASE_DENY)
 
 
+DENIED_LATER = ("Workflow", "EnterWorktree", "ExitWorktree", "CronList", "TaskStop", "ReportFindings")
+
+
+def test_the_tools_a_lane_does_not_get_are_gone_from_a_session_and_from_its_subagents(lane, api):
+    """Not offered, not loadable by ToolSearch, and a call made anyway reaches no hook and runs nothing: not from the
+    main agent, not from a subagent, which the same deny rules hold. SendMessage is the control: ToolSearch finds what
+    is not denied."""
+    select = ("ToolSearch", {"query": f"select:{','.join(DENIED_LATER)},SendMessage", "max_results": 10})
+    calls = [(tool, {}) for tool in DENIED_LATER]
+    api.mode, api.any_tool = "allow", True
+    api.scripts = {"PROBE-MAIN": [[select], calls, [agent("PROBE-SUB")]], "PROBE-SUB": [[select], calls]}
+    run = lane.run("PROBE-MAIN", disallowed=approvals.BASE_DENY)
+    assert run.rc == 0, run.stderr
+    assert not set(DENIED_LATER) & set(run.init["tools"])
+    assert [h for h in api.events("PreToolUse") if h.tool == "Agent"], "the subagent ran"
+    assert {h.agent_id is not None for h in api.events("PreToolUse") if h.tool == "ToolSearch"} == {True, False}
+    assert not set(DENIED_LATER) & {t["name"] for body in api.requests for t in body.get("tools", [])}
+    loaded = [json.dumps(r["content"]) for r in api.tool_results() if "tool_reference" in json.dumps(r["content"])]
+    assert loaded and all('"SendMessage"' in text and not any(f'"{t}"' in text for t in DENIED_LATER) for text in loaded)
+    assert not set(DENIED_LATER) & {h.tool for h in api.hooks}
+    refused = [json.dumps(r["content"]) for r in api.tool_results() if "No such tool available" in json.dumps(r["content"])]
+    assert {tool for tool in DENIED_LATER if any(f"No such tool available: {tool}" in text for text in refused)} == \
+        set(DENIED_LATER)
+    assert sum(json.dumps(body["messages"][0]).count("PROBE-SUB") > 0 for body in api.requests) >= 3, "the subagent's turns"
+
+
+def test_a_workflow_runs_in_the_background_whatever_the_cli_is_told_and_breaks_a_run_into_two_results(lane, api):
+    """Why `approvals.BASE_DENY` has Workflow: the switch that keeps a run one turn (`cliengine.NO_BACKGROUND`) does not
+    hold it, Stop fires while its agents work, and the run writes a `result` for each turn. No cap: the script's count.
+    Each agent's call does reach the gate, marked as a subagent's. The script itself has no way out of its sandbox."""
+    marker = lane.cwd.parent / "ran"
+    script = ("export const meta = {name: 'p', description: 'probe'}\n"
+              "const r = {process: typeof process, require: typeof require, fetch: typeof fetch}\n"
+              "await parallel(Array.from({length: 5}, (_, i) => () => agent('PROBE-AGENT ' + i, {label: 'a' + i})))\n"
+              "return r")
+    api.mode = "allow"
+    api.scripts = {"PROBE-MAIN": [[("Workflow", {"script": script})]],
+                   "PROBE-AGENT": [[bash(f"sleep 1; echo ran >> {marker}")]]}
+    run = lane.run("PROBE-MAIN")
+    assert run.rc == 0, run.stderr
+    assert len(marker.read_text().splitlines()) == 5
+    assert sum(line.get("type") == "result" for line in run.lines) == 2
+    order = [(h.event, h.tool) for h in api.hooks if "/mark/" not in h.path]
+    assert order.index(("Stop", None)) < len(order) - 1 - order[::-1].index(("PostToolUse", "Bash")), "Stop came first"
+    assert len([h for h in api.events("PreToolUse") if h.tool == "Bash" and h.agent_id]) == 5
+    told = sent(api)
+    assert all(f'\\"{name}\\":\\"undefined\\"' in told for name in ("process", "require", "fetch")), "its sandbox"
+
+
+def test_a_worktree_is_made_and_deleted_past_the_classifier_and_moves_the_session_for_good(lane, api):
+    """Why `approvals.BASE_DENY` has EnterWorktree and ExitWorktree: no decision at the gate and neither asks the
+    classifier, which blocks all it is asked here. The CLI's cwd stays moved on a resume, and a removal deletes what was
+    not committed, on the tool's word alone. An existing worktree by `path` the CLI asks about, and an ask is denied."""
+    def git(*args: str, cwd: Path = lane.cwd) -> None:
+        subprocess.run(["git", "-c", "user.name=a", "-c", "user.email=a@example.com", *args], cwd=cwd, check=True,
+                       capture_output=True)
+    git("init", "-q", "-b", "main")
+    git("commit", "-q", "--allow-empty", "-m", "c")
+    tree = lane.cwd / ".claude" / "worktrees" / "probe"
+    load = [("ToolSearch", {"query": "select:EnterWorktree,ExitWorktree", "max_results": 5})]
+    api.mode = "none"
+    made = [load, [("EnterWorktree", {"name": "probe"})], [("Write", {"file_path": str(tree / "lost"), "content": "x"})]]
+    api.turns = made
+    first = lane.run("go")
+    assert first.rc == 0, first.stderr
+    assert (tree / "lost").exists() and not api.events("PermissionDenied")
+    assert api.events("Stop")[-1].body["cwd"] == str(tree)
+
+    api.hooks.clear()
+    api.turns = [*made, [("ExitWorktree", {"action": "remove"})],
+                 [("ExitWorktree", {"action": "remove", "discard_changes": True})]]
+    api.requests.clear()
+    resumed = lane.run("again", resume=first.result["session_id"])
+    assert resumed.rc == 0, resumed.stderr
+    assert not tree.exists() and not api.events("PermissionDenied")
+    assert api.events("PreToolUse")[0].body["cwd"] == str(tree), "the resume went on in the worktree"
+
+    other = lane.cwd.parent / "other"
+    git("worktree", "add", "-q", "-b", "other", str(other))
+    api.hooks.clear()
+    api.requests.clear()
+    api.mode = "allow"
+    api.turns = [load, [("EnterWorktree", {"path": str(other)})]]
+    assert lane.run("go").rc == 0
+    assert [h.tool for h in api.events("PermissionRequest")] == ["EnterWorktree"]
+    assert api.events("Stop")[-1].body["cwd"] == str(lane.cwd), "an existing one is not entered even when allowed"
+
+
 def test_d4_a_resume_with_no_transcript_is_its_own_error_and_reaches_no_model(lane, api):
     """The transcript gone, its days over or its volume lost: no init line, one error result that says so, nothing
     asked of the model."""

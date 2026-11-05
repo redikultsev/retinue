@@ -93,9 +93,15 @@ BASE_CARD: list[str] = []
 BASE_ALLOW = ["Read", "Grep", "Glob", "TodoWrite", "Skill"]
 # The plan tools came with the stdio prompt tool (`cliengine.PREFIX`), not wanted: a plan's approval is a card of its own,
 # not built yet, and EnterPlanMode would take a run out of auto. ListAgents shows the other sessions a CLI can reach:
-# they are the platform's to show (`cliengine.INBOUND`, `MESSAGE`, docs/platform.md).
+# they are the platform's to show (`cliengine.INBOUND`, `MESSAGE`, docs/platform.md). The rest, probed with 2.1.304
+# (docs/platform.md, «Tools a lane does not get»). Workflow runs in the background whatever `cliengine.NO_BACKGROUND`
+# says, as many agents as its script asks, and a run then writes two `result`s and fires Stop while the agents work.
+# EnterWorktree and ExitWorktree reach no classifier: they make and delete a branch and its folder, uncommitted work
+# too, and move the CLI's cwd away from the session's folder for good, a resume included. CronList has only an empty
+# list to show; TaskStop only a Workflow to stop; ReportFindings is for a host's panel no lane has, and every level of
+# the CLI's own review says not to call it.
 BASE_DENY = ["CronCreate", "CronDelete", "ScheduleWakeup", "RemoteTrigger", "EnterPlanMode", "ExitPlanMode",
-             "ListAgents"]
+             "ListAgents", "Workflow", "EnterWorktree", "ExitWorktree", "CronList", "TaskStop", "ReportFindings"]
 # The web tools: denied on every lane but one whose proxy is open to the public web (`LaneRef.web`: the room,
 # docs/platform.md). Its managed settings are the lock; this is the second one. There, the gate's exfil guard cards a
 # call that looks like it carries data (`exfil`).
@@ -116,8 +122,7 @@ class Mark:
 # A side session answers a question about another session; it changes nothing — no file, no command. These are deny
 # rules, in --disallowedTools, which hold in auto as in any mode: the classifier never sees such a call.
 # AskUserQuestion too: a side session answers from what it reads and never waits on a question card.
-READ_ONLY_DENY = ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "EnterWorktree", "ExitWorktree", "Workflow",
-                  "AskUserQuestion"]
+READ_ONLY_DENY = ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "AskUserQuestion"]
 
 
 def marks_for(track: Track, lane: LaneRef, read_only: bool = False) -> list[Mark]:

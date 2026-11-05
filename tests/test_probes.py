@@ -27,7 +27,7 @@ from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
 
 from fakeapi import FakeApi
-from retinue import approvals, cliengine, gate, instructions, lane_host, subs
+from retinue import approvals, cliengine, gate, instructions, lane_host, platformd, subs
 from retinue.config import LaneHostConfig, LaneRef, PlatformConfig, Track
 from retinue.lane_host import LaneHost
 from retinue.platformd import Platform
@@ -812,6 +812,39 @@ def test_e4_a_deferred_call_granted_after_both_processes_restarted_runs_exactly_
         assert stack.store.approval(card["approval"])["state"] == "executed"
         assert [n["data"]["text"] for n in stack.notes("summary")] == ["done"]
         assert stack.store.session(session)["state"] == "closed"
+        await stack.platform_down()
+        await stack.lane_down()
+
+    asyncio.run(go())
+
+
+def test_d4_a_message_to_a_session_with_no_transcript_goes_on_in_a_new_conversation_from_its_summary(stack, api):
+    """The real CLI's error, read by the platform: the message is not lost, no error is told, the model is asked once
+    with the old conversation's summary, and the next message goes on in the new conversation."""
+    async def go():
+        await stack.lane_up()
+        stack.platform_object()
+        await stack.platform_listening()
+        session = (await stack.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "go"}))["session"]
+        await stack.settled()
+        first = stack.store.session(session)["cli_session"]
+        assert first and [path.unlink() for path in Path(stack.lane_cfg.config_dir).rglob(f"{first}*") if path.is_file()]
+
+        api.requests = []
+        await stack.owner("input", {"input_id": "tg:2", "session": session, "text": "PROBE-AGAIN"})
+        await stack.settled()
+        await stack.platform.drain()
+        await stack.settled()
+        said = json.dumps(api.requests[-1]["messages"], ensure_ascii=False)
+        assert "PROBE-AGAIN" in said and "The earlier conversation of this session is gone" in said and "done" in said
+        second = stack.store.session(session)["cli_session"]
+        assert second and second != first
+        told = [note["data"]["text"] for note in stack.notes("summary")]
+        assert told.count(platformd.MEMORY_GONE) == 1 and not [text for text in told if "error" in text], told
+
+        await stack.owner("input", {"input_id": "tg:3", "session": session, "text": "дальше"})
+        await stack.settled()
+        assert stack.store.session(session)["cli_session"] == second
         await stack.platform_down()
         await stack.lane_down()
 

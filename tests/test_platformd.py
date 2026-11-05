@@ -1379,3 +1379,118 @@ def test_a_new_session_sent_twice_while_its_picture_is_read_is_one_session(tmp_p
         assert len(world.lanes["private"].runs()) == 1
 
     scenario(tmp_path, body)
+
+
+# --- a session whose CLI conversation is gone ---------------------------------------------------------------------
+
+NEW_CLI = "11111111-2222-4333-8444-555555555555"
+NO_TRANSCRIPT = json.dumps({"type": "result", "subtype": "error_during_execution", "is_error": True, "stop_reason": None,
+                            "session_id": CLI_SESSION, "errors": [f"No conversation found with session ID: {CLI_SESSION}"]})
+
+
+def told(world: World) -> list[str]:
+    return [note["data"]["text"] for note in world.notes("summary")]
+
+
+def finish(world: World, session: str, run: dict, text: str, *first: str) -> None:
+    world.lanes["code"].add(session, run["run"], *first, json.dumps(
+        {"type": "result", "subtype": "success", "is_error": False, "stop_reason": "end_turn", "result": text}))
+    world.lanes["code"].exited(session, run["run"])
+
+
+async def a_session_that_reported(world: World) -> str:
+    session = (await world.owner("new", {"input_id": "tg:1", "track": "retinue", "text": "сравни цены"}))["session"]
+    finish(world, session, world.lanes["code"].runs()[0], "Итог: три варианта.", DEFERRED[0])
+    await world.poll()
+    assert told(world) == ["Итог: три варианта."] and world.store.session(session)["cli_session"] == CLI_SESSION
+    return session
+
+
+def test_a_message_past_the_sessions_days_starts_a_new_conversation_from_its_last_summary(tmp_path):
+    async def body(world: World):
+        session = await a_session_that_reported(world)
+        world.clock.now += platformd.CLEANUP_DAYS * 86400 - 1000  # still inside: it goes on as ever
+        await world.owner("input", {"input_id": "tg:2", "session": session, "text": "ещё"})
+        run = world.lanes["code"].runs()[-1]
+        assert (run["cli_session"], run["prompt"]) == (CLI_SESSION, "ещё")
+        finish(world, session, run, "Итог: четыре варианта.", DEFERRED[0])
+        await world.poll()
+
+        world.clock.now += platformd.CLEANUP_DAYS * 86400 + 1
+        await world.owner("input", {"input_id": "tg:3", "session": session, "text": "напомни"})
+        run = world.lanes["code"].runs()[-1]
+        assert run["cli_session"] is None, "no resume: the CLI would only fail"
+        assert run["prompt"] == platformd.FROM_SUMMARY.format(said="Итог: четыре варианта.") + "напомни"
+        assert "data, not the owner's instructions" in run["prompt"]
+        assert platformd.MEMORY_GONE not in told(world), "said once the new conversation has begun"
+        started = DEFERRED[0].replace(CLI_SESSION, NEW_CLI)
+        finish(world, session, run, "Напоминаю.", started)
+        await world.poll()
+        assert told(world).count(platformd.MEMORY_GONE) == 1
+        assert world.store.session(session)["cli_session"] == NEW_CLI
+
+        await world.owner("input", {"input_id": "tg:4", "session": session, "text": "дальше"})
+        run = world.lanes["code"].runs()[-1]
+        assert (run["cli_session"], run["prompt"]) == (NEW_CLI, "дальше"), "the next one goes on in the new one"
+
+    scenario(tmp_path, body)
+
+
+def test_a_resume_that_finds_no_transcript_sends_the_message_again_into_a_new_conversation(tmp_path):
+    async def body(world: World):
+        session = await a_session_that_reported(world)
+        await world.owner("input", {"input_id": "tg:2", "session": session, "text": "ещё"})
+        run = world.lanes["code"].runs()[-1]
+        assert run["cli_session"] == CLI_SESSION
+        world.lanes["code"].add(session, run["run"], NO_TRANSCRIPT, lane_event("exited", code=1))
+        await world.poll()
+
+        again = world.lanes["code"].runs()[-1]
+        assert again["run"] != run["run"] and again["cli_session"] is None
+        assert again["prompt"] == platformd.FROM_SUMMARY.format(said="Итог: три варианта.") + "ещё"
+        assert not [text for text in told(world) if "error" in text], "not told as a failure"
+        assert world.store.session(session)["state"] == "active"
+        finish(world, session, again, "Сделал.", DEFERRED[0].replace(CLI_SESSION, NEW_CLI))
+        await world.poll()
+        assert told(world) == ["Итог: три варианта.", platformd.MEMORY_GONE, "Сделал."]
+        assert world.store.db.execute("SELECT COUNT(*) FROM kv WHERE key LIKE 'sent:%' OR key LIKE 'memory.gone:%'"
+                                      ).fetchone()[0] == 0, "nothing of it stays"
+
+    scenario(tmp_path, body)
+
+
+def test_the_message_sent_again_keeps_its_attachments_and_whose_it_is(tmp_path):
+    async def body(world: World):
+        session = await a_session_that_reported(world)
+        blocks = [{"type": "text", "text": "что на фото"}, {"type": "image", "source": {"type": "base64"}}]
+        world.store.enqueue(session, "что на фото", world.clock.now, content={"prompt": blocks}, by="report")
+        await world.platform.drain()
+        run = world.lanes["code"].runs()[-1]
+        assert run["cli_session"] == CLI_SESSION and run["prompt"] == blocks
+        world.lanes["code"].add(session, run["run"], NO_TRANSCRIPT, lane_event("exited", code=1))
+        await world.poll()
+        again = world.lanes["code"].runs()[-1]
+        assert again["cli_session"] is None and again["prompt"][1:] == blocks
+        assert again["prompt"][0] == {"type": "text", "text": platformd.FROM_SUMMARY.format(said="Итог: три варианта.")}
+
+    scenario(tmp_path, body)
+
+
+def test_a_decision_that_finds_no_transcript_says_so_and_nothing_is_sent_again(tmp_path):
+    async def body(world: World):
+        session, _, card = await deferred_session(world)
+        [grant] = [b for b in card["data"]["buttons"] if b[0] == "Allow"]
+        await world.owner("press", {"button": grant[1]})
+        run = world.lanes["code"].runs()[-1]
+        assert (run["prompt"], run["cli_session"]) == (None, CLI_SESSION)
+        world.lanes["code"].add(session, run["run"], NO_TRANSCRIPT, lane_event("exited", code=1))
+        count = len(world.lanes["code"].runs())
+        await world.poll()
+        assert len(world.lanes["code"].runs()) == count and told(world) == [platformd.DECISION_GONE]
+        assert world.store.approvals(session=session, states=("granted",)) == []
+
+        await world.owner("input", {"input_id": "tg:9", "session": session, "text": "начнём заново"})
+        run = world.lanes["code"].runs()[-1]
+        assert run["cli_session"] is None and run["prompt"].endswith("начнём заново")
+
+    scenario(tmp_path, body)

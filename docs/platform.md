@@ -261,6 +261,12 @@ bot's own commands (`new`, `app`, `wait`… — `config.BOT_COMMANDS`); the plat
   `main = 1`), so two `/travel` racing make one main session, and the other message goes into it or stays an ordinary
   session of the sphere. Archiving a session takes its main mark off: the next `/<sphere>` or «＋» starts a new one. A main session stays in the app's list however long ago it closed; a message opens it again
   (a `--resume`, which after an hour of silence re-reads the context uncached, as a card says).
+- **A session's memory lasts a year.** The CLI keeps a session's transcript for 365 days (`platformd.CLEANUP_DAYS`, the
+  lanes' managed settings). A message to a session whose last run is older, or whose transcript is gone with the lane's
+  volume (the CLI's own error says so: no model is asked), starts a new CLI session: its first message is the old one's
+  last summary, as data, and then yours; you get one line, «This session's memory is gone, so it goes on in a new
+  conversation that starts from its last summary», and the next message goes on in the new one. A decision on a card
+  that went back to such a session cannot go on: you are told to write what to do next.
 - **The voice.** With `voice:` in `platform.yaml`, one sphere — the root project, whose sessions run in the Base's
   root — has the voice as its main session: the router writes into it by `/owner/voice` and holds the call until
   the turn is over, and the turn's summaries go back to the router as its answer instead of as pings

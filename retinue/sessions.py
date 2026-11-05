@@ -504,6 +504,12 @@ class PlatformStore:
         self.db.commit()
         return cursor.rowcount == 1 and mode != "auto" and before is None
 
+    def last_ran(self, session: str) -> float | None:
+        """When the session's CLI last ran: its last run an init line was seen for, not one the lane refused or had no
+        room for."""
+        return self.db.execute("SELECT MAX(COALESCE(ended, started)) FROM runs WHERE session = ? AND mode IS NOT NULL",
+                               (session,)).fetchone()[0]
+
     def end_run(self, run: str, now: float) -> None:
         self.db.execute("UPDATE runs SET ended = ? WHERE id = ? AND ended IS NULL", (now, run))
         self.db.commit()
@@ -1118,6 +1124,10 @@ class PlatformStore:
 
     def set(self, key: str, value: str) -> None:
         self.db.execute("INSERT OR REPLACE INTO kv VALUES (?, ?)", (key, value))
+        self.db.commit()
+
+    def unset(self, key: str) -> None:
+        self.db.execute("DELETE FROM kv WHERE key = ?", (key,))
         self.db.commit()
 
 

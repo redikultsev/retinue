@@ -236,6 +236,13 @@ def context_tokens(line: dict) -> int | None:
     return sum(n for n in counts if type(n) is int and n > 0)
 
 
+def conversation_gone(line: dict) -> bool:
+    """The result of a resume that found no transcript: no init line before it, no model asked (probed,
+    `test_d4_a_resume_with_no_transcript_is_its_own_error_and_reaches_no_model`)."""
+    errors = line.get("errors") if line.get("subtype") == "error_during_execution" else None
+    return isinstance(errors, list) and any(str(error).startswith("No conversation found") for error in errors)
+
+
 def usage_limit_wait(line: dict) -> float | None:
     """Seconds the CLI will wait for a subscription limit to reset, from its `system/api_retry` line: a 429 the retry
     watchdog (`CLAUDE_CODE_RETRY_WATCHDOG`) waits out to the reset time the API gave. A shorter wait is its ordinary

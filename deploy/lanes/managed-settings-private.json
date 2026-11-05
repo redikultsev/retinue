@@ -29,5 +29,5 @@
       "pypi.org", "files.pythonhosted.org", "registry.npmjs.org"
     ]}
   },
-  "cleanupPeriodDays": 30
+  "cleanupPeriodDays": 365
 }

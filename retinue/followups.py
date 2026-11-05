@@ -11,7 +11,7 @@ the owner: the call's arguments in the transcript show it. The turn rings when d
 
 A turn a follow-up started is no one's word: it cannot set another follow-up, and a sub-session it asks for is the
 owner's card, as from a report's turn (`MACHINE_TURNS`). Limits: `OPEN_MAX` open per session, `ALL_MAX` in all,
-from `MIN_HOURS` to `MAX_HOURS` ahead — past that the CLI's transcript may be gone (`cleanupPeriodDays`). An archived
+from `MIN_HOURS` to `MAX_HOURS` ahead. An archived
 session's follow-up, and one whose session's lane or track is gone, is dropped when it comes due; the owner's «Stop»
 of the session drops its open ones and a fired one still queued.
 """

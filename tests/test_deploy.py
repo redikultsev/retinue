@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from dockerup import docker_up
-from retinue import cliengine, lane_host, pagesd, reach
+from retinue import cliengine, lane_host, pagesd, platformd, reach
 from retinue.bus import bus_token
 from retinue.config import AgentConfig, PlatformConfig, RouterConfig
 from retinue.tools import TOOLS
@@ -1151,7 +1151,7 @@ def test_the_lanes_managed_settings_deny_the_web_and_hooks_anywhere_but_the_plat
     assert set(network) == {*NETWORK_LOCKS, "allowedDomains"}, \
         "no httpProxyPort: the CLI's own proxy goes on through HTTPS_PROXY"
     assert network["allowedDomains"][0] == "platform", "the hooks go through its filter"
-    assert managed["cleanupPeriodDays"] == 30
+    assert managed["cleanupPeriodDays"] == platformd.CLEANUP_DAYS
 
 
 def test_the_retired_lanes_keep_their_volumes_and_the_platform_is_off_their_networks():
@@ -1229,7 +1229,7 @@ def test_the_rooms_managed_settings_leave_the_web_tools_and_keep_bash_off_the_op
         "filesystem": {"denyWrite": ["/lane/config", "/lane/run", "/etc/claude-code"]},
         "network": {**NETWORK_LOCKS, "allowedDomains": ["platform", *code_hosts]}}, \
         "Bash never reaches the open web: the platform, GitHub and the registries; the web is the CLI's own"
-    assert managed["cleanupPeriodDays"] == 30
+    assert managed["cleanupPeriodDays"] == platformd.CLEANUP_DAYS
     web = json.loads((ROOT / "deploy" / "lanes" / "managed-settings-web.json").read_text())
     assert "WebFetch" not in web["permissions"]["deny"], "the retired lane-web's, unchanged"
     instructions = (ROOT / "deploy" / "lanes" / "instructions" / "private.md").read_text()

@@ -25,5 +25,5 @@
     "filesystem": {"denyWrite": ["/lane/config", "/lane/run", "/etc/claude-code"]},
     "network": {"strictAllowlist": true, "allowManagedDomainsOnly": true, "allowedDomains": ["platform"]}
   },
-  "cleanupPeriodDays": 30
+  "cleanupPeriodDays": 365
 }

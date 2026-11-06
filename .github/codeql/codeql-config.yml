@@ -1,0 +1,11 @@
+# CodeQL for Retinue: the security-extended queries on the code that runs (retinue/, deploy/, face/src, the
+# workflows); the tests are left out, their fixtures are made to look like what the queries look for.
+name: Retinue CodeQL
+queries:
+  - uses: security-extended
+paths-ignore:
+  - tests/**
+  - face/src/test/**
+  - face/e2e/**
+  - "**/*.test.ts"
+  - "**/*.test.tsx"

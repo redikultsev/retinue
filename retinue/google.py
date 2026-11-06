@@ -227,7 +227,7 @@ class Google:
         """One message as it is: {raw: bytes, labels, thread, ts (the mailbox's own time), size}."""
         if not MESSAGE_ID.fullmatch(message_id):
             raise Gone(message_id)
-        data = await self.get(f"{GMAIL}/messages/{message_id}", {"format": "raw"})
+        data = await self.get(f"{GMAIL}/messages/{quote(message_id, safe='')}", {"format": "raw"})
         raw = str(data.get("raw") or "")
         return {"raw": base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)), "labels": data.get("labelIds") or [],
                 "thread": str(data.get("threadId") or ""), "ts": int(data.get("internalDate") or 0) / 1000,
@@ -296,7 +296,7 @@ class Google:
         return await self.get(f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}")
 
     async def event(self, calendar_id: str, event_id: str) -> dict:
-        return await self.get(f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events/{event_id}")
+        return await self.get(f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events/{quote(event_id, safe='')}")
 
     async def insert(self, calendar_id: str, event: dict) -> dict:
         """events.insert with the event's own id, notifying no one."""
@@ -305,13 +305,13 @@ class Google:
 
     async def update(self, calendar_id: str, event_id: str, event: dict, etag: str) -> dict:
         """events.update against `etag`: Conflict when the owner changed it since."""
-        return await self.write("PUT", f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events/{event_id}",
+        return await self.write("PUT", f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events/{quote(event_id, safe='')}",
                                 event, {"sendUpdates": "none"}, etag)
 
     async def delete(self, calendar_id: str, event_id: str) -> None:
         """events.delete; an event already gone is gone."""
         try:
-            await self.write("DELETE", f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events/{event_id}",
+            await self.write("DELETE", f"{CALENDAR}/calendars/{quote(calendar_id, safe='')}/events/{quote(event_id, safe='')}",
                              params={"sendUpdates": "none"})
         except Gone:
             pass

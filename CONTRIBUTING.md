@@ -11,9 +11,21 @@ that will not land.
 - Node 24 and pnpm 11 for the app in `face/` ([face/README.md](face/README.md));
 - Docker only for the deployment and the e2e smoke test ([docs/install.md](docs/install.md#tests)).
 
+## Branches
+
+Work goes to `develop`: push to it, or open your pull request against it. `main` takes pull requests from
+`develop` only, merged as a merge commit; a direct push to `main`, or a pull request into it from any other branch,
+is refused ([.github/workflows/main-from-develop.yml](.github/workflows/main-from-develop.yml) and the repository's
+ruleset on `main`).
+
+CodeQL scans the Python, the app's TypeScript and the workflows on every push and pull request
+([.github/workflows/codeql.yml](.github/workflows/codeql.yml)); its findings show on the pull request's diff and in
+the Security tab, and one rated high or critical that a pull request adds keeps it out of `main`. A finding that is
+not real is dismissed there with the reason, never silenced in the code.
+
 ## Before a pull request
 
-GitHub runs these checks on every pull request and every push to main
+GitHub runs these checks on every pull request and every push to main or develop
 ([.github/workflows/ci.yml](.github/workflows/ci.yml)): the same commands, on Linux, where the tests that need Docker
 run too, plus the probes on the pinned CLI, where a skip is a failure ([docs/platform.md](docs/platform.md#probes)). Run
 them yourself first.

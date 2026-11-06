@@ -1,0 +1,28 @@
+# main takes pull requests from this repository's develop branch only; the ruleset on main requires this check.
+# Work goes to develop (pushed to directly, or through a PR into it); develop goes to main in a PR, merged as a
+# merge commit so the two keep one history.
+name: main from develop
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+jobs:
+  from-develop:
+    name: PR comes from develop
+    runs-on: ubuntu-24.04
+    steps:
+      - name: The head is this repository's develop
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REF" != develop ] || [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "::error::main takes pull requests only from $BASE_REPO's develop branch; this one is from $HEAD_REPO:$HEAD_REF. Open it against develop instead."
+            exit 1
+          fi
+          echo "from $BASE_REPO:develop"

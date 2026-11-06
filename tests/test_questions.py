@@ -7,6 +7,7 @@ and the resume hands the CLI `updatedInput.answers` once — after a restart too
 from __future__ import annotations
 
 import json
+import time
 
 from retinue import gate, platformd, questions
 from test_face import FaceWorld, faced
@@ -124,6 +125,14 @@ def test_the_brief_is_read_by_its_labels():
     assert questions.has_brief("Долго.\n\n**Recommend:** центр\n- **Risk:** шумно")
     assert not questions.has_brief("**Why:** дёшево\n**Cost:** €20"), "no recommendation: no brief"
     assert not questions.has_brief("**Prices.** go up\n**Recommend** nothing on its line")
+    assert questions.has_brief("**Recommend**: центр\n\t* **Why**. тише"), "a colon or a dot after the label, a tab"
+
+
+def test_a_long_run_of_blanks_after_a_label_is_read_in_linear_time():
+    start = time.perf_counter()
+    assert not questions.has_brief("**why**" + "\t" * 100_000)
+    assert not questions.has_brief(("**Recommend:**" + " " * 50_000 + "\n") * 4)
+    assert time.perf_counter() - start < 1, "the old pattern took about 100 s on the first of these"
 
 
 def test_buttons_answer_each_question_and_the_resume_after_a_restart_hands_the_cli_the_answers_once(tmp_path):

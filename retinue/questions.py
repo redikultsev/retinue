@@ -33,8 +33,10 @@ OPEN_SINGLE = "Press one — or reply in your own words."
 OPEN_MULTI = "Tick, then «Done» — or reply in your own words."
 # The brief a session writes right before its question (deploy/lanes/instructions/common.md): labelled lines the face
 # shows beside the options — the face reads them by the same labels (`components/question-decide.tsx`).
-BRIEF = re.compile(r"^\s*(?:[-*]\s+)?\*\*(Recommend|Why|Cost|Risk|Skip|Not checked)\s*[:.]?\s*\*\*\s*[:.]?\s*\S",
-                   re.IGNORECASE | re.MULTILINE)
+# One line each, as the face reads them: blanks within the line only, never two runs of them side by side
+# (`\s*[:.]?\s*` took quadratic time on a long run of tabs: CodeQL py/polynomial-redos).
+BRIEF = re.compile(r"^[ \t]*(?:[-*][ \t]+)?\*\*(Recommend|Why|Cost|Risk|Skip|Not checked)[ \t]*(?:[:.][ \t]*)?\*\*"
+                   r"[ \t]*(?:[:.][ \t]*)?\S", re.IGNORECASE | re.MULTILINE)
 
 
 def has_brief(said: str) -> bool:

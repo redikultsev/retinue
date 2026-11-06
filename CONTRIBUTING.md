@@ -18,6 +18,11 @@ Work goes to `develop`: push to it, or open your pull request against it. `main`
 is refused ([.github/workflows/main-from-develop.yml](.github/workflows/main-from-develop.yml) and the repository's
 ruleset on `main`).
 
+CodeQL scans the Python, the app's TypeScript and the workflows on every push and pull request
+([.github/workflows/codeql.yml](.github/workflows/codeql.yml)); its findings show on the pull request's diff and in
+the Security tab, and one rated high or critical that a pull request adds keeps it out of `main`. A finding that is
+not real is dismissed there with the reason, never silenced in the code.
+
 ## Before a pull request
 
 GitHub runs these checks on every pull request and every push to main or develop

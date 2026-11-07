@@ -285,8 +285,10 @@ Voice is **input only**: you speak, the answers stay text (reading is faster tha
 
 ## The shell
 
-On a phone the app is five tabs at the bottom — **Today · Sessions · ＋ · Spaces · Pages** — and on a wide
-screen (≥ 1024 px) three columns, as in Claude's desktop app (`face/src/components/shell.tsx`).
+On a phone the app is five tabs at the bottom — **Today · Operator · ＋ · Projects · Pages** — and on a wide
+screen (≥ 1024 px) three columns, as in Claude's desktop app (`face/src/components/shell.tsx`). «Projects» is the tree
+of projects with their sessions (`/sessions`); a Space opens from its row. On a wide screen the left column has
+«Today», «Operator» (with the amber count of the requests that wait), «Pages», «Spaces» and «Numbers» on top.
 
 The lines between the columns are dragged to resize them: the left column from 200 to 440 px (dragged past its
 minimum it folds away, and dragged out it comes back), the right panel from 260 px to 60 % of the window, the middle
@@ -296,7 +298,8 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
 | Route | What |
 |---|---|
 | `/` | goes to `/today`, its hash along (a Mini App's signed data rides in it) |
-| `/today` | “Today”, the home screen ([below](#today)) |
+| `/today` | “Today”, the home screen ([below](#today)); an old `?mode=operator` or `?mode=map` goes to `/operator` |
+| `/operator` | “Operator”, the sessions' requests as cards, or the map with `?view=map` ([below](#the-operator)) |
 | `/new` | «＋»: a new task ([below](#a-new-task)); a tab on a phone, “New task” in the left column on a wide screen |
 | `/sessions` | the projects and their sessions ([below](#in-the-app)); on a wide screen the left column has them, the middle says so |
 | `/spaces`, `/spaces/<space>`, `/spaces/<space>/p/<path>`, `/spaces/<space>/r/<path inside the Space>` | the Spaces of the Base, a project's page ([below](#a-project)), a Record ([base.md](base.md)) |
@@ -401,8 +404,8 @@ the people's rows, which are Tasks'), «Tasks N» (the open ones and the people'
 (the week as an hourly grid, [below](#tasks-and-schedule)) — and the hub's status at the right: what is fine is one
 green dot (its words in the tooltip), what is off is said («limit 89 %»). The address says the tab: `/today`,
 `?tab=tasks`, `?tab=schedule`; an old link to the day, the week or the grid's first name (`?tab=day`, `?tab=week`,
-`?tab=plan`) lands on «Schedule»; `?mode=operator` or `?mode=map` opens «Today» that way, and an old `?mode=project`
-«By action». On a phone the title gives its room to the tabs, and the week's numbers are an icon.
+`?tab=plan`) lands on «Schedule»; an old `?mode=operator` or `?mode=map` lands on «Operator», a place of its own, and
+an old `?mode=project` on «Today». On a phone the title gives its room to the tabs, and the week's numbers are an icon.
 
 «Today» is an inbox (`components/inbox.tsx`): the list at the left — 360 px, 400 from 1280 — and the row opened whole at the
 right — side by side only where «Today» itself has 820 px (`useRoomFor`): beside the open chat it has less, and the
@@ -461,10 +464,13 @@ J / K or the arrows go down and up the list, E marks her row done — never whil
 
 ### The operator
 
-«Operator» on «Today» (`components/operator.tsx`, `ending-card.tsx`, `lib/operator.ts`): only the sessions' requests,
+«Operator», a place of its own (`/operator`, `pages/operator.tsx`, `components/operator.tsx`, `ending-card.tsx`,
+`lib/operator.ts`), as cards or as [the map](#the-map) — «Cards · Map», the pick kept on the device, the same switch a
+project's «Operator» tab has. «Today» is the inbox by action alone. Only the sessions' requests,
 one card each in the feed's order — what waits first, a finished turn last — answered from the card without opening
-the session. A card's top line: its number while it waits («#3»), the project, the session, what it wants, how long,
-«Open the session ↗». A session whose turn ended with a word for you (`ending` on its feed row — the shape of the
+the session. A card's top line: its number while it waits («#3»), the project, the session — its title opens the
+session's own screen, the whole conversation —, what it wants, how long, «Open the session ↗». The map's card for a
+session with no request has its title as that way in too. A session whose turn ended with a word for you (`ending` on its feed row — the shape of the
 platform's `turn_ending`) is drawn by it, «You asked: …» — your request in your words — first:
 
 - **ask**: what was found and what the advice rests on; the options as buttons, each with what it changes, the advice
@@ -476,7 +482,11 @@ platform's `turn_ending`) is drawn by it, «You asked: …» — your request in
 - **done**: what came out and what is next, and whose move.
 
 Every answer — a button, a box's words — goes to the session as your next message, and the card says it in place
-(«You: …»). A row with a card of its own (a question, an approval, a proposal, a push) shows that card. A card waits
+(«You: …»). A session of one of your computers ([from the computers](#from-the-computers)) is a card too, drawn by its
+ending the same way, «on laptop» on its top line: it runs on that computer and is answered there — its options show
+what each changes, without buttons, and «Answer on laptop ↗» opens the session there by its `claude://` link; one that
+waits with no ending says so. With nothing to show, the page says what it looked at: no session waits, or how many
+sessions your computer lists, or that it has not reported for a while. A row with a card of its own (a question, an approval, a proposal, a push) shows that card. A card waits
 unless its turn is only to read — a finished one (`done`, or a turn to read with no word for you); a thing to look at
 waits, though the feed lists it under “Read” — and that one rule (`lib/waiting.ts` `waits`) gives the numbers, the
 amber mark on «Today», a tile's «waits for you» and every count of a project. A waiting card
@@ -489,7 +499,7 @@ The same cards, filtered to a project and its sub-projects and keeping «Today»
 
 ### The map
 
-«Map» on «Today», and «Cards · Map» on a project's «Operator» (`components/map.tsx`, `lib/map.ts`): every live session
+«Map» on «Operator», and «Cards · Map» on a project's «Operator» (`components/map.tsx`, `lib/map.ts`): every live session
 as a tile in a place it keeps for its whole life, so the eye finds it where it was and its progress is easy to follow.
 Flat on purpose: stable places are what spatial memory uses (Robertson et al., Data Mountain, 1998), a third
 dimension does not help (Cockburn & McKenzie, 2002).

@@ -353,7 +353,7 @@ def test_a_device_reports_its_sessions_and_the_app_lists_them_until_it_goes_off(
         first, second = laptop["sessions"]
         assert first == {"id": "local_a1", "title": "Garden plan second line", "folder": "/home/anna/garden",
                          "project": "garden/roses", "state": "waiting", "at": world.clock.now - 5,
-                         "link": "claude://claude.ai/epitaxy/local_a1"}
+                         "link": "claude://claude.ai/epitaxy/local_a1", "slot": 0}
         assert second["project"] == "" and "link" not in second, "no project: the list's «Other»"
         assert "Garden plan" not in caplog.text and "/home/anna" not in caplog.text, "titles and folders: no log"
 
@@ -427,6 +427,49 @@ def test_a_device_reads_the_project_tree_its_sidebar_is_filed_by(tmp_path):
     faced(tmp_path, body)
 
 
+def test_a_computers_turn_endings_are_cards_in_the_feed(tmp_path):
+    async def body(world: FaceWorld):
+        token = await world.platform.collections.add_device("laptop", "read", world.clock.now)
+        device = Device(world, token)
+        await device.start()
+        now = world.clock.now
+        asks = {"kind": "ask", "request": "Pick a plan", "why_owner": "goal", "context": "Two found",
+                "options": [{"label": "A", "effect": "cheaper"}, {"label": "B", "effect": "faster"}]}
+        done = {"kind": "done", "request": "Fix it", "what": "Fixed", "next": "Nothing", "next_by": "me",
+                "artifacts": [{"path": "C:\\work\\out\\shot.png"}, {"url": "https://example.com/page", "title": "Page"}]}
+        rows = [{"id": "local_q", "title": "Plan", "state": "waiting", "at": now - 60, "project": "garden",
+                 "link": "claude://claude.ai/epitaxy/local_q", "ending": asks},
+                {"id": "local_d", "title": "Fix", "state": "done", "at": now - 30, "ending": done},
+                {"id": "local_w", "title": "Waits", "state": "waiting", "at": now - 10},
+                {"id": "local_x", "title": "Bad", "state": "done", "at": now - 5, "ending": {"kind": "ask"}},
+                {"id": "local_r", "title": "Runs", "state": "working", "at": now, "ending": done},
+                {"id": "local_q2", "title": "Quiet", "state": "done", "at": now}]
+        status, answer, _ = await device.post(report_of(2, rows))
+        assert status == 200 and answer["result"]["taken"] == 6
+        assert [x["id"] for x in answer["result"]["left_out"]] == ["local_x"], "an ending off the shape is named"
+
+        await world.login()
+        feed = await world.get("/api/feed")
+        by_key = {r["key"]: (g["action"], r) for g in feed["groups"] for r in g["rows"]}
+        assert set(by_key) == {"ending:laptop/local_q", "ending:laptop/local_d", "reply:laptop/local_w"}, \
+            "at work, quiet, or its ending left out with nothing to say: no row"
+        action, q = by_key["ending:laptop/local_q"]
+        assert action == "answer" and q["session"] is None and q["project"] == "garden"
+        assert q["computer"] == {"device": "laptop", "id": "local_q", "link": "claude://claude.ai/epitaxy/local_q"}
+        assert q["ending"]["options"] == asks["options"]
+        action, d = by_key["ending:laptop/local_d"]
+        shot, page = d["ending"]["artifacts"]
+        assert action == "read" and shot["title"] == "shot.png" and shot["src"] is None and shot["on_computer"]
+        assert page["src"] == "https://example.com/page" and page["kind"] == "link"
+        assert by_key["reply:laptop/local_w"][0] == "reply"
+
+        world.clock.now += computers.OFF_S + 1
+        feed = await world.get("/api/feed")
+        assert not [r for g in feed["groups"] for r in g["rows"] if r.get("computer")], "an off computer: no rows"
+
+    faced(tmp_path, body)
+
+
 def test_the_old_address_is_the_same_endpoint_for_the_clients_set_up_with_it(tmp_path):
     """`/mcp/mac`, the endpoint's old name (#66): a client set up with it keeps working, and writes under the new
     name; it opens to a device's token alone, as the new address does."""
@@ -448,6 +491,18 @@ def test_the_old_address_is_the_same_endpoint_for_the_clients_set_up_with_it(tmp
         assert status == 401 and answer["error"] == endpoint.UNAUTHORIZED
 
     faced(tmp_path, body)
+
+
+def test_a_computers_session_keeps_its_place_on_the_map_while_it_is_listed():
+    machines = computers.Computers()
+    row = lambda sid, project="": {"id": sid, "title": sid, "state": "done", "at": 1.0, "project": project}  # noqa: E731
+    slots = lambda: {r["id"]: r["slot"] for r in machines.listing(2.0)[0]["sessions"]}  # noqa: E731
+    machines.report("laptop", {"sessions": [row("a"), row("b"), row("c", "garden")]}, 1.0)
+    assert slots() == {"a": 0, "b": 1, "c": 0}, "the lowest place free in its project"
+    machines.report("laptop", {"sessions": [row("d"), row("b"), row("c", "garden")]}, 2.0)
+    assert slots() == {"d": 0, "b": 1, "c": 0}, "one that left frees its place; the others stay put"
+    machines.report("laptop", {"sessions": [row("d"), row("b", "garden"), row("c", "garden")]}, 3.0)
+    assert slots() == {"d": 0, "b": 1, "c": 0}, "moved to another project: the lowest place free there"
 
 
 def test_rights_events_and_the_feed_read_the_old_class_name_as_device():

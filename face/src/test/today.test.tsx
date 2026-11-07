@@ -8,9 +8,7 @@ import {
   dayWords,
   elapsed,
   finished,
-  keptMode,
   lastLine,
-  MODE_KEY,
   projectTitle,
   running,
   SEEN_KEY,
@@ -20,6 +18,7 @@ import {
   Visits,
 } from "@/lib/today";
 import type { Item, Session } from "@/lib/types";
+import { Operator } from "@/components/operator";
 import { TodayView } from "@/pages/today";
 
 const NOW = 1_000_000;
@@ -291,8 +290,7 @@ describe("«Today» by action", () => {
   });
 
   it("test_today_is_by_action_every_row_names_its_project_and_an_old_by_project_lands_on_by_action", async () => {
-    // «By project» duplicated the left panel's projects: a device that kept it opens by action
-    localStorage.setItem(MODE_KEY, "project");
+    // «By project» duplicated the left panel's projects; the operator and the map are a place of their own now
     const tasks = plan([
       task("t1", { title: "Send Acme the draft", project: "work/acme", due: "1970-01-12" }),
       task("t2", { title: "Book the dentist" }),
@@ -300,12 +298,10 @@ describe("«Today» by action", () => {
     const view = () => (
       <TodayView feed={BY_PROJECT} sessions={[]} spheres={SPHERES} since={NOW} now={NOW} plan={{ plan: tasks, error: null, reload: () => undefined }} />
     );
-    const first = mount(view());
+    mount(view());
 
-    const show = await screen.findByRole("group", { name: "Show" });
-    expect(within(show).getAllByRole("button").map((b) => b.textContent)).toEqual(["By action", "Operator", "Map"]);
-    expect(within(show).getByRole("button", { name: "By action" }).getAttribute("aria-pressed")).toBe("true");
-    const flat = screen.getByRole("region", { name: "Waiting for you" });
+    expect(screen.queryByRole("group", { name: "Show" })).toBeNull();
+    const flat = await screen.findByRole("region", { name: "Waiting for you" });
     expect(within(flat).queryAllByRole("region")).toEqual([]);
     const rows = within(flat).getAllByTestId("inbox-row").map((r) => r.textContent);
     expect(rows).toEqual([
@@ -321,22 +317,14 @@ describe("«Today» by action", () => {
     expect(rows[3]).toContain("Travel · is a transfer needed");
     // the tasks are a tab of their own («Tasks»), never among what waits
     for (const title of ["Send Acme the draft", "Book the dentist"]) expect(screen.queryByText(title)).toBeNull();
-
-    fireEvent.click(within(show).getByRole("button", { name: "Operator" }));
-    expect(localStorage.getItem(MODE_KEY)).toBe("operator");
-    first.unmount(); // kept on the device: the next visit opens as he left it
-    mount(view());
-    const again = await screen.findByRole("group", { name: "Show" });
-    expect(within(again).getByRole("button", { name: "Operator" }).getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("takes the way from the address: `?mode=operator`, and an old `?mode=project` as «By action»", () => {
+  it("names the operator's place in an old address: `?mode=operator`, `?mode=map`; an old `?mode=project` is «Today»", () => {
     expect(todaySearch({ mode: "operator" })).toEqual({ mode: "operator" });
-    expect(todaySearch({ mode: "project" })).toEqual({ mode: "action" });
     expect(todaySearch({ mode: "map" })).toEqual({ mode: "map" });
-    expect(todaySearch({ mode: "board" })).toEqual({});
+    expect(todaySearch({ mode: "project" })).toEqual({});
+    expect(todaySearch({ mode: "action" })).toEqual({});
     expect(todaySearch({ tab: "tasks", mode: "operator" })).toEqual({ tab: "tasks" });
-    expect(keptMode({ getItem: () => "project" })).toBe("action");
   });
 
   it("test_operator_mode_shows_only_the_sessions_requests", async () => {
@@ -358,14 +346,11 @@ describe("«Today» by action", () => {
         ...BY_PROJECT.groups.filter((g) => g.action === "assistant"),
       ],
     };
-    const sessions = [session("run", { state: "active", turn_started: NOW - 60, title: "Trip to Ensk" })];
-    const tasks = plan([task("t1", { title: "Send Acme the draft" })]);
-    mount(<TodayView feed={feed} sessions={sessions} spheres={SPHERES} since={NOW} now={NOW} plan={{ plan: tasks, error: null, reload: () => undefined }} />);
-    fireEvent.click(within(await screen.findByRole("group", { name: "Show" })).getByRole("button", { name: "Operator" }));
+    mount(<Operator feed={feed} spheres={SPHERES} now={NOW} />);
 
-    const cards = screen.getAllByTestId("operator-card");
+    const cards = await screen.findAllByTestId("operator-card");
     expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual(["Pick a venue", "Session old"]); // one card each
-    expect(within(cards[0]!).getByText(/work \/ acme · Pick a venue · waits for your message/)).toBeTruthy();
+    expect(cards[0]!.textContent).toMatch(/work \/ acme · Pick a venue · waits for your message/);
     expect(within(cards[0]!).getByText("Two venues hold the date")).toBeTruthy();
     expect(within(cards[0]!).getByRole("textbox", { name: "Your message" })).toBeTruthy();
     expect(within(cards[1]!).getByRole("link", { name: /Open the session/ }).getAttribute("href")).toBe("/s/old");

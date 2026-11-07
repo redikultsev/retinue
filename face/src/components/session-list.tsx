@@ -33,6 +33,7 @@ import { SessionMenu } from "@/components/session-menu";
 import { Markdown } from "@/components/transcript/item";
 import { ApiError, api } from "@/lib/api";
 import { type ComputerRow, computerRows, isComputer, useComputers } from "@/lib/computers";
+import { useFeed } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { useNearestProject, useProjectOf, useProjects } from "@/lib/projects";
@@ -41,6 +42,7 @@ import { approvalsOf, lastWords, listed, orderedItems, orderedSummaries, waitsOn
 import { toast } from "@/lib/toast";
 import { QUEUED, type Session, type Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { waitingIn } from "@/lib/waiting";
 
 const FOLDED_KEY = "retinue-list-folded";
 const NO_SPHERES: Sphere[] = [];
@@ -485,6 +487,9 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
     () => projectGroups([...listed(sessions), ...computerRows(machines)], spheres, nodes ?? [], Date.now() / 1000, where),
     [sessions, machines, spheres, nodes, where],
   );
+  // what waits for the owner in each project, its sub-projects' too, as «Operator» counts it: the folded row's dot
+  const feed = useFeed();
+  const waitsIn = useMemo(() => waitingIn(feed, listed(sessions), of), [feed, sessions, of]);
   const opened = projectOfPath(pathname);
   const folds = folded;
   const row = ({ session: s, depth, side, kids, folded: shut, waiting }: FoldedRow) =>
@@ -523,7 +528,7 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
             <section key={g.key || "-"} aria-label={g.title} className="flex flex-col">
               <ProjectHead
                 group={g}
-                waiting={under.some((x) => x.rows.some((r) => isWaiting(r.session)))}
+                waiting={waitsIn(g.key) > 0}
                 fills={g.rows.length > 0 || under.length > 1}
                 folded={g.folded}
                 onFold={() => fold(foldKey(g))}

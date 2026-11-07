@@ -9,6 +9,10 @@ server and is never shown again. So a change is a request, one JSON file dropped
 set, when Settings changed it, the lanes' values, the services waiting for a restart and how each request ended —
 never a value. A restart is a request too, pressed by the owner.
 
+The owner's computers (`/mcp/device`) are listed here too — name, scope, when last seen — and one is taken back here
+at once: that is the platform's own file (`Collections.revoke_device`), not root's. Making one stays the server's
+terminal's (`retinue-platform collections device add`): its token is shown once, and the app never holds one.
+
 What a key is for and where to get it is said here, in the owner's words; which names exist, what they look like and
 who reads them is the host script's, and the copies here are kept equal to it by tests/test_settings.py.
 """
@@ -26,6 +30,8 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from . import cliengine
+from .collections import DEVICE, Rejected
+from .collections import Refused as StoreRefused
 
 if TYPE_CHECKING:
     from .platformd import Platform
@@ -81,7 +87,8 @@ class Settings:
 
     def routes(self) -> list:
         return [web.get("/api/settings", self.get),
-                web.post("/api/settings/{op:" + "|".join(OPS) + "}", self.post)]
+                web.post("/api/settings/{op:" + "|".join(OPS) + "}", self.post),
+                web.post("/api/settings/device/revoke", self.revoke)]
 
     # --- what the screen shows -------------------------------------------------------------------------------------
 
@@ -93,7 +100,19 @@ class Settings:
         return status if isinstance(status, dict) and status.get("schema") == SCHEMA else None
 
     async def get(self, request: web.Request) -> web.Response:
-        return web.json_response(self.view(self.status()))
+        return web.json_response({**self.view(self.status()), "devices": await self.devices()})
+
+    async def devices(self) -> list[dict] | None:
+        """The owner's computers, as made: what each may do and when it was last seen — its last request since the
+        platform started, else its last change — never a token or its hash. None: the store could not be read."""
+        try:
+            made = await self.platform.collections.devices()
+        except StoreRefused:
+            return None
+        computers = self.platform.computers
+        return [{"name": d["name"], "scope": d["scope"], "created": d["created"], "revoked": d["revoked"],
+                 "seen": max((t for t in (computers.seen(d["name"]), d["written"]) if t is not None), default=None)}
+                for d in made]
 
     def view(self, status: dict | None) -> dict:
         s = status or {}
@@ -163,6 +182,26 @@ class Settings:
             return _error(503, "The server could not take the change. Try again in a minute.")
         log.info("settings: %s request %s", op, rid)  # never what it carries
         return web.json_response({"id": rid}, status=202)
+
+    async def revoke(self, request: web.Request) -> web.Response:
+        """A device taken back at once: its token opens nothing at its next call, its sessions leave the list. One
+        taken back already is done as well."""
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        name = body.get("name") if isinstance(body, dict) else None
+        if not isinstance(name, str) or not DEVICE.fullmatch(name):
+            return _error(400, "Not a device's name.")
+        try:
+            await self.platform.collections.revoke_device(name, self.platform.clock())
+        except Rejected as refusal:
+            return _error(400, refusal.reason[:1].upper() + refusal.reason[1:] + ".")
+        except StoreRefused:
+            return _error(503, "The server could not take the device back. Try again in a minute.")
+        self.platform.computers.forget(name)
+        log.info("settings: a device taken back")  # never which
+        return web.json_response({"revoked": True})
 
     def request_of(self, op: str, body: dict) -> dict:
         """The request as the host takes it, checked here first so the owner hears at once what is wrong; the host

@@ -13,6 +13,7 @@ import pytest
 
 from retinue import cliengine, settings
 
+from test_device import Device
 from test_face import ORIGIN, FaceWorld, faced
 from test_platformd import short_wait  # noqa: F401 — the fixture is autouse
 
@@ -157,5 +158,77 @@ def test_a_request_file_is_written_beside_and_renamed(tmp_path, monkeypatch):
         code, _, _ = await world.call("POST", "/api/settings/key", {"name": "ELEVENLABS_API_KEY", "value": VOICE})
         assert code == 503 and list(inbox.iterdir()) == []
         monkeypatch.setattr(settings.os, "replace", real)
+
+    faced(tmp_path, body)
+
+
+def test_the_view_lists_the_devices_what_each_may_do_and_when_it_was_last_seen_never_a_token(tmp_path):
+    async def body(world: FaceWorld):
+        wire(world, status())
+        store = world.platform.collections
+        made = world.clock.now
+        laptop = await store.add_device("laptop", "write", made)
+        office = await store.add_device("office-pc", "read", made)
+        world.clock.now += 60
+        await Device(world, laptop).start()  # a request of the laptop's: seen now
+        await world.login()
+        devices = (await world.get("/api/settings"))["devices"]
+        assert devices == [
+            {"name": "laptop", "scope": "write", "created": made, "revoked": None, "seen": made + 60},
+            {"name": "office-pc", "scope": "read", "created": made, "revoked": None, "seen": None},
+        ]
+        view = json.dumps(await world.get("/api/settings"))
+        assert laptop not in view and office not in view and "sha256" not in view
+
+    faced(tmp_path, body)
+
+
+def test_a_device_revoked_in_settings_opens_nothing_at_its_next_call_and_leaves_the_list(tmp_path):
+    async def body(world: FaceWorld):
+        wire(world, None)  # the host's service plays no part: the collections are the platform's
+        token = await world.platform.collections.add_device("laptop", "write", world.clock.now)
+        laptop = Device(world, token)
+        await laptop.start()
+        report = {"jsonrpc": "2.0", "id": 7, "method": "retinue/sessions", "params": {"sessions": [
+            {"id": "s1", "title": "Invented session", "project": "work", "state": "working", "at": world.clock.now}]}}
+        assert (await laptop.post(report))[0] == 200
+        await world.login()
+        assert [c["device"] for c in (await world.get("/api/computers"))["computers"]] == ["laptop"]
+        world.clock.now += 5
+        code, answer, _ = await world.call("POST", "/api/settings/device/revoke", {"name": "laptop"})
+        assert code == 200 and answer == {"revoked": True}
+        assert (await laptop.post({"jsonrpc": "2.0", "id": 8, "method": "tools/list"}))[0] == 401
+        assert (await world.get("/api/computers"))["computers"] == []
+        [device] = (await world.get("/api/settings"))["devices"]
+        assert device["revoked"] == world.clock.now
+        again = await world.call("POST", "/api/settings/device/revoke", {"name": "laptop"})
+        assert again[:2] == (200, {"revoked": True}), "taken back already: done as well"
+        assert (await world.platform.collections.devices())[0]["revoked"] == world.clock.now, "its first time kept"
+
+    faced(tmp_path, body)
+
+
+@pytest.mark.parametrize("given", [{"name": "nobody"}, {"name": "../x"}, {"name": 7}, {}, ["laptop"]])
+def test_a_revoke_of_no_such_device_is_refused_and_takes_nothing_back(tmp_path, given):
+    async def body(world: FaceWorld):
+        wire(world, status())
+        await world.platform.collections.add_device("laptop", "write", world.clock.now)
+        await world.login()
+        code, answer, _ = await world.call("POST", "/api/settings/device/revoke", given)
+        assert code == 400 and answer["error"]
+        assert (await world.platform.collections.devices())[0]["revoked"] is None
+
+    faced(tmp_path, body)
+
+
+def test_a_revoke_needs_the_owners_login_and_its_post_header(tmp_path):
+    async def body(world: FaceWorld):
+        wire(world, status())
+        await world.platform.collections.add_device("laptop", "write", world.clock.now)
+        assert (await world.call("POST", "/api/settings/device/revoke", {"name": "laptop"}))[0] == 401
+        await world.login()
+        assert (await world.call("POST", "/api/settings/device/revoke", {"name": "laptop"},
+                                 headers={"Origin": ORIGIN}))[0] == 403
+        assert (await world.platform.collections.devices())[0]["revoked"] is None
 
     faced(tmp_path, body)

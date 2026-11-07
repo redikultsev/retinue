@@ -101,6 +101,15 @@ class Computers:
 
     def __init__(self) -> None:
         self._last: dict[str, dict] = {}  # device name -> {"at": when reported, "sessions": [rows]}
+        self._seen: dict[str, float] = {}  # device name -> its last request with a token that opens
+
+    def saw(self, device: str, now: float) -> None:
+        """A request of the device's, any (`device.py` checks its token first): «last seen» in Settings."""
+        self._seen[device] = now
+
+    def seen(self, device: str) -> float | None:
+        """When the device last called since the platform started, or None."""
+        return self._seen.get(device)
 
     def report(self, device: str, params: object, now: float) -> tuple[int, list[dict]]:
         """A device's whole list, replacing the one before: the number of rows taken, and the endings left out with

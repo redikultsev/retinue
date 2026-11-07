@@ -345,6 +345,7 @@ if [[ $MEMORY_ON == 1 ]]; then
   git -C "$HUB" symbolic-ref HEAD refs/heads/none
   rm -rf "$HUB/kbcheck"                 # an earlier version kept the lint's copies here, writable by the group
   install -m 755 "$REPO/retinue/kbcheck.py" "$HUB/hooks/pre-receive"
+  install -m 644 "$REPO/retinue/passport.py" "$HUB/hooks/passport.py"   # the passport schema the hook imports
   install -m 644 "$MEMORY_DIR/policy.json" "$HUB/hooks/kb-policy.json"
   chmod -R go-w "$HUB"
   chmod -R g+rwX "$HUB/objects" "$HUB/refs"

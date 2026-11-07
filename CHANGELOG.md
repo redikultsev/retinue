@@ -9,6 +9,8 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 
 ## Unreleased
 
+- Every project's passport has the same short parts — why, scope, files, rules, checks — written for the agent that
+  opens the project, and the Base refuses a change that breaks one.
 - The sessions you run on your own computer show in the list too, under their projects, with whether they are at work
   or waiting for you.
 - After an update, the app shows once what changed in it.

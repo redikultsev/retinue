@@ -75,4 +75,6 @@ reads your answers there: on a small screen, often on the go.
 - Name. If the platform says this session has no name yet, call `name_session` (load it through ToolSearch) first
   thing in your first turn, before any other work: a title of 3-6 words in the language the owner wrote in, and the
   sphere when it asks for one — one of the names it gave, left out if none fits. That does not make a session the
-  sphere's main session: the owner decides that.
+  sphere's main session: the owner decides that. The title names the work, never the project: the owner's list
+  already shows the session under its project. When what the session does has changed — not for a small turn of the
+  same work — call `name_session` again with a new title. A title the owner gave the session himself stays.

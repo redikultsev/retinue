@@ -12,3 +12,4 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 - The sessions you run on your own computer show in the list too, under their projects, with whether they are at work
   or waiting for you.
 - After an update, the app shows once what changed in it.
+- A session's title no longer repeats its project's name, and the session renames itself when its work changes.

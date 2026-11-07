@@ -7,7 +7,7 @@ import { DictateButton } from "@/components/talk";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
-import type { FeedRow } from "@/lib/feed";
+import { type FeedRow, feedSource } from "@/lib/feed";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { insertAt } from "@/lib/voice";
@@ -36,7 +36,11 @@ export type Deliver = (words: string) => Promise<unknown>;
 export function deliverTo(row: FeedRow): Deliver | null {
   if (row.computer) {
     const { device, id } = row.computer;
-    return (words) => api.answerComputer(device, id, words);
+    return async (words) => {
+      const given = await api.answerComputer(device, id, words);
+      void feedSource.refresh(); // no event says it: the row is answered now, and waits on him no more
+      return given;
+    };
   }
   const session = row.session;
   return session ? (words) => api.input(session, words) : null;

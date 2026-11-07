@@ -66,6 +66,12 @@ pnpm -C face typecheck && pnpm -C face lint && pnpm -C face test
   numbers and order are checked by code; what a message, doc or prompt says is read by a person or judged by a model.
   No regex against prose, and no test that scans the repository's texts for a word ([AGENTS.md](AGENTS.md) has the
   full rule).
+- **Tests run in parallel.** CI runs pytest in one process per core (`pytest -n auto`, pytest-xdist), and in no fixed
+  order, so a test shares nothing with another: it writes only under its own `tmp_path`, never into the checkout or a
+  fixed path; a server it starts binds port 0, or a socket it already holds, never a port picked and bound later; a
+  container, network or image it makes has a random suffix, or a name that holds its content's hash; the environment
+  changes through `monkeypatch` or a subprocess's own `env`. Locally, `-n auto` works the same way. The probes
+  (`-m probe`) run in one process: one of them takes a server down and brings it back on the same port.
 - **No real personal data, anywhere.** Fixtures and examples use `example.com`, `example.org`, `acme`, `<owner-id>`,
   `123456789`, documentation IP ranges (`203.0.113.0/24`) and made-up names. No real mail, chats, notes, hostnames,
   tokens or paths from your own machine.

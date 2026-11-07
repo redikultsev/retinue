@@ -3,6 +3,9 @@
 [Unit]
 Description=Retinue settings: what the owner set in the app, written where the stack reads it
 After=docker.service
+# setup.sh rewrites stack.env and platform.yaml line by line, and each write starts this again (retinue-settings.path):
+# no start limit, or the unit is refused for good after five. A run with nothing to do only writes its status.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot

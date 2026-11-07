@@ -731,7 +731,11 @@ if [[ $HOST_SETUP == 1 && $PLATFORM_ON == 1 ]]; then
   done
   systemctl daemon-reload
   systemctl enable --now retinue-settings.path
-  systemctl start retinue-settings.service
+  systemctl reset-failed retinue-settings.service 2>/dev/null || true
+  if ! systemctl start retinue-settings.service; then
+    journalctl -u retinue-settings.service --no-pager -n 40 >&2 || true  # names and lengths, never a value
+    exit 1
+  fi
 fi
 
 echo

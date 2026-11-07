@@ -323,6 +323,8 @@ def test_settings_units_run_root_s_writer_on_a_request_and_may_write_only_retinu
     assert "ExecStart=/usr/bin/python3 /usr/local/lib/retinue/retinue-settings.py" in service
     assert "ProtectSystem=strict" in service and "ReadWritePaths=/srv/retinue\n" in service
     assert "NoNewPrivileges=yes" in service and "EnvironmentFile" not in service
+    assert "StartLimitIntervalSec=0" in service and "TriggerLimitIntervalSec=0" in path, \
+        "setup.sh's writes in a row start it many times: no limit may refuse it"
     script = (ROOT / "deploy" / "setup.sh").read_text()
     block = script.split("# Settings:")[1].split("\nfi\n")[0]
     assert "$HOST_SETUP == 1 && $PLATFORM_ON == 1" in block, "with the platform, whose app it serves"

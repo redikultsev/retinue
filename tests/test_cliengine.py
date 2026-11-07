@@ -38,11 +38,29 @@ def test_the_argv_is_the_fixed_prefix_the_rules_and_the_resume_and_never_a_promp
     assert cliengine.check_argv(full) == full and cliengine.check_argv(prefix) == prefix
 
 
-@pytest.mark.parametrize("flag, value", [("--model", "claude-sonnet-5-5"), ("--model", "opus"), ("--effort", "low")])
-def test_another_model_or_effort_is_off_the_fixed_prefix(flag, value):
+@pytest.mark.parametrize("model", cliengine.MODELS)
+@pytest.mark.parametrize("effort", cliengine.EFFORTS)
+def test_a_lanes_model_and_effort_from_the_lists_go_into_the_prefix(model, effort):
+    """A lane's `model` and `effort` (platform.yaml, Settings): any pair of the closed lists is the fixed prefix."""
+    argv = cliengine.argv(SETTINGS, [], [], SESSION, model=model, effort=effort)
+    assert argv[argv.index("--model") + 1] == model and argv[argv.index("--effort") + 1] == effort
+    assert cliengine.check_argv(argv) == argv
+
+
+@pytest.mark.parametrize("flag, value", [("--model", "opus"), ("--model", "claude-haiku-5-5"), ("--model", "claude-sonnet-5-5[2m]"),
+                                         ("--effort", "ultra"), ("--effort", "--permission-mode")])
+def test_a_model_or_effort_off_the_lists_is_refused(flag, value):
     argv = cliengine.argv(SETTINGS, [], [], None)
     at = argv.index(flag) + 1
-    assert refused(cliengine.check_argv, [*argv[:at], value, *argv[at + 1:]])
+    assert value in refused(cliengine.check_argv, [*argv[:at], value, *argv[at + 1:]]), "the value passes through"
+    assert value in refused(lambda: cliengine.argv(SETTINGS, [], [], None, **{flag[2:]: value}))
+
+
+def test_the_model_and_effort_stand_where_the_prefix_has_them_or_it_is_not_the_prefix():
+    argv = cliengine.argv(SETTINGS, [], [], None)
+    at = argv.index("--model")
+    refused(cliengine.check_argv, [*argv[:at], "--effort", "xhigh", "--model", "claude-opus-5-5[1m]", *argv[at + 4:]])
+    refused(cliengine.check_argv, [*argv[:at], *argv[at + 2:]])
 
 
 @pytest.mark.parametrize("mode", ["manual", "default", "acceptEdits", "dontAsk", "plan"])

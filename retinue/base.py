@@ -793,10 +793,10 @@ class BaseRepo:
             elif self._ignore.hard(path):
                 done.left_out.append(f"{path}: excluded — does not go to the Base (out/, inbox/ or the hub's policy)")
             elif kbcheck.hidden(path):
-                done.refused.append(f"{path}: a hidden path — edited only from the Mac")
+                done.refused.append(f"{path}: a hidden path — edited only from the owner's computer")
             elif kbcheck.any_match(path, self.cfg.protect) or kbcheck.norm(path) in {
                     kbcheck.norm(arg) for arg in self._policy.check}:  # what the hub's check names, whatever `protect` says
-                done.refused.append(f"{path}: this file runs in the Base's check — edited only from the Mac")
+                done.refused.append(f"{path}: this file runs in the Base's check — edited only from the owner's computer")
             elif path not in self._head_files and self._ignore.soft(path):
                 done.left_out.append(f"{path}: in the Base's .gitignore")
             else:

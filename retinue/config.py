@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
-from .cliengine import SETTINGS_DIR, rule_ok
+from .cliengine import EFFORT, EFFORTS, MODEL, MODELS, SETTINGS_DIR, rule_ok
 
 log = logging.getLogger("retinue.config")
 
@@ -375,6 +375,11 @@ class LaneRef:
     token: str = ""                     # from RETINUE_LANE_TOKEN_<NAME>
     retired: bool = False               # kept for its sessions, which stay readable; no run starts, nothing goes in,
     # its open runs hold no room, its journal is not pulled and it needs no token (lane-code, lane-web)
+    # What its runs are run with (docs/platform.md, «A lane's model»): from the closed lists of `cliengine`, set in
+    # Settings or here; a change applies from the next run after the platform's restart.
+    engine: str = "claude-code"         # the one engine there is (`SESSION_ENGINES`)
+    model: str = MODEL
+    effort: str = EFFORT
 
 
 @dataclass
@@ -512,6 +517,10 @@ class PlatformConfig:
     # The pages service's address, https://<host>: the one origin a page of «Pages» may open on (`library.py`); '' :
     # the router's list of pages is refused.
     pages_origin: str = ""
+    # The app's «Settings» (`settings.py`): where it drops a change for root's retinue-settings.service on the host,
+    # and the status that service writes back — compose mounts the first read-write, the second read-only.
+    settings_inbox: str = "/settings/inbox"
+    settings_status: str = "/settings/status/status.json"
     spheres: list[Sphere] = field(default_factory=list)
     base: BaseConfig | None = None
     code: CodeConfig | None = None
@@ -549,6 +558,15 @@ class PlatformConfig:
                 raise SystemExit(f"platform config: lane {lane.name}: max_sessions is not a positive number")
             if type(lane.web) is not bool or type(lane.retired) is not bool:
                 raise SystemExit(f"platform config: lane {lane.name}: web or retired is not true or false")
+            if lane.engine not in SESSION_ENGINES:
+                raise SystemExit(f"platform config: lane {lane.name}: engine {lane.engine!r} is not one of "
+                                 f"{', '.join(SESSION_ENGINES)}")
+            if lane.model not in MODELS:
+                raise SystemExit(f"platform config: lane {lane.name}: model {lane.model!r} is not one of "
+                                 f"{', '.join(MODELS)}")
+            if lane.effort not in EFFORTS:
+                raise SystemExit(f"platform config: lane {lane.name}: effort {lane.effort!r} is not one of "
+                                 f"{', '.join(EFFORTS)}")
             if not lane.retired:
                 lane.token = _env(f"RETINUE_LANE_TOKEN_{lane.name.upper()}")
         if type(cfg.max_sessions) is not int or cfg.max_sessions < 1:

@@ -11,7 +11,7 @@ them under «Pages» ([face.md](face.md#pages)).
 ```
 base (git) ── router: pages.json, pages/*.html; trip pages ──▶ pages-build (no network): checked release, current
                                                                           │
-your phone / Mac ── WireGuard ── Traefik (your devices only, adds the key) ──▶ pages (retinue-pages): shell, page,
+your phone / computer ── WireGuard ── Traefik (your devices only, adds the key) ──▶ pages (retinue-pages): shell, page,
                                                                           │     its store (SQLite), «Share»
                                                                           ▼ writes the shared pages' files
 anyone ── Traefik (the public sites, at a pace) ──▶ pages-public (nginx, static, read-only)
@@ -40,7 +40,7 @@ dig +short @1.1.1.1 pages.in.example.com        # the server's public address
 
 ### 2. Your devices reach the owner's host through the VPN
 
-Traefik lets through the WireGuard addresses of your devices (wg-easy shows them, e.g. `10.8.0.2` for the Mac,
+Traefik lets through the WireGuard addresses of your devices (wg-easy shows them, e.g. `10.8.0.2` for the owner's computer,
 `10.8.0.3` for the phone) — one list for the pages and the app, `/srv/retinue/devices.txt`. A device must therefore
 go to the server **through the tunnel**: its DNS must be the VPN's `10.8.0.1` (split DNS answers `10.8.0.1` for
 every `*.in` name), otherwise it resolves the public record, goes over the internet and gets 404.
@@ -105,7 +105,7 @@ It goes through the same build as any page.
 **Scripts by author.** The file's whole history decides (every commit that ever touched that exact path, both sides
 of a merge, the path read literally — `*` in a name is a character, not a glob):
 
-- no commit of the router's identity without the bot's `Retinue-Upload` trailer — yours from the Mac, a lane's
+- no commit of the router's identity without the bot's `Retinue-Upload` trailer — yours from the owner's computer, a lane's
   session's, the bot's — the page's scripts run;
 - any commit of hers (her turn, committed under the router's identity; a revert the router made counts too) —
   `script-src 'none'` and the build strips every script, handler and `javascript:` address: she reads mail and the

@@ -161,13 +161,24 @@ describe("«Pages»", () => {
     expect(onOpen).toHaveBeenCalled();
   });
 
-  it("says when the list never came, when it is empty, and when it failed", () => {
+  it("says which case an empty or late list is in — not set up, never sent, late, nothing published — and when it failed", () => {
+    const note = () => screen.queryByTestId("list-note")?.getAttribute("data-state") ?? null;
+    view({ ...LIBRARY, origin: "", at: null, pages: [] });
+    expect(note()).toBe("off");
+    document.body.innerHTML = "";
     view({ ...LIBRARY, at: null, pages: [] });
-    expect(screen.getByText("The list of pages has not come from the router yet.")).toBeTruthy();
+    expect(note()).toBe("never");
     expect(screen.queryByLabelText("Find a page")).toBeNull();
     document.body.innerHTML = "";
     view({ ...LIBRARY, pages: [] });
-    expect(screen.getByText(/No pages/)).toBeTruthy();
+    expect(note()).toBe("empty");
+    document.body.innerHTML = "";
+    view({ ...LIBRARY, at: NOW - 3 * 3600 }); // late, its pages still listed under the line
+    expect(note()).toBe("late");
+    expect(screen.getAllByRole("link", { name: "Regex course" }).length).toBeGreaterThan(0);
+    document.body.innerHTML = "";
+    view(LIBRARY);
+    expect(note()).toBeNull();
     document.body.innerHTML = "";
     const onRetry = vi.fn();
     view(null, { error: "No connection to the server.", onRetry });

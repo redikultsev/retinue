@@ -11,6 +11,8 @@ import { useEffect, useMemo, useState } from "react";
 import { BaseMarkdown } from "@/components/base-markdown";
 import { FileRow } from "@/components/files";
 import { MapView } from "@/components/map";
+import { OperatorSwitch } from "@/components/operator";
+import { keepOperatorView, keptOperatorView, type OperatorView } from "@/lib/operator";
 import { Operator } from "@/components/operator";
 import { RELATION_WORDS, RelationIcon, upOf } from "@/components/relation";
 import { Agenda } from "@/components/views/agenda";
@@ -52,9 +54,7 @@ import {
   type RecordView,
   rowWords,
   type ShowcaseItem,
-  type SpaceRow,
   type SpaceView,
-  sessionBadges,
   spacesApi,
   TYPE_WORDS,
 } from "@/lib/spaces";
@@ -154,16 +154,6 @@ const sphereOf = (spheres: Sphere[], name: string) => spheres.find((s) => s.name
 
 function spaceTitle(name: string, sphere: Sphere | undefined, showcase?: string) {
   return sphere?.title || showcase || name;
-}
-
-function Badges({ waiting, working, questions }: { waiting: number; working: number; questions: number }) {
-  return (
-    <span className="flex flex-wrap gap-1">
-      {waiting > 0 && <Badge variant="warning">{`${waiting} waiting`}</Badge>}
-      {working > 0 && <Badge variant="secondary">{`${working} working`}</Badge>}
-      {questions > 0 && <Badge variant="outline">{`${questions} ${plural(questions, "question", "questions")}`}</Badge>}
-    </span>
-  );
 }
 
 // --- «Discuss» -------------------------------------------------------------------------------------------------------
@@ -273,13 +263,9 @@ export function Discuss({
 // --- the grid ----------------------------------------------------------------------------------------------------------
 
 export function SpacesPage({ read = spacesApi.list }: { read?: typeof spacesApi.list }) {
-  const { sessions } = useLiveState();
   const spheres = useSpheres();
   const { data, error } = useRead("spaces", read);
-  const live_ = useMemo(() => sessionBadges(listed(sessions)), [sessions]);
-  const loaded = Object.keys(sessions).length > 0;
   const rows = useMemo(() => orderSpaces(data?.spaces ?? [], spheres), [data, spheres]);
-  const badges = (row: SpaceRow) => (loaded ? (live_.get(row.name) ?? { waiting: 0, working: 0 }) : row);
   return (
     <div className="flex flex-col">
       <Header title="Spaces" />
@@ -290,15 +276,13 @@ export function SpacesPage({ read = spacesApi.list }: { read?: typeof spacesApi.
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {rows.map((row) => {
             const sphere = sphereOf(spheres, row.name);
-            const { waiting, working } = badges(row);
             return (
               <li key={row.name}>
-                <ToProject path={row.name} className="flex h-full min-h-24 flex-col gap-2 rounded-xl border bg-card p-3 hover:bg-accent">
+                <ToProject path={row.name} className="flex h-full min-h-14 flex-col gap-2 rounded-xl border bg-card p-3 hover:bg-accent">
                   <span className="flex items-center gap-2">
                     {sphere?.icon ? <SphereMark icon={sphere.icon} className="size-4 shrink-0 text-muted-foreground" /> : <Layers className="size-4 shrink-0 text-muted-foreground" />}
                     <span className="min-w-0 flex-1 truncate font-medium">{spaceTitle(row.name, sphere, row.title)}</span>
                   </span>
-                  <Badges waiting={waiting} working={working} questions={row.questions} />
                 </ToProject>
               </li>
             );
@@ -667,44 +651,6 @@ function RecordsList({ space, below, view }: { space: string; below: string; vie
         </ul>
       )}
     </Section>
-  );
-}
-
-type OperatorView = "cards" | "map";
-const OPERATOR_VIEW_KEY = "retinue-project-operator";
-
-function keptOperatorView(): OperatorView {
-  try {
-    return localStorage.getItem(OPERATOR_VIEW_KEY) === "map" ? "map" : "cards";
-  } catch {
-    return "cards";
-  }
-}
-
-function keepOperatorView(view: OperatorView): void {
-  try {
-    localStorage.setItem(OPERATOR_VIEW_KEY, view);
-  } catch {
-    // storage unavailable: the pick holds while the page is open
-  }
-}
-
-/** A project's «Operator» as cards or as the map of its sessions in their places — the switch «Today» has. */
-function OperatorSwitch({ view, onView }: { view: OperatorView; onView: (v: OperatorView) => void }) {
-  return (
-    <fieldset aria-label="Show" className="inline-flex h-9 w-fit items-center self-start rounded-md border p-0.5 max-md:h-11">
-      {(["cards", "map"] as const).map((v) => (
-        <button
-          key={v}
-          type="button"
-          aria-pressed={view === v}
-          onClick={() => onView(v)}
-          className={cn("h-7 rounded px-3 text-[13px] max-md:h-9 whitespace-nowrap transition-colors", view === v ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
-        >
-          {v === "cards" ? "Cards" : "Map"}
-        </button>
-      ))}
-    </fieldset>
   );
 }
 

@@ -24,5 +24,5 @@ engine:
   # refused argument: 8 cut it short. A cap against a loop, not a target; every step spends the subscription.
   max_turns: 20
   model: claude-opus-5-5[1m]        # pinned by id: an alias names a different model depending on the CLI release
-  effort: xhigh                     # the owner's own setup on his Mac, as every platform session has it
+  effort: xhigh                     # the owner's own setup on his computer, as every platform session has it
 public_url: http://assistant:9000

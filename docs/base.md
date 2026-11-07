@@ -1,14 +1,14 @@
 # Your Base in the server's sessions
 
-Sessions on the server can work in your knowledge base (the Base) as on your Mac: they see all of it, read and edit
+Sessions on the server can work in your knowledge base (the Base) as on your computer: they see all of it, read and edit
 its records, and what they changed is committed and pushed by the platform itself after every turn, said in one line
-with «Undo». What the Mac's agent did by hand — `git pull` at the start, "commit
+with «Undo». What the agent on the owner's computer did by hand — `git pull` at the start, "commit
 and push?" at the end — is the platform's job here: it pulls the hub before each run, commits with your name, and
 pushes to the hub itself. That lane is the room, which also reads the
 web ([platform.md](platform.md#the-room): what that gives up and what stands in the way).
 
 ```
-your Mac ── push/pull over the VPN ──┐
+your computer ── push/pull over the VPN ──┐
                                       ▼
             /srv/retinue/memory/hub.git   (bare; pre-receive = kbcheck.py; docs/memory.md)
               ▲ push (your role: the platform is not uid 10001)        ▲ the router's pushes (the assistant)
@@ -44,7 +44,7 @@ spheres:
 
 The example `platform.yaml` gives spheres no `cwd`: their sessions start in the root of the Base. A sphere's `cwd`
 (inside its track's), when you set one, wins over the track's: a session of `travel` runs in `/work/base/travel` —
-«в Пространстве» — and the repository's rules reach it as on the Mac: `base/CLAUDE.md` and its `@AGENTS.md`
+«в Пространстве» — and the repository's rules reach it as on the owner's computer: `base/CLAUDE.md` and its `@AGENTS.md`
 ([instructions.md](instructions.md)). Every consumer of a session's directory — the run's `cwd`, `out/` and its
 attribution, the face's diff, a fork — uses the directory stored with the session (`sessions.cwd`), not the track's.
 A fork runs where its parent ran; it is refused («the session's track is now … in another folder») only when the configuration
@@ -117,7 +117,7 @@ link out, or make it wait:
   a path that check runs, or code at all (`protect`: `scripts/**`, `justfile`, `**/*.py`, `**/*.sh`; and any path
   the policy's `check` command names, whatever `protect` says), nor a hidden
   one (`.gitattributes`, `.claude/…`), nor a name git would take for its own (`.git`, `.GIT.`, `git~1`): those are
-  refused («edited only from the Mac»). The lint the hub runs is therefore always the one your Mac pushed. Git, the hook
+  refused («edited only from the owner's computer»). The lint the hub runs is therefore always the one your computer pushed. Git, the hook
   and the lint get an environment of `PATH`, `HOME`, `LANG`, `TMPDIR` and git's own variables only — none of the
   platform's secrets.
 - **Writes check what they replace.** A write or a delete in the tree first checks the path is still what was read
@@ -133,7 +133,7 @@ has not moved. Otherwise it fetches, and for every file the hub changed since th
 - **already as the hub has it** → nothing;
 - **dirty here** → `git merge-file` (ours = the tree, base = `HEAD`, theirs = the hub); a clean merge is written;
 - **dirty here, and the lines do not merge** (a text file both sides edited in the same place — the session and the
-  owner's Mac at once) → both versions go into the file between conflict markers (`<<<<<<< this session`, `=======`,
+  owner's computer at once) → both versions go into the file between conflict markers (`<<<<<<< this session`, `=======`,
   `>>>>>>> the hub`), as `git pull` leaves it, on top of the hub's version: from now on the file is the hub's plus the
   session's edit, so no later commit undoes the hub's change. The path is noted in `base.sqlite` (`marked`), and
   `tobase` tells the session that changed it — a message from the platform (`by: "platform"`), not from the owner: merge
@@ -176,9 +176,9 @@ waits on the Base.
    `commit-tree` with the hub's head as parent; author and committer = `author` from the config; a trailer
    `Pushed-by: retinue-platform (the platform's own commit after a turn, session <id>)`. Other sessions' uncommitted files are not looked at.
 4. **Checked the hub's way first** (`kbcheck.check`, the owner's role, without the lint): a path it refuses (an `id`
-   renamed, a symlink, a name that collides on a Mac) goes to `refused` with its reason and the rest is built again.
+   renamed, a symlink, a name that collides on a computer) goes to `refused` with its reason and the rest is built again.
 5. **Pushed**, up to four times: when the hub moved meanwhile (the router pushes after the assistant's turns, the
-   Mac at any time) it fetches and does 2–4 again on top. The hub's own refusal (its lint) comes back as its lines
+   owner's computer at any time) it fetches and does 2–4 again on top. The hub's own refusal (its lint) comes back as its lines
    in `refused`, nothing pushed.
 6. **The clone follows**: a merged file is written into the tree, then `HEAD` moves to the pushed commit the way a
    refresh does, so the committed paths are clean and the hub's other changes are in. While a run on the lane is
@@ -220,7 +220,7 @@ could write the hub's objects and refs past the hook: it is code you trust; the 
 
 The clone, its refresh and the commit are above (`retinue/base.py`). `retinue/tobase.py` adds **who changed what** and
 **the platform's own commit after every turn**: the session writes, the platform commits and pushes, you read one line.
-There is no button to commit — as the Mac's agents commit and push by themselves, so does the server.
+There is no button to commit — as the agents on the owner's computer commit and push by themselves, so does the server.
 
 - **Who changed what.** Each run on the Base's lane is watched — a session in the clone, and one that is not (a
   notes session at `/work` can Edit `/work/base/…` as well); never a side question, which only reads — in windows: the tree's snapshot (path → digest) when the run starts, and again
@@ -241,7 +241,7 @@ There is no button to commit — as the Mac's agents commit and push by themselv
 - **What.** Everything the session changed — added, edited, deleted, a file another session changed too — and every
   uncommitted file no session claims (changed before this, or by something no window saw): never left behind. As the
   snapshot has them (`expect`: the Base refuses a file that moved under its own lock), committed by
-  `BaseRepo.commit(…, role="owner")` — your rules, as your own agents push from the Mac. What the platform never commits
+  `BaseRepo.commit(…, role="owner")` — your rules, as your own agents push from the owner's computer. What the platform never commits
   (the Base's scripts and code, hidden paths) stays out. The body is the turn's summary and `Retinue: session <id>, after
   turn <n>.` with the link to it; the trailer says `Pushed-by: retinue-platform (the platform's own commit after a turn,
   session <id>)`.
@@ -258,7 +258,7 @@ There is no button to commit — as the Mac's agents commit and push by themselv
 - **«Undo»** (`BaseRepo.revert`): for 7 days, while the session is not running, a new commit on top of the hub's
   `main` — history is never rewritten — puts each file back as it was before that commit, only if neither the hub nor
   the clone changed it since («changed here since», «changed in the Base since»: left as it is, never merged). The card
-  ends «Undone»; the ping loses its button. Older than that: the evening's list of commits, or the Mac.
+  ends «Undone»; the ping loses its button. Older than that: the evening's list of commits, or the owner's computer.
 - **A restart mid-commit** — the card left «Writing…» is settled from the clone when the platform is back: the files no
   longer uncommitted went in («Written to the Base before the platform restarted»), the rest go with the session's next
   turn; while the Base cannot be read, the clock tries again each minute.
@@ -307,28 +307,13 @@ opened, because the tree is never opened. The answers carry `head`, that commit,
   `#` heading, left out), shown folded. Below: the lines by heading (`##` to `######`, not inside a code block), each
   a top-level list item with what is indented under it, or a paragraph. A heading with «Открыт… вопрос…» holds the Open
   questions, one that starts with «Задач» the Tasks, «Запис» the Records (not shown: the app lists the Records from the
-  commit). Their counts are list items; «Пока … нет» there is a placeholder, not a line. No marker: all of it is rules.
-- **A project's passport** is the `## Why` section above the marker (`## Зачем` too): why the project is, in its
-  prose, and its scope in lines of their own — `In scope: …` and `Not in scope: … → where it goes instead` (`Входит:`,
-  `Не входит:`; a list item or in bold too). The answer carries it as `passport: {why, in_scope, not_in_scope}`, its
-  links resolved as the rules' are, and the rules are what is above the marker without it; no such section: `null`.
-  The app opens a project on it ([face.md](face.md#a-project)), and «Edit with a session» asks a session in the
-  project's folder to write it:
-
-  ```markdown
-  # Travel
-
-  ## Why
-
-  Trips without surprises: tickets, stays and documents for every trip in one place.
-
-  In scope: flights, trains, stays, transfers, travel documents and insurance
-  Not in scope: visas → Documents; spending on trips → Money
-
-  ## Rules of the domain
-
-  - Live prices only, with a link.
-  ```
+  commit). Their counts are list items; «Пока … нет» there is a placeholder, not a line. No marker: all of it is the
+  passport.
+- **A project's passport** is everything above the marker, read by its schema ([below](#a-projects-passport)). The
+  answer carries it as `passport: {why, in_scope, not_in_scope, scope, files, rules, checks, imports, problems}`, its
+  links resolved; `rules` beside it is the passport's «Rules» as a list, then whatever above the marker the schema
+  does not name, so nothing written there goes unseen. The app opens a project on it
+  ([face.md](face.md#a-project)), and «Edit with a session» asks a session in the project's folder to write it.
 - **The grid** (`GET /api/spaces`) reads only each Showcase — beside the Spaces, `projects`: every project at any depth
   with its title, the project it is in and its counts, every Showcase in one batch —; a Space's Records are read when that Space is opened,
   and each only for its head — a Record up to 64 KB in one batch, a bigger one only its first 16 KB.
@@ -351,6 +336,73 @@ opened, because the tree is never opened. The answers carry `head`, that commit,
   nor a submodule); at most 512 KB (bigger: 413, and listed with `big`). A Showcase is read up to 256 KB.
 - With no Base configured the API answers 404 «The Base is not connected.»; while the repository cannot be read (not
   cloned yet, git failing), 503.
+
+## A project's passport
+
+A project's `AGENTS.md` above the Showcase marker is its passport: the file an agent CLI reads first in the project's
+folder. Claude Code loads `AGENTS.md`/`CLAUDE.md` from the working folder and its parents
+([memory](https://code.claude.com/docs/en/memory): «target under 200 lines»), Codex joins every `AGENTS.md` from the
+root down to it, 32 KiB in all ([AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)). So a
+passport is written for that reader: short fixed parts, one thought per item, pointers to the project's files with
+when to open each. The schema is `SCHEMA` in `retinue/passport.py`; a passport holds exactly these parts, in this
+order, and nothing else. The parts follow what [agents.md](https://agents.md/) lists as an `AGENTS.md`'s usual
+sections — a project overview (`Files`), its conventions (`Rules`), build and test commands (`Checks`) — plus what
+no code file says: what the project is for (`Why`) and where it stops, both ways, with its size (`Scope`):
+
+| Part | | What it holds | Limits |
+| --- | --- | --- | --- |
+| head | optional | `id`, `status`, `icon`, `code`, `memory` between `---` lines (#21, #22, #49) | those keys only |
+| `# <title>` | required | the project's name | 80 characters |
+| `@path` lines | optional | files Claude Code loads with the passport | 3; each path is in the project |
+| `## Why` (or `## Зачем`, #50) | required | one paragraph: what the project is for and how we know it worked | 800 characters; a mark |
+| `## Scope` | required | `- In: …`, `- Out: … → where it goes instead`, `- Size: …`, ``- Ceiling: `page` `` | In 0–3, Out 1–3, Size 0–1, Ceiling 0–1; each ends with a mark |
+| `## Files` | required | ``- `path` — what it holds; when to read it`` | 1–20; each path is in the project |
+| `## Rules` | optional | one rule an item, imperative | 1–12, 300 characters each |
+| `## Checks` | optional | how to verify work before calling it done | 1–6, 240 characters each |
+
+The whole passport is at most 5 KiB, so a chain of six (the root down to a deep project) stays under Codex's 32 KiB.
+A **mark** says whose a line is: `(owner, YYYY-MM-DD)` — the owner's words of that day — or `(assumption)`, an
+agent's guess he has not confirmed. A path is relative to the project's folder, below it, with no dot segment. What
+does not fit goes to the project's files and the passport points to it: the reasons and cases behind rules to its
+`rules.md`, the state of the work to its `README.md`, the history to `journal/`.
+
+```markdown
+# Garden
+
+## Why
+
+Roses that bloom every summer without the owner remembering to water them (owner, 2026-05-01).
+
+## Scope
+
+- In: soil tests and the watering timer (assumption)
+- Out: buying plants → ledger (owner, 2026-05-01)
+
+## Files
+
+- `README.md` — the garden's state; read first
+- `journal/` — the history of sessions
+
+## Rules
+
+- Water before 9 am.
+```
+
+**The check** (`python3 -m retinue.passport <Base folder>`) prints `ok` or `FAIL` and its problems for every project
+of the Base, and exits 1 when one fails. It reads structure only — headings, items, keys, marks, sizes, whether a path
+exists —, never what a sentence says: whether a passport is any good is for the agent writing it and the owner
+reading it. Each problem is data: `code` (missing, unknown, stray, nested, order, twice, count, long, mark, where,
+key, path, size, title, head), the `part` and its `subject`.
+
+**The hub holds it.** Its pre-receive (`kbcheck.py`, with `passport.py` installed beside it by `setup.sh`) refuses a
+push that breaks a passport which passed before — an edit of the `AGENTS.md`, or a file it points to removed or
+moved —, whoever pushes. A platform commit after a turn that is refused this way goes back to its session to fix
+(«What kept a file out is the session's to fix», above). A new project's passport, or one that already fails, is let
+through and listed by the check: the session that makes a project writes its passport in the same turn.
+
+**Who writes it.** Agents, never the owner by hand: the session that starts a project writes it, every session keeps
+it true when its work moves a file the passport names or the owner corrects the scope (his words and date go in the
+mark). He reads it in the app and says what is wrong.
 
 ## Turning it on
 
@@ -378,7 +430,7 @@ at start. Check from the lane: `docker compose -p retinue exec lane-private ls /
 - **A file with conflict markers** — its session was told to merge it; until it does, no commit takes the file and the
   line under the ping says why. A file no session claims keeps its markers (the log says so): merge it in any session.
 - **A held file** — it stays as the session left it; the line under the ping names it as a conflict. Either put
-  it back to the hub's version (it stops being held at the next refresh) or edit it on the Mac and pull.
+  it back to the hub's version (it stops being held at the next refresh) or edit it on the owner's computer and pull.
 - **The platform's repository is lost** (`platform-data` gone) — the next start makes a new one; files the tree has
   that differ from the hub are held with no base and can only be committed after being reconciled by hand.
 - **The lane's folder and the platform's differ** (only with a `mount` of its own) — every call refuses with «restart

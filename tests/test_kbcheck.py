@@ -231,10 +231,10 @@ def test_the_lint_copy_is_a_fresh_folder_only_its_user_can_enter(base, tmp_path)
 
 
 def stage(repo, files: dict) -> tuple[str, str]:
-    """Commit paths a Mac's file system could not hold side by side (A.md and a.md, é in NFC and NFD): straight into
+    """Commit paths a computer's file system could not hold side by side (A.md and a.md, é in NFC and NFD): straight into
     git's index, never onto the disk."""
     old = git(repo, "rev-parse", "HEAD")
-    git(repo, "config", "core.precomposeunicode", "false")  # git on a Mac would make NFD into NFC by itself
+    git(repo, "config", "core.precomposeunicode", "false")  # git on a computer would make NFD into NFC by itself
     for path, text in files.items():
         blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=repo, input=text, capture_output=True,
                               text=True, check=True).stdout.strip()
@@ -244,7 +244,7 @@ def stage(repo, files: dict) -> tuple[str, str]:
 
 
 def test_case_unicode_and_hidden_names_do_not_get_past_never(base):
-    """On the owner's Mac `claude.md` is CLAUDE.md, and a folder that starts with a dot is nobody's notes."""
+    """On the owner's computer `claude.md` is CLAUDE.md, and a folder that starts with a dot is nobody's notes."""
     for path in ("notes/knowledge/claude.md", "notes/knowledge/Claude.md", "notes/knowledge/agents.md",
                  "notes/knowledge/SKILL.MD"):
         assert [r.split(": ")[0] for r in verdict(base, *stage(base, {path: "x\n"})).refusals] == [path], path
@@ -256,7 +256,7 @@ def test_case_unicode_and_hidden_names_do_not_get_past_never(base):
     assert kbcheck.match(unicodedata.normalize("NFD", "notes/knowledge/é.md"), "notes/knowledge/é.md")
 
 
-def test_two_names_that_are_one_file_on_a_mac_are_refused(base):
+def test_two_names_that_are_one_file_on_macos_or_windows_are_refused(base):
     out = verdict(base, *stage(base, {"notes/knowledge/A.md": "x\n"}), role=kbcheck.OWNER)
     assert [r.split(": ")[0] for r in out.refusals] == ["notes/knowledge/A.md"] and "notes/knowledge/a.md" in out.refusals[0]
     git(base, "reset", "-q", "HEAD~1")

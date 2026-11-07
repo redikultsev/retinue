@@ -1,6 +1,6 @@
 // «Today»: what the home screen folds from what the app already has — the session rows (sphere, state, unread), the
 // stream's items and the text being written, the feed's deadlines. Nothing here asks the server anything.
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { plural } from "./format";
 import type { Item, Session, Sphere } from "./types";
 
@@ -180,46 +180,6 @@ export function useSince(source: Visits = visits): number {
 
 // --- by action, the operator ---------------------------------------------------------------------------------------
 
-/** How «Waiting» is shown: by what the owner does about it (the default), or the sessions' requests alone, one card
- * each. «By project» was a third way: the left panel holds the projects now, so it is gone — a device or a link that kept it lands on «By action». */
-export type TodayMode = "action" | "operator" | "map";
-export const MODE_KEY = "retinue-today-mode";
-
-/** A mode as written down anywhere — the device, a link —, as one of today's: an old «project» is «action». */
-export function modeOf(value: unknown): TodayMode | undefined {
-  return value === "operator" || value === "map" ? value : value === "action" || value === "project" ? "action" : undefined;
-}
-
-/** The way picked last on this device; «By action» the first time, and wherever the device keeps nothing. */
-export function keptMode(store: Pick<Storage, "getItem"> | null = storage()): TodayMode {
-  try {
-    return modeOf(store?.getItem(MODE_KEY)) ?? "action";
-  } catch {
-    return "action";
-  }
-}
-
-export function keepMode(mode: TodayMode, store: Pick<Storage, "setItem"> | null = storage()): void {
-  try {
-    store?.setItem(MODE_KEY, mode);
-  } catch {
-    // storage unavailable: the pick holds while the app is open
-  }
-}
-
-/** The way «Waiting» is shown, kept on the device as it is picked; a link's own (`?mode=`) wins and is kept. */
-export function useTodayMode(asked?: TodayMode): [TodayMode, (mode: TodayMode) => void] {
-  const [mode, setMode] = useState<TodayMode>(() => {
-    if (asked) keepMode(asked);
-    return asked ?? keptMode();
-  });
-  const pick = useCallback((next: TodayMode) => {
-    keepMode(next);
-    setMode(next);
-  }, []);
-  return [mode, pick];
-}
-
 /** A project's path as the app compares it — no slash at either end; "" for none. */
 export const projectKey = (project: string | null | undefined): string => (project ?? "").trim().replace(/^\/+|\/+$/g, "");
 
@@ -234,11 +194,13 @@ export function projectTitle(project: string, spheres: Sphere[]): string {
 
 // --- the address ------------------------------------------------------------------------------------------------
 
-/** «Today»'s address: «Today» bare, `?mode=operator`, `?tab=tasks`, `?tab=schedule`. «Schedule» is the week as an hourly
- * grid (a day on a phone); the day and the week were tabs of their own once, and the grid was «Plan»: a link to one
- * (`?tab=day`, `?tab=week`, `?tab=plan`) lands on «Schedule»; `?mode=project`, a way gone, lands on «By action». */
-export function todaySearch(s: Record<string, unknown>): { tab?: "tasks" | "schedule"; mode?: TodayMode } {
+/** «Today»'s address: «Today» bare, `?tab=tasks`, `?tab=schedule`. «Schedule» is the week as an hourly grid (a day on a
+ * phone); the day and the week were tabs of their own once, and the grid was «Plan»: a link to one (`?tab=day`,
+ * `?tab=week`, `?tab=plan`) lands on «Schedule». The operator and its map were ways of «Today» once (`?mode=operator`,
+ * `?mode=map`): such a link names them (`mode`), and the router takes it to `/operator`; an old `?mode=project` or
+ * `?mode=action` is «Today» itself. */
+export function todaySearch(s: Record<string, unknown>): { tab?: "tasks" | "schedule"; mode?: "operator" | "map" } {
   const tab = s.tab === "tasks" ? "tasks" : s.tab === "schedule" || s.tab === "day" || s.tab === "week" || s.tab === "plan" ? "schedule" : undefined;
-  const mode = tab ? undefined : modeOf(s.mode);
+  const mode = tab ? undefined : s.mode === "operator" || s.mode === "map" ? s.mode : undefined;
   return { tab, ...(mode ? { mode } : {}) };
 }

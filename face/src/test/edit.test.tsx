@@ -189,8 +189,8 @@ describe("writing from the screen", () => {
 
 describe("the words of a write", () => {
   it("says who changed what, from what to what", () => {
-    expect(["owner", "assistant", "session:s1", "mac:air/s2", "code:mail-sent", "import:X", "define:3"].map(actorWords)).toEqual([
-      "you", "the assistant", "a session", "the Mac", "the rule mail-sent", "an import", "a form change",
+    expect(["owner", "assistant", "session:s1", "device:air/s2", "mac:air/s3", "code:mail-sent", "import:X", "define:3"].map(actorWords)).toEqual([
+      "you", "the assistant", "a session", "your computer", "your computer", "the rule mail-sent", "an import", "a form change",
     ]);
     const fields = { deal: { type: "ref" as const, to: "deals" }, stage: { type: "enum" as const } };
     expect(changeWords({ op: "set", before: { stage: "pack_ready", deal: null }, after: { stage: "interview", deal: ids.acme } }, fields, { [ids.acme]: "Acme" })).toEqual([

@@ -50,7 +50,7 @@ class GoogleError(Exception):
 
 class InvalidGrant(GoogleError):
     """The refresh token no longer works: access revoked, the password changed (Gmail scopes), six months unused.
-    Only the owner can fix it, with a new consent on his Mac."""
+    Only the owner can fix it, with a new consent on his computer."""
 
 
 class Expired(GoogleError):

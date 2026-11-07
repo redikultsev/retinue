@@ -20,7 +20,9 @@ import { PushPage } from "@/pages/push";
 import { FilePage } from "@/pages/file";
 import { LoginPage } from "@/pages/login";
 import { NewPage } from "@/pages/new";
+import { OperatorPage } from "@/pages/operator";
 import { ReadPage } from "@/pages/read";
+import { SettingsPage } from "@/pages/settings";
 import { type SessionSearch, SessionPage } from "@/pages/session";
 import { SessionsPage } from "@/pages/sessions";
 import { ProjectPage, RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
@@ -125,21 +127,33 @@ const shellRoute = createRoute({
 });
 
 // «Today» · «Tasks» · «Schedule» (lib/today.ts `todaySearch`: an old `?tab=day`, `?tab=week` or `?tab=plan` lands on
-// «Schedule», `?mode=operator` opens the operator's cards, an old `?mode=project` «By action»).
+// «Schedule»; an old `?mode=operator` or `?mode=map` on «Operator», a place of its own now).
 const todayRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: "/today",
   validateSearch: todaySearch,
+  beforeLoad: ({ search }) => {
+    if (search.mode) throw redirect({ to: "/operator", search: search.mode === "map" ? { view: "map" } : {}, replace: true });
+  },
   component: function Today() {
-    const { tab, mode } = todayRoute.useSearch();
+    const { tab } = todayRoute.useSearch();
     const navigate = todayRoute.useNavigate();
     return (
       <TodayPage
-        mode={mode}
         tab={tab ?? "waiting"}
         onTab={(t: TodayTab) => void navigate({ search: t === "waiting" ? {} : { tab: t }, replace: true })}
       />
     );
+  },
+});
+// «Operator»: the sessions' requests as cards, or the map (`?view=map`); the pick is kept on the device.
+const operatorRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: "/operator",
+  validateSearch: (s: Record<string, unknown>): { view?: "cards" | "map" } => (s.view === "map" || s.view === "cards" ? { view: s.view } : {}),
+  component: function OperatorPlace() {
+    const { view } = operatorRoute.useSearch();
+    return <OperatorPage key={view ?? ""} view={view} />;
   },
 });
 const sessionsRoute = createRoute({ getParentRoute: () => shellRoute, path: "/sessions", component: SessionsPage });
@@ -155,6 +169,8 @@ const readRoute = createRoute({
   },
 });
 const weekRoute = createRoute({ getParentRoute: () => shellRoute, path: "/week", component: () => <WeekPage /> });
+// «Settings»: the keys, the tokens and the sessions' model (pages/settings.tsx), from the header's gear.
+const settingsRoute = createRoute({ getParentRoute: () => shellRoute, path: "/settings", component: SettingsPage });
 const spacesRoute = createRoute({ getParentRoute: () => shellRoute, path: "/spaces", component: SpacesPage });
 const spaceRoute = createRoute({
   getParentRoute: () => shellRoute,
@@ -250,7 +266,7 @@ const pushRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   homeRoute,
   loginRoute,
-  shellRoute.addChildren([todayRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, spacesRoute, spaceRoute, projectRoute, recordRoute, sessionRoute]),
+  shellRoute.addChildren([todayRoute, operatorRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, settingsRoute, spacesRoute, spaceRoute, projectRoute, recordRoute, sessionRoute]),
   approvalRoute,
   fileRoute,
   pushRoute,

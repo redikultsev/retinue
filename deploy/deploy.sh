@@ -4,9 +4,12 @@
 # (.github/workflows/ci.yml: images, deploy), with a key whose authorized_keys line allows nothing else: the commit's
 # sha arrives as SSH_ORIGINAL_COMMAND. By hand, as root: deploy.sh <sha>.
 #
-# Nothing is built here. The checkout goes to the commit (its compose file names its images), and deploy/update.sh
-# switches to them as to a release — health, pull, stop, snapshot of the data, start, health, back to what ran before
-# with its data when it is not healthy. Then the checkout follows: the commit's, or back to the one before.
+# Nothing is built here. The checkout goes to the commit (its compose file names its images); its deploy/setup.sh puts
+# what the version needs on the host — units, hooks, profiles, the files under /srv/retinue — run with no switches, so
+# it sets up what the last run did; and deploy/update.sh switches to the images as to a release — health, pull, stop,
+# snapshot of the data, start, health, back to what ran before with its data when it is not healthy. A setup.sh that
+# fails stops the version there, before anything is stopped. Then the checkout follows: the commit's, or back to the
+# one before, whose setup.sh runs again so the host is that version's.
 set -euo pipefail
 
 REPO=${RETINUE_REPO:-/opt/retinue}
@@ -39,6 +42,13 @@ main() {
   say "${sha:0:12} (running ${was:0:12})"
   git -C "$REPO" fetch -q origin "$sha"
   git -C "$REPO" checkout -q --detach "$sha"
+  say "setup.sh of ${sha:0:12}"
+  if ! bash "$REPO/deploy/setup.sh"; then
+    git -C "$REPO" checkout -q --detach "$was"
+    bash "$REPO/deploy/setup.sh" || say "setup.sh of ${was:0:12} failed too: run it by hand"
+    say "${sha:0:12} was not deployed (its setup.sh failed, nothing was stopped); the checkout is back on ${was:0:12}"
+    exit 1
+  fi
   if RETINUE_IMAGE=$image bash "$REPO/deploy/update.sh" "sha-${sha:0:12}"; then
     ls -1d "$SNAPSHOTS"/*/ 2>/dev/null | head -n "-$KEEP" | xargs -r rm -rf
     say "now on ${sha:0:12}"
@@ -47,9 +57,11 @@ main() {
     code=$?
   fi
   git -C "$REPO" checkout -q --detach "$was"
-  if (( code == 1 )); then   # update.sh went back, with the commit's compose file: the one before's, once more
+  bash "$REPO/deploy/setup.sh" || { say "setup.sh of ${was:0:12} failed: run it by hand"; code=3; }
+  if (( code == 1 )); then   # update.sh went back with the commit's compose file and host files: the one before's, once more
     RETINUE_IMAGE=$(value RETINUE_IMAGE) RETINUE_VERSION=$(value RETINUE_VERSION) \
-      docker compose -p retinue --env-file "$ROOT/stack.env" -f "$REPO/deploy/compose.yml" up -d --no-build || code=3
+      docker compose -p retinue --env-file "$ROOT/stack.env" -f "$REPO/deploy/compose.yml" up -d --no-build \
+      --force-recreate || code=3
   fi
   say "${sha:0:12} was not deployed (update.sh exit $code); the checkout is back on ${was:0:12}"
   exit "$code"

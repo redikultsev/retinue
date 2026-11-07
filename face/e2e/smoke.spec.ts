@@ -95,7 +95,7 @@ test("a project opens on its passport, and its «Operator» is its own sessions'
   await fits(page);
 });
 
-test("«Today»'s map keeps the sessions in their places by project and opens a tile's card", async ({ page }) => {
+test("the operator's map (an old «Today» map link lands on it) keeps the sessions in their places and opens a tile's card", async ({ page }) => {
   await login(page);
   await page.goto("/today?mode=map");
   const map = page.getByRole("region", { name: "The map" });
@@ -196,8 +196,7 @@ test("«Tasks» by project: the groups follow the Base's tree, and a row's menu 
 
 test("the operator lists the sessions' requests, answers an ask by its option and opens a look's thing in place", async ({ page }) => {
   await login(page);
-  await page.goto("/today");
-  await page.getByRole("button", { name: "Operator", exact: true }).click();
+  await page.goto("/operator");
   const cards = page.getByTestId("operator-card");
   await expect(cards.first()).toBeVisible();
   // a card of every kind of turn ending (mock/fixtures.ts `endings`), what waits before what is only to read

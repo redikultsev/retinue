@@ -26,7 +26,7 @@ UNTRIED=(
   "router: Telegram — getMe refuses the made-up bot token, so only its Matrix channel starts (logged below)"
   "tg-business: polls the Bot API with a made-up Business bot token; refused, retried"
   "assistant, platform, lane-private: no model call — no real CLAUDE_CODE_OAUTH_TOKEN (the container probe needs it)"
-  "collector, mail-send: no Google keys (deploy/mail/login.py on the owner's Mac)"
+  "collector, mail-send: no Google keys (deploy/mail/login.py on the owner's computer)"
   "speech: no ELEVENLABS_API_KEY; backup: backup.env unfilled, so restic is installed but its timer is off"
 )
 # Profiles not turned on at all, and why (printed, so the gap is in the log, not only in this file).
@@ -88,6 +88,18 @@ if systemctl is-enabled retinue-backup.timer 2>/dev/null; then   # backup.env un
 fi
 /usr/local/bin/restic version                         # the pinned binary for this architecture, its sha256 checked
 grep -q '^retinue-lane ' /sys/kernel/security/apparmor/profiles   # the lanes' profile, loaded by setup.sh
+
+step "4b. setup.sh with no switches, as deploy.sh runs it for each version: the same set-up"
+router_before=$(cksum < "$ROOT/router.yaml") stack_before=$(sort "$STACK" | cksum)
+hub_owner=$(stat -c %U "$ROOT/memory/hub.git")
+env -u SUDO_USER bash "$REPO/deploy/setup.sh" > /dev/null   # root without sudo, as over deploy.sh's ssh key
+if [[ $(cksum < "$ROOT/router.yaml") != "$router_before" || $(sort "$STACK" | cksum) != "$stack_before" ]]; then
+  echo "rehearsal: setup.sh with no switches changed router.yaml or stack.env" >&2; exit 1
+fi
+if [[ $(stat -c %U "$ROOT/memory/hub.git") != "$hub_owner" ]]; then
+  echo "rehearsal: setup.sh without sudo gave the hub to another owner" >&2; exit 1
+fi
+systemctl is-active retinue-settings.path
 
 step "5. build"
 compose build

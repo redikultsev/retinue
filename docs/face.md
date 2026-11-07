@@ -228,7 +228,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/push/{id}` · `/diff` | `{card}` for the page `/p/<id>`; `{diff, truncated}`: merge-base → the card's tip, at most 1 MB |
 | `POST /api/push/{id}/target {target}` · `/title {title}` · `/send` · `/cancel` | `{toast, card}`: the remote branch, the PR's title, “Push”, “Cancel” — by the rules of a Telegram press |
 | `GET /api/spaces` | `{head, spaces: [{name, title, questions, tasks, waiting, working}], projects: [{name, title, parent, questions, tasks}]}` — the Base's Spaces as its `main` commit has them; `waiting`/`working` count the sessions of the sphere of that name; `projects`: every project at any depth, the one it is in (`""` the root) — the left panel's ([base.md](base.md#reading-the-base-in-the-app)) |
-| `GET /api/spaces/{space}` | `{head, space: {name, title, passport: {why, in_scope, not_in_scope} \| null, rules, marker, sections: [{heading, kind, items: [{text, list}]}], counts, records: {knowledge, profile, journal, artifacts}}}`; 404 for no such Space |
+| `GET /api/spaces/{space}` | `{head, space: {name, title, passport: {why, in_scope, not_in_scope, scope, files, rules, checks, imports, problems}, rules, marker, sections: [{heading, kind, items: [{text, list}]}], counts, records: {knowledge, profile, journal, artifacts}}}`; 404 for no such Space |
 | `GET /api/spaces/{space}/r/{path}` | `{head, record: {space, path, nature, title, head, bad_head, body}}`; 404 for a path the rules refuse, 413 for a Record over 512 KB; 404 “The Base is not connected.” with no Base, 503 while it cannot be read |
 | `POST /api/speech?mode=dictate\|en` (body: the recording, `Content-Type` its type) | `{text}`; in `en` also `{message}`, the text as the session gets it, “(by voice, verbatim) …” — [Voice](#voice) |
 | `GET /api/library` | `{schema, hub, at, pages: [{id, title, url, updated, section, section_title, section_icon, minutes, opened, done}]}` — “Pages”, [below](#pages) |
@@ -680,8 +680,8 @@ into its requests; N what waits, amber).
 
 - **Overview**: the **passport** card — why the project is, at 16 px; then a table of two columns: «In scope», «Not in
   scope» (where those things go instead) and «Rules», their first lines joined, «All rules» folding the rest; «Edit
-  with a session» starts a session in the project's folder whose first message asks to edit the passport (the
-  `## Why` section of its `AGENTS.md`, [base.md](base.md#reading-the-base-in-the-app)); without one the card says so and
+  with a session» starts a session in the project's folder whose first message asks to edit the passport (its
+  `AGENTS.md` above the marker, by its schema: [base.md](base.md#a-projects-passport)); without one the card says so and
   the button writes one. Then **Yours** — its Open questions, each with «Discuss», and its Tasks, each with «Plan» (a
   session to plan it), one list —; a Space's collections' first views (the work: strips, queues, the days ahead, the
   numbers) and its proposals; **Sessions** — its own sessions (a state dot: amber waiting, blue at work; the relation's

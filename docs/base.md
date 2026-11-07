@@ -307,28 +307,13 @@ opened, because the tree is never opened. The answers carry `head`, that commit,
   `#` heading, left out), shown folded. Below: the lines by heading (`##` to `######`, not inside a code block), each
   a top-level list item with what is indented under it, or a paragraph. A heading with «Открыт… вопрос…» holds the Open
   questions, one that starts with «Задач» the Tasks, «Запис» the Records (not shown: the app lists the Records from the
-  commit). Their counts are list items; «Пока … нет» there is a placeholder, not a line. No marker: all of it is rules.
-- **A project's passport** is the `## Why` section above the marker (`## Зачем` too): why the project is, in its
-  prose, and its scope in lines of their own — `In scope: …` and `Not in scope: … → where it goes instead` (`Входит:`,
-  `Не входит:`; a list item or in bold too). The answer carries it as `passport: {why, in_scope, not_in_scope}`, its
-  links resolved as the rules' are, and the rules are what is above the marker without it; no such section: `null`.
-  The app opens a project on it ([face.md](face.md#a-project)), and «Edit with a session» asks a session in the
-  project's folder to write it:
-
-  ```markdown
-  # Travel
-
-  ## Why
-
-  Trips without surprises: tickets, stays and documents for every trip in one place.
-
-  In scope: flights, trains, stays, transfers, travel documents and insurance
-  Not in scope: visas → Documents; spending on trips → Money
-
-  ## Rules of the domain
-
-  - Live prices only, with a link.
-  ```
+  commit). Their counts are list items; «Пока … нет» there is a placeholder, not a line. No marker: all of it is the
+  passport.
+- **A project's passport** is everything above the marker, read by its schema ([below](#a-projects-passport)). The
+  answer carries it as `passport: {why, in_scope, not_in_scope, scope, files, rules, checks, imports, problems}`, its
+  links resolved; `rules` beside it is the passport's «Rules» as a list, then whatever above the marker the schema
+  does not name, so nothing written there goes unseen. The app opens a project on it
+  ([face.md](face.md#a-project)), and «Edit with a session» asks a session in the project's folder to write it.
 - **The grid** (`GET /api/spaces`) reads only each Showcase — beside the Spaces, `projects`: every project at any depth
   with its title, the project it is in and its counts, every Showcase in one batch —; a Space's Records are read when that Space is opened,
   and each only for its head — a Record up to 64 KB in one batch, a bigger one only its first 16 KB.
@@ -351,6 +336,73 @@ opened, because the tree is never opened. The answers carry `head`, that commit,
   nor a submodule); at most 512 KB (bigger: 413, and listed with `big`). A Showcase is read up to 256 KB.
 - With no Base configured the API answers 404 «The Base is not connected.»; while the repository cannot be read (not
   cloned yet, git failing), 503.
+
+## A project's passport
+
+A project's `AGENTS.md` above the Showcase marker is its passport: the file an agent CLI reads first in the project's
+folder. Claude Code loads `AGENTS.md`/`CLAUDE.md` from the working folder and its parents
+([memory](https://code.claude.com/docs/en/memory): «target under 200 lines»), Codex joins every `AGENTS.md` from the
+root down to it, 32 KiB in all ([AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)). So a
+passport is written for that reader: short fixed parts, one thought per item, pointers to the project's files with
+when to open each. The schema is `SCHEMA` in `retinue/passport.py`; a passport holds exactly these parts, in this
+order, and nothing else. The parts follow what [agents.md](https://agents.md/) lists as an `AGENTS.md`'s usual
+sections — a project overview (`Files`), its conventions (`Rules`), build and test commands (`Checks`) — plus what
+no code file says: what the project is for (`Why`) and where it stops, both ways, with its size (`Scope`):
+
+| Part | | What it holds | Limits |
+| --- | --- | --- | --- |
+| head | optional | `id`, `status`, `icon`, `code`, `memory` between `---` lines (#21, #22, #49) | those keys only |
+| `# <title>` | required | the project's name | 80 characters |
+| `@path` lines | optional | files Claude Code loads with the passport | 3; each path is in the project |
+| `## Why` (or `## Зачем`, #50) | required | one paragraph: what the project is for and how we know it worked | 800 characters; a mark |
+| `## Scope` | required | `- In: …`, `- Out: … → where it goes instead`, `- Size: …`, ``- Ceiling: `page` `` | In 0–3, Out 1–3, Size 0–1, Ceiling 0–1; each ends with a mark |
+| `## Files` | required | ``- `path` — what it holds; when to read it`` | 1–20; each path is in the project |
+| `## Rules` | optional | one rule an item, imperative | 1–12, 300 characters each |
+| `## Checks` | optional | how to verify work before calling it done | 1–6, 240 characters each |
+
+The whole passport is at most 5 KiB, so a chain of six (the root down to a deep project) stays under Codex's 32 KiB.
+A **mark** says whose a line is: `(owner, YYYY-MM-DD)` — the owner's words of that day — or `(assumption)`, an
+agent's guess he has not confirmed. A path is relative to the project's folder, below it, with no dot segment. What
+does not fit goes to the project's files and the passport points to it: the reasons and cases behind rules to its
+`rules.md`, the state of the work to its `README.md`, the history to `journal/`.
+
+```markdown
+# Garden
+
+## Why
+
+Roses that bloom every summer without the owner remembering to water them (owner, 2026-05-01).
+
+## Scope
+
+- In: soil tests and the watering timer (assumption)
+- Out: buying plants → ledger (owner, 2026-05-01)
+
+## Files
+
+- `README.md` — the garden's state; read first
+- `journal/` — the history of sessions
+
+## Rules
+
+- Water before 9 am.
+```
+
+**The check** (`python3 -m retinue.passport <Base folder>`) prints `ok` or `FAIL` and its problems for every project
+of the Base, and exits 1 when one fails. It reads structure only — headings, items, keys, marks, sizes, whether a path
+exists —, never what a sentence says: whether a passport is any good is for the agent writing it and the owner
+reading it. Each problem is data: `code` (missing, unknown, stray, nested, order, twice, count, long, mark, where,
+key, path, size, title, head), the `part` and its `subject`.
+
+**The hub holds it.** Its pre-receive (`kbcheck.py`, with `passport.py` installed beside it by `setup.sh`) refuses a
+push that breaks a passport which passed before — an edit of the `AGENTS.md`, or a file it points to removed or
+moved —, whoever pushes. A platform commit after a turn that is refused this way goes back to its session to fix
+(«What kept a file out is the session's to fix», above). A new project's passport, or one that already fails, is let
+through and listed by the check: the session that makes a project writes its passport in the same turn.
+
+**Who writes it.** Agents, never the owner by hand: the session that starts a project writes it, every session keeps
+it true when its work moves a file the passport names or the owner corrects the scope (his words and date go in the
+mark). He reads it in the app and says what is wrong.
 
 ## Turning it on
 

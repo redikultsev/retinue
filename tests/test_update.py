@@ -53,7 +53,21 @@ if args[0] == "compose":
         print("\n".join(SERVICES))
     elif sub == ["config", "--images"]:
         image, version = os.environ["RETINUE_IMAGE"], os.environ["RETINUE_VERSION"]
-        print(f"{image}:{version}\n{image}-face:{version}\nubuntu/squid:6.6@sha256:" + "0" * 64)
+        print(f"{image}:{version}\n{image}-face:{version}\nretinue-lane-private:{version}\n"
+              "ubuntu/squid:6.6@sha256:" + "0" * 64)
+    elif sub == ["config", "--format", "json"]:
+        image, version = os.environ["RETINUE_IMAGE"], os.environ["RETINUE_VERSION"]
+        print(json.dumps({"services": {
+            "router": {"image": f"{image}:{version}", "build": {"context": ".."}},
+            "face": {"image": f"{image}-face:{version}", "build": {"context": ".."}},
+            "lane-private": {"image": f"retinue-lane-private:{version}", "build": {"context": ".."}},
+            "travel-ops": {"image": "travel-ops:local", "build": {"context": "/opt/travel-ops"}},
+            "egress": {"image": "ubuntu/squid:6.6@sha256:" + "0" * 64}}}))
+    elif sub[0] == "build":
+        if os.environ.get("FAKE_BUILD_FAILS"):
+            sys.exit("failed to solve")
+        state["images"] += [f"retinue-{name}:{os.environ['RETINUE_VERSION']}" for name in sub[1:]]
+        save()
     elif sub[0] == "down":
         state["running"] = None
         save()
@@ -145,7 +159,11 @@ def test_an_update_to_a_tag_ends_healthy_with_that_version(tmp_path):
     assert pulls == [f"{IMAGE}:v1.1.0", f"{IMAGE}-face:v1.1.0"], "Retinue's own images of the tag, nothing pinned"
     down, = compose(calls, "down")
     up, = compose(calls, "up")
-    assert max(n for n, call in enumerate(calls) if call["args"][0] == "pull") < down < up, \
+    build, = compose(calls, "build")
+    assert calls[build]["args"][-2:] == ["build", "lane-private"] and calls[build]["version"] == "v1.1.0", \
+        "the image no registry has is built under the tag, and only it: the pulled ones are not rebuilt"
+    assert "retinue-lane-private:v1.1.0" in state["images"]
+    assert max(n for n, call in enumerate(calls) if call["args"][0] == "pull") < build < down < up, \
         "every image is in before anything is stopped"
     assert calls[up]["version"] == "v1.1.0" and calls[up]["image"] == IMAGE and "--no-build" in calls[up]["args"]
     snapshot, = (tmp_path / "snapshots").iterdir()
@@ -182,6 +200,15 @@ def test_an_update_to_a_tag_that_was_not_published_changes_nothing(tmp_path):
     assert (srv / "stack.env").read_text() == before and state["running"]["version"] == "v1.0.0"
 
 
+def test_an_update_whose_image_does_not_build_changes_nothing(tmp_path):
+    srv, volumes = server(tmp_path)
+    before = (srv / "stack.env").read_text()
+    run, calls, state = update(tmp_path, "v1.1.0", FAKE_BUILD_FAILS="1")
+    assert run.returncode != 0 and "lane-private could not be built" in run.stderr
+    assert not compose(calls, "down") and not compose(calls, "up"), "nothing stopped"
+    assert (srv / "stack.env").read_text() == before and state["running"]["version"] == "v1.0.0"
+
+
 def workflow_steps(workflow: dict) -> list[dict]:
     return [step for job in workflow["jobs"].values() for step in job["steps"]]
 
@@ -210,9 +237,16 @@ def test_the_release_workflow_parses_and_pins_every_action_by_commit():
 
 def test_the_release_builds_every_image_of_retinues_own_that_compose_runs():
     """Each image compose takes from the release is built by the workflow exactly as compose builds it locally."""
+    here = []
     for name, service in SERVICES.items():
-        assert not re.match(r"retinue(-[a-z-]+)?:", service.get("image", "")), \
+        image = service.get("image", "")
+        if re.fullmatch(r"retinue(-[a-z-]+)?:\$\{RETINUE_VERSION:-local\}", image):
+            assert "build" in service, f"{name}: an image no registry has is built here (update.sh)"
+            here.append(image.split(":")[0])
+            continue
+        assert not re.match(r"retinue(-[a-z-]+)?:", image), \
             f"{name}: a Retinue image by a fixed name stays behind when the stack moves to a release or a commit"
+    assert here == ["retinue-lane-private"], "only the lane's, which carries Claude Code, is kept out of the registry"
     own = {}
     for name, service in SERVICES.items():
         image = service.get("image", "")
@@ -231,7 +265,7 @@ def test_the_release_builds_every_image_of_retinues_own_that_compose_runs():
         if image.startswith("${RETINUE_IMAGE:-retinue}"):
             assert image.split(":${RETINUE_VERSION")[0].replace("${RETINUE_IMAGE:-retinue}", "retinue") in own, \
                 f"{name}: a service of the release's image that no service builds locally"
-    assert sorted(own) == ["retinue", "retinue-face", "retinue-lane-private", "retinue-pages-build"]
+    assert sorted(own) == ["retinue", "retinue-face", "retinue-pages-build"]
     workflow = yaml.safe_load(RELEASE.read_text())
     matrix = workflow["jobs"]["images"]["strategy"]["matrix"]["include"]
     assert {entry["image"]: {"context": entry["context"], "dockerfile": entry["dockerfile"],

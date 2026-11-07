@@ -106,8 +106,12 @@ export interface FeedRow {
   collection_proposal?: CollectionProposal;
   /** What the session's turn left him (`ending:<session>` rows): its card by kind. */
   ending?: TurnEnding;
-  /** A session of one of his computers (retinue/computers.py): answered there, by its link. */
+  /** A session of one of his computers (retinue/computers.py): answered on its card, its link the way back to it. */
   computer?: { device: string; id: string; link?: string };
+  /** A computer's session: his answer, waiting until that computer puts it into the session. */
+  answered?: string;
+  /** A computer's session: his answer that computer did not put in, and why (retinue/computers.py `WHYS`). */
+  undelivered?: { text: string; why: string };
   /** «From the assistant»: a person's row's token — what «Done», «Not a task», «Tomorrow» name it by. Absent on a draft
    * and a date. */
   t?: string;

@@ -668,11 +668,25 @@ are its own, not the owner's records.
   ([face.md](face.md#the-operator)); a session that waits with none is a «Reply» row. An artifact by `path` is a file
   on the computer: the app shows its name, «on your computer»; one by `url` opens as a link. An ending off the shape is
   left out and the session stays: the answer names it, `"left_out": [{"id", "why"}]`.
+- **`answers`**, in the reply: what the owner answered its sessions on their cards in the app, on any device —
+  `"answers": [{"id": "9f2c…", "session": "local_a1", "text": "One pair, carry-on only", "ending": 1767225600,
+  "at": 1767225660}]`. `ending` is the session's `at` as its card showed it: the answer is to that turn, and the
+  computer puts `text` into its session as the owner's next message only while the session still waits at that `at`.
+  It then names each id in a later report — `"delivered": ["9f2c…"]` for those it put in, `"refused": [{"id":
+  "9f2c…", "why": "moved_on"}]` for those it did not, `why` one of `moved_on`, `unknown_session`, `too_long`, `failed` —
+  beside `sessions` in `params`; either list drops the answer here, and the card tells a refused one while the session
+  stays at that turn. An answer comes in every reply until it is named or its session leaves the list; a newer answer
+  to the same session replaces it, with a new id. The computer keeps its own list of the ids it put in, so an answer
+  that comes again after a lost ack is not put in twice.
+- **Who makes an answer:** only the owner, in the app, by his login (`POST /api/computers/{device}/sessions/{id}/answer`,
+  `{"text", "at"}`, at most 4000 characters) — a device's token opens nothing of `/api/*`, and nothing on
+  `/mcp/device` makes one. A device gets only the answers to the sessions it reported. The app takes one only for a
+  session the computer lists, not at work, and still at the `at` the card showed (else 409: read the card again).
 - **A place on the map** (`slot` in the app's list): the lowest free in its project when it first shows, kept while
   the computer lists it.
 - **Kept in memory only**, per device: nothing on disk and nothing in a log — titles and folders are the owner's —;
-  a restart forgets the lists until each device's next report. No report for 2 minutes and the computer is off: the
-  app greys its rows. A revoked device's rows go at once.
+  a restart forgets the lists and the answers waiting until each device's next report. No report for 2 minutes and
+  the computer is off: the app greys its rows. A revoked device's rows go at once.
 - **`retinue/projects`** gives the Base's project tree, `{head, projects: [{path, title, parent}]}`, which the
   computer's helper files its own sidebar by — a group per project, its sessions in it — so the sidebar follows a
   project made or renamed in the Base by itself.

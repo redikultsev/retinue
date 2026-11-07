@@ -21,7 +21,8 @@ unread, as any turn there) — and its row carries the ending whole (`ending`).
 The owner's computers' own sessions (`computers.py`) are rows too, while their computer reports: one whose turn ended
 with an ending, by its kind as above (look and done under «Read» while the computer lists it); one that waits on him
 with none, under «Reply». Such a row has no session of the room (`session` null) and carries `computer` — the device,
-the session's id there and its `claude://` link —: he answers it on that computer.
+the session's id there and its `claude://` link —. He answers it here, on its card: his words wait for that computer's
+next report (`answered` on the row until it takes them).
 
 The digest is the one thing kept. The router knows what waits in her world — a letter or a chat she judged to ask
 something of him, a draft waiting for «Send», a deadline of the base — and pushes it here (`POST /owner/waiting`)
@@ -569,7 +570,9 @@ class Feed:
 
     def _computer_rows(self, device: str, sessions: list[dict]):
         """A computer's sessions as rows (`computers.py`): one that ended its turn with a word for him, by its ending;
-        one that waits on him with none, «Reply». Not answerable here: the row says which computer and its link back."""
+        one that waits on him with none, «Reply». He answers it on its card (`answered`: his words, until the computer
+        takes them, or `undelivered` with why it refused them); the row also says which computer and its link back."""
+        machines = getattr(self, "computers", None)
         for s in sessions:
             if s["state"] == "working":
                 continue
@@ -582,7 +585,8 @@ class Feed:
                    "project": s["project"] or None, "title": s["title"], "since": s["at"],
                    "essence": _ending_essence(ending) if ending else "", "ref": s["id"],
                    "computer": {"device": device, "id": s["id"], **({"link": s["link"]} if s.get("link") else {})},
-                   **({"ending": ending} if ending else {})}
+                   **({"ending": ending} if ending else {}),
+                   **(machines.answer_state(device, s["id"], s["at"]) if machines else {})}
 
     def session_project(self, lane: str, track: str, cwd: str | None) -> str | None:
         """A session's project: its folder in the Base (`project_of`) — the folder it was made with, its track's for

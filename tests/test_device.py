@@ -15,7 +15,7 @@ from retinue import device as endpoint
 from retinue import project as project_mod
 from retinue.collections import Rejected, Writer, among, granted, idem_scope, parse_form, parse_rights, writer_class
 from retinue.face import COOKIE
-from test_face import FaceWorld, faced
+from test_face import POST, FaceWorld, faced
 from test_platformd import short_wait  # noqa: F401 — the fixture is autouse
 
 DEFINE = Writer("owner", "define")
@@ -466,6 +466,94 @@ def test_a_computers_turn_endings_are_cards_in_the_feed(tmp_path):
         world.clock.now += computers.OFF_S + 1
         feed = await world.get("/api/feed")
         assert not [r for g in feed["groups"] for r in g["rows"] if r.get("computer")], "an off computer: no rows"
+
+    faced(tmp_path, body)
+
+
+def test_the_owners_answer_to_a_computers_session_reaches_that_computer_until_it_is_delivered(tmp_path, caplog):
+    async def body(world: FaceWorld):
+        store = world.platform.collections
+        laptop, desktop = Device(world, await store.add_device("laptop", "read", world.clock.now)), \
+            Device(world, await store.add_device("desktop", "read", world.clock.now))
+        await laptop.start()
+        await desktop.start()
+        now = world.clock.now
+        asks = {"kind": "ask", "request": "Pick a plan", "why_owner": "goal", "context": "Two found",
+                "options": [{"label": "A", "effect": "cheaper"}, {"label": "B", "effect": "faster"}]}
+        rows = [{"id": "local_q", "title": "Plan", "state": "waiting", "at": now - 60, "ending": asks},
+                {"id": "local_w", "title": "Waits", "state": "waiting", "at": now - 10},
+                {"id": "local_r", "title": "Runs", "state": "working", "at": now}]
+        assert "answers" not in (await laptop.post(report_of(2, rows)))[1]["result"], "none given: none handed over"
+        await desktop.post(report_of(2, [{"id": "local_q", "title": "Other", "state": "waiting", "at": now}]))
+        await world.login()
+
+        at = {r["id"]: r["at"] for r in rows}
+
+        def answer(device: str, session: str, text: object, seen: object = None):
+            return world.call("POST", f"/api/computers/{device}/sessions/{session}/answer",
+                              {"text": text, "at": at.get(session, now) if seen is None else seen})
+
+        status, given, _ = await answer("laptop", "local_q", "  A  ")
+        assert status == 200 and given["answer"]
+        for device, session, text, seen, code in [
+                ("laptop", "local_r", "go", None, 400), ("laptop", "local_gone", "go", None, 404),
+                ("laptop", "local_w", "  ", None, 400), ("laptop", "local_w", "x" * (computers.ANSWER_MAX + 1), None, 400),
+                ("laptop", "local_w", "go", "yesterday", 400), ("laptop", "local_w", "go", now - 11, 409),
+                ("nobody", "local_q", "go", None, 404)]:
+            assert (await answer(device, session, text, seen))[0] == code, (device, session, text, seen)
+        assert (await world.call("POST", "/api/computers/laptop/sessions/local_w/answer", {"text": "go", "at": now - 10},
+                                 headers={}))[0] in (401, 403), "the app's guard, as every POST"
+        for token in (laptop.token, desktop.token):  # only the owner, by the app: no device makes an answer
+            assert (await world.call("POST", "/api/computers/laptop/sessions/local_w/answer",
+                                     {"text": "go", "at": now - 10}, headers={**POST, "Authorization": f"Bearer {token}"},
+                                     cookie=""))[0] == 401
+
+        feed = await world.get("/api/feed")
+        by_key = {r["key"]: r for g in feed["groups"] for r in g["rows"]}
+        assert by_key["ending:laptop/local_q"]["answered"] == "A", "the card says his answer instead of asking again"
+        assert "answered" not in by_key["reply:desktop/local_q"], "one computer's answer is that computer's alone"
+
+        result = (await laptop.post(report_of(3, rows)))[1]["result"]
+        [handed] = result["answers"]
+        assert {k: handed[k] for k in ("id", "session", "text", "ending")} == {
+            "id": given["answer"], "session": "local_q", "text": "A", "ending": now - 60}, "bound to the turn it answers"
+        assert "answers" not in (await desktop.post(report_of(3, [{"id": "local_q", "title": "Other",
+                                                                   "state": "waiting", "at": now}])))[1]["result"]
+        assert (await laptop.post(report_of(4, rows)))[1]["result"]["answers"] == [handed], \
+            "again on every report until it is delivered"
+
+        _, newer, _ = await answer("laptop", "local_q", "B")
+        [replaced] = (await laptop.post(report_of(5, rows)))[1]["result"]["answers"]
+        assert (replaced["id"], replaced["text"]) == (newer["answer"], "B"), "a newer answer replaces the one before"
+        delivered = {**report_of(6, rows), "params": {"sessions": rows, "delivered": [newer["answer"]]}}
+        assert "answers" not in (await laptop.post(delivered))[1]["result"], "delivered: not handed over again"
+        assert "answered" not in {r["key"]: r for g in (await world.get("/api/feed"))["groups"]
+                                  for r in g["rows"]}["ending:laptop/local_q"]
+
+        await answer("laptop", "local_w", "go on")
+        assert "answers" not in (await laptop.post(report_of(7, rows[:1])))[1]["result"], \
+            "its session left the list: the answer goes"
+        rows = rows[:1]
+        for params in ({"delivered": "all"}, {"refused": [{"id": "x", "why": "it felt wrong"}]},
+                       {"refused": ["x"]}):
+            bad = {**report_of(8, rows), "params": {"sessions": rows, **params}}
+            assert (await laptop.post(bad))[1]["error"]["message"] == computers.NOT_ACKED, params
+
+        _, missed, _ = await answer("laptop", "local_q", "E")
+        refused = {**report_of(9, rows), "params": {"sessions": rows, "refused": [{"id": missed["answer"], "why": "failed"}]}}
+        assert "answers" not in (await laptop.post(refused))[1]["result"], "refused: not handed over again"
+        card = {r["key"]: r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]}["ending:laptop/local_q"]
+        assert card["undelivered"] == {"text": "E", "why": "failed"} and "answered" not in card, \
+            "the card says it did not go in, while the session is at that turn"
+        moved = [{**rows[0], "at": now - 1}, *rows[1:]]
+        await laptop.post(report_of(10, moved))
+        card = {r["key"]: r for g in (await world.get("/api/feed"))["groups"] for r in g["rows"]}["ending:laptop/local_q"]
+        assert "undelivered" not in card and "answered" not in card, "a new turn is a new card"
+        rows = moved
+
+        await store.revoke_device("laptop", world.clock.now)
+        assert (await answer("laptop", "local_q", "D"))[0] == 404, "a revoked device's sessions take no answer"
+        assert "go on" not in caplog.text and "Pick a plan" not in caplog.text, "his words: no log"
 
     faced(tmp_path, body)
 

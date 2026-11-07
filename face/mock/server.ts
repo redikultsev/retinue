@@ -63,21 +63,26 @@ function endingLine(e: TurnEnding): string {
  * waiting on the owner (a question, a step of his), two back with a result, one elsewhere. `MOCK_LAPTOP_OFF=1`: the
  * laptop has not reported for a while. */
 const LAPTOP_OFF = process.env.MOCK_LAPTOP_OFF === "1";
+const LAPTOP_AT = now(); // its sessions' last activity, fixed: an answer is to the turn its card showed
 function laptop() {
   const link = (id: string) => `claude://claude.ai/epitaxy/${id}`;
   return [
-    { id: "local_m1", title: "Compare the two stays", folder: "/home/anna/base/travel/lisbon", project: "travel/lisbon", state: "working", at: now() - 20, link: link("local_m1"), slot: 0 },
-    { id: "local_m2", title: "Packing list", folder: "/home/anna/base/travel", project: "travel", state: "waiting", at: now() - 600, link: link("local_m2"), slot: 0,
+    { id: "local_m1", title: "Compare the two stays", folder: "/home/anna/base/travel/lisbon", project: "travel/lisbon", state: "working", at: LAPTOP_AT - 20, link: link("local_m1"), slot: 0 },
+    { id: "local_m2", title: "Packing list", folder: "/home/anna/base/travel", project: "travel", state: "waiting", at: LAPTOP_AT - 600, link: link("local_m2"), slot: 0,
       ending: { kind: "ask", request: "Make a packing list for Lisbon that fits in a carry-on", why_owner: "goal", context: "It fits in 7 kg with one pair of shoes; two pairs need a checked bag (€35).",
         options: [{ label: "One pair, carry-on only", effect: "no bag fee; walking shoes only" }, { label: "Check a bag", effect: "+€35, room for the dinner shoes" }], without: "I keep the carry-on list." } },
-    { id: "local_m4", title: "Book the ferry", folder: "/home/anna/base/travel/lisbon", project: "travel/lisbon", state: "waiting", at: now() - 1800, link: link("local_m4"), slot: 1,
+    { id: "local_m4", title: "Book the ferry", folder: "/home/anna/base/travel/lisbon", project: "travel/lisbon", state: "waiting", at: LAPTOP_AT - 1800, link: link("local_m4"), slot: 1,
       ending: { kind: "step", what: "Pay for the two ferry seats — the site takes cards only from the passenger", where: "the ferry company's site, «My bookings»", command: "Booking ref: FX-1042", expect: "the confirmation number" } },
-    { id: "local_m5", title: "The site's footer", folder: "/home/anna/code/acme-site", project: "work/acme/site", state: "done", at: now() - 3600, link: link("local_m5"), slot: 0,
+    { id: "local_m5", title: "The site's footer", folder: "/home/anna/code/acme-site", project: "work/acme/site", state: "done", at: LAPTOP_AT - 3600, link: link("local_m5"), slot: 0,
       ending: { kind: "look", request: "Make the footer match the new header", artifacts: [{ title: "footer.png", src: null, kind: "other", why: "On your computer.", on_computer: true }, { url: "https://example.com/acme-preview", title: "The preview", src: "https://example.com/acme-preview", kind: "link" }], checks: ["the links line up with the header's"] } },
-    { id: "local_m3", title: "Scratch notes", folder: "/tmp", project: "", state: "done", at: now() - 7200, slot: 0,
+    { id: "local_m3", title: "Scratch notes", folder: "/tmp", project: "", state: "done", at: LAPTOP_AT - 7200, slot: 0,
       ending: { kind: "done", request: "Tidy my scratch notes", what: "Merged 14 notes into 3 and dropped the duplicates.", next: "Nothing: they are filed.", next_by: "me" } },
   ];
 }
+
+/** The owner's answers to the laptop's sessions, by session (retinue/computers.py `answer`): the made-up laptop never
+ * takes them, so each card keeps saying it is on its way. */
+const laptopAnswers = new Map<string, { text: string; ending: number }>();
 
 /** The laptop's sessions as the feed's rows (retinue/feed.py `_computer_rows`): by their ending's kind, or «Reply». */
 function laptopRows(): FeedRow[] {
@@ -90,6 +95,7 @@ function laptopRows(): FeedRow[] {
       key: `${e ? "ending" : "reply"}:laptop/${s.id}`, action, source: "computer", session: null, track: null, sphere: null, sphere_title: null, sphere_icon: null,
       project: s.project || null, title: s.title, since: s.at, essence: e ? endingLine(e) : "", ref: s.id,
       computer: { device: "laptop", id: s.id, ...(s.link ? { link: s.link } : {}) }, ...(e ? { ending: e } : {}),
+      ...(laptopAnswers.get(s.id)?.ending === s.at ? { answered: laptopAnswers.get(s.id)?.text } : {}),
     }];
   });
 }
@@ -569,6 +575,20 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       off_s: 120,
       computers: [{ device: "laptop", at: now() - (LAPTOP_OFF ? 3600 : 5), off: LAPTOP_OFF, sessions: laptop().map(({ ending: _ending, ...s }) => s) }],
     });
+  const answering = /^\/api\/computers\/([^/]+)\/sessions\/([^/]+)\/answer$/.exec(path);
+  if (answering && method === "POST") {
+    const [, device, id] = answering.map((x) => decodeURIComponent(x ?? ""));
+    const session = LAPTOP_OFF || device !== "laptop" ? undefined : laptop().find((s) => s.id === id);
+    if (!session) return json(res, 404, { error: device === "laptop" ? "That computer does not list this session now." : "No such computer." });
+    if (session.state === "working") return json(res, 400, { error: "The session is at work: answer it when its turn ends." });
+    const b = await body(req);
+    const text = String(b.text ?? "").trim();
+    if (!text || text.length > 4000) return json(res, 400, { error: "text: the answer, at most 4000 characters." });
+    if (typeof b.at !== "number") return json(res, 400, { error: "at: the session's last activity, as its card showed it." });
+    if (b.at !== session.at) return json(res, 409, { error: "The session moved on since its card was drawn: read it again." });
+    laptopAnswers.set(session.id, { text, ending: session.at });
+    return json(res, 200, { answer: randomUUID().slice(0, 16) });
+  }
   if (path === paths.archived && method === "GET")
     return json(res, 200, { schema: 1, sessions: [...sessions.values()].filter((s) => s.archived).map((s) => ({ ...s, archived_at: s.at })).sort((a, b) => b.archived_at - a.archived_at) });
 

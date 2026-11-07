@@ -197,7 +197,9 @@ describe("the operator", () => {
     expect(renumber(later, ["b", "c", "d"], NOW + 31 * 60)).toEqual({ b: { n: 2 }, c: { n: 3 }, d: { n: 1 } });
   });
 
-  it("draws a computer's session by its ending, answered on that computer by its link", async () => {
+  it("test_a_computers_session_is_answered_on_its_card_to_that_computer", async () => {
+    const answer = vi.spyOn(api, "answerComputer").mockResolvedValue({ answer: "a1" });
+    const input = vi.spyOn(api, "input");
     const computer = { device: "laptop", id: "local_q", link: "claude://claude.ai/epitaxy/local_q" };
     const ask: TurnEnding = {
       kind: "ask",
@@ -210,16 +212,39 @@ describe("the operator", () => {
       ],
     };
     const rows = [
-      row("ending:laptop/local_q", "answer", ask, { source: "computer", session: null, title: "Plan", computer }),
-      row("reply:laptop/local_w", "reply", null, { source: "computer", session: null, title: "Waits", essence: "", computer: { device: "laptop", id: "local_w" } }),
+      row("ending:laptop/local_q", "answer", ask, { source: "computer", session: null, title: "Card one", computer }),
+      row("reply:laptop/local_w", "reply", null, { source: "computer", session: null, title: "Card two", essence: "", computer: { device: "laptop", id: "local_w" } }),
+      row("ending:laptop/local_d", "answer", ask, { source: "computer", session: null, title: "Card three", computer: { device: "laptop", id: "local_d" }, answered: "B" }),
+      row("ending:laptop/local_n", "answer", ask, {
+        source: "computer", session: null, title: "Card four", computer: { device: "laptop", id: "local_n" }, undelivered: { text: "B", why: "failed" },
+      }),
     ];
     mount(<Operator feed={feedOf(rows)} spheres={[]} now={NOW} />);
-    const [first, second] = await screen.findAllByTestId("operator-card");
-    expect(within(first!).getByRole("link", { name: /Answer on laptop/ }).getAttribute("href")).toBe(computer.link);
-    for (const option of within(first!).getAllByRole("button", { name: /^[AB]/ })) expect((option as HTMLButtonElement).disabled).toBe(true);
-    expect(within(first!).queryByRole("textbox")).toBeNull();
+    const cards = await screen.findAllByTestId("operator-card");
+    const [first, second, third, fourth] = ["one", "two", "three", "four"].map((n) => cards.find((c) => c.textContent?.includes(`Card ${n}`)));
+    // no way out to the computer: the card itself takes the answer
+    expect(within(first!).queryByRole("link", { name: /on laptop/ })).toBeNull();
     expect(within(first!).queryByRole("link", { name: /Open the session/ })).toBeNull();
-    expect(within(second!).queryByRole("link")).toBeNull();
-    expect(within(second!).queryByRole("textbox")).toBeNull();
+    for (const option of within(first!).getAllByRole("button", { name: /^[AB]/ })) expect((option as HTMLButtonElement).disabled).toBe(false);
+    expect(within(first!).getByRole("textbox", { name: "Your message" })).toBeTruthy();
+    fireEvent.click(within(first!).getByRole("button", { name: /^A/ }));
+    expect(await within(first!).findByText("You: «A»")).toBeTruthy();
+    expect(answer).toHaveBeenCalledWith("laptop", "local_q", "A", NOW - 600); // the turn its card showed
+    expect(within(first!).queryByRole("group", { name: "Options" })).toBeNull();
+
+    fireEvent.change(within(second!).getByRole("textbox", { name: "Your message" }), { target: { value: "Go on" } });
+    fireEvent.click(within(second!).getByRole("button", { name: "Send" }));
+    expect(await within(second!).findByText("You: «Go on»")).toBeTruthy();
+    expect(answer).toHaveBeenCalledWith("laptop", "local_w", "Go on", NOW - 600);
+
+    // answered before: it says so and asks nothing again
+    expect(within(third!).getByText("You: «B»")).toBeTruthy();
+    expect(within(third!).queryByRole("group", { name: "Options" })).toBeNull();
+    expect(within(third!).queryByRole("textbox")).toBeNull();
+    // refused by the computer: it says what did not go in, and asks again
+    expect(within(fourth!).getByText(/«B»/)).toBeTruthy();
+    expect(within(fourth!).getAllByRole("button", { name: /^[AB]/ })).toHaveLength(2);
+    expect(within(fourth!).getByRole("textbox", { name: "Your message" })).toBeTruthy();
+    expect(input).not.toHaveBeenCalled();
   });
 });

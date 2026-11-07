@@ -314,6 +314,7 @@ class Face:
             web.get("/api/meta", self.meta), web.get("/api/sessions", self.sessions),
             web.post("/api/whats-new/seen", self.whats_new_seen),
             web.get("/api/archived", self.archived), web.get("/api/computers", self.computers),
+            web.post("/api/computers/{device}/sessions/{id}/answer", self.answer_computer),
             web.post("/api/sessions", self.new), web.get("/api/sessions/{id}", self.session),
             web.post("/api/sessions/{id}/input", self.input), web.post("/api/sessions/{id}/stop", self.stop),
             web.post("/api/sessions/{id}/pin", self.pin), web.post("/api/sessions/{id}/side", self.side),
@@ -462,6 +463,27 @@ class Face:
             live = set()
         return web.json_response({"computers": self.platform.computers.listing(self.clock(), live),
                                   "off_s": computers.OFF_S})
+
+    async def answer_computer(self, request: web.Request) -> web.Response:
+        """The owner's answer to a session on one of his computers, from its card: kept until that computer's next
+        report takes it (`computers.Computers.answer`), for the turn the card showed (`at`). Only here, by the owner's
+        login: a device's token opens nothing of `/api/*`. A revoked device's sessions are not answered."""
+        body, device, session = await _body(request), request.match_info["device"], request.match_info["id"]
+        try:
+            live = {d["name"] for d in await self.platform.collections.devices() if d["revoked"] is None}
+        except Refused:
+            live = set()
+        if device not in live:
+            return _error(404, "No such computer.")
+        try:
+            given = self.platform.computers.answer(device, session, body.get("text"), body.get("at"), self.clock())
+        except computers.NotListed as exc:
+            return _error(404, str(exc))
+        except computers.MovedOn as exc:
+            return _error(409, str(exc))
+        except computers.Refused as exc:
+            return _error(400, str(exc))
+        return web.json_response({"answer": given["id"]})
 
     async def archived(self, request: web.Request) -> web.Response:
         """«Archived»: what the owner archived, the latest first, for his «Restore» (`unarchive`)."""

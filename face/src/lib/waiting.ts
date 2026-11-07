@@ -15,8 +15,10 @@ import type { Session } from "./types";
 const rowsOf = (feed: Feed | null): FeedRow[] => (feed?.groups ?? []).flatMap((g) => g.rows);
 
 /** Whether a row is the owner's move: all but a finished turn, which is only to read. A turn that ended on a thing to
- * look at waits («Looks right»), though the feed lists it under «Read». */
+ * look at waits («Looks right»), though the feed lists it under «Read». A computer's session he has answered waits on
+ * that computer, not on him. */
 export function waits(row: FeedRow): boolean {
+  if (row.computer && row.answered) return false;
   const e = endingOf(row);
   return e ? e.kind !== "done" : row.action !== "read";
 }

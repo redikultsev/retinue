@@ -4,14 +4,14 @@
 // counted at the top, one answered or gone stays in its place, dimmed, until he lays the list out again. No key
 // answers a card here: one press would reach them all.
 import { Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { CollectionProposalCard } from "@/components/collection-proposal-card";
-import { EndingCard, FRAME, OnComputer } from "@/components/ending-card";
+import { EndingCard, FRAME, Undelivered } from "@/components/ending-card";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
 import { QuestionDecide } from "@/components/question-decide";
-import { Crumb, Reply } from "@/components/reply";
+import { Crumb, deliverTo, Reply } from "@/components/reply";
 import { Button } from "@/components/ui/button";
 import { type Feed, type FeedRow, feedSource, waited } from "@/lib/feed";
 import { endingOf, keepNumbers, keptNumbers, type Numbers, type OperatorView, releaseHeld, renumber, useHeld, verbOf } from "@/lib/operator";
@@ -62,17 +62,34 @@ function Body({ row }: { row: FeedRow }) {
         </div>
       </div>
     );
-  if (row.computer)
-    return (
-      <div className={FRAME}>
-        <p className="max-w-[68ch] break-words">{row.essence || `It waits for you on ${row.computer.device}.`}</p>
-        <OnComputer computer={row.computer} />
-      </div>
-    );
+  if (row.computer) return <ComputerWaits row={row} computer={row.computer} />;
   return (
     <div className={FRAME}>
       <p className="max-w-[68ch] break-words">{row.essence || (row.action === "reply" ? "It waits for your message." : "Its turn is done.")}</p>
       {row.session && <Reply session={row.session} placeholder={row.action === "reply" ? "It waits for your message" : "Reply to go on with it"} />}
+    </div>
+  );
+}
+
+/** A computer's session that waits on him with no card of its own: his words, answered here, reach it on that
+ * computer's next report. */
+function ComputerWaits({ row, computer }: { row: FeedRow; computer: NonNullable<FeedRow["computer"]> }) {
+  const [said, setSaid] = useState<string | null>(row.answered ?? null);
+  const deliver = deliverTo(row);
+  return (
+    <div className={FRAME}>
+      <p className="max-w-[68ch] break-words">{row.essence || "It waits for your message."}</p>
+      {said !== null ? (
+        <div className="flex flex-col gap-1">
+          <p className="rounded-md bg-muted px-3 py-2 text-sm">You: «{said}»</p>
+          <p className="text-[13px] text-muted-foreground">It reaches the session when {computer.device} next checks in.</p>
+        </div>
+      ) : (
+        <>
+          <Undelivered row={row} />
+          {deliver && <Reply session={`${computer.device}/${computer.id}`} deliver={deliver} placeholder="It waits for your message" onSent={setSaid} />}
+        </>
+      )}
     </div>
   );
 }

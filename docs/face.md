@@ -196,6 +196,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `POST /api/sessions/{id}/pin {pinned}` | `{session}`: the pin is the session's row (`pinned`), so every device agrees; its `at` stays |
 | `POST /api/sessions/{id}/archive` | `{session}`: “Archive” — the session, its sub-sessions and side questions end where they stand (queue dropped, run stopped, cards stale) and leave every list (`archived`); a turn of it beginning again, a message from you, brings it back ([platform.md](platform.md#archive)) |
 | `GET /api/computers` | `{computers, off_s}` — the owner's computers' own sessions ([above](#from-the-computers)): per device `{device, at, off, sessions}`, each session `{id, title, folder, project, state, at, link?}` as its device last reported it (`state`: `working`, `waiting`, `done`; `at` in seconds); a revoked device is left out |
+| `POST /api/computers/{device}/sessions/{id}/answer` | `{text, at}` → `{answer}` (its id) — your answer to a session of that computer, from its card, to the turn the card showed (`at`, the row's `since`): kept in memory until the computer's next report takes it ([collections.md](collections.md#its-sessions), `answers`); a newer one replaces it. 404 for a computer revoked or unknown, or a session it does not list; 400 for one at work, a text empty or past 4000 characters, or no `at`; 409 when the session moved on since. The feed's row says it meanwhile (`answered`), or, when the computer refused it, what and why (`undelivered: {text, why}`) |
 | `GET /api/archived` | `{schema, sessions}` — “Archived”: the archived sessions, the latest first, 200 at most, each a session row with `archived_at`; kin archived with its session is not listed apart |
 | `POST /api/sessions/{id}/unarchive {main?}` | `{session}`: “Undo” in the toast “Archived.” — the session and the kin archived with it back in every list; their stopped turns stay stopped. `main: true`: it was its sphere's main session, and is again unless another one is by now |
 | `POST /api/sessions/{id}/side {input_id, text}` | `{session, say}`: a side question — see below |
@@ -486,9 +487,10 @@ platform's `turn_ending`) is drawn by it, «You asked: …» — your request in
 
 Every answer — a button, a box's words — goes to the session as your next message, and the card says it in place
 («You: …»). A session of one of your computers ([from the computers](#from-the-computers)) is a card too, drawn by its
-ending the same way, «on laptop» on its top line: it runs on that computer and is answered there — its options show
-what each changes, without buttons, and «Answer on laptop ↗» opens the session there by its `claude://` link; one that
-waits with no ending says so. With nothing to show, the page says what it looked at: no session waits, or how many
+ending the same way, «on laptop» on its top line, and answered here the same way, on any device: the answer waits on
+the platform until that computer's next report takes it into the session there, and meanwhile the card says «You: …»
+and that it reaches the session when the computer next checks in — it no longer waits on you. One that waits with no
+ending takes your words in its box. With nothing to show, the page says what it looked at: no session waits, or how many
 sessions your computer lists, or that it has not reported for a while. A row with a card of its own (a question, an approval, a proposal, a push) shows that card. A card waits
 unless its turn is only to read — a finished one (`done`, or a turn to read with no word for you); a thing to look at
 waits, though the feed lists it under “Read” — and that one rule (`lib/waiting.ts` `waits`) gives the numbers, the
@@ -777,8 +779,8 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
   the right “waiting” when it waits on you, a laptop mark and its last activity; its tooltip says the computer and
   the folder it runs in. It goes under the nearest project of the Base folder its computer gave, else under «Other» —
   never a project made up from its folder's top. It opens nothing here: on the computer itself, its link opens the
-  session there (`claude://…`, the one link a device may give). It has no pin, peek or menu, no cards in «Today» and
-  its question stays on the computer, which alone can answer it. Its dot is a room session's. A computer that has
+  session there (`claude://…`, the one link a device may give). It has no pin, peek or menu and no cards in «Today»;
+  its question is answered on its card in «Operator». Its dot is a room session's. A computer that has
   not reported for 2 minutes is off: its rows stay where they are, greyed, “off” on the right and «laptop off · seen
   14:05» in the tooltip, neither waiting nor working.
 - **A session's menu** («⋯», on its row and in its header): its sphere, “Make main in the sphere” / “No longer

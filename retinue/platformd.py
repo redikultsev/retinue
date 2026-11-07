@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from . import (approvals, attachments, chat, citecheck, cliengine, collections_admin, colltools, courier, episodes, events, face, feed, finish,
+from . import (approvals, attachments, chat, citecheck, cliengine, collections_admin, colltools, computers, courier, episodes, events, face, feed, finish,
                followups, inbox, lanetravel, lifecycle, outfiles, pings, plan, projecthosts, questions, signals, spaces, subs,
                tobase, topush, transcript, views)
 from .base import BaseRepo, under
@@ -134,6 +134,7 @@ class Platform:
         self.life = lifecycle.Lifecycle(store, self.subs, self._interrupt)  # a session's states and their moves
         self.followups = followups.FollowUps(self)  # a session brought back to a task that waits (`followups.py`)
         self.colltools = colltools.CollTools(self)  # the agents' tools for the collections, and their proposals
+        self.computers = computers.Computers()  # the sessions the owner's computers run, as they report them
         self.events = events.wire(self)  # the projects' events and their reactions (`events.py`)
         self.plan = plan.Plan(self)  # «Today»'s tasks, day and week, and the busy window the Router pushes
         self.chat = chat.Chat(self)  # the app's chat with the assistant: the router's rows, his words for it

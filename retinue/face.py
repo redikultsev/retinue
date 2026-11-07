@@ -48,7 +48,7 @@ from urllib.parse import parse_qsl, quote, unquote
 
 from aiohttp import web
 
-from . import changelog, changes, feed, inbox, mac, signals, spaces, tobase, topush
+from . import changelog, changes, computers, feed, inbox, mac, signals, spaces, tobase, topush
 from .cliengine import UUID4
 from .collections import FILE_MAX, Full, Refused
 from .sessions import PlatformStore
@@ -312,7 +312,7 @@ class Face:
             web.post("/api/auth/logout", self.logout),
             web.get("/api/meta", self.meta), web.get("/api/sessions", self.sessions),
             web.post("/api/whats-new/seen", self.whats_new_seen),
-            web.get("/api/archived", self.archived),
+            web.get("/api/archived", self.archived), web.get("/api/computers", self.computers),
             web.post("/api/sessions", self.new), web.get("/api/sessions/{id}", self.session),
             web.post("/api/sessions/{id}/input", self.input), web.post("/api/sessions/{id}/stop", self.stop),
             web.post("/api/sessions/{id}/pin", self.pin), web.post("/api/sessions/{id}/side", self.side),
@@ -354,7 +354,7 @@ class Face:
             *self.platform.plan.routes(),  # «Today»'s tasks, day and week (`plan.py`)
             *self.platform.chat.routes()])  # «Talk to Retinue»: the assistant's conversation (`chat.py`)
         # The agents on the owner's Mac (`mac.py`): their own app, their own check — a device's token, not the cookie.
-        self.mac_app = mac.Mac(self.platform).app()
+        self.mac_app = mac.Mac(self.platform, self.spaces).app()
         app.add_subapp(mac.PATH, self.mac_app)
         app.on_startup.append(self._sweep)
         return app
@@ -446,6 +446,16 @@ class Face:
     async def sessions(self, request: web.Request) -> web.Response:
         return web.json_response({"schema": SCHEMA, "cursor": self.store.cursor(),
                                   "sessions": self.store.face_sessions(self.clock())})
+
+    async def computers(self, request: web.Request) -> web.Response:
+        """The sessions the owner's computers run, as each last reported them (`computers.py`); a revoked device's are
+        left out."""
+        try:
+            live = {d["name"] for d in await self.platform.collections.devices() if d["revoked"] is None}
+        except Refused:
+            live = set()
+        return web.json_response({"computers": self.platform.computers.listing(self.clock(), live),
+                                  "off_s": computers.OFF_S})
 
     async def archived(self, request: web.Request) -> web.Response:
         """«Archived»: what the owner archived, the latest first, for his «Restore» (`unarchive`)."""

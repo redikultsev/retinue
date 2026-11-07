@@ -6,7 +6,7 @@
 // its cards under its row, with the full input and both buttons, when `cards` is set. A row opens inline (a peek):
 // the session's last words and a reply box, without leaving the list. A dot marks what came since the owner looked.
 import { Link, useRouterState } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { ArchivedList } from "@/components/archived-list";
 import { Composer } from "@/components/composer";
@@ -18,6 +18,7 @@ import {
   Columns,
   Database,
   GitPullRequest,
+  Laptop,
   Layers,
   Pin,
   Plus,
@@ -29,10 +30,11 @@ import { RELATION_WORDS, RelationIcon, upOf } from "@/components/relation";
 import { SessionMenu } from "@/components/session-menu";
 import { Markdown } from "@/components/transcript/item";
 import { ApiError, api } from "@/lib/api";
+import { type ComputerRow, computerRows, isComputer, useComputers } from "@/lib/computers";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
 import { useFeed } from "@/lib/feed";
-import { useProjectOf, useProjects } from "@/lib/projects";
+import { useNearestProject, useProjectOf, useProjects } from "@/lib/projects";
 import { FILTERS, type Filter, type FoldedRow, foldProjects, foldRows, isWaiting, type ProjectGroup, projectGroups } from "@/lib/spheres";
 import { approvalsOf, lastWords, listed, orderedItems, orderedSummaries, waitsOnOwner } from "@/lib/store";
 import { toast } from "@/lib/toast";
@@ -345,6 +347,45 @@ function Row({
   );
 }
 
+/** A session of one of the owner's computers (lib/computers.ts): its state, its title, the computer's mark and when it
+ * was last active. It opens nothing here; on the computer, its link opens the session there. An off computer's row is
+ * greyed, with when the computer was last seen. */
+function ComputerItem({ s, depth }: { s: ComputerRow; depth: number }) {
+  const { device, off, seen, folder, link } = s.computer;
+  const said = off ? `${device} off · seen ${when(seen)}` : `on ${device} · ${when(s.at)}`;
+  const inner = (
+    <>
+      <StateDot s={s} />
+      <span className={cn("min-w-0 flex-1 truncate text-[13px] pointer-coarse:text-[15px]", off ? "text-muted-foreground" : "text-foreground/85")}>
+        {s.title || "Untitled"}
+      </span>
+      <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground tabular-nums">
+        {s.state === "waiting" && (
+          <span className="rounded-sm bg-warning/20 px-1 leading-4 font-medium text-warning-foreground dark:text-warning">waiting</span>
+        )}
+        <Laptop className="size-3" />
+        <span className="sr-only">{said}</span>
+        <span aria-hidden="true">{off ? "off" : when(s.at)}</span>
+      </span>
+    </>
+  );
+  const line = "flex h-[30px] min-w-0 flex-1 items-center gap-2 self-stretch rounded-md pr-1 pl-2 pointer-coarse:h-auto pointer-coarse:min-h-11";
+  const title = `${s.title || "Untitled"} · ${said}${folder ? ` · ${folder}` : ""}`;
+  return (
+    <li className="flex flex-col" style={{ marginLeft: depth ? `${depth * 1.25}rem` : undefined }}>
+      {link ? (
+        <a href={link} title={title} className={cn(line, "hover:bg-accent/70")}>
+          {inner}
+        </a>
+      ) : (
+        <div title={title} className={line}>
+          {inner}
+        </div>
+      )}
+    </li>
+  );
+}
+
 /** A project in the list: a place — its row opens the project's page —, its mark, its name and the amber count of
  * what waits for the owner in it (its sub-projects too); a chevron folds what is under it. «Other» is a heading only. */
 function ProjectHead({
@@ -459,9 +500,13 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
   const feed = useFeed();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const of = useProjectOf(spheres);
+  const nearestOf = useNearestProject(spheres);
+  const machines = useComputers();
+  // a computer's session goes under the nearest project of the Base folder its computer gave, else «Other»
+  const where = useCallback((s: Session) => (isComputer(s) ? nearestOf(s.project) : of(s)), [of, nearestOf]);
   const groups = useMemo(
-    () => projectGroups(listed(sessions), spheres, nodes ?? [], filter, Date.now() / 1000, of),
-    [sessions, spheres, nodes, filter, of],
+    () => projectGroups([...listed(sessions), ...computerRows(machines)], spheres, nodes ?? [], filter, Date.now() / 1000, where),
+    [sessions, machines, spheres, nodes, filter, where],
   );
   // what waits for the owner in each project, its sub-projects' too: the number of its «Operator» tab
   const waitsIn = useMemo(() => waitingIn(feed, listed(sessions), of), [feed, sessions, of]);
@@ -477,27 +522,30 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
   }
   // Under «Waiting» nothing is folded: the filter is there to see what waits.
   const folds = filter === "waiting" ? NO_FOLDS : folded;
-  const row = ({ session: s, depth, side, kids, folded: shut, waiting }: FoldedRow) => (
-    <div key={s.id} className="flex flex-col">
-      <Row
-        s={s}
-        current={current}
-        beside={beside}
-        onPick={onPick}
-        pin={pin}
-        nested={side}
-        depth={depth}
-        kids={kids}
-        folded={shut}
-        hiddenWaiting={waiting}
-        onFold={() => fold(s.id)}
-      />
-      {cards &&
-        approvalsOf(approvals, s.id)
-          .filter(waitsOnOwner)
-          .map((a) => <ApprovalCard key={a.id} approval={a} className="mx-1 my-1" />)}
-    </div>
-  );
+  const row = ({ session: s, depth, side, kids, folded: shut, waiting }: FoldedRow) =>
+    isComputer(s) ? (
+      <ComputerItem key={s.id} s={s} depth={depth} />
+    ) : (
+      <div key={s.id} className="flex flex-col">
+        <Row
+          s={s}
+          current={current}
+          beside={beside}
+          onPick={onPick}
+          pin={pin}
+          nested={side}
+          depth={depth}
+          kids={kids}
+          folded={shut}
+          hiddenWaiting={waiting}
+          onFold={() => fold(s.id)}
+        />
+        {cards &&
+          approvalsOf(approvals, s.id)
+            .filter(waitsOnOwner)
+            .map((a) => <ApprovalCard key={a.id} approval={a} className="mx-1 my-1" />)}
+      </div>
+    );
   return (
     <nav aria-label="Projects" className={cn("flex flex-col gap-1", fill && "min-h-0 flex-1 px-2")}>
       {/* what the list is: the projects, each with its sessions; the chips under it filter the sessions by state */}

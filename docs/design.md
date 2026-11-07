@@ -130,6 +130,10 @@ Of the prototypes, «4 · Projects with sessions» was taken: a project is a pla
 - **A project's row** is a session row's height (30 px, 44 on touch): its mark, its name at 13 px medium, the amber
   count of what waits in it in mono at its right — its «Operator» count, the same number on its page and its parent's —, the fold chevron after it; the row opens the project. A sub-project
   is indented 14 px a level, its sessions with it. «Other» is a quiet 12 px heading, not a place.
+- **A computer's session** is a session row with nothing to press but its link: the same dot and title, then on the
+  right “waiting” (amber, when it waits on him), a 12 px laptop mark and its time in 11 px muted mono — the mark says
+  where it runs without a word per row. Off, its title goes muted and the time says “off”: grey is “not now”, never
+  an error.
 - **Talk to Retinue** is a column at the right (380 px) on a wide screen, a sheet on a phone: the sidebar's surface,
   a one-line header (mark, «Retinue», «your assistant · also in Telegram» quiet, ×), the conversation, the composer
   (no «＋»: it takes text and dictation). The conversation is the session's look: his words in the bubble (where

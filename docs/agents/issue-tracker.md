@@ -32,7 +32,8 @@ What the skills leave to us:
   --add-assignee @me` before the first line of code. One assigned to someone else is theirs: comment, ask, do not
   start it. Stopping — unassign yourself, with a comment on where it stands.
 - **One branch per issue**, from `develop`: `<n>-<short-slug>`; its pull request goes into `develop`, a draft while
-  it grows, and says `Closes #<n>`. A decision the other should know goes into the issue as a comment.
+  it grows, and says `Closes #<n>` (`.github/workflows/issue-link.yml` checks both and closes the issue on merge,
+  which GitHub does by itself only for `main`). A decision the other should know goes into the issue as a comment.
 - **Before the next one**: `gh issue list --assignee @me` — finish or hand back what you hold.
 - **What only the owner can do** — a token, a login, a choice — is `ready-for-human`, assigned to him, with exactly
   what is needed and where it goes.

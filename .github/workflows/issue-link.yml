@@ -1,0 +1,56 @@
+# Work goes issue first (docs/agents/issue-tracker.md): a pull request into develop names its open issue — the
+# branch is `<n>-<slug>` and the body says `Closes #n` — and the issue closes when the pull request merges. GitHub
+# closes it by itself only for the default branch (main), so for develop this workflow does.
+name: Issue link
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, edited, reopened, synchronize, closed]
+
+permissions:
+  contents: read
+
+jobs:
+  names:
+    name: PR — names its open issue
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      issues: read
+    steps:
+      - name: the branch and the body name one open issue
+        env:
+          BRANCH: ${{ github.head_ref }}
+          BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=${BRANCH%%-*}
+          [[ $n =~ ^[0-9]+$ && $BRANCH == "$n"-?* ]] || { echo "::error::the branch is <issue>-<slug>, not $BRANCH"; exit 1; }
+          grep -qiE "\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #$n\b" <<< "$BODY" \
+            || { echo "::error::the body says «Closes #$n»"; exit 1; }
+          state=$(gh api "repos/$REPO/issues/$n" --jq 'if .pull_request then "a pull request" else .state end') \
+            || { echo "::error::#$n is not an issue here"; exit 1; }
+          [[ $state == open ]] || { echo "::error::#$n is $state, not an open issue"; exit 1; }
+          echo "#$n"
+
+  closes:
+    name: PR merged — its issue closes
+    if: github.event.action == 'closed' && github.event.pull_request.merged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      issues: write
+    steps:
+      - name: close the issue the branch names
+        env:
+          BRANCH: ${{ github.head_ref }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=${BRANCH%%-*}
+          [[ $n =~ ^[0-9]+$ ]] || { echo "no issue in $BRANCH"; exit 0; }
+          gh issue close "$n" --repo "$REPO" --reason completed --comment "Merged into develop by #$PR."

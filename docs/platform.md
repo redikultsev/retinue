@@ -442,9 +442,19 @@ A session you started names itself, as the desktop app titles a session within s
 server's instructions tell it to call `name_session` first thing in its first turn, before any other work — a title of
 3–6 words in the language you wrote in, which the list shows in place of your first words, and, when it has no sphere
 and you did not place it, the sphere: the instructions list the names, only a configured one is taken. The platform
-sets the sphere, never the main mark, and the session's sub-sessions follow — but one you placed yourself. Each once:
-a title it has stays; a sphere set by you (`sphere_by: owner`) or by the session stays. A sub-session has its title
-from its start and its parent's sphere; a side question its question's — neither is asked.
+sets the sphere, never the main mark, and the session's sub-sessions follow — but one you placed yourself. A sphere set
+by you (`sphere_by: owner`) or by the session stays. A sub-session has its title from its start and its parent's
+sphere; a side question its question's — neither is asked.
+
+The title names the work, never the project: the list shows the session under its project already. A title that
+starts with the session's own project and a colon is kept without that part — the project by the map's rule
+(`PlatformStore.project_key`: its folder in the Base, else its sphere), compared, case aside, with that project's
+title and folder name only (a Base project's Showcase heading and folder; a sphere's title and name); anything else
+before a colon («Fix: …») stays, as does a title that would be left empty. The session names itself again when what it
+does has changed: `name_session` may be called at any time, the instructions tell a named session its title and when
+to change it, and each call that changes the title is shown at once. A title you set yourself (`title_by: owner`,
+`set_title(by="owner")`) is never overwritten: the call is answered, not refused, and nothing changes. The app has no
+rename of its own yet: the mark is what one will set.
 
 ## The page reader
 

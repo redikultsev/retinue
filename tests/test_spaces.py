@@ -321,6 +321,12 @@ def test_spaces_are_top_folders_with_a_showcase(base):
         "no folder without AGENTS.md, no name that is not a Space's, no Showcase that is a link"
 
 
+def test_a_projects_title_is_the_one_its_row_shows_and_a_folder_that_is_no_project_has_none(base):
+    rows = {row["name"]: row["title"] for row in base.spaces()[1]}
+    assert base.title("travel") == rows["travel"] and base.title("home") == rows["home"]
+    assert base.title("nowhere") is None and base.title("") is None
+
+
 def test_a_space_lists_its_records_by_nature_with_their_dates(base):
     _, view = base.space("travel")
     records = view["records"]

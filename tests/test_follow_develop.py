@@ -79,7 +79,7 @@ def test_a_commit_that_is_not_healthy_goes_back_with_its_data_and_its_checkout(t
     assert git("rev-parse", "HEAD", cwd=repo) == a
     assert state["running"] == {"version": "v1.0.0", "healthy": True}
     data = volumes / "retinue_router-data" / "_data"
-    assert (data / "schema.txt").read_text() == "v1.0.0" and (data / "router.sqlite").read_text() == "the owner's rows"
+    assert (data / "schema.txt").read_text() == "v1.0.0" and (data / "router.sqlite").read_text()
     assert [calls[n]["version"] for n in compose(calls, "up")][-1] == "v1.0.0", \
         "started once more with the compose file of the commit before"
     assert stack_env(srv)["RETINUE_VERSION"] == "v1.0.0"

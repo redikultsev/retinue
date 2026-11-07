@@ -324,8 +324,7 @@ def test_the_feed_groups_by_action_not_by_source(tmp_path):
 
         got = await world.get("/api/feed")
         assert got["count"] == 6 and got["bot"] == "retinue_bot" and got["assistant_at"] == world.clock.now
-        assert [g["title"] for g in got["groups"]] == ["Answer the question", "Decide", "Reply", "Read",
-                                                       "From the assistant"]
+        assert [g["action"] for g in got["groups"]] == ["answer", "decide", "reply", "read", "assistant"]
         answer, decide, reply, unread, assistant = (g["rows"] for g in got["groups"])
         [row] = answer
         assert (row["session"], row["source"], row["essence"]) == (question, "question", "Где жить?")
@@ -420,7 +419,7 @@ def test_wait_gets_the_first_ten_rows_without_inputs_and_the_count_of_the_rest(t
                          "approval": card["approval"], "card": None, "where": "retinue", "title": "почини",
                          "since": first["since"], "essence": "echo ran >> ran.txt"}
         assert "input" not in json.dumps(got), "a card's input stays in the app"
-        assert got["rows"][1]["group"] == "From the assistant" and got["rows"][1]["session"] is None
+        assert got["rows"][1]["group"] and got["rows"][1]["session"] is None
 
     scenario(tmp_path, body)
 

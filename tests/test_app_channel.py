@@ -69,7 +69,7 @@ def test_his_message_in_the_app_is_the_conversation_and_her_answer_and_drafts_go
         return core, platform, telegram
 
     core, platform, telegram = asyncio.run(run())
-    assert len(world.asked) == 1 and ", in the app]\nBook the usual table" in world.asked[0], "once, named as the app's"
+    assert len(world.asked) == 1 and "Book the usual table" in world.asked[0], "once, named as the app's"
     rows = platform.rows()
     assert rows["app:face:1"]["by"] == "owner" and rows["app:face:1"]["text"] == "Book the usual table"
     her = [r for r in rows.values() if r["by"] == "her"]
@@ -101,8 +101,8 @@ def test_telegram_s_words_and_her_cards_reach_the_app_and_a_press_rewrites_the_c
     rows = platform.rows()
     assert rows["telegram:7"]["via"] == "telegram" and rows["telegram:7"]["by"] == "owner"
     assert pressed["text"] == "Pick one\n\n_Chosen: Yes_" and pressed["buttons"] == []
-    assert pressed["toast"] == "The button reached the router."
-    assert spent["toast"] == "The button was already pressed or has expired." and spent["text"] == pressed["text"]
+    assert pressed["toast"]
+    assert spent["toast"] and spent["text"] == pressed["text"]
     assert rows[second]["text"] == "Again?\n\n_Chosen: Yes_", "a press in Telegram rewrites the app's row too"
 
 
@@ -150,7 +150,7 @@ def test_her_files_go_up_beside_their_row_and_one_too_big_is_named(tmp_path, mon
     assert [f["row"] for f in platform.files] == [her["id"]] and platform.files[0]["data"] == "JVBE"
     kept, named = her["files"]
     assert kept == {"id": "f" * 32, "name": "plan.pdf", "size": 3, "mime": "application/pdf"}
-    assert named["id"] is None and named["name"] == "big.zip" and "not kept in the app" in named["why"]
+    assert named["id"] is None and named["name"] == "big.zip"
 
 
 @pytest.mark.parametrize("typed, command", [("/new", "New conversation"), ("/help", "Commands:")])

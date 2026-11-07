@@ -1795,10 +1795,12 @@ def test_every_service_has_a_memory_ceiling_and_the_always_on_part_stays_small()
 def test_every_image_is_pinned_by_digest_or_built_here():
     """A deploy runs exactly what was checked: a tag can be moved by its owner, a digest cannot. Built images are
     named `*:local`; their own base images are pinned in their Dockerfiles or by the commit they are built from.
-    Retinue's own images are a release's, by the tag deploy/update.sh writes, or built here: each one a service builds."""
+    Retinue's own images are a release's, by the tag deploy/update.sh writes, or built here: each one a service builds.
+    The lane's is never a release's (it carries Claude Code): update.sh builds it here under the version."""
     files = [ROOT / "deploy" / "compose.yml", ROOT / "deploy" / "split-dns" / "compose.yml",
              ROOT / "tests" / "e2e" / "compose.yml"]
-    own = re.compile(r"\$\{RETINUE_IMAGE:-retinue\}(-face|-pages-build|-lane-private)?:\$\{RETINUE_VERSION:-local\}")
+    own = re.compile(r"\$\{RETINUE_IMAGE:-retinue\}(-face|-pages-build)?:\$\{RETINUE_VERSION:-local\}")
+    here = re.compile(r"retinue-lane-private:\$\{RETINUE_VERSION:-local\}")
     for path in files:
         services = yaml.safe_load(path.read_text())["services"]
         built = {service.get("image") for service in services.values() if "build" in service}
@@ -1806,6 +1808,9 @@ def test_every_image_is_pinned_by_digest_or_built_here():
             image = service.get("image", "")
             if own.fullmatch(image):
                 assert image in built, f"{path.name}: {name}: no service builds {image} for a local run"
+                continue
+            if here.fullmatch(image):
+                assert "build" in service, f"{path.name}: {name}: {image} is built by its own service"
                 continue
             assert "RETINUE_VERSION" not in image, f"{path.name}: {name}: {image}"
             if "build" in service or image.endswith(":local"):

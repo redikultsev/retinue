@@ -263,9 +263,11 @@ def test_d8_the_init_line_names_the_session_the_model_and_the_mode_and_an_answer
 
 
 def effort_of(request: object) -> list:
-    """Every value under a key `effort` in what the CLI sent the API, wherever it put it."""
+    """Every value under a key `effort` in what the CLI sent the API, wherever it put it — but in `tools`, whose
+    schemas have parameters of that name (the Agent tool's `effort`)."""
     if isinstance(request, dict):
-        return [v for k, v in request.items() if k == "effort"] + [e for v in request.values() for e in effort_of(v)]
+        return [v for k, v in request.items() if k == "effort"] + \
+            [e for k, v in request.items() if k != "tools" for e in effort_of(v)]
     if isinstance(request, list):
         return [e for v in request for e in effort_of(v)]
     return []
@@ -286,7 +288,8 @@ def test_every_effort_settings_offers_reaches_the_api_as_it_was_set(lane, api, e
     api.tools, api.mode = [bash("true")], "allow"
     run = lane.run("go", effort=effort)
     assert run.rc == 0, run.stderr
-    assert effort_of(api.requests[0]) == [effort], "not lowered, not dropped"
+    sent = effort_of(api.requests[0])
+    assert sent and set(sent) == {effort}, ("not lowered, not dropped", sent)
 
 
 def test_a_deferred_call_runs_exactly_once_on_resume_and_never_again(lane, api):

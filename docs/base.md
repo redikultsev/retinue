@@ -345,7 +345,9 @@ folder. Claude Code loads `AGENTS.md`/`CLAUDE.md` from the working folder and it
 root down to it, 32 KiB in all ([AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)). So a
 passport is written for that reader: short fixed parts, one thought per item, pointers to the project's files with
 when to open each. The schema is `SCHEMA` in `retinue/passport.py`; a passport holds exactly these parts, in this
-order, and nothing else:
+order, and nothing else. The parts follow what [agents.md](https://agents.md/) lists as an `AGENTS.md`'s usual
+sections — a project overview (`Files`), its conventions (`Rules`), build and test commands (`Checks`) — plus what
+no code file says: what the project is for (`Why`) and where it stops, both ways, with its size (`Scope`):
 
 | Part | | What it holds | Limits |
 | --- | --- | --- | --- |

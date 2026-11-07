@@ -71,11 +71,12 @@ export function Goal({ plan, goal }: { plan: Plan; goal?: string }) {
   );
 }
 
-/** The line under a task's title: its goal, how long, by when. */
-export function TaskMeta({ plan, task, today }: { plan: Plan; task: Task; today: string }) {
+/** The line under a task's title: its project where the list is not by project, its goal, how long, by when. */
+export function TaskMeta({ plan, task, today, project }: { plan: Plan; task: Task; today: string; project?: string }) {
   const due = task.fields.due;
   const late = due && due < today && task.fields.state === "open";
   const bits: React.ReactNode[] = [];
+  if (project) bits.push(<span key="p">{project}</span>);
   if (goalLabel(plan.tasks.goals, task.fields.goal)) bits.push(<Goal key="g" plan={plan} goal={task.fields.goal} />);
   bits.push(<span key="m">{duration(minutesOf(task))}</span>);
   const by = moment(task.fields.by);

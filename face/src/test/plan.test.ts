@@ -1,7 +1,8 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Live } from "@/lib/live";
-import { addDays, at, dayOf, dayWords, duration, hm, iso, type Plan, placed, planDay, usePlan, windowDay, windowOf } from "@/lib/plan";
+import { addDays, at, byProject, dayOf, dayWords, duration, hm, iso, type Plan, placed, planDay, type Task, usePlan, windowDay, windowOf } from "@/lib/plan";
+import { projectTree } from "@/lib/projects";
 
 const TZ = "Europe/Berlin";
 const ZONE = "Asia/Dubai"; // the plan's own zone, three hours ahead of the owner's
@@ -88,5 +89,51 @@ describe("usePlan", () => {
     await waitFor(() => expect(reads).toBe(3));
     unmount();
     expect(resynced.size).toBe(0);
+  });
+});
+
+describe("tasks by project", () => {
+  // the Base's list, A–Z as the platform sends it; the spheres in the platform's order
+  const nodes = [
+    { name: "reading", parent: "" },
+    { name: "travel", parent: "" },
+    { name: "travel/lisbon", parent: "travel" },
+    { name: "work", parent: "" },
+    { name: "work/acme", parent: "work" },
+    { name: "work/acme/site", parent: "work/acme" },
+    { name: "zoo", parent: "" },
+  ];
+  const spheres = [{ name: "work" }, { name: "travel" }, { name: "reading" }];
+  const task = (id: string, project?: string): Task => ({
+    id, fields: { title: id, state: "open", ...(project ? { project } : {}) }, version: 1, created: NOW, updated: NOW,
+  });
+
+  it("orders the tree as the left panel does: the spheres' order, the other top projects A–Z, each one's sub-projects after it", () => {
+    expect(projectTree(nodes, spheres)).toEqual([
+      { key: "work", depth: 0 },
+      { key: "work/acme", depth: 1 },
+      { key: "work/acme/site", depth: 2 },
+      { key: "travel", depth: 0 },
+      { key: "travel/lisbon", depth: 1 },
+      { key: "reading", depth: 0 },
+      { key: "zoo", depth: 0 },
+    ]);
+  });
+
+  it("takes the spheres for the tree when there is no list of the Base's projects", () => {
+    expect(projectTree(null, spheres)).toEqual([{ key: "work", depth: 0 }, { key: "travel", depth: 0 }, { key: "reading", depth: 0 }]);
+    expect(projectTree([], [])).toEqual([]);
+  });
+
+  it("groups the tasks in the tree's order, a folder the tree does not know after them, the tasks of none last, each in the order given", () => {
+    const rows = [task("a"), task("b", "travel/lisbon"), task("c", "work/acme"), task("d", "home"), task("e", "work/acme"), task("f")];
+    const groups = byProject(rows, (t) => t.fields.project ?? "", projectTree(nodes, spheres));
+    expect(groups.map((g) => [g.key, g.depth, g.rows.map((r) => r.id)])).toEqual([
+      ["work/acme", 1, ["c", "e"]],
+      ["travel/lisbon", 1, ["b"]],
+      ["home", 0, ["d"]],
+      ["", 0, ["a", "f"]],
+    ]);
+    expect(byProject([], () => "", projectTree(nodes, spheres))).toEqual([]);
   });
 });

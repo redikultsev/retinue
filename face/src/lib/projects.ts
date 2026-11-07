@@ -114,6 +114,33 @@ export function useNearestProject(spheres: Sphere[]): (folder: string | null | u
   return useMemo(() => (folder) => nearest(folder, known), [known]);
 }
 
+/** A place in the tree of projects: its path, and how deep below a top project it is (0 for a top one). */
+export interface TreeNode {
+  key: string;
+  depth: number;
+}
+
+/** The projects in the left panel's order (lib/spheres.ts `projectGroups`): the top ones — the spheres as the
+ * platform lists them, then the others A–Z —, each followed by its sub-projects A–Z, at every depth. With no list of
+ * the Base's projects, the spheres stand for them. */
+export function projectTree(list: Pick<ProjectNode, "name" | "parent">[] | null, spheres: Pick<Sphere, "name">[]): TreeNode[] {
+  const nodes = list?.length ? list : spheres.map((s) => ({ name: s.name, parent: "" }));
+  const node = new Map(nodes.map((n) => [n.name, n]));
+  const up = (key: string): string | null => {
+    const p = node.get(key)?.parent;
+    return p && node.has(p) ? p : null;
+  };
+  const names = [...node.keys()].filter(Boolean);
+  const at = (k: string) => spheres.findIndex((s) => s.name === k) + 1 || spheres.length + 1;
+  const out: TreeNode[] = [];
+  const walk = (key: string, depth: number) => {
+    out.push({ key, depth });
+    for (const k of names.filter((k) => up(k) === key).sort((a, b) => a.localeCompare(b))) walk(k, depth + 1);
+  };
+  for (const k of names.filter((k) => up(k) === null).sort((a, b) => at(a) - at(b) || a.localeCompare(b))) walk(k, 0);
+  return out;
+}
+
 /** A project's title: its Showcase's, a top one's sphere's, else its folder's last name. */
 export function projectName(path: string, list: ProjectNode[] | null, spheres: Sphere[]): string {
   const sphere = spheres.find((s) => s.name === path);

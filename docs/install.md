@@ -154,11 +154,13 @@ lines in *Environment* and redeploy: no snapshot, no way back.
 ## Following develop
 
 A server can follow `develop` instead of releases: each push there that CI passes is on it minutes later, with no one
-on the server (CI's last job, `deploy` in `.github/workflows/ci.yml`). Actions logs in over ssh with a key that can do one thing, run
-`deploy/deploy.sh` with the commit's sha. It checks the commit out, builds it while the stack runs, stops the stack,
-copies its data (as `update.sh` does, into `/var/backups/retinue/deploys/`, the last five kept), starts it with
-`docker compose up --wait` and, when a service is not healthy within five minutes, puts the data back and starts the
-commit before. A server on `develop` builds from its checkout: no `RETINUE_IMAGE`, no `RETINUE_VERSION` in `stack.env`.
+on the server. CI builds the commit's images once, as a release's (`release.yml`, both architectures), and pushes
+them as `ghcr.io/<owner>/retinue*:sha-<12 hex>`; its last job, `deploy` in `.github/workflows/ci.yml`, logs in over
+ssh with a key that can do one thing, run `deploy/deploy.sh` with the commit's sha. Nothing is built on the server:
+it checks the commit out (its compose file names its images) and switches to them with `update.sh` — the steps of
+«Updating», snapshot and way back included. Not healthy: the data, `stack.env` and the checkout go back to the commit
+before. The last ten snapshots are kept. The registry's packages are public, as the repository is; for a private one,
+log the server in as in «Updating».
 
 To turn it on, once:
 

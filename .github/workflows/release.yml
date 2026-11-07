@@ -1,5 +1,7 @@
 # A tag vX.Y.Z publishes Retinue's own images to the owner's registry (ghcr.io) as <owner>/retinue*:vX.Y.Z, each built
 # as deploy/compose.yml builds it (tests/test_update.py); deploy/update.sh pulls them (docs/install.md, «Updating»).
+# CI calls the same build for each push to develop that passed, with the commit: its images are sha-<12 hex>, which
+# the server that follows develop pulls (ci.yml, deploy; docs/install.md, «Following develop»).
 # Each image is built for linux/amd64 and linux/arm64, each on a runner of its own architecture (no emulation), pushed
 # as vX.Y.Z-amd64 and vX.Y.Z-arm64, and vX.Y.Z names both: a server pulls the one for its own architecture.
 # Actions are pinned by commit, each at least two weeks old when pinned (as ci.yml).
@@ -8,6 +10,12 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_call:
+    inputs:
+      commit:
+        description: the commit of develop to build; its images are tagged sha-<its first 12 hex>
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -44,7 +52,8 @@ jobs:
         env:
           OWNER: ${{ github.repository_owner }}
           REPOSITORY: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          REF: ${{ github.ref_name }}
+          COMMIT: ${{ inputs.commit }}
           IMAGE: ${{ matrix.image }}
           ARCH: ${{ matrix.arch }}
           CONTEXT: ${{ matrix.context }}
@@ -53,7 +62,8 @@ jobs:
           ACTOR: ${{ github.actor }}
           TOKEN: ${{ github.token }}
         run: |
-          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$TAG is not vX.Y.Z"; exit 1; }
+          if [[ -n $COMMIT ]]; then TAG=sha-${COMMIT:0:12}; else TAG=$REF; fi
+          [[ $TAG =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{12})$ ]] || { echo "::error::$TAG is not vX.Y.Z or sha-<hex>"; exit 1; }
           [[ $(docker version --format '{{.Server.Arch}}') == "$ARCH" ]] || { echo "::error::not an $ARCH runner"; exit 1; }
           ref="ghcr.io/${OWNER,,}/$IMAGE:$TAG-$ARCH"   # the registry takes lower case only
           build_args=()
@@ -75,11 +85,13 @@ jobs:
       - name: one tag for both architectures
         env:
           OWNER: ${{ github.repository_owner }}
-          TAG: ${{ github.ref_name }}
+          REF: ${{ github.ref_name }}
+          COMMIT: ${{ inputs.commit }}
           IMAGE: ${{ matrix.image }}
           ACTOR: ${{ github.actor }}
           TOKEN: ${{ github.token }}
         run: |
+          if [[ -n $COMMIT ]]; then TAG=sha-${COMMIT:0:12}; else TAG=$REF; fi
           ref="ghcr.io/${OWNER,,}/$IMAGE:$TAG"
           printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           docker buildx imagetools create -t "$ref" "$ref-amd64" "$ref-arm64"

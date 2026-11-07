@@ -3,6 +3,7 @@
 // order, a sub-project as an area of its own under its project. Nothing moves when a state changes: a tile only says
 // it. Flat on purpose: places that stay put are what spatial memory needs (Data Mountain, 1998); a third dimension
 // does not help (Cockburn & McKenzie, 2002).
+import { rowSession } from "./computers";
 import type { FeedRow, TurnEnding } from "./feed";
 import { endingOf, type Numbers } from "./operator";
 import { RECENT_S } from "./store";
@@ -115,7 +116,7 @@ export function needs(row: FeedRow): string {
 
 /** A session's tile: by its request on the feed (the first that waits), else by its own state. */
 export function tileOf(s: Session, rows: FeedRow[], numbers: Numbers): Tile {
-  const mine = rows.filter((r) => r.session === s.id);
+  const mine = rows.filter((r) => rowSession(r) === s.id);
   const row = mine.find(rowWaits) ?? mine[0] ?? null;
   const waits = (row !== null && rowWaits(row)) || isWaiting(s);
   const state: TileState = waits ? "waits" : s.state === "active" ? "working" : "done";

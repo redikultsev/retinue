@@ -659,6 +659,13 @@ not the owner's records.
   for a session outside every project; `link`, optional, only `claude://claude.ai/…`. At most 500 sessions; a report
   with a row it does not take is refused whole, with why, and the list before stays. The answer is
   `{"taken": N, "again_s": 30}`: the Mac reports on each change and every 30 s at the latest.
+- **`ending`**, optional on a session not at work: its current turn ending, the shape of a room session's
+  `turn_ending` ([platform.md](platform.md#turn-endings)). The feed shows it as that session's card, by its kind
+  ([face.md](face.md#the-operator)); a session that waits with none is a «Reply» row. An artifact by `path` is a file
+  on the Mac: the app shows its name, «on your computer»; one by `url` opens as a link. An ending off the shape is left
+  out and the session stays: the answer names it, `"left_out": [{"id", "why"}]`.
+- **A place on the map** (`slot` in the app's list): the lowest free in its project when it first shows, kept while
+  the Mac lists it.
 - **Kept in memory only**, per device: nothing on disk and nothing in a log — titles and folders are the owner's —;
   a restart forgets the lists until each Mac's next report. No report for 2 minutes and the Mac is off: the app
   greys its rows. A revoked device's rows go at once.

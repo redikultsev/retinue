@@ -20,6 +20,8 @@ export interface ComputerSession {
   at: number;
   /** `claude://…`: the session on that computer. */
   link?: string;
+  /** Its place on the operator's map in its project, kept while its computer lists it. */
+  slot?: number;
 }
 
 export interface Computer {
@@ -37,6 +39,13 @@ export interface ComputerRow extends Session {
 }
 
 export const isComputer = (s: Session): s is ComputerRow => "computer" in s && !!(s as ComputerRow).computer;
+
+/** The list's id of a computer's session: never one of the room's. */
+export const computerId = (device: string, id: string) => `computer:${device}:${id}`;
+
+/** The session a feed row belongs to, as the list and the map name it: the room's id, or a computer's. */
+export const rowSession = (row: { session: string | null; computer?: { device: string; id: string } }): string | null =>
+  row.session ?? (row.computer ? computerId(row.computer.device, row.computer.id) : null);
 
 const EVERY_MS = 15_000;
 let computers: Computer[] = [];
@@ -88,7 +97,7 @@ export function useComputers(): Computer[] {
 export function computerRows(list: Computer[]): ComputerRow[] {
   return list.flatMap((c) =>
     c.sessions.map((s) => ({
-      id: `computer:${c.device}:${s.id}`,
+      id: computerId(c.device, s.id),
       track: c.device,
       lane: "",
       kind: "computer",
@@ -99,6 +108,7 @@ export function computerRows(list: Computer[]): ComputerRow[] {
       waiting: 0,
       sphere: null,
       project: s.project,
+      ...(s.slot !== undefined ? { slot: s.slot } : {}),
       computer: { device: c.device, off: c.off, seen: c.at, folder: s.folder, ...(s.link ? { link: s.link } : {}) },
     })),
   );

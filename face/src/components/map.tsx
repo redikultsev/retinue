@@ -7,8 +7,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Layers, SphereMark } from "@/components/icons";
 import { OperatorCard, useOperatorNumbers } from "@/components/operator";
 import { RelationIcon, upOf } from "@/components/relation";
+import { OnComputer } from "@/components/ending-card";
 import { Crumb, Reply } from "@/components/reply";
 import { Dialog } from "@/components/ui/dialog";
+import { computerRows, isComputer, useComputers } from "@/lib/computers";
 import type { Feed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { type Area, mapAreas, onMap, type Tile, tileOf } from "@/lib/map";
@@ -113,6 +115,16 @@ function AreaView({
 
 /** A session with no request on the feed: what it is doing, a way to it and a box to write into it. */
 function SessionCard({ s, tile }: { s: Session; tile: Tile }) {
+  if (isComputer(s))
+    return (
+      <article aria-label={s.title || "Untitled"} className="flex flex-col gap-3">
+        <Crumb>
+          {WORDS[tile.state]} · on {s.computer.device}
+        </Crumb>
+        <h2 className="text-[15px] font-medium text-balance">{s.title || "Untitled"}</h2>
+        <OnComputer computer={{ device: s.computer.device, id: s.id, ...(s.computer.link ? { link: s.computer.link } : {}) }} verb="Open" />
+      </article>
+    );
   return (
     <article aria-label={s.title || s.track} className="flex flex-col gap-3">
       <Crumb session={s.id}>{WORDS[tile.state]}</Crumb>
@@ -146,14 +158,16 @@ export function MapView({
   const [open, setOpen] = useState<string | null>(null);
   const grid = useRef<HTMLElement>(null);
   const of = useProjectOf(spheres);
+  const machines = useComputers();
+  // the room's sessions and the computers' (an off computer's are not on the map: nothing there is live)
   const sessions = useMemo(() => {
-    const all = onMap(listed(state.sessions), now);
+    const all = [...onMap(listed(state.sessions), now), ...computerRows(machines.filter((m) => !m.off))];
     return project ? all.filter((s) => within(of(s), project)) : all;
-  }, [state.sessions, now, project, of]);
+  }, [state.sessions, machines, now, project, of]);
   const areas = useMemo(() => mapAreas(sessions, spheres, nodes ?? [], of), [sessions, spheres, nodes, of]);
   const rows = useMemo(() => requests(feed), [feed]);
   const tiles = useMemo(() => new Map(sessions.map((s) => [s.id, tileOf(s, rows, numbers)])), [sessions, rows, numbers]);
-  const picked = open ? state.sessions[open] : undefined;
+  const picked = open ? sessions.find((s) => s.id === open) : undefined;
   const pickedTile = open ? tiles.get(open) : undefined;
 
   // working sessions' plans: their snapshot read once, then the stream keeps them

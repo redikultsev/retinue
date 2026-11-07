@@ -30,7 +30,8 @@ This repository is public. It is one person's platform, and it must say nothing 
 ### Issue tracker
 
 GitHub Issues on `retinue-oss/retinue`, which are public, so the rules above apply to every issue. See
-`docs/agents/issue-tracker.md`.
+`docs/agents/issue-tracker.md`. Two people develop it at once: work starts from an issue, claimed by assigning
+yourself before the first line of code; one assigned to someone else is theirs (its «Two of us at once»).
 
 ### Triage labels
 

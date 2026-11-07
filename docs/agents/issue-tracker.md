@@ -11,6 +11,25 @@ original. When in doubt, leave it out of the issue and ask.
 
 Write issues in English, like the rest of the repository.
 
+## Two of us at once
+
+Two people develop Retinue, each with agents, often on the same day. The issue is where we see who does what, so no
+two of us build the same thing and nothing waits unseen.
+
+- **Work starts from an issue.** Search the open ones first (`gh issue list --search "<words>"`): what you want may
+  be a ticket already, or part of a map (#11). Nothing fits — file one, labelled by the triage table, before the code.
+- **Claim before the first line of code**: `gh issue edit <n> --add-assignee @me`. An issue assigned to someone else
+  is theirs: add what you know as a comment, or ask them, and do not start it. Stopping — unassign yourself with a
+  comment on where it stands.
+- **One branch per issue**, from `develop`: `<n>-<short-slug>`. Its pull request goes into `develop` and says
+  `Closes #<n>`; the template's «For the owner» line is the changelog's.
+- **Small, visible steps.** Push the branch early; open the pull request as a draft while it grows, so the other
+  sees it on the issue. A decision the other should know goes into the issue as a comment, not only into the code.
+- **Before picking the next one**: `gh issue list --assignee @me` (finish or hand back what you hold), then the open
+  ones with no assignee and no open blocker (the frontier query below).
+- **What only the owner can do** — a token, a login, a choice — is `ready-for-human`, assigned to him, with exactly
+  what is needed and where it goes. The agent that needs it says so in its session too.
+
 ## Without `gh`
 
 Where `gh` is not available (a cloud session), use the GitHub MCP tools for the same operations: `issue_write`

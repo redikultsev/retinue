@@ -39,7 +39,7 @@ tracks:
 # Spheres of your life — the Spaces of your knowledge base. The app groups sessions by them; `/<name> <text>` in
 # Telegram writes into the sphere's main session (made on the first such message), `/<name>` alone says how it is;
 # `/new <name> <text>` starts another session there. `track`: where a new session of the sphere runs — the root of
-# the Base, like a session on your Mac. A name is also a bot command: a-z, 0-9 and `_`, not a track's name and not one
+# the Base, like a session on your computer. A name is also a bot command: a-z, 0-9 and `_`, not a track's name and not one
 # of the bot's own commands. See docs/platform.md.
 spheres:
   - {name: work, title: Work, icon: "💼", track: base}

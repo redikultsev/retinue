@@ -74,7 +74,7 @@ REJECTED = ("push rejected", "push не принят")
 
 
 def norm(path: str) -> str:
-    """A name as the owner's Mac sees it: its file system ignores case and Unicode normalisation."""
+    """A name as macOS and Windows see it: their file systems ignore case, and macOS's Unicode normalisation too."""
     return unicodedata.normalize("NFC", path).casefold()
 
 
@@ -85,7 +85,7 @@ def hidden(path: str) -> bool:
 
 def match(path: str, pattern: str) -> bool:
     """A glob over `/`-separated paths: `*` and `?` stay inside one folder, `**` is any number of folders. Case and
-    Unicode normalisation do not count, as on the owner's Mac."""
+    Unicode normalisation do not count, as on macOS (case alone on Windows)."""
     path, pattern = norm(path), norm(pattern)
     segments, regex = pattern.split("/"), ""
     for i, segment in enumerate(segments):
@@ -241,7 +241,7 @@ def check(git: list[str], old: str, new: str, policy: Policy, role: str) -> Verd
 
 
 def collisions(git: list[str], rev: str, changed: set[str]) -> list[str]:
-    """Two names in the tree that are one file or folder on the owner's Mac (`A.md` and `a.md`, `é` composed and
+    """Two names in the tree that are one file or folder on macOS or Windows (`A.md` and `a.md`, `é` composed and
     decomposed): one of them would silently take the other's place there. Only those the change brings in."""
     names = [n for n in _git(git, "ls-tree", "-r", "-z", "--name-only", rev, text=False).decode("utf-8", "replace")
              .split("\0") if n]
@@ -258,7 +258,7 @@ def collisions(git: list[str], rev: str, changed: set[str]) -> list[str]:
         for name in sorted(group):
             if any(path == name or path.startswith(name + "/") for path in changed):
                 other = sorted(group - {name})[0]
-                out.append(f"{name}: on a Mac it is the same as {other} — the names differ only in case or Unicode "
+                out.append(f"{name}: on macOS or Windows it is the same as {other} — the names differ only in case or Unicode "
                            "normalization")
     return out
 

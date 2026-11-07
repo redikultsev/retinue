@@ -16,7 +16,7 @@ from test_kbcheck import MARKER, RECORD, base, change, git, install_hub, policy 
 
 @pytest.fixture
 def kb(tmp_path, base):
-    """The hub (pushes from this test's user are the assistant's), the router's working copy, a Mac clone."""
+    """The hub (pushes from this test's user are the assistant's), the router's working copy, a computer clone."""
     hub = install_hub(tmp_path, base, writer_uid=os.getuid())
     rules = tmp_path / "policy.json"
     rules.write_text(json.dumps(policy(writer_uid=os.getuid()).__dict__, ensure_ascii=False))
@@ -24,9 +24,9 @@ def kb(tmp_path, base):
                        checkout=["/*.md", "/notes/"])
     memory = Memory(cfg, sqlite3.connect(":memory:"))
     memory.prepare()
-    mac = tmp_path / "mac"
-    git(tmp_path, "clone", "-q", str(hub), str(mac))
-    return memory, hub, mac
+    computer = tmp_path / "computer"
+    git(tmp_path, "clone", "-q", str(hub), str(computer))
+    return memory, hub, computer
 
 
 def hub_files(hub, rev="main"):
@@ -42,7 +42,7 @@ def test_she_sees_the_base_but_not_its_scripts(kb):
 
 
 def test_a_turn_becomes_one_commit_in_the_hub(kb):
-    memory, hub, mac = kb
+    memory, hub, computer = kb
     memory.sync()
     (memory.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Ассистентка (Opus 5.5)", body="Б."))
     showcase = memory.tree / "notes/AGENTS.md"
@@ -54,8 +54,8 @@ def test_a_turn_becomes_one_commit_in_the_hub(kb):
     assert message.startswith("Assistant <assistant@retinue>|Assistant: notes/AGENTS.md")
     assert "Retinue-Turn: turn-1" in message and "Foreign-Input: forwarded" in message
     assert "notes/knowledge/b.md" in hub_files(hub)
-    assert subprocess.run(["git", "pull", "-q", "--ff-only"], cwd=mac).returncode == 0
-    assert (mac / "notes/knowledge/b.md").is_file(), "the Mac gets it with an ordinary pull"
+    assert subprocess.run(["git", "pull", "-q", "--ff-only"], cwd=computer).returncode == 0
+    assert (computer / "notes/knowledge/b.md").is_file(), "the owner's computer gets it with an ordinary pull"
     assert memory.settle("turn-2", "conversation", []).commit is None, "nothing written, nothing committed"
     memory.record(done)
     row = memory.db.execute("SELECT sha, files, foreign_input FROM memory_commits").fetchall()
@@ -80,37 +80,37 @@ def test_a_refused_turn_is_undone_and_says_why(kb):
     assert len(list((memory.git_dir / "refused").glob("*.patch"))) == 2, "what she wrote is kept for the owner"
 
 
-def test_a_push_from_the_mac_meanwhile_is_put_under_her_commit(kb):
-    memory, hub, mac = kb
+def test_a_push_from_the_owners_computer_meanwhile_is_put_under_her_commit(kb):
+    memory, hub, computer = kb
     memory.sync()
     (memory.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Ассистентка", body="Б."))
-    change(mac, {"notes/knowledge/c.md": RECORD.format(id="c", who="Владелец", body="В.")})
-    git(mac, "push", "-q", "origin", "main")
+    change(computer, {"notes/knowledge/c.md": RECORD.format(id="c", who="Владелец", body="В.")})
+    git(computer, "push", "-q", "origin", "main")
     done = memory.settle("turn-1", "conversation", [])
     assert done.refusals == [] and git(hub, "log", "--format=%s", "-2", "main").split("\n") == [
-        "Assistant: notes/knowledge/b.md", "edit"], "her commit goes on top of the Mac's, the history stays a line"
-    assert (memory.tree / "notes/knowledge/c.md").is_file(), "and her folder has the Mac's change now"
+        "Assistant: notes/knowledge/b.md", "edit"], "her commit goes on top of the owner's computer's, the history stays a line"
+    assert (memory.tree / "notes/knowledge/c.md").is_file(), "and her folder has the owner's computer's change now"
 
 
-def test_a_conflict_with_the_mac_undoes_her_turn(kb):
-    memory, hub, mac = kb
+def test_a_conflict_with_the_owners_computer_undoes_her_turn(kb):
+    memory, hub, computer = kb
     memory.sync()
     showcase = memory.tree / "notes/AGENTS.md"
     showcase.write_text(showcase.read_text() + "- её строка\n")
-    change(mac, {"notes/AGENTS.md": (mac / "notes/AGENTS.md").read_text() + "- строка с Mac\n"})
-    git(mac, "push", "-q", "origin", "main")
+    change(computer, {"notes/AGENTS.md": (computer / "notes/AGENTS.md").read_text() + "- строка с компьютера\n"})
+    git(computer, "push", "-q", "origin", "main")
     refused = memory.settle("turn-1", "conversation", [])
     assert refused.commit is None
     assert len(refused.refusals) == 1 and refused.refusals[0].endswith("notes/AGENTS.md")
-    assert "строка с Mac" in showcase.read_text() and "её строка" not in showcase.read_text()
+    assert "строка с компьютера" in showcase.read_text() and "её строка" not in showcase.read_text()
 
 
 def test_sync_puts_the_tree_back_to_the_hub(kb):
-    memory, hub, mac = kb
+    memory, hub, computer = kb
     (memory.tree / "notes/knowledge/a.md").write_text("испорчено\n")
     (memory.tree / "notes/knowledge/stray.md").write_text("x\n")
-    change(mac, {"notes/knowledge/c.md": "новое с Mac\n"})
-    git(mac, "push", "-q", "origin", "main")
+    change(computer, {"notes/knowledge/c.md": "новое с компьютера\n"})
+    git(computer, "push", "-q", "origin", "main")
     memory.sync()
     assert "Факт." in (memory.tree / "notes/knowledge/a.md").read_text()
     assert not (memory.tree / "notes/knowledge/stray.md").exists() and (memory.tree / "notes/knowledge/c.md").is_file()
@@ -463,21 +463,21 @@ def test_a_file_the_owner_handed_to_code_is_committed_by_the_same_rules_and_is_n
     assert git(hub, "rev-parse", "main") == commit and not (memory.tree / "scripts").exists()
 
 
-def test_the_hub_tells_when_the_mac_last_pushed_and_how_a_file_was(kb):
-    """«Mac не пушил N дней» and the week's applications read the hub's log: a commit not the router's own is the
-    Mac's; a file at a moment is the last commit before it."""
-    memory, hub, mac = kb
+def test_the_hub_tells_when_the_owners_computer_last_pushed_and_how_a_file_was(kb):
+    """«The computer has not pushed for N days» and the week's applications read the hub's log: a commit not the
+    router's own is the owner's computer's; a file at a moment is the last commit before it."""
+    memory, hub, computer = kb
     memory.sync()
-    mac_commit = float(git(hub, "log", "-1", "--format=%ct", "main"))  # the base was made by «t», not by her
-    assert memory.last_foreign_commit() == mac_commit
+    computer_commit = float(git(hub, "log", "-1", "--format=%ct", "main"))  # the base was made by «t», not by her
+    assert memory.last_foreign_commit() == computer_commit
     (memory.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Ассистентка (Opus 5.5)", body="Б."))
     memory.settle("turn-1", "conversation", [])
-    assert memory.last_foreign_commit() == mac_commit, "her own commit is not the Mac's"
+    assert memory.last_foreign_commit() == computer_commit, "her own commit is not the owner's computer's"
     late = {"GIT_COMMITTER_DATE": "@2000000000 +0000", "GIT_AUTHOR_DATE": "@2000000000 +0000"}
-    git(mac, "pull", "-q", "--ff-only")
-    (mac / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="новое"))
-    git(mac, "commit", "-qam", "mac", env=late)
-    git(mac, "push", "-q", "origin", "main")
+    git(computer, "pull", "-q", "--ff-only")
+    (computer / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="новое"))
+    git(computer, "commit", "-qam", "computer", env=late)
+    git(computer, "push", "-q", "origin", "main")
     memory.sync()
     assert memory.last_foreign_commit() == 2_000_000_000
     assert "новое" in memory.file_at("notes/knowledge/a.md", 2_000_000_001)

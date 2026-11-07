@@ -14,4 +14,6 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 - «Settings» in the app, behind the gear: your Claude subscription, ElevenLabs, the Telegram bots, the repositories'
   tokens, the projects' keys and the sessions' model and effort, each set or replaced there and never shown again,
   with one «Restart» to apply. Run `deploy/setup.sh` once more on the server to install its service.
+- Your own computer is no longer called «the Mac»: the setup is written for macOS, Windows and Linux alike, and a
+  computer set up before keeps working as it is.
 - After an update, the app shows once what changed in it.

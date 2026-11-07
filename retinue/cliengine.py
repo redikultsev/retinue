@@ -35,14 +35,14 @@ RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # sessions.PlatformStore.add_run; i
 MARK_N = r"\d{1,4}"  # the n of a marker hook's address `<hook_url>/mark/<n>`; the platform routes the same
 SETTINGS_PATH = re.compile(re.escape(SETTINGS_DIR) + "/" + RUN_ID.pattern + r"\.json")
 UUID4 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
-# `--permission-mode auto`: a call no rule and no hook decides goes to the CLI's own classifier, as on the owner's Mac;
+# `--permission-mode auto`: a call no rule and no hook decides goes to the CLI's own classifier, as on the owner's computer;
 # the gate's PreToolUse still comes first (probed with 2.1.304: hook, then rules, then the classifier). A run where auto
 # is unavailable starts in manual without saying so but in its init line, and the gate falls back (docs/platform.md).
 # Every run passes it, a `--resume` too: the CLI does not carry the mode over.
 # `--include-partial-messages`: the text of a message while it is written, as `stream_event` lines the platform passes
 # to the face and never stores. `--forward-subagent-text` (2.1.211+): a foreground subagent's own text and thinking as
 # lines with its `parent_tool_use_id`, which the projection folds into the subagent's item.
-# `--model` and `--effort`: every run is the owner's own setup on his Mac — the latest Opus by its full id (an alias
+# `--model` and `--effort`: every run is the owner's own setup on his computer — the latest Opus by its full id (an alias
 # names another model with another CLI release) with its million-token context, at extra-high effort. Without them a
 # headless CLI takes its own default, a smaller model. These are the defaults; a lane's `model` and `effort` in
 # platform.yaml choose others, from closed lists (`MODELS`, `EFFORTS`): a model the CLI runs without auto mode moves a

@@ -53,7 +53,7 @@ def test_the_lane_cli_is_pinned_in_the_engine_the_lock_and_the_lane_image_alike(
 
 
 def test_the_lanes_run_in_auto_and_never_in_bypass():
-    """Server sessions approve as the owner's Mac does, by auto's classifier."""
+    """Server sessions approve as the owner's computer does, by auto's classifier."""
     from retinue import cliengine
     prefix = list(cliengine.PREFIX)
     assert prefix[prefix.index("--permission-mode") + 1] == "auto"

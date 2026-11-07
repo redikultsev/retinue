@@ -3,7 +3,7 @@
 # requires-python = ">=3.12"
 # dependencies = ["google-auth-oauthlib>=1.2,<2"]
 # ///
-"""The owner's consents, on his Mac: a refresh token for one account and each kind asked — `gmail` (read mail),
+"""The owner's consents, on his computer: a refresh token for one account and each kind asked — `gmail` (read mail),
 `calendar` (read calendars), `send` (send mail, nothing else), `calwrite` (the calendar «Retinue» it makes itself,
 nothing else of his calendars) — each checked to be that very account, and put on the server: the read kinds for the
 mail collector, `send` for the mail sender, `calwrite` for the calendar writer, each in its own folder as its own

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# The owner's memory for the room: each top-level *.md of <source> (his Claude Code memory folder on the Mac,
+# The owner's memory for the room: each top-level *.md of <source> (his Claude Code memory folder on the owner's computer,
 # ~/.claude/projects/<project>/memory: MEMORY.md and one file per memory) is copied into
 # /srv/retinue/owner-memory/memory, checked as the lane host checks it (retinue/instructions.py: plain Markdown files,
 # MEMORY.md among them, no link, sizes bounded, nothing that looks like a credential) and swapped in whole.
 # lane-private mounts /srv/retinue/owner-memory read-only; a session's next run sees the new snapshot, no restart.
 #
-#   sudo bash deploy/memory/install-owner-memory.sh ~/retinue-owner-memory    # from the Mac: a tar of the folder
+#   sudo bash deploy/memory/install-owner-memory.sh ~/retinue-owner-memory    # from the owner's computer: a tar of the folder
 #   sudo bash deploy/memory/install-owner-memory.sh --empty                   # no memory
 #
 # The source is a folder of the user who ran sudo, so it is read as that user (tar under `sudo -u $SUDO_USER`), never

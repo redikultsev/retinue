@@ -65,7 +65,7 @@ export function actorWords(actor: string): string {
   if (actor === "owner") return "you";
   if (actor === "assistant") return "the assistant";
   if (actor.startsWith("session:")) return "a session";
-  if (actor.startsWith("mac:")) return "the Mac";
+  if (actor.startsWith("device:") || actor.startsWith("mac:")) return "your computer"; // mac: its old name (#66)
   if (actor.startsWith("code:")) return `the rule ${actor.slice(5)}`;
   if (actor.startsWith("import:")) return "an import";
   if (actor.startsWith("define:")) return "a form change";

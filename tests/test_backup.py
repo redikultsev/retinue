@@ -1,5 +1,5 @@
 """The host's nightly backup: two restic passes, the second with the containers paused; the secrets left out of the
-stack's scope; the host's scope with Dokploy's database and key; a status file for the router. The Mac's monthly care.
+stack's scope; the host's scope with Dokploy's database and key; a status file for the router. The owner's computer's monthly care.
 
 restic and docker are replaced by fakes that record their arguments: no repository, no network, no root, no daemon.
 """
@@ -245,8 +245,8 @@ def test_the_host_scope_takes_the_whole_server_and_dokploy_with_its_key(tmp_path
     assert "dokploy: no dokploy_auth_secret" in json.loads((srv / "status" / "backup.json").read_text())["warning"]
 
 
-MAC = ROOT / "deploy" / "backup" / "mac.sh"
-FAKE_MAC_RESTIC = """#!/bin/bash
+CARE = ROOT / "deploy" / "backup" / "care.sh"
+FAKE_CARE_RESTIC = """#!/bin/bash
 echo "$*" >> "$FAKE_LOG"
 [[ $1 != version ]] || { echo "${FAKE_VERSION:-restic 0.19.1 compiled with go1.26 on darwin/arm64}"; exit 0; }
 [[ $1 != snapshots ]] || { echo "$FAKE_SNAPSHOTS"; exit 0; }
@@ -265,8 +265,8 @@ echo "$* <<< $(cat)" >> "$FAKE_SSH_LOG"
 """
 
 
-def mac(tmp_path, archive_bytes=None, platform=None, env="", **fake):
-    """The owner's Mac: an env file with the deleting key, a fake restic whose `restore` lays out last night's copies.
+def care(tmp_path, archive_bytes=None, platform=None, env="", **fake):
+    """The owner's computer: an env file with the deleting key, a fake restic whose `restore` lays out last night's copies.
     `platform`: the platform's volume too — `{"collections": bool, "rows": [sha…], "blobs": {sha: bytes}}`, and
     `"other"`: blobs in another volume's `attachments/`. `env`: more lines for backup.env."""
     snapshot = tmp_path / "snapshot"
@@ -307,12 +307,12 @@ def mac(tmp_path, archive_bytes=None, platform=None, env="", **fake):
                         "AWS_ACCESS_KEY_ID=k\nAWS_SECRET_ACCESS_KEY=s\nAWS_DEFAULT_REGION=r\n"
                         f"RETINUE_LOCAL_REPO={tmp_path / 'local-repo'}\n{env}")
     restic = tmp_path / "restic"
-    restic.write_text(FAKE_MAC_RESTIC)
+    restic.write_text(FAKE_CARE_RESTIC)
     restic.chmod(0o755)
     ssh = tmp_path / "ssh"
     ssh.write_text(FAKE_SSH)
     ssh.chmod(0o755)
-    run = subprocess.run(["bash", str(MAC), "monthly"], capture_output=True, text=True,
+    run = subprocess.run(["bash", str(CARE), "monthly"], capture_output=True, text=True,
                          env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), "TMPDIR": str(tmp_path),
                               "RETINUE_BACKUP_ENV": str(env_file), "RESTIC": str(restic), "PYTHON": sys.executable,
                               "SSH": str(ssh), "FAKE_SSH_LOG": str(tmp_path / "ssh.log"),
@@ -326,8 +326,8 @@ def mac(tmp_path, archive_bytes=None, platform=None, env="", **fake):
     return run, steps, calls
 
 
-def test_monthly_care_on_the_mac_checks_restores_copies_and_only_then_prunes(tmp_path):
-    run, steps, calls = mac(tmp_path)
+def test_monthly_care_on_the_owners_computer_checks_restores_copies_and_only_then_prunes(tmp_path):
+    run, steps, calls = care(tmp_path)
     assert run.returncode == 0, run.stderr
     assert steps[0] == "unlock", "the night's stale lock would stop the check: it goes first"
     assert calls[1:3] == ["version", "snapshots --json --host retinue --tag retinue"], "the snapshot to prove is chosen first"
@@ -338,7 +338,7 @@ def test_monthly_care_on_the_mac_checks_restores_copies_and_only_then_prunes(tmp
     assert calls[1].endswith(" --include *.sqlite* --include *.db --include *.db-* --include attachments "
                              "--include staging"), "the databases and what goes with them, not the server's secrets"
     assert calls[2] == f"-r {tmp_path / 'local-repo'} init --from-repo s3:https://s3.example/bucket/retinue " \
-                       "--copy-chunker-params", "the copy on the Mac is made once, deduplicating like the original"
+                       "--copy-chunker-params", "the copy on the owner's computer is made once, deduplicating like the original"
     assert calls[3] == f"-r {tmp_path / 'local-repo'} copy --from-repo s3:https://s3.example/bucket/retinue " \
                        "--host retinue --tag retinue"
     assert calls[4] == "unlock", "the server's key cannot delete its own locks; forget needs them gone"
@@ -354,19 +354,19 @@ def test_monthly_care_on_the_mac_checks_restores_copies_and_only_then_prunes(tmp
 
 
 def test_a_monthly_run_that_went_through_tells_the_server_and_a_broken_one_does_not(tmp_path):
-    run, _, _ = mac(tmp_path, env="RETINUE_SSH_HOST=server.example\n")
+    run, _, _ = care(tmp_path, env="RETINUE_SSH_HOST=server.example\n")
     assert run.returncode == 0, run.stderr
     [told] = (tmp_path / "ssh.log").read_text().splitlines()
     assert told.startswith("server.example sudo tee /srv/retinue/status/restore.json >/dev/null <<< {\"checked\": ")
     assert told.endswith(', "snapshot": "a1b2c3d4e5f6"}'), "the server's summary names the proven snapshot"
     broken = tmp_path / "broken"
     broken.mkdir()
-    run, _, _ = mac(broken, archive_bytes=b"not a database", env="RETINUE_SSH_HOST=server.example\n")
+    run, _, _ = care(broken, archive_bytes=b"not a database", env="RETINUE_SSH_HOST=server.example\n")
     assert run.returncode != 0 and not (broken / "ssh.log").exists(), "a failed check tells the server nothing"
 
 
 def test_a_broken_restore_stops_before_anything_is_deleted(tmp_path):
-    run, steps, _ = mac(tmp_path, archive_bytes=b"not a database")
+    run, steps, _ = care(tmp_path, archive_bytes=b"not a database")
     assert run.returncode != 0 and steps[3:] == ["check", "restore"], "no copy, no prune after a failed restore"
     assert "archive.sqlite" in run.stderr
     assert not list(tmp_path.glob("retinue-restore.*")), "nor a copy of the archive left in the temporary folder"
@@ -374,18 +374,18 @@ def test_a_broken_restore_stops_before_anything_is_deleted(tmp_path):
 
 def test_with_the_platform_a_snapshot_without_its_collections_or_their_files_fails_the_restore(tmp_path):
     sha = "ab" * 32
-    run, steps, _ = mac(tmp_path / "a", platform={"collections": False, "rows": [], "blobs": {}})
+    run, steps, _ = care(tmp_path / "a", platform={"collections": False, "rows": [], "blobs": {}})
     assert run.returncode != 0 and steps[3:] == ["check", "restore"] and "collections.sqlite" in run.stderr, \
         "the platform makes the file at its start: a snapshot without it lost it"
-    run, steps, _ = mac(tmp_path / "b", platform={"collections": True, "rows": [sha], "blobs": {}, "other": [sha]})
+    run, steps, _ = care(tmp_path / "b", platform={"collections": True, "rows": [sha], "blobs": {}, "other": [sha]})
     assert run.returncode != 0 and steps[3:] == ["check", "restore"] and "1 uploaded files" in run.stderr, \
         "a row whose file is not there, nor counted from another volume: the uploads were not all taken"
-    run, steps, _ = mac(tmp_path / "d", platform={"collections": True, "rows": [sha], "blobs": {sha: b"xy"}})
+    run, steps, _ = care(tmp_path / "d", platform={"collections": True, "rows": [sha], "blobs": {sha: b"xy"}})
     assert run.returncode != 0 and "1 uploaded files" in run.stderr, "a file cut short is not the file"
-    run, steps, _ = mac(tmp_path / "e", env="RETINUE_PLATFORM=1\n")
+    run, steps, _ = care(tmp_path / "e", env="RETINUE_PLATFORM=1\n")
     assert run.returncode != 0 and steps[3:] == ["check", "restore"] and "collections.sqlite, platform.sqlite" in run.stderr, \
         "with the platform on, a snapshot without its whole volume fails too"
-    run, steps, _ = mac(tmp_path / "c", platform={"collections": True, "rows": [sha], "blobs": {sha: b"x"}})
+    run, steps, _ = care(tmp_path / "c", platform={"collections": True, "rows": [sha], "blobs": {sha: b"x"}})
     assert run.returncode == 0, run.stderr
     assert "(agent.sqlite, archive.sqlite, collections.sqlite, platform.sqlite, router.sqlite)" in run.stdout
 
@@ -395,14 +395,14 @@ def test_a_snapshot_dated_in_the_future_stops_the_month_before_anything_is_delet
     real snapshot out of range, and forget --prune would delete them all."""
     forged = ('[{"id": "a1", "short_id": "a1", "time": "2026-01-01T03:30:01.5+01:00"},'
               ' {"id": "f0", "short_id": "f0f0f0f0", "time": "2099-01-01T00:00:00Z"}]')
-    run, steps, _ = mac(tmp_path, FAKE_SNAPSHOTS=forged)
+    run, steps, _ = care(tmp_path, FAKE_SNAPSHOTS=forged)
     assert run.returncode != 0 and steps == ["unlock", "version", "snapshots"], steps
     assert "f0f0f0f0" in run.stderr and "2099-01-01T00:00:00Z" in run.stderr
     assert not (tmp_path / "verified-snapshot").exists()
 
 
 def test_another_restic_series_is_named_but_does_not_stop_the_month(tmp_path):
-    run, _, _ = mac(tmp_path, FAKE_VERSION="restic 0.20.0 compiled with go1.27 on darwin/arm64")
+    run, _, _ = care(tmp_path, FAKE_VERSION="restic 0.20.0 compiled with go1.27 on darwin/arm64")
     assert run.returncode == 0, run.stderr
     assert "warning: restic 0.20.0" in run.stderr
 
@@ -415,21 +415,21 @@ def test_the_restore_check_opens_every_database_by_its_header_and_dokploys_dump_
     wg = tmp_path / "volumes" / "wg-easy_etc_wireguard" / "_data"
     wg.mkdir(parents=True)
     sqlite3.connect(wg / "wg-easy.db").execute("CREATE TABLE t (x)").connection.close()
-    run, _, _ = mac(tmp_path / "a", FAKE_STAGING=str(staging), FAKE_VOLUMES=str(tmp_path / "volumes"))
+    run, _, _ = care(tmp_path / "a", FAKE_STAGING=str(staging), FAKE_VOLUMES=str(tmp_path / "volumes"))
     assert run.returncode == 0, run.stderr
     assert "integrity ok: 4 databases (agent.sqlite, archive.sqlite, router.sqlite), Dokploy" in run.stdout, \
         "wg-easy.db is a database too, found by its header"
     (staging / "dokploy" / "auth_secret").unlink()
-    run, steps, _ = mac(tmp_path / "b", FAKE_STAGING=str(staging), FAKE_VOLUMES=str(tmp_path / "volumes"))
+    run, steps, _ = care(tmp_path / "b", FAKE_STAGING=str(staging), FAKE_VOLUMES=str(tmp_path / "volumes"))
     assert run.returncode != 0 and "encryption secret" in run.stderr and "forget" not in steps
     (staging / "dokploy" / "auth_secret").write_text("s3cret")
     (wg / "wg-easy.db").write_bytes(b"SQLite format 3\x00" + b"\x00" * 200)
-    run, _, _ = mac(tmp_path / "c", FAKE_STAGING=str(staging), FAKE_VOLUMES=str(tmp_path / "volumes"))
+    run, _, _ = care(tmp_path / "c", FAKE_STAGING=str(staging), FAKE_VOLUMES=str(tmp_path / "volumes"))
     assert run.returncode != 0 and "wg-easy.db" in run.stderr, "a torn database anywhere fails the month"
 
 
 def test_before_the_first_night_with_two_passes_there_is_nothing_to_prove(tmp_path):
     old = '[{"id": "a1", "short_id": "a1", "time": "2026-01-01T03:30:01Z", "tags": ["retinue"]}]'
-    run, steps, _ = mac(tmp_path, FAKE_SNAPSHOTS=old)
+    run, steps, _ = care(tmp_path, FAKE_SNAPSHOTS=old)
     assert run.returncode != 0 and steps == ["unlock", "version", "snapshots"]
     assert run.stderr

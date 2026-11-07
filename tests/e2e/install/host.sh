@@ -26,7 +26,7 @@ UNTRIED=(
   "router: Telegram — getMe refuses the made-up bot token, so only its Matrix channel starts (logged below)"
   "tg-business: polls the Bot API with a made-up Business bot token; refused, retried"
   "assistant, platform, lane-private: no model call — no real CLAUDE_CODE_OAUTH_TOKEN (the container probe needs it)"
-  "collector, mail-send: no Google keys (deploy/mail/login.py on the owner's Mac)"
+  "collector, mail-send: no Google keys (deploy/mail/login.py on the owner's computer)"
   "speech: no ELEVENLABS_API_KEY; backup: backup.env unfilled, so restic is installed but its timer is off"
 )
 # Profiles not turned on at all, and why (printed, so the gap is in the log, not only in this file).

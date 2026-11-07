@@ -194,7 +194,7 @@ services:
   # The mail collector: code, no model. It reads the owner's Gmail and Google Calendar with read-only tokens and
   # hands what it found to the router by number. Its own user (not the containers' 10001), its own keys folder,
   # its own way out: a proxy that lets through Google's three hosts. Off until the owner turns it on (setup.sh
-  # MAIL=1); the keys come from his Mac (deploy/mail/login.py).
+  # MAIL=1); the keys come from his computer (deploy/mail/login.py).
   collector:
     profiles: ["mail"]
     image: *retinue-image
@@ -232,7 +232,7 @@ services:
   # The mail sender: code, no model, the only holder of the owner's `gmail.send` tokens. It sends one letter when
   # the router asks with the key, the envelope and the digest of a card the owner pressed «Send» under — each
   # key once — and reads nothing. Its own user and keys, apart from the collector, which parses strangers' letters.
-  # Off until the owner turns it on (setup.sh SEND=1, which needs MAIL=1); the keys come from his Mac (--kind send).
+  # Off until the owner turns it on (setup.sh SEND=1, which needs MAIL=1); the keys come from his computer (--kind send).
   mail-send:
     profiles: ["send"]
     image: *retinue-image
@@ -261,7 +261,7 @@ services:
   # calendar of his, «Retinue», made by itself, and in it one event per block of his plan as the router asks — no
   # guests, no notifications — and tells the router what he moved or deleted there. The token reaches no other
   # calendar of his. Off until the owner turns it on (setup.sh CALWRITE=1, which needs MAIL=1: its way out is the
-  # mail proxy); the key comes from his Mac (deploy/mail/login.py --kind calwrite).
+  # mail proxy); the key comes from his computer (deploy/mail/login.py --kind calwrite).
   calwrite:
     profiles: ["calwrite"]
     image: *retinue-image

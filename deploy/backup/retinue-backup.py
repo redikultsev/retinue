@@ -54,7 +54,7 @@ GROWTH_WARN = int(os.environ.get("RETINUE_BACKUP_GROWTH_WARN", str(2 << 30)))  #
 # The stack's scope never takes these off the host: Claude Code's login file; the env files with the subscription
 # token (stack.env), the generated secrets and the backup's own keys, the owner's dated copies of them included; the
 # Matrix registration; the mail collector's and sender's folders — the owner's Google tokens. setup.sh writes the
-# registration anew after a restore; the tokens come from the Mac. The pages' Traefik file carries their key, and
+# registration anew after a restore; the tokens come from the owner's computer. The pages' Traefik file carries their key, and
 # their releases and public files are made again from what is kept. The host's scope takes all of it: a move to a
 # new server is not simple without them (docs/backup.md).
 SECRETS = [".credentials.json", f"{ROOT}/*.env", f"{ROOT}/*.env.*", f"{ROOT}/**/*.env", f"{ROOT}/**/*.env.*",

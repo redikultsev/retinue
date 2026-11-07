@@ -1,14 +1,14 @@
 # Your Base in the server's sessions
 
-Sessions on the server can work in your knowledge base (the Base) as on your Mac: they see all of it, read and edit
+Sessions on the server can work in your knowledge base (the Base) as on your computer: they see all of it, read and edit
 its records, and what they changed is committed and pushed by the platform itself after every turn, said in one line
-with «Undo». What the Mac's agent did by hand — `git pull` at the start, "commit
+with «Undo». What the agent on the owner's computer did by hand — `git pull` at the start, "commit
 and push?" at the end — is the platform's job here: it pulls the hub before each run, commits with your name, and
 pushes to the hub itself. That lane is the room, which also reads the
 web ([platform.md](platform.md#the-room): what that gives up and what stands in the way).
 
 ```
-your Mac ── push/pull over the VPN ──┐
+your computer ── push/pull over the VPN ──┐
                                       ▼
             /srv/retinue/memory/hub.git   (bare; pre-receive = kbcheck.py; docs/memory.md)
               ▲ push (your role: the platform is not uid 10001)        ▲ the router's pushes (the assistant)
@@ -44,7 +44,7 @@ spheres:
 
 The example `platform.yaml` gives spheres no `cwd`: their sessions start in the root of the Base. A sphere's `cwd`
 (inside its track's), when you set one, wins over the track's: a session of `travel` runs in `/work/base/travel` —
-«в Пространстве» — and the repository's rules reach it as on the Mac: `base/CLAUDE.md` and its `@AGENTS.md`
+«в Пространстве» — and the repository's rules reach it as on the owner's computer: `base/CLAUDE.md` and its `@AGENTS.md`
 ([instructions.md](instructions.md)). Every consumer of a session's directory — the run's `cwd`, `out/` and its
 attribution, the face's diff, a fork — uses the directory stored with the session (`sessions.cwd`), not the track's.
 A fork runs where its parent ran; it is refused («the session's track is now … in another folder») only when the configuration
@@ -117,7 +117,7 @@ link out, or make it wait:
   a path that check runs, or code at all (`protect`: `scripts/**`, `justfile`, `**/*.py`, `**/*.sh`; and any path
   the policy's `check` command names, whatever `protect` says), nor a hidden
   one (`.gitattributes`, `.claude/…`), nor a name git would take for its own (`.git`, `.GIT.`, `git~1`): those are
-  refused («edited only from the Mac»). The lint the hub runs is therefore always the one your Mac pushed. Git, the hook
+  refused («edited only from the owner's computer»). The lint the hub runs is therefore always the one your computer pushed. Git, the hook
   and the lint get an environment of `PATH`, `HOME`, `LANG`, `TMPDIR` and git's own variables only — none of the
   platform's secrets.
 - **Writes check what they replace.** A write or a delete in the tree first checks the path is still what was read
@@ -133,7 +133,7 @@ has not moved. Otherwise it fetches, and for every file the hub changed since th
 - **already as the hub has it** → nothing;
 - **dirty here** → `git merge-file` (ours = the tree, base = `HEAD`, theirs = the hub); a clean merge is written;
 - **dirty here, and the lines do not merge** (a text file both sides edited in the same place — the session and the
-  owner's Mac at once) → both versions go into the file between conflict markers (`<<<<<<< this session`, `=======`,
+  owner's computer at once) → both versions go into the file between conflict markers (`<<<<<<< this session`, `=======`,
   `>>>>>>> the hub`), as `git pull` leaves it, on top of the hub's version: from now on the file is the hub's plus the
   session's edit, so no later commit undoes the hub's change. The path is noted in `base.sqlite` (`marked`), and
   `tobase` tells the session that changed it — a message from the platform (`by: "platform"`), not from the owner: merge
@@ -176,9 +176,9 @@ waits on the Base.
    `commit-tree` with the hub's head as parent; author and committer = `author` from the config; a trailer
    `Pushed-by: retinue-platform (the platform's own commit after a turn, session <id>)`. Other sessions' uncommitted files are not looked at.
 4. **Checked the hub's way first** (`kbcheck.check`, the owner's role, without the lint): a path it refuses (an `id`
-   renamed, a symlink, a name that collides on a Mac) goes to `refused` with its reason and the rest is built again.
+   renamed, a symlink, a name that collides on a computer) goes to `refused` with its reason and the rest is built again.
 5. **Pushed**, up to four times: when the hub moved meanwhile (the router pushes after the assistant's turns, the
-   Mac at any time) it fetches and does 2–4 again on top. The hub's own refusal (its lint) comes back as its lines
+   owner's computer at any time) it fetches and does 2–4 again on top. The hub's own refusal (its lint) comes back as its lines
    in `refused`, nothing pushed.
 6. **The clone follows**: a merged file is written into the tree, then `HEAD` moves to the pushed commit the way a
    refresh does, so the committed paths are clean and the hub's other changes are in. While a run on the lane is
@@ -220,7 +220,7 @@ could write the hub's objects and refs past the hook: it is code you trust; the 
 
 The clone, its refresh and the commit are above (`retinue/base.py`). `retinue/tobase.py` adds **who changed what** and
 **the platform's own commit after every turn**: the session writes, the platform commits and pushes, you read one line.
-There is no button to commit — as the Mac's agents commit and push by themselves, so does the server.
+There is no button to commit — as the agents on the owner's computer commit and push by themselves, so does the server.
 
 - **Who changed what.** Each run on the Base's lane is watched — a session in the clone, and one that is not (a
   notes session at `/work` can Edit `/work/base/…` as well); never a side question, which only reads — in windows: the tree's snapshot (path → digest) when the run starts, and again
@@ -241,7 +241,7 @@ There is no button to commit — as the Mac's agents commit and push by themselv
 - **What.** Everything the session changed — added, edited, deleted, a file another session changed too — and every
   uncommitted file no session claims (changed before this, or by something no window saw): never left behind. As the
   snapshot has them (`expect`: the Base refuses a file that moved under its own lock), committed by
-  `BaseRepo.commit(…, role="owner")` — your rules, as your own agents push from the Mac. What the platform never commits
+  `BaseRepo.commit(…, role="owner")` — your rules, as your own agents push from the owner's computer. What the platform never commits
   (the Base's scripts and code, hidden paths) stays out. The body is the turn's summary and `Retinue: session <id>, after
   turn <n>.` with the link to it; the trailer says `Pushed-by: retinue-platform (the platform's own commit after a turn,
   session <id>)`.
@@ -258,7 +258,7 @@ There is no button to commit — as the Mac's agents commit and push by themselv
 - **«Undo»** (`BaseRepo.revert`): for 7 days, while the session is not running, a new commit on top of the hub's
   `main` — history is never rewritten — puts each file back as it was before that commit, only if neither the hub nor
   the clone changed it since («changed here since», «changed in the Base since»: left as it is, never merged). The card
-  ends «Undone»; the ping loses its button. Older than that: the evening's list of commits, or the Mac.
+  ends «Undone»; the ping loses its button. Older than that: the evening's list of commits, or the owner's computer.
 - **A restart mid-commit** — the card left «Writing…» is settled from the clone when the platform is back: the files no
   longer uncommitted went in («Written to the Base before the platform restarted»), the rest go with the session's next
   turn; while the Base cannot be read, the clock tries again each minute.
@@ -378,7 +378,7 @@ at start. Check from the lane: `docker compose -p retinue exec lane-private ls /
 - **A file with conflict markers** — its session was told to merge it; until it does, no commit takes the file and the
   line under the ping says why. A file no session claims keeps its markers (the log says so): merge it in any session.
 - **A held file** — it stays as the session left it; the line under the ping names it as a conflict. Either put
-  it back to the hub's version (it stops being held at the next refresh) or edit it on the Mac and pull.
+  it back to the hub's version (it stops being held at the next refresh) or edit it on the owner's computer and pull.
 - **The platform's repository is lost** (`platform-data` gone) — the next start makes a new one; files the tree has
   that differ from the hub are held with no base and can only be committed after being reconciled by hand.
 - **The lane's folder and the platform's differ** (only with a `mount` of its own) — every call refuses with «restart

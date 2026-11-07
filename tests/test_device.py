@@ -1,6 +1,6 @@
-"""`/mcp/mac` (`retinue/mac.py`): the agents on the owner's Mac read and write his collections by a device's token —
-scoped, revocable, kept only as its SHA-256 —, as `mac:<device>/<session>` under the collection's rights for the class
-`mac`; the face's cookie opens nothing there, and the token opens nothing of the face — against the face of
+"""`/mcp/device` (`retinue/device.py`): the agents on the owner's computer read and write his collections by a device's token —
+scoped, revocable, kept only as its SHA-256 —, as `device:<device>/<session>` under the collection's rights for the class
+`device`; the face's cookie opens nothing there, and the token opens nothing of the face — against the face of
 `test_face`."""
 
 from __future__ import annotations
@@ -8,8 +8,12 @@ from __future__ import annotations
 import hashlib
 import json
 
-from retinue import colltools, computers, mac
-from retinue.collections import Writer
+import pytest
+
+from retinue import colltools, computers, feed
+from retinue import device as endpoint
+from retinue import project as project_mod
+from retinue.collections import Rejected, Writer, among, granted, idem_scope, parse_form, parse_rights, writer_class
 from retinue.face import COOKIE
 from test_face import FaceWorld, faced
 from test_platformd import short_wait  # noqa: F401 — the fixture is autouse
@@ -27,23 +31,24 @@ async def collections(world: FaceWorld) -> None:
     store, now = world.platform.collections, world.clock.now
     await store.define(DEFINE, "deals", "work", DEALS, now)
     await store.define(DEFINE, "touches", "work", TOUCHES, now)
+    # deals by the class's old name, as rights kept before #66 have it: it counts as `device`
     await store.rights(DEFINE, "deals", {"writers": {"mac": {"add": True, "set": ["company", "product", "stage"],
                                                                   "delete": False}}}, now)
-    await store.rights(DEFINE, "touches", {"writers": {"mac": {"add": True, "set": "*", "delete": False}},
+    await store.rights(DEFINE, "touches", {"writers": {"device": {"add": True, "set": "*", "delete": False}},
                                            "set_by": {"state": {"sent": ["owner"]}}}, now)
 
 
 class Device:
-    """An MCP client of `/mcp/mac`, as Claude Code is: initialize, then every request with the session it gave."""
+    """An MCP client of `/mcp/device`, as Claude Code is: initialize, then every request with the session it gave."""
 
-    def __init__(self, world: FaceWorld, token: str) -> None:
-        self.world, self.token, self.session, self.n = world, token, "", 0
+    def __init__(self, world: FaceWorld, token: str, path: str = endpoint.PATH) -> None:
+        self.world, self.token, self.path, self.session, self.n = world, token, path, "", 0
 
     async def post(self, body: dict, headers: dict | None = None):
         given = {"Authorization": f"Bearer {self.token}"} if headers is None else headers
         if self.session and headers is None:
-            given[mac.SESSION_HEADER] = self.session
-        response = await self.world.api.post(mac.PATH, json=body, headers=given)
+            given[endpoint.SESSION_HEADER] = self.session
+        response = await self.world.api.post(self.path, json=body, headers=given)
         return response.status, await response.json() if response.content_type == "application/json" else None, \
             response
 
@@ -52,7 +57,7 @@ class Device:
         status, answer, response = await self.post({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
             "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "claude-code"}}})
         assert status == 200, answer
-        self.session = response.headers[mac.SESSION_HEADER]
+        self.session = response.headers[endpoint.SESSION_HEADER]
         return answer["result"]
 
     async def tools(self) -> list[str]:
@@ -92,8 +97,8 @@ def test_a_device_lists_its_tools_and_writes_as_itself_once_however_often_the_ca
         assert not error and said.startswith("Written: 1 change."), said
         [record] = answer_of(said)["records"]
         [change] = await store.history("deals", record["id"])
-        assert (change["actor"], change["via"], change["foreign"]) == (f"mac:laptop/{device.session}", "mac", []), \
-            "the device and its MCP session, via mac, with no mark of foreign text: the owner watches it"
+        assert (change["actor"], change["via"], change["foreign"]) == (f"device:laptop/{device.session}", "device", []), \
+            "the device and its MCP session, via device, with no mark of foreign text: the owner watches it"
 
         first = device.session
         await device.start()  # Claude Code makes an idempotent call again "once, on a new connection"
@@ -109,7 +114,7 @@ def test_a_device_lists_its_tools_and_writes_as_itself_once_however_often_the_ca
     faced(tmp_path, body)
 
 
-def test_the_rights_of_the_class_mac_decide_what_it_writes(tmp_path):
+def test_the_rights_of_the_class_device_decide_what_it_writes(tmp_path):
     async def body(world: FaceWorld):
         await world.login()
         await collections(world)
@@ -122,7 +127,7 @@ def test_the_rights_of_the_class_mac_decide_what_it_writes(tmp_path):
 
         said, error = await device.call(colltools.APPLY, {"collection": "deals", "ops": [
             {"op": "delete", "id": rid, "version": 1}]}, use="toolu_d")
-        assert error and "delete" in said and "mac" in said, said
+        assert error and "delete" in said and "device" in said, said
         said, error = await device.call(colltools.APPLY, {"collection": "deals", "ops": [
             {"op": "set", "id": rid, "version": 1, "fields": {"close_reason": "price"}}]}, use="toolu_s")
         assert error and "close_reason" in said, said
@@ -134,12 +139,12 @@ def test_the_rights_of_the_class_mac_decide_what_it_writes(tmp_path):
         assert not error, "a value `set_by` keeps for the owner becomes his card"
         assert (await store.catalog())[1]["records"] == 0
         [proposal] = world.platform.colltools.waiting()
-        assert proposal["actor"] == f"mac:laptop/{device.session}" and proposal["session"] is None
+        assert proposal["actor"] == f"device:laptop/{device.session}" and proposal["session"] is None
         stored = world.platform.store.db.execute('SELECT "foreign" FROM collection_proposals').fetchone()[0]
-        assert stored == "mac", "applied, the owner's change still says a Mac's session filled it"
+        assert stored == "device", "applied, the owner's change still says a computer's session filled it"
         feed = await world.get("/api/feed")
         [row] = [r for g in feed["groups"] for r in g["rows"] if r["source"] == "collection_proposal"]
-        assert row["title"] == "Mac laptop"
+        assert row["title"] == "Computer laptop"
 
     faced(tmp_path, body)
 
@@ -154,7 +159,7 @@ def test_a_token_that_only_reads_lists_and_serves_the_reads_alone(tmp_path):
         for name in (colltools.APPLY, colltools.PROPOSE):
             said, error = await device.call(name, {"collection": "deals", "ops": [
                 {"op": "add", "fields": {"company": "Acme"}}], "why": "x"}, use=f"toolu_{name}")
-            assert error and said == mac.READ_ONLY.format(tool=name)
+            assert error and said == endpoint.READ_ONLY.format(tool=name)
         assert (await store.catalog())[0]["records"] == 0 and world.platform.colltools.waiting() == []
         said, error = await device.call(colltools.QUERY, {"collection": "deals"})
         assert not error
@@ -172,11 +177,11 @@ def test_no_token_a_wrong_one_or_a_revoked_one_opens_nothing_and_the_file_keeps_
         listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
         for headers in ({}, {"Authorization": "Bearer nope"}, {"Authorization": token}, {"Authorization": "Bearer "}):
             status, answer, response = await Device(world, token).post(listing, headers=headers)
-            assert status == 401 and answer["error"] == mac.UNAUTHORIZED, headers
+            assert status == 401 and answer["error"] == endpoint.UNAUTHORIZED, headers
             assert response.headers["WWW-Authenticate"].startswith("Bearer")
         status, _, _ = await Device(world, "nope").post(listing, headers={})
         assert status == 401
-        response = await world.api.post(f"{mac.PATH}/other", json=listing)
+        response = await world.api.post(f"{endpoint.PATH}/other", json=listing)
         assert response.status == 401, "a path the app has not is still the token's first"
 
         device = Device(world, token)
@@ -191,24 +196,24 @@ def test_no_token_a_wrong_one_or_a_revoked_one_opens_nothing_and_the_file_keeps_
     faced(tmp_path, body)
 
 
-def test_the_cookie_opens_nothing_at_mcp_mac_and_the_token_nothing_of_the_face(tmp_path):
+def test_the_cookie_opens_nothing_at_mcp_device_and_the_token_nothing_of_the_face(tmp_path):
     async def body(world: FaceWorld):
         await collections(world)
         cookie = await world.login()
         token = await world.platform.collections.add_device("laptop", "write", world.clock.now)
         listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-        response = await world.api.post(mac.PATH, json=listing, headers={
+        response = await world.api.post(endpoint.PATH, json=listing, headers={
             "Cookie": f"{COOKIE}={cookie}", "X-Retinue": "1", "Origin": "https://app.example.test"})
         assert response.status == 401, "the owner's login is not a device"
         for method, path in (("GET", "/api/sessions"), ("GET", "/api/c/deals"), ("POST", "/api/c/deals")):
             status, answer, _ = await world.call(method, path, {"ops": []}, cookie="", headers={
                 "Authorization": f"Bearer {token}", **({"X-Retinue": "1"} if method == "POST" else {})})
             assert status == 401, (method, path)
-        # …and the face's own header is no part of the Mac's: none asked, none needed.
+        # …and the face's own header is no part of the owner's computer's: none asked, none needed.
         device = Device(world, token)
         await device.start()
         status, answer, _ = await device.post(listing, headers={"Authorization": f"Bearer {token}",
-                                                                mac.SESSION_HEADER: device.session})
+                                                                endpoint.SESSION_HEADER: device.session})
         assert status == 200 and answer["result"]["tools"]
 
     faced(tmp_path, body)
@@ -219,12 +224,12 @@ def test_a_request_without_its_session_is_refused_and_there_is_no_stream(tmp_pat
         token = await world.platform.collections.add_device("laptop", "write", world.clock.now)
         device = Device(world, token)
         status, answer, _ = await device.post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
-        assert status == 400 and answer["error"]["message"] == mac.NO_SESSION
+        assert status == 400 and answer["error"]["message"] == endpoint.NO_SESSION
         await device.start()
         status, answer, _ = await device.post({"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert status == 202 and answer is None
         for method in ("GET", "DELETE"):
-            response = await world.api.request(method, mac.PATH, headers={"Authorization": f"Bearer {token}"})
+            response = await world.api.request(method, endpoint.PATH, headers={"Authorization": f"Bearer {token}"})
             assert response.status == 405 and response.headers["Allow"] == "POST"
 
     faced(tmp_path, body)
@@ -241,8 +246,8 @@ def test_a_session_is_one_the_server_gave_that_device(tmp_path):
         one_off = laptop.session[:-1] + ("0" if laptop.session[-1] != "0" else "1")  # not a 1 in 16 chance of itself
         for forged in ("forged_session", other.session, one_off):
             status, answer, _ = await laptop.post(listing, headers={"Authorization": f"Bearer {laptop.token}",
-                                                                    mac.SESSION_HEADER: forged})
-            assert status == 404 and answer["error"]["message"] == mac.UNKNOWN_SESSION, forged
+                                                                    endpoint.SESSION_HEADER: forged})
+            assert status == 404 and answer["error"]["message"] == endpoint.UNKNOWN_SESSION, forged
         status, _, _ = await laptop.post(listing)
         assert status == 200, "its own, given at initialize"
 
@@ -253,10 +258,10 @@ def test_a_body_past_its_limit_is_refused_before_it_is_read(tmp_path):
     async def body(world: FaceWorld):
         device = Device(world, await world.platform.collections.add_device("laptop", "write", world.clock.now))
         await device.start()
-        response = await world.api.post(mac.PATH, data=b" " * (mac.BODY_MAX + 1), headers={
-            "Authorization": f"Bearer {device.token}", mac.SESSION_HEADER: device.session,
+        response = await world.api.post(endpoint.PATH, data=b" " * (endpoint.BODY_MAX + 1), headers={
+            "Authorization": f"Bearer {device.token}", endpoint.SESSION_HEADER: device.session,
             "Content-Type": "application/json"})
-        assert response.status == 413 and (await response.json())["error"]["message"] == mac.TOO_LONG
+        assert response.status == 413 and (await response.json())["error"]["message"] == endpoint.TOO_LONG
 
     faced(tmp_path, body)
 
@@ -322,7 +327,7 @@ def test_a_devices_proposals_are_limited_in_all_its_sessions_and_a_revoked_ones_
 # --- the device's own sessions and the project tree (retinue/computers.py) ---------------------------------------------
 
 def report_of(n: int, sessions: list) -> dict:
-    return {"jsonrpc": "2.0", "id": n, "method": mac.SESSIONS, "params": {"sessions": sessions}}
+    return {"jsonrpc": "2.0", "id": n, "method": endpoint.SESSIONS, "params": {"sessions": sessions}}
 
 
 def test_a_device_reports_its_sessions_and_the_app_lists_them_until_it_goes_off(tmp_path, caplog):
@@ -331,7 +336,7 @@ def test_a_device_reports_its_sessions_and_the_app_lists_them_until_it_goes_off(
         token = await store.add_device("laptop", "read", world.clock.now)
         device = Device(world, token)
         await device.start()
-        assert mac.SESSIONS not in await device.tools() and mac.PROJECTS not in await device.tools(), \
+        assert endpoint.SESSIONS not in await device.tools() and endpoint.PROJECTS not in await device.tools(), \
             "the device's own methods are never listed among the tools a session sees"
         rows = [{"id": "local_a1", "title": "Garden plan\nsecond line", "folder": "/home/anna/garden",
                  "project": "garden/roses/", "state": "waiting", "at": world.clock.now - 5,
@@ -388,7 +393,7 @@ def test_a_report_the_platform_does_not_take_keeps_the_list_before(tmp_path):
             {"sessions": [{**good, "link": "javascript:alert(1)"}]},
         ]
         for n, params in enumerate(bad, start=3):
-            status, answer, _ = await device.post({"jsonrpc": "2.0", "id": n, "method": mac.SESSIONS,
+            status, answer, _ = await device.post({"jsonrpc": "2.0", "id": n, "method": endpoint.SESSIONS,
                                                    "params": params})
             assert status == 200 and answer["error"]["code"] == -32602 and answer["error"]["message"], params
         listed = world.platform.computers.listing(world.clock.now)
@@ -409,10 +414,10 @@ def test_a_device_reads_the_project_tree_its_sidebar_is_filed_by(tmp_path):
         device = Device(world, token)
         await device.start()
         world.platform.base = None
-        status, answer, _ = await device.post({"jsonrpc": "2.0", "id": 2, "method": mac.PROJECTS})
-        assert answer["error"]["message"] == mac.NO_BASE
+        status, answer, _ = await device.post({"jsonrpc": "2.0", "id": 2, "method": endpoint.PROJECTS})
+        assert answer["error"]["message"] == endpoint.NO_BASE
         world.platform.base = _Base(reader(work))
-        status, answer, _ = await device.post({"jsonrpc": "2.0", "id": 3, "method": mac.PROJECTS})
+        status, answer, _ = await device.post({"jsonrpc": "2.0", "id": 3, "method": endpoint.PROJECTS})
         assert status == 200 and answer["result"]["head"]
         assert answer["result"]["projects"] == [
             {"path": "garden", "title": "Garden", "parent": ""},
@@ -465,6 +470,29 @@ def test_a_computers_turn_endings_are_cards_in_the_feed(tmp_path):
     faced(tmp_path, body)
 
 
+def test_the_old_address_is_the_same_endpoint_for_the_clients_set_up_with_it(tmp_path):
+    """`/mcp/mac`, the endpoint's old name (#66): a client set up with it keeps working, and writes under the new
+    name; it opens to a device's token alone, as the new address does."""
+    async def body(world: FaceWorld):
+        await collections(world)
+        store = world.platform.collections
+        token = await store.add_device("laptop", "write", world.clock.now)
+        old = Device(world, token, "/mcp/mac")  # as written in the clients set up before #66, not taken from the code
+        assert endpoint.PATH != "/mcp/mac"
+        await old.start()
+        assert await old.tools() == list(colltools.NAMES)
+        add = {"collection": "deals", "ops": [{"op": "add", "fields": {"company": "Acme"}}]}
+        said, error = await old.call(colltools.APPLY, add, use="toolu_o1")
+        assert not error, said
+        [change] = await store.history("deals", answer_of(said)["records"][0]["id"])
+        assert change["actor"] == f"device:laptop/{old.session}" and change["via"] == "device"
+        listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        status, answer, _ = await old.post(listing, headers={})
+        assert status == 401 and answer["error"] == endpoint.UNAUTHORIZED
+
+    faced(tmp_path, body)
+
+
 def test_a_computers_session_keeps_its_place_on_the_map_while_it_is_listed():
     machines = computers.Computers()
     row = lambda sid, project="": {"id": sid, "title": sid, "state": "done", "at": 1.0, "project": project}  # noqa: E731
@@ -475,3 +503,30 @@ def test_a_computers_session_keeps_its_place_on_the_map_while_it_is_listed():
     assert slots() == {"d": 0, "b": 1, "c": 0}, "one that left frees its place; the others stay put"
     machines.report("laptop", {"sessions": [row("d"), row("b", "garden"), row("c", "garden")]}, 3.0)
     assert slots() == {"d": 0, "b": 1, "c": 0}, "moved to another project: the lowest place free there"
+
+
+def test_rights_events_and_the_feed_read_the_old_class_name_as_device():
+    """Rights, events and writers kept before #66 say `mac`: each reads as `device`, and what is kept anew says
+    `device` only."""
+    form = parse_form(DEALS)
+    kept = parse_rights({"writers": {"mac": {"add": True, "set": ["company"], "delete": False}},
+                         "set_by": {"stage": {"won": ["owner", "mac"]}}}, form)
+    assert kept == {"writers": {"device": {"add": True, "set": ["company"], "delete": False}},
+                    "set_by": {"stage": {"won": ["owner", "device"]}}}, "kept anew: the new name"
+    for twice in ({"writers": {"mac": {"add": True}, "device": {"add": True}}},
+                  {"writers": {}, "set_by": {"stage": {"won": ["mac", "device"]}}}):
+        with pytest.raises(Rejected, match="twice"):
+            parse_rights(twice, form)
+
+    old = {"writers": {"mac": {"add": True, "set": "*", "delete": False}}, "set_by": {}}  # as kept before
+    assert granted(old, "device") == {"add": True, "set": "*", "delete": False}
+    assert granted(old, "session") == {} and among("device", ["owner", "mac"]) and not among("session", ["mac"])
+    assert writer_class("mac:laptop/s1") == writer_class("device:laptop/s1") == "device"
+    assert idem_scope("device:laptop/s1") == "device:laptop", "a device's idems are its own, whatever its session"
+
+    described = project_mod.parse({"events": {"won": {"collection": "deals", "by": ["owner", "mac"]}}}, "work")
+    assert described["events"]["won"]["by"] == ["owner", "device"]
+    with pytest.raises(Rejected, match="each once"):
+        project_mod.parse({"events": {"won": {"collection": "deals", "by": ["mac", "device"]}}}, "work")
+
+    assert feed._proposer("mac:air/s1") == feed._proposer("device:air/s1") == "Computer air"

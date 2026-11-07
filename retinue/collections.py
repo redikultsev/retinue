@@ -10,8 +10,8 @@ backup copy, an import) is `Refused` at once, for the caller to say «try again�
 The file uses a rollback journal, like every database the backup copies (deploy/backup/retinue-backup.py). It holds
 `files`, and the records: `schemas` (a collection's form, rights and views), `records` (each one's current state, a JSON document),
 `changes` (every change of one, append-only: the history and the provenance), `batches` (changes that go
-together), `idems` (the calls already made, so a repeat makes none) and `devices` (the owner's Macs that reach the
-collections at `/mcp/mac`, each by the SHA-256 of its token). Every write of a record is one `apply`,
+together), `idems` (the calls already made, so a repeat makes none) and `devices` (the owner's computers that reach the
+collections at `/mcp/device`, each by the SHA-256 of its token). Every write of a record is one `apply`,
 checked whole against the form and the collection's rights before anything is kept; every read is `get`, `query` or
 `count`, whose SQL only code assembles, from names the form declares — or a `Reader`'s, in one transaction: what the
 views, the agents' tools and the events read beside them. No other module names a table or a column of the file.
@@ -115,7 +115,7 @@ SCHEMA = """
         PRIMARY KEY (scope, collection, idem)
     ) STRICT;
     CREATE TABLE IF NOT EXISTS devices (
-        name TEXT PRIMARY KEY,              -- the device: its changes are by mac:<name>/<session>; never given twice
+        name TEXT PRIMARY KEY,              -- the device: its changes are by device:<name>/<session>; never given twice
         token_sha256 TEXT NOT NULL UNIQUE,  -- of its token, which only the device keeps
         scope TEXT NOT NULL CHECK (scope IN ('read', 'write')),
         created REAL NOT NULL,
@@ -147,7 +147,7 @@ SCHEMA = """
         BEGIN SELECT RAISE(ABORT, 'changes are append-only'); END;
 """
 FILE_COLUMNS = "sha256, name, size, mime, created"
-DEVICE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # a Mac's name, as `mac:<device>/<session>` names it
+DEVICE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # a computer's name, as `device:<device>/<session>` names it
 SCOPES = ("read", "write")  # a device's token: describe and query; or those, apply and propose too
 
 NAME = re.compile(r"[a-z][a-z0-9_]{0,39}")      # a collection's name, and a field's
@@ -158,10 +158,12 @@ INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z")  # a moment i
 ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 PROJECT = r"[a-z0-9][a-z0-9_-]{0,63}"           # a project's name, as a Space's (`SPACE` below)
-ACTOR = re.compile(r"owner|assistant|session:[A-Za-z0-9_-]{1,64}|mac:[a-z0-9][a-z0-9_-]{0,39}/[A-Za-z0-9_-]{1,64}"
+# `mac:` is the old name of `device:` (#66): the history keeps it as written, nothing new writes it.
+ACTOR = re.compile(r"owner|assistant|session:[A-Za-z0-9_-]{1,64}|(?:device|mac):[a-z0-9][a-z0-9_-]{0,39}"
+                   r"/[A-Za-z0-9_-]{1,64}"
                    rf"|code:[a-z][a-z0-9_-]{{0,39}}|project:{PROJECT}|import:[0-9A-HJKMNP-TV-Z]{{26}}"
                    r"|define:[1-9][0-9]{0,8}")
-VIA = ("screen", "session", "mac", "assistant", "mail", "code", "event", "import", "define")
+VIA = ("screen", "session", "device", "assistant", "mail", "code", "event", "import", "define")
 SRC = re.compile(r"(?:mail|tg|owner_words|cal|file|record|web):\S{1,1000}")
 LABEL = re.compile(r"[a-z][a-z0-9_]{0,31}")      # a mark of foreign text the writer read (core.FOREIGN's keys)
 TYPES = {  # each type, and the keys its field takes beside `type`, `required` and `index`
@@ -179,15 +181,16 @@ OP_KEYS = {  # each operation of `apply`, and the keys it takes
     "revert": {"op", "change_id", "version", "src"},
 }
 OWNERS = ("owner", "import", "define")  # classes that may do anything: the owner, and what he runs from the terminal
-WRITER_CLASS = re.compile(rf"assistant|session|mac|code:[a-z][a-z0-9_-]{{0,39}}|project:{PROJECT}")  # rights' classes
-SET_BY_CLASS = re.compile(rf"owner|assistant|session|mac|code:[a-z][a-z0-9_-]{{0,39}}|project:{PROJECT}")
-DEFAULT_RIGHTS = {  # a new collection's: sessions add and set, deleting by a proposal; the Mac without deleting;
+WRITER_CLASS = re.compile(rf"assistant|session|device|mac|code:[a-z][a-z0-9_-]{{0,39}}|project:{PROJECT}")  # rights' classes; mac: #66
+SET_BY_CLASS = re.compile(rf"owner|assistant|session|device|mac|code:[a-z][a-z0-9_-]{{0,39}}|project:{PROJECT}")  # mac: #66
+DEFAULT_RIGHTS = {  # a new collection's: sessions add and set, deleting by a proposal; the owner's computer without deleting;
     "writers": {    # the assistant and every code: rule nothing, until the owner gives them some
         "session": {"add": True, "set": "*", "delete": "propose"},
-        "mac": {"add": True, "set": "*", "delete": False},
+        "device": {"add": True, "set": "*", "delete": False},
     },
     "set_by": {},
 }
+OLD_CLASS = {"mac": "device"}  # a class by its old name (#66): rights kept before read as the new one
 FILTER_OPS = ("eq", "in", "between", "empty", "not_empty", "ref_is")
 VIEW_KEYS = {  # each kind of view (`views.py`), and the keys it takes
     "stat": {"name", "kind", "title", "tab", "count", "filter", "date", "field", "to", "window", "goal"},
@@ -292,7 +295,7 @@ class Rejected(Exception):
 @dataclass(frozen=True)
 class Writer:
     """Who writes, as every change keeps it: `actor` of a closed kind (`owner`, `assistant`, `session:<id>`,
-    `mac:<device>/<session>`, `code:<rule>`, `import:<batch>`, `define:<rev>`), `via` the path it came by, `model`
+    `device:<device>/<session>`, `code:<rule>`, `import:<batch>`, `define:<rev>`), `via` the path it came by, `model`
     the model behind it if any, `foreign` the marks of foreign text it had read."""
 
     actor: str
@@ -604,9 +607,12 @@ def parse_rights(rights: Any, form: dict) -> dict:
         raise Rejected("\"writers\" and \"set_by\" are objects")
     kept: dict = {"writers": {}, "set_by": {}}
     for cls, grant in writers.items():
-        if not WRITER_CLASS.fullmatch(cls):
-            raise Rejected(f"writers: {cls!r} is not a writer's class: assistant, session, mac, code:<rule> or "
+        if not isinstance(cls, str) or not WRITER_CLASS.fullmatch(cls):
+            raise Rejected(f"writers: {cls!r} is not a writer's class: assistant, session, device, code:<rule> or "
                            "project:<name> (the owner may do anything, and is not listed)")
+        cls = OLD_CLASS.get(cls, cls)
+        if cls in kept["writers"]:
+            raise Rejected(f"writers.{cls} is given twice (mac is its old name)")  # #66
         if not isinstance(grant, dict) or (unknown := set(grant) - {"add", "set", "delete"}):
             raise Rejected(f"writers.{cls} takes \"add\", \"set\" and \"delete\"")
         add, open_, delete = grant.get("add", False), grant.get("set", []), grant.get("delete", False)
@@ -629,9 +635,11 @@ def parse_rights(rights: Any, form: dict) -> dict:
                 raise Rejected(f"set_by.{name}: {value!r} is not one of its values")
             if (not isinstance(who, list) or not who or len(set(map(str, who))) != len(who)
                     or not all(isinstance(c, str) and SET_BY_CLASS.fullmatch(c) for c in who)):
-                raise Rejected(f"set_by.{name}.{value} is a list of classes: owner, assistant, session, mac, "
+                raise Rejected(f"set_by.{name}.{value} is a list of classes: owner, assistant, session, device, "
                                "code:<rule>, project:<name>")
-        kept["set_by"][name] = {value: list(who) for value, who in values.items()}
+            if len({OLD_CLASS.get(c, c) for c in who}) != len(who):
+                raise Rejected(f"set_by.{name}.{value} names device twice (mac is its old name)")  # #66
+        kept["set_by"][name] = {value: [OLD_CLASS.get(c, c) for c in who] for value, who in values.items()}
     return kept
 
 
@@ -683,19 +691,34 @@ def _indexes(collection: str, form: dict) -> dict[str, str]:
 
 def writer_class(actor: str) -> str:
     """The class a writer's rights and its idems go by: a `code:` rule and a project's reactions (`project:<name>`,
-    `events.py`) their own, every other actor its kind (`session:<id>` is a session)."""
-    return actor if actor.startswith(("code:", "project:")) else actor.split(":")[0]
+    `events.py`) their own, every other actor its kind (`session:<id>` is a session; `mac:` (#66), the old
+    name of `device:`, a device)."""
+    if actor.startswith(("code:", "project:")):
+        return actor
+    kind = actor.split(":")[0]
+    return OLD_CLASS.get(kind, kind)
+
+
+def granted(rights: dict, cls: str) -> dict:
+    """A class's grant in a collection's rights as kept: under its old name too, for rights kept before #66."""
+    writers = rights.get("writers", {})
+    return writers.get(cls) or next((g for old, g in writers.items() if OLD_CLASS.get(old) == cls), {})
+
+
+def among(cls: str, classes: list) -> bool:
+    """Whether a class is one of these, as kept: an old name counts as its new one."""
+    return cls in {OLD_CLASS.get(c, c) for c in classes}
 
 
 def idem_scope(actor: str, derived: bool = False) -> str:
     """Whose idems a writer's are. A call's (`idem`) are a session's own actor's — another session's `add-1` is
-    another call —, a Mac's its device's (`mac:<device>`: Claude Code makes a call again on a new connection, which is
+    another call —, a device's its device's own (`device:<name>`: Claude Code makes a call again on a new connection, which is
     another MCP session of the same device), and its class's for the rest. One the store derives from a mail is its
     class's, so the assistant reading a mail again finds what it made the first time, whichever run it is. An
     import's, of both kinds, are its own batch's: a failed import, taken back, leaves none behind that a corrected one
     would skip."""
     cls = writer_class(actor)
-    if cls == "mac" and not derived:
+    if cls == "device" and not derived:
         return actor.split("/")[0]
     return actor if cls == "import" or (not derived and cls == "session") else cls
 
@@ -1241,7 +1264,7 @@ class Collections:
         terminal, may do anything."""
         if cls in OWNERS:
             return
-        grant = rights["writers"].get(cls, {})
+        grant = granted(rights, cls)
         if kind == "add" and not grant.get("add"):
             raise Rejected(f"{cls} does not add records to {collection}: propose it to the owner instead")
         if kind in ("delete", "restore"):
@@ -1259,8 +1282,8 @@ class Collections:
                            f"{cls} in {collection}: propose the change to the owner instead")
         for name, value in fields.items():
             who = rights["set_by"].get(name, {}).get(value) if isinstance(value, str) else None
-            if who is not None and cls not in who:
-                by = ", ".join(dict.fromkeys(["the owner", *(c for c in who if c != "owner")]))
+            if who is not None and not among(cls, who):
+                by = ", ".join(dict.fromkeys(["the owner", *(OLD_CLASS.get(c, c) for c in who if c != "owner")]))
                 raise Rejected(f"{name!r} becomes {value!r} only by {by}: not by {cls}", kind="propose")
 
     def _keys(self, collection: str, form: dict, data: dict, rid: str, changed: set | None, check_key: bool) -> None:
@@ -1688,10 +1711,10 @@ class Collections:
                 counts["files"] += 1
         return counts
 
-    # --- the Macs -----------------------------------------------------------------------------------------------------
+    # --- the computers -----------------------------------------------------------------------------------------------------
 
     async def add_device(self, name: str, scope: str, now: float) -> str:
-        """A Mac that reaches the collections at `/mcp/mac`: its token, shown once — the file keeps only its SHA-256.
+        """A computer that reaches the collections at `/mcp/device`: its token, shown once — the file keeps only its SHA-256.
         A name is given once, revoked or not: the changes it made keep naming that device. Raises Rejected, Refused."""
         if not isinstance(name, str) or not DEVICE.fullmatch(name):
             raise Rejected(f"a device's name is 1 to 40 of a-z, 0-9, - and _, starting with a letter or digit: not "
@@ -1730,8 +1753,9 @@ class Collections:
         Raises Refused."""
         return await self._run(self._read, lambda: [
             {"name": name, "scope": scope, "created": created, "revoked": revoked,
-             "written": self._db.execute("SELECT max(ts) FROM changes WHERE substr(actor, 1, ?) = ?",
-                                         (len(name) + 5, f"mac:{name}/")).fetchone()[0]}
+             "written": self._db.execute(
+                 "SELECT max(ts) FROM changes WHERE substr(actor, 1, ?) = ? OR substr(actor, 1, ?) = ?",
+                 (len(name) + 8, f"device:{name}/", len(name) + 5, f"mac:{name}/")).fetchone()[0]}  # mac: #66
             for name, scope, created, revoked in self._db.execute(
                 "SELECT name, scope, created, revoked FROM devices ORDER BY created, name").fetchall()])
 
@@ -2010,7 +2034,7 @@ class Reader:
         ("*" for all)."""
         out = []
         for schema in self.schemas():
-            grant = schema["rights"].get("writers", {}).get(cls, {})
+            grant = granted(schema["rights"], cls)
             if grant.get("add") or grant.get("set"):
                 out.append({"name": schema["name"], "space": schema["space"], "add": bool(grant.get("add")),
                             "set": grant.get("set") or []})
@@ -2236,18 +2260,19 @@ class Reader:
 
     def foreign(self, collection: str, ids: list[str]) -> bool:
         """Whether any of these records was written by a writer that had read someone else's text, or by a session or
-        the Mac — which carry no mark of their own: a session's page, a Mac's anything."""
+        the owner's computer — which carry no mark of their own: a session's page, a computer's anything."""
         if not ids:
             return False
         marks = ", ".join("?" * len(ids))
         return self._store._db.execute(
             f'SELECT 1 FROM changes WHERE collection = ? AND id IN ({marks}) AND ("foreign" IS NOT NULL OR actor LIKE '
-            "'session:%' OR actor LIKE 'mac:%') LIMIT 1", (collection, *ids)).fetchone() is not None
+            "'session:%' OR actor LIKE 'device:%' OR actor LIKE 'mac:%') LIMIT 1", (collection, *ids)).fetchone() is not None  # mac: #66
 
     def owner_changed(self, since: float, until: float) -> bool:
-        """Whether the owner changed any record from `since` to before `until` — on a screen of his, or from a Mac."""
+        """Whether the owner changed any record from `since` to before `until` — on a screen of his, or from a computer."""
         return self._store._db.execute(
-            "SELECT 1 FROM changes WHERE ts >= ? AND ts < ? AND (actor = 'owner' OR actor LIKE 'mac:%') LIMIT 1",
+            "SELECT 1 FROM changes WHERE ts >= ? AND ts < ? AND (actor = 'owner' OR actor LIKE 'device:%' "
+            "OR actor LIKE 'mac:%') LIMIT 1",  # #66
             (since, until)).fetchone() is not None
 
     # --- the events' log --------------------------------------------------------------------------------------------

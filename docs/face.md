@@ -6,12 +6,12 @@ can add to the home screen) and the same page opened from a card in Telegram as 
 through WireGuard, from your own devices.
 
 ```
-phone ── WireGuard ── Traefik (allow list: your devices; TLS; adds the key) ── face (nginx: the app; /api/*, /mcp/mac on)
+phone ── WireGuard ── Traefik (allow list: your devices; TLS; adds the key) ── face (nginx: the app; /api/*, /mcp/device on)
                                                     └── face-platform (internal) ── platform 172.16.96.10:9600
 ```
 
-The **face API** is `/api/*` — and `/mcp/mac`, the collections for the agents on your Mac, by a device's token instead
-of the login ([collections.md](collections.md#from-the-mac)) — on the platform's second port (9600), on its own address on its own network
+The **face API** is `/api/*` — and `/mcp/device`, the collections for the agents on your computer, by a device's token instead
+of the login ([collections.md](collections.md#from-the-owners-computer)) — on the platform's second port (9600), on its own address on its own network
 `face-platform`, where only the face's nginx is besides the platform. The router, the lanes' hooks and the lanes stay
 on 9500 and never see that network. nginx in front adds nothing secret: who may do what is decided by the face API
 alone.

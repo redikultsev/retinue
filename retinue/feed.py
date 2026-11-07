@@ -514,7 +514,7 @@ class Feed:
                                                            f"{'' if n == 1 else 's'} proposed")
             if (session := sessions.get(proposal["session"] or "")) is not None:
                 row = self._row(key, "decide", "collection_proposal", session, proposal["created"], essence)
-            elif proposal["session"] is None:  # the assistant's, a Mac's or a rule's: no session to name it by
+            elif proposal["session"] is None:  # the assistant's, a computer's or a rule's: no session to name it by
                 row = {"key": key, "action": "decide", "source": "collection_proposal", "session": None,
                        "track": None, **self._sphere(None), "project": None, "title": _proposer(proposal["actor"]),
                        "since": proposal["created"], "essence": essence, "ref": proposal["id"]}
@@ -634,10 +634,10 @@ class Feed:
 
 
 def _proposer(actor: str) -> str:
-    """Who proposed a write with no session behind it, as a row's title: the assistant, a Mac by its device's name,
+    """Who proposed a write with no session behind it, as a row's title: the assistant, a computer by its device's name,
     or a rule by its name."""
     if actor == "assistant":
         return "Assistant"
-    if actor.startswith("mac:"):
-        return f"Mac {actor.removeprefix('mac:').split('/')[0]}"
+    if actor.startswith(("device:", "mac:")):  # mac: the old name of device: (#66)
+        return f"Computer {actor.split(':', 1)[1].split('/')[0]}"
     return f"Rule {actor.removeprefix('code:')}"

@@ -1,6 +1,6 @@
 # Your repositories in the room
 
-Sessions on the server work in your repositories as on your Mac: each is an ordinary git clone at
+Sessions on the server work in your repositories as on your computer: each is an ordinary git clone at
 `/work/code/<name>` of `lane-private`, where a session runs `git status`, `log`, `diff`, `blame`, makes branches and
 commits, `git pull`s fresh code, runs the tests and installs packages. What leaves the server is yours to decide:
 **«Push · N»** under the session's summary opens a card, and «Send» pushes the session's branch to the
@@ -115,7 +115,7 @@ mirror's path: `git pull` and `git fetch` in the room need no credential and rea
 `/etc/gitconfig` (root's) trusts `/lane/mirrors/*`, which belong to the platform's user.
 
 `/new code <name> [task]` starts a session in `/work/code/<name>`, so the repository's `CLAUDE.md` and `AGENTS.md`
-reach it as on the Mac ([instructions.md](instructions.md)). A session started elsewhere (the Base's root) is told by
+reach it as on the owner's computer ([instructions.md](instructions.md)). A session started elsewhere (the Base's root) is told by
 the room's `code.md` to read them before it works in a repository, and to commit on a branch, never `git push`.
 
 ## The button

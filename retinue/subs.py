@@ -29,21 +29,25 @@ piece of work, one child. A proposal keeps what it was made with — the owner's
 report's turn made it — and expires on the clock (`expire`), its card told. No app, no proposals: nowhere to press.
 
 **Naming**: a session the owner started names itself first thing in its first turn (`name_session`), as the
-desktop app titles a session within seconds: a short title in place of his first words, and — when nobody placed it —
-its sphere, allow-listed; never as the sphere's main session. Each once: a title it has stays, a sphere the owner or
-the session set stays.
+desktop app titles a session within seconds: a short title of its work in place of his first words, and — when nobody
+placed it — its sphere, allow-listed; never as the sphere's main session. The title names the work, never the
+project, which the list shows already: one that starts with the session's own project — its title or folder name,
+then a colon (`project_key`) — is kept without that part. It names itself again when its work has changed; a title
+the owner set himself stays (`title_by`). A sphere the owner or the session set stays.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import posixpath
 import secrets
 from datetime import datetime, time as dtime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from . import colltools, endings, followups, migrate, pings
+from . import colltools, endings, followups, migrate, pings, spaces
 from .courier import line
 
 if TYPE_CHECKING:
@@ -95,8 +99,10 @@ TOOLS = [
      "inputSchema": {"type": "object", "additionalProperties": False, "required": ["id"],
                      "properties": {"id": {"type": "string"}}}},
     {"name": NAME,
-     "description": "Name this session in the owner's list, first thing in your first turn: a short title of its task "
-                    "and, when the platform asks for it, its sphere. Once: a title it has stays.",
+     "description": "Name this session in the owner's list, first thing in your first turn: a short title of its work "
+                    "and, when the platform asks for it, its sphere. The title names the work, never the project: the "
+                    "list shows the session under its project already. Call it again when what the session does has "
+                    "changed — not for a small turn of the same work. A title the owner gave the session himself stays.",
      "inputSchema": {"type": "object", "additionalProperties": False, "required": ["title"],
                      "properties": {"title": {"type": "string",
                                               "description": "3-6 words, in the language the owner wrote in"},
@@ -193,6 +199,14 @@ def _text(value: object, cap: int) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() and len(value) <= cap else None
 
 
+def unprefixed(title: str, project: set[str]) -> str:
+    """A title without the project it starts with — one of `project`'s names (folded), then a colon: the list shows
+    the session under its project already. Anything else before a colon («Fix: …») stays, and so does a title that
+    would be left empty."""
+    head, colon, rest = title.partition(":")
+    return rest.strip() if colon and rest.strip() and head.strip().casefold() in project else title
+
+
 def _converge(db) -> None:
     """Step 1: what the upgrade at open did before the steps were numbered — the columns tables from before them
     lack."""
@@ -213,6 +227,7 @@ class Subs:
     def __init__(self, platform: Platform) -> None:
         self.platform = platform
         self.store = platform.store
+        self._spaces: spaces.Spaces | None = None  # the Base's reader, for a project's title (`project_names`)
         migrate.run(self.store.db, "subs", STEPS,
             """
             CREATE TABLE IF NOT EXISTS sub_starts (
@@ -256,7 +271,7 @@ class Subs:
 
     def instructions(self, session: dict) -> str:
         """What a run is told of its tools; to name the session while it has no title — and its sphere too, when
-        nobody placed it."""
+        nobody placed it —, and the title it has, while that is its own to change."""
         said = ("Sub-sessions: separate work that can be done in parallel and without you goes to a sub-session with "
                 f"a self-contained brief — {START} when the owner asked for it to be split off, {PROPOSE} when you "
                 "decided it yourself: he starts a proposal or not, and you go on. A report comes to you as the next "
@@ -267,10 +282,13 @@ class Subs:
         placed = session.get("sphere") is not None or session.get("sphere_by") is not None
         if session.get("title") is None:  # asked once: named, the session is not asked again, sphere or none
             said += (f"\nThis session has no name yet. First thing in your first turn, before any other work, call {NAME} "
-                     "with a title of its task: 3-6 words, in the language the owner wrote in.")
+                     "with a title of its work, not of its project: 3-6 words, in the language the owner wrote in.")
             if not placed and self.platform.spheres.by_name:
                 said += (f" Its sphere is not set: give {NAME} the sphere too, one of: "
                          f"{', '.join(self.platform.spheres.by_name)}; leave it out if none fits.")
+        elif session.get("title_by") != "owner":  # his own title is not the session's to change
+            said += (f'\nThis session is named "{line(session["title"], NAME_CHARS)}" in the owner\'s list. When what '
+                     f"it does has changed, not for a small turn of the same work, give it a new title with {NAME}.")
         return said
 
     async def mcp(self, run: Run, body: object) -> tuple[int, dict | None]:
@@ -326,7 +344,7 @@ class Subs:
         if name == READ:
             return self.read(session, arguments)
         if name == NAME:
-            return self.name(session, arguments)
+            return await self.name(session, arguments)
         if name == endings.TOOL:
             return self.endings.declare(run.id, session, arguments)
         if name == followups.FOLLOW:
@@ -346,9 +364,10 @@ class Subs:
                                      "ORDER BY created", (parent,)).fetchall()
         return [self.store.session(row[0]) for row in rows]
 
-    def name(self, session: dict, arguments: dict) -> tuple[str, bool]:
-        """The session's own title, if it has none, and its sphere, if nobody placed it (`set_sphere`, by the
-        session: never as main, its sub-sessions following)."""
+    async def name(self, session: dict, arguments: dict) -> tuple[str, bool]:
+        """The session's own title — again whenever its work changes, never over the owner's — and its sphere, if
+        nobody placed it (`set_sphere`, by the session: never as main, its sub-sessions following). The sphere first:
+        the project a title must not repeat may be the sphere it names (`unprefixed`)."""
         title, sphere = _text(arguments.get("title"), NAME_CHARS), arguments.get("sphere")
         if title is None or sphere is not None and not isinstance(sphere, str):
             return f"Needed: title (up to {NAME_CHARS} characters); sphere, if given, a name.", True
@@ -357,14 +376,41 @@ class Subs:
             return f"No sphere {line(sphere, 40)}: one of {', '.join(self.platform.spheres.by_name)}, or none.", True
         row = self.store.session(session["id"]) or session
         said = []
-        if self.store.set_title(row["id"], line(title, NAME_CHARS)):
-            said.append(f'titled "{line(title, NAME_CHARS)}"')
         if sphere and row.get("sphere") is None and row.get("sphere_by") is None:
             self.store.set_sphere(row["id"], sphere, by="session")
             said.append(f"in the sphere {sphere}")
+        owners = row.get("title_by") == "owner"
+        if not owners:
+            title = line(unprefixed(title, await self.project_names(row["id"])), NAME_CHARS)
+            if self.store.set_title(row["id"], title):
+                said.insert(0, f'titled "{title}"')
         if not said:
-            return "The session is named already: nothing changed. Go on with your work.", False
+            why = "the owner named it himself: his title stays" if owners else "nothing changed"
+            return f"The session is named already: {why}. Go on with your work.", False
         return f"The session is {' and '.join(said)}. Go on with your work.", False
+
+    async def project_names(self, session: str) -> set[str]:
+        """The names of the session's own project (`project_key`), folded for comparison: a Base folder's name and
+        its Showcase's title; a sphere's name and title. None: in no project."""
+        key = self.store.project_key(session)
+        if not key:
+            return set()
+        names = {posixpath.basename(key)}
+        sphere = self.platform.spheres.by_name.get(key)
+        if sphere is not None:
+            names.add(sphere.title)
+        else:
+            try:
+                names.add(await asyncio.to_thread(lambda: self._base().tree().title(key)) or "")
+            except (spaces.Refused, OSError):  # no Base, or not readable now: the folder's name still counts
+                pass
+        return {n.strip().casefold() for n in names if n and n.strip()}
+
+    def _base(self) -> spaces.Spaces:
+        """The Base's reader, made on first use (git runs in it: off the loop)."""
+        if self._spaces is None:
+            self._spaces = spaces.Spaces(self.platform)
+        return self._spaces
 
     @staticmethod
     def _asked(arguments: dict) -> tuple[str, str, str] | str:

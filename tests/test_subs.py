@@ -11,7 +11,7 @@ import json
 import pytest
 
 from retinue import colltools, endings, followups, pings, subs
-from retinue.config import Sphere
+from retinue.config import BaseConfig, Sphere
 from test_face import FaceWorld
 from test_platformd import World, decision, short_wait  # noqa: F401 — the fixture is autouse
 
@@ -488,7 +488,7 @@ def test_the_token_of_a_run_that_ended_opens_neither_a_hook_nor_the_server(tmp_p
     (None, None, None),
     ("home", "travel", "home"),
 ])
-def test_a_session_names_itself_once_and_its_sphere_only_while_nobody_placed_it(tmp_path, before, sphere, after):
+def test_a_session_names_itself_again_and_its_sphere_only_while_nobody_placed_it(tmp_path, before, sphere, after):
     async def body(world: SubsWorld):
         parent = await world.parent("найди жильё в Лиссабоне на неделю", sphere=before)
         told = world.platform.subs.instructions(world.store.session(parent))
@@ -505,12 +505,70 @@ def test_a_session_names_itself_once_and_its_sphere_only_while_nobody_placed_it(
         assert f"call {subs.NAME}" not in world.platform.subs.instructions(row), "named: not asked again"
 
         said, error = await world.tool(parent, subs.NAME, {"title": "Другое", "sphere": "home"}, "toolu_m")
-        assert world.store.face_session(parent)["title"] == "Жильё в Лиссабоне", "a title stays"
+        assert not error
+        assert world.store.face_session(parent)["title"] == "Другое", "its work changed: a second call renames"
+        assert world.store.session(parent)["title_by"] == "session"
         if after is None:  # still nobody's: a sphere can come later
-            assert not error and said
+            assert world.store.session(parent)["sphere"] == "home"
         else:
-            assert not error
             assert world.store.session(parent)["sphere"] == after, "a sphere set stays the setter's"
+    subs_scenario(tmp_path, body)
+
+
+def test_a_title_the_owner_set_himself_stays_whatever_the_session_calls(tmp_path):
+    async def body(world: SubsWorld):
+        parent = await world.parent("найди билеты", sphere="travel")
+        said, error = await world.tool(parent, subs.NAME, {"title": "Билеты туда"}, "toolu_1")
+        assert not error and world.store.session(parent)["title_by"] == "session"
+        assert world.store.set_title(parent, "Билеты AMS→LIS", by="owner")
+        assert not world.store.set_title(parent, "Что-то ещё"), "the store keeps his title from the session too"
+
+        for n, title in enumerate(("Билеты обратно", "Билеты AMS→LIS")):
+            said, error = await world.tool(parent, subs.NAME, {"title": title}, f"toolu_o{n}")
+            assert not error, "answered, not refused: the session goes on with its work"
+            row = world.store.session(parent)
+            assert (row["title"], row["title_by"]) == ("Билеты AMS→LIS", "owner")
+        assert world.store.face_session(parent)["title"] == "Билеты AMS→LIS"
+        assert not world.store.set_title(parent, "Билеты AMS→LIS", by="owner"), "the same title again changes nothing"
+        assert world.store.set_title(parent, "Билеты и жильё", by="owner")
+        assert world.store.session(parent)["title"] == "Билеты и жильё", "his own title is his to change"
+    subs_scenario(tmp_path, body)
+
+
+@pytest.mark.parametrize("sphere, given, stored", [
+    ("travel", "Путешествия: билеты в Порту", "билеты в Порту"),   # the sphere's title
+    ("travel", "  TRAVEL :  билеты", "билеты"),                     # its name, any case
+    ("travel", "Fix: билеты", "Fix: билеты"),                       # not its project: as given
+    ("travel", "Дом: билеты", "Дом: билеты"),                       # another sphere's title is no prefix of this one
+    ("travel", "Путешествия:", "Путешествия:"),                     # nothing would be left
+    (None, "Путешествия: билеты", "Путешествия: билеты"),           # in no project
+])
+def test_a_title_drops_its_own_projects_name_before_a_colon(tmp_path, sphere, given, stored):
+    async def body(world: SubsWorld):
+        parent = await world.parent("найди билеты", sphere=sphere)
+        said, error = await world.tool(parent, subs.NAME, {"title": given}, "toolu_1")
+        assert not error and world.store.session(parent)["title"] == stored
+    subs_scenario(tmp_path, body)
+
+
+def test_the_project_a_title_drops_is_the_sphere_it_names_in_the_same_call_or_its_base_folder(tmp_path):
+    async def body(world: SubsWorld):
+        placed = await world.parent("найди билеты", sphere=None)
+        said, error = await world.tool(placed, subs.NAME, {"title": "Путешествия: билеты", "sphere": "travel"},
+                                       "toolu_1")
+        assert not error and world.store.session(placed)["title"] == "билеты"
+
+        based = await world.parent("подготовь предложение", sphere="travel")
+        world.store.db.execute("UPDATE sessions SET cwd = 'base/work/acme' WHERE id = ?", (based,))
+        world.store.db.commit()
+        world.cfg.base = BaseConfig(author="Anna Petrova <anna@example.com>")  # now it runs in the Base's work/acme
+        assert world.store.project_key(based) == "work/acme", "its folder in the Base, not its sphere"
+        for n, (given, stored) in enumerate((("Acme: the offer", "the offer"),
+                                             ("Путешествия: the offer", "Путешествия: the offer"),
+                                             ("work: the offer", "work: the offer"))):
+            said, error = await world.tool(based, subs.NAME, {"title": given}, f"toolu_b{n}")
+            assert not error and world.store.session(based)["title"] == stored
+        world.cfg.base = None
     subs_scenario(tmp_path, body)
 
 

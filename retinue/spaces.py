@@ -557,6 +557,12 @@ class BaseTree:
         made = self.commit()
         return made.head, made.projects
 
+    def title(self, project: str) -> str | None:
+        """A project's title as the app lists it (its Showcase's first heading, else its folder's name); None for a
+        folder that is no project."""
+        made = self.commit()
+        return self._row(made, project)["title"] if project and project in made.projects else None
+
     def space(self, name: str) -> tuple[str, dict]:
         made = self.commit()
         if space_name(name) not in made.spaces:

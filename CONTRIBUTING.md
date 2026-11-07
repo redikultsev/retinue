@@ -26,6 +26,12 @@ CodeQL scans the Python, the app's TypeScript and the workflows on every push an
 the Security tab, and one rated high or critical that a pull request adds keeps it out of `main`. A finding that is
 not real is dismissed there with the reason, never silenced in the code.
 
+The same checks audit the dependencies against known vulnerabilities (the job «Dependencies» in
+[.github/workflows/ci.yml](.github/workflows/ci.yml)). A Python package is red once its fix has been out two weeks, the
+age nothing younger than goes in ([face/pnpm-workspace.yaml](face/pnpm-workspace.yaml)); before that it is a warning on
+the run. The fix is a new version in `uv.lock`: `uv lock -P name==version` with the uv the Dockerfile pins. The face is
+red on a high or critical advisory in its production packages.
+
 ## Releases
 
 A pull request that changes what the owner sees adds one line in plain words under «Unreleased» in

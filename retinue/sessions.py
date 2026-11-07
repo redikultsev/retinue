@@ -70,8 +70,15 @@ def _slots(db: sqlite3.Connection) -> None:
         db.execute(f"ALTER TABLE sessions ADD COLUMN {column}")
 
 
+def _title_by(db: sqlite3.Connection) -> None:
+    """Step 3: who set a session's title last — `title_by`, owner | session; NULL: the one it was started with (a
+    sub-session's) or one from before the column, which the session may name again. One the owner set, the session's
+    `name_session` never overwrites (`set_title`)."""
+    db.execute("ALTER TABLE sessions ADD COLUMN title_by TEXT")
+
+
 # The store's numbered migrations (`migrate`, docs/migrations.md): append a step, never change one released.
-STEPS: tuple[migrate.Step, ...] = (_converge, _slots)
+STEPS: tuple[migrate.Step, ...] = (_converge, _slots, _title_by)
 
 
 class PlatformStore:
@@ -109,8 +116,8 @@ class PlatformStore:
                 news_at REAL,                       -- when it last said something new: a summary, a card
                 turn_started REAL,                  -- when its running turn began: idle or closed -> active
                 sub_of TEXT,                        -- a sub-session: the session that started it (`subs`)
-                title TEXT,                         -- a sub-session's given title, or the one it named itself;
-                                                    -- NULL: its first input
+                title TEXT,                         -- a sub-session's given title, the one it named itself or the
+                                                    -- owner's (`title_by`, step 3); NULL: its first input
                 turn_by TEXT,                       -- who started its current turn: owner | parent | report (`subs`)
                 sphere_by TEXT,                     -- who set its sphere last: owner | session; NULL: its start
                 hops INTEGER NOT NULL DEFAULT 0,    -- a parent: child<->parent exchanges since the owner last wrote
@@ -275,7 +282,7 @@ class PlatformStore:
 
     SESSION = ("id", "track", "lane", "kind", "state", "cli_session", "cli_version", "created", "at", "idle_since",
                "turn", "parent", "context_tokens", "sphere", "main", "fork_of", "cwd", "sub_of", "title", "turn_by",
-               "sphere_by", "hops", "owner_hold", "owner_joined", "stopped_run", "archived")
+               "sphere_by", "hops", "owner_hold", "owner_joined", "stopped_run", "archived", "title_by")
 
     def new_session(self, track: str, lane: str, kind: str, now: float, parent: str | None = None,
                     sphere: str | None = None, fork_of: str | None = None, main: bool = False,
@@ -297,9 +304,9 @@ class PlatformStore:
 
     # --- the map: each live session's place in its project ----------------------------------------------------------
 
-    def _slot_key(self, session: str) -> str | None:
-        """The project a session's place is in: its folder in the Base (`project_of`), else its sphere, else ''; None
-        for no such session."""
+    def project_key(self, session: str) -> str | None:
+        """The project a session is in — its place on the map, the prefix its title drops (`subs`): its folder in the
+        Base (`project_of`), else its sphere, else ''; None for no such session."""
         row = self.db.execute("SELECT lane, track, cwd, sphere FROM sessions WHERE id = ?", (session,)).fetchone()
         if row is None:
             return None
@@ -310,7 +317,7 @@ class PlatformStore:
         """The session's place on the face's map, inside the caller's transaction: the lowest number no other live
         (not archived) session of its project holds, kept for its whole life — a state changing moves nothing. One
         that is in its project's places already keeps its own."""
-        key = self._slot_key(session)
+        key = self.project_key(session)
         if key is None:
             return
         slot, slot_in = self.db.execute("SELECT slot, slot_in FROM sessions WHERE id = ?", (session,)).fetchone()
@@ -355,9 +362,15 @@ class PlatformStore:
             self._session_event(session)
         return True
 
-    def set_title(self, session: str, title: str) -> bool:
-        """The session names itself (`subs` `name_session`): once — a title it has, given or its own, stays."""
-        cursor = self.db.execute("UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL", (title, session))
+    def set_title(self, session: str, title: str, by: str = "session") -> bool:
+        """The session's title: `by` session, its own `name_session`, again whenever its work changes — never over
+        one the owner set (`title_by: owner`); `by` owner, his own, which stays. False: nothing changed."""
+        if by == "owner":
+            cursor = self.db.execute("UPDATE sessions SET title = ?, title_by = 'owner' WHERE id = ? AND "
+                                     "(title IS NOT ? OR title_by IS NOT 'owner')", (title, session, title))
+        else:
+            cursor = self.db.execute("UPDATE sessions SET title = ?, title_by = 'session' WHERE id = ? AND "
+                                     "title_by IS NOT 'owner' AND title IS NOT ?", (title, session, title))
         self.db.commit()
         if cursor.rowcount == 1:
             self._session_event(session)

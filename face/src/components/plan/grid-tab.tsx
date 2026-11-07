@@ -86,18 +86,24 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
   const s = useSchedule();
   const calendar = useRef<CalendarRef>(null);
   const [title, setTitle] = useState("");
-  // The calendar says its dates while it renders, before this grid has mounted (React refuses that update, at
-  // random): its title is read once mounted, and from then on as it says it.
+  // FullCalendar starts its now-timer while it renders, and only its unmount stops it: a render React throws away
+  // (this lazy grid's first is a Suspense retry, which React may drop) leaves the timer to update a calendar that
+  // never mounted. So the calendar is drawn once this grid has mounted, in an update React renders through.
+  const [drawn, setDrawn] = useState(false);
+  useEffect(() => setDrawn(true), []);
+  // The calendar says its dates while it renders, before it has mounted (React refuses that update): its title is
+  // read once it has mounted, and from then on as it says it.
   const mounted = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new width is a new calendar (its key), read again
   useEffect(() => {
+    if (!drawn) return;
     mounted.current = true;
     const shown = calendar.current?.getApi().view?.title;
     if (shown) setTitle(shown);
     return () => {
       mounted.current = false;
     };
-  }, [wide]);
+  }, [wide, drawn]);
   const [menu, setMenu] = useState<{ p: Placed; x: number; y: number } | null>(null);
   const all = useMemo(() => placed(plan), [plan]);
   const goals = plan.tasks.goals;
@@ -191,7 +197,8 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
         <PlanBar plan={plan} first={first} today={today} unplanned={unplanned.length}
           nav={{ title, go: (to) => calendar.current?.getApi()[to]() }}
         />
-        <FullCalendar
+        {!drawn && <p className="px-2 py-6 text-sm text-muted-foreground">Loading the grid…</p>}
+        {drawn && <FullCalendar
           plugins={[timeGrid, interaction, classic]}
           colorScheme={dark ? "dark" : "light"}
           initialView={wide ? "timeGridWeek" : "timeGridDay"}
@@ -262,7 +269,7 @@ export function GridTab({ plan, today }: { plan: Plan; today: string }) {
               </div>
             );
           }}
-        />
+        />}
       </div>
       {menu && <BlockMenu menu={menu} close={() => setMenu(null)} tz={tz} />}
     </div>

@@ -24,6 +24,7 @@ This repository is public. It is one person's platform, and it must say nothing 
   rules (no emoji, no tracked capitals, no `transition-all`, no text under 11 px) are a test that fails the build.
 - **See it before you call it done.** A change to the app is looked at in a browser at the sizes it is used at — a
   laptop window, a large screen, a phone — with short and long content, and on the deployed app after deploying.
+- **A pull request is done when its CI is green and you have read it.** A red check is yours to fix before you report.
 
 ## Agent skills
 

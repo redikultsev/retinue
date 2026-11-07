@@ -25,10 +25,14 @@ COPY deploy/lanes/fetch-cli.sh deploy/lanes/cli.lock /tmp/cli/
 # The CLI the lane host checks at start-up (cliengine.CLI_VERSION); its npm integrity is checked before unpacking.
 RUN bash /tmp/cli/fetch-cli.sh /opt/claude && rm -rf /tmp/cli
 
+# The server builds this image for every commit it deploys (update.sh), from Docker's build cache: every layer above
+# the first one whose files changed is reused. So what changes with each commit comes last — the dependencies are
+# installed from the lock alone, then the code on top of them.
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md LICENSE ./
-COPY retinue ./retinue
 ENV UV_PYTHON_DOWNLOADS=never
+RUN uv sync --frozen --no-dev --no-editable --no-install-project
+COPY retinue ./retinue
 RUN uv sync --frozen --no-dev --no-editable
 ENV PATH="/app/.venv/bin:$PATH"
 

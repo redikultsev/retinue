@@ -13,7 +13,10 @@ that will not land.
 
 ## Branches
 
-Work goes to `develop`: push to it, or open your pull request against it. `main` takes pull requests from
+Work goes to `develop` by a pull request against it: every push to `develop` deploys to the server that follows it
+([docs/install.md](docs/install.md)), so the repository's ruleset on `develop` lets in only a pull request whose
+checks are green, CodeQL's included, and refuses a direct push, a force-push and a deletion. No approval is needed:
+the checks are the gate. Tags `v*` are created, moved and deleted by an admin only, since a tag is a release. `main` takes pull requests from
 `develop` only, merged as a merge commit; a direct push to `main`, or a pull request into it from any other branch,
 is refused ([.github/workflows/main-from-develop.yml](.github/workflows/main-from-develop.yml) and the repository's
 ruleset on `main`).

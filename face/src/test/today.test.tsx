@@ -350,7 +350,7 @@ describe("«Today» by action", () => {
 
     const cards = await screen.findAllByTestId("operator-card");
     expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual(["Pick a venue", "Session old"]); // one card each
-    expect(within(cards[0]!).getByText(/work \/ acme · Pick a venue · waits for your message/)).toBeTruthy();
+    expect(cards[0]!.textContent).toMatch(/work \/ acme · Pick a venue · waits for your message/);
     expect(within(cards[0]!).getByText("Two venues hold the date")).toBeTruthy();
     expect(within(cards[0]!).getByRole("textbox", { name: "Your message" })).toBeTruthy();
     expect(within(cards[1]!).getByRole("link", { name: /Open the session/ }).getAttribute("href")).toBe("/s/old");

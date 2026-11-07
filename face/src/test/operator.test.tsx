@@ -126,7 +126,9 @@ describe("the operator", () => {
     expect(within(ask).getByText("#1")).toBeTruthy();
     expect(within(picture).getByText("#4")).toBeTruthy();
     expect(within(done).queryByText(/^#\d/)).toBeNull();
-    expect(within(ask).getByText(/work \/ acme · Session ask · asks · 10 min/)).toBeTruthy();
+    expect(ask.textContent).toMatch(/work \/ acme · Session ask · asks · 10 min/);
+    // the session's title on the top line is the way into its own screen
+    expect(within(ask).getByRole("link", { name: "Session ask" }).getAttribute("href")).toMatch(/^\/s\//);
 
     const options = within(within(ask).getByRole("group", { name: "Options" })).getAllByRole("button");
     expect(options.map((o) => o.textContent)).toEqual([

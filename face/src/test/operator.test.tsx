@@ -212,15 +212,16 @@ describe("the operator", () => {
       ],
     };
     const rows = [
-      row("ending:laptop/local_q", "answer", ask, { source: "computer", session: null, title: "Plan", computer }),
-      row("reply:laptop/local_w", "reply", null, { source: "computer", session: null, title: "Waits", essence: "", computer: { device: "laptop", id: "local_w" } }),
-      row("ending:laptop/local_d", "answer", ask, { source: "computer", session: null, title: "Done", computer: { device: "laptop", id: "local_d" }, answered: "B" }),
+      row("ending:laptop/local_q", "answer", ask, { source: "computer", session: null, title: "Card one", computer }),
+      row("reply:laptop/local_w", "reply", null, { source: "computer", session: null, title: "Card two", essence: "", computer: { device: "laptop", id: "local_w" } }),
+      row("ending:laptop/local_d", "answer", ask, { source: "computer", session: null, title: "Card three", computer: { device: "laptop", id: "local_d" }, answered: "B" }),
       row("ending:laptop/local_n", "answer", ask, {
-        source: "computer", session: null, title: "Not in", computer: { device: "laptop", id: "local_n" }, undelivered: { text: "B", why: "failed" },
+        source: "computer", session: null, title: "Card four", computer: { device: "laptop", id: "local_n" }, undelivered: { text: "B", why: "failed" },
       }),
     ];
     mount(<Operator feed={feedOf(rows)} spheres={[]} now={NOW} />);
-    const [first, second, third, fourth] = await screen.findAllByTestId("operator-card");
+    const cards = await screen.findAllByTestId("operator-card");
+    const [first, second, third, fourth] = ["one", "two", "three", "four"].map((n) => cards.find((c) => c.textContent?.includes(`Card ${n}`)));
     // no way out to the computer: the card itself takes the answer
     expect(within(first!).queryByRole("link", { name: /on laptop/ })).toBeNull();
     expect(within(first!).queryByRole("link", { name: /Open the session/ })).toBeNull();

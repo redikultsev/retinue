@@ -478,7 +478,7 @@ def test_the_owners_answer_to_a_computers_session_reaches_that_computer_until_it
         await laptop.start()
         await desktop.start()
         now = world.clock.now
-        asks = {"kind": "ask", "request": "Pick a plan", "context": "Two found",
+        asks = {"kind": "ask", "request": "Pick a plan", "why_owner": "goal", "context": "Two found",
                 "options": [{"label": "A", "effect": "cheaper"}, {"label": "B", "effect": "faster"}]}
         rows = [{"id": "local_q", "title": "Plan", "state": "waiting", "at": now - 60, "ending": asks},
                 {"id": "local_w", "title": "Waits", "state": "waiting", "at": now - 10},
@@ -511,7 +511,7 @@ def test_the_owners_answer_to_a_computers_session_reaches_that_computer_until_it
         feed = await world.get("/api/feed")
         by_key = {r["key"]: r for g in feed["groups"] for r in g["rows"]}
         assert by_key["ending:laptop/local_q"]["answered"] == "A", "the card says his answer instead of asking again"
-        assert "answered" not in by_key["ending:desktop/local_q"], "one computer's answer is that computer's alone"
+        assert "answered" not in by_key["reply:desktop/local_q"], "one computer's answer is that computer's alone"
 
         result = (await laptop.post(report_of(3, rows)))[1]["result"]
         [handed] = result["answers"]

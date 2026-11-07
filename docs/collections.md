@@ -686,16 +686,19 @@ are its own, not the owner's records.
    401 is the network right (no token yet); 404 is a computer not on the list, or not on the tunnel's route.
 
    Another VPN on the computer (a work one, say) can take that route away while the tunnel is up: its DNS outranks
-   the tunnel's, the face's host resolves to the public address, and the check gives 404. Send only the VPN's
-   names to the tunnel's DNS (`10.8.0.1`, [face.md](face.md)), and the other VPN keeps the rest:
+   the tunnel's, the face's host resolves to the public address, and the check gives 404. A company's computer is
+   not yours to re-route, and a system rule that sends a domain to a foreign DNS server looks like DNS hijacking
+   to its security team. Change nothing on the system. Point the clients at the tunnel's address instead, and keep
+   the name for TLS (SNI and the certificate) and for `Host`:
 
-   - macOS: a file `/etc/resolver/in.example.com` with the line `nameserver 10.8.0.1`.
-   - Windows, in an administrator's PowerShell:
-     `Add-DnsClientNrptRule -Namespace ".in.example.com" -NameServers 10.8.0.1`.
-   - Linux with systemd-resolved: `resolvectl dns wg0 10.8.0.1` and `resolvectl domain wg0 '~in.example.com'`
-     (`wg0` is the tunnel's interface; put both in its `PostUp`, as they last only while it is up).
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' --resolve app.in.example.com:443:10.8.0.1 -X POST https://app.in.example.com/mcp/device
+   ```
 
-   The host then resolves to `10.8.0.1` again (`dig +short app.in.example.com`, on Windows `Resolve-DnsName`).
+   401 here and 404 without `--resolve` means this case. Claude Code's `http` entry follows the system's DNS. A
+   small stdio bridge that connects to the address this way does not, and becomes the `retinue` server instead.
+   Off the tunnel the address does not answer: the bridge says so and does not fall back to the public address,
+   which answers 404 anyway. A browser follows the system's DNS too and cannot be pointed this way.
 2. **A device**, on the server's terminal ([below](#from-the-servers-terminal)):
 
    ```bash

@@ -762,7 +762,8 @@ are its own, not the owner's records.
 
    `claude mcp list` shows it connected; `/mcp` in a session lists its tools. A project's `.mcp.json` would do as
    well, but Claude Code asks before it uses one, and runs its helper only in a folder the owner has trusted.
-5. **A lost computer** is shut out with one command, asked nothing, at its very next call:
+5. **A lost computer** is shut out at its very next call: «Revoke» on its row in the app's
+   [Settings](face.md#settings), or one command, asked nothing:
 
    ```bash
    docker compose -p retinue exec platform retinue-platform collections device revoke laptop

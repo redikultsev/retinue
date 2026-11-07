@@ -13,22 +13,29 @@ Write issues in English, like the rest of the repository.
 
 ## Two of us at once
 
-Two people develop Retinue, each with agents, often on the same day. The issue is where we see who does what, so no
-two of us build the same thing and nothing waits unseen.
+Two people develop Retinue, each with agents, often on the same day. The issue is where we see who does what. The
+flow is Matt Pocock's engineering skills (the `mattpocock-skills` plugin), which this file configures; each is run
+with its slash command, or read and followed by an agent that has it installed:
 
-- **Work starts from an issue.** Search the open ones first (`gh issue list --search "<words>"`): what you want may
-  be a ticket already, or part of a map (#11). Nothing fits — file one, labelled by the triage table, before the code.
-- **Claim before the first line of code**: `gh issue edit <n> --add-assignee @me`. An issue assigned to someone else
-  is theirs: add what you know as a comment, or ask them, and do not start it. Stopping — unassign yourself with a
-  comment on where it stands.
-- **One branch per issue**, from `develop`: `<n>-<short-slug>`. Its pull request goes into `develop` and says
-  `Closes #<n>`; the template's «For the owner» line is the changelog's.
-- **Small, visible steps.** Push the branch early; open the pull request as a draft while it grows, so the other
-  sees it on the issue. A decision the other should know goes into the issue as a comment, not only into the code.
-- **Before picking the next one**: `gh issue list --assignee @me` (finish or hand back what you hold), then the open
-  ones with no assignee and no open blocker (the frontier query below).
+| When | Skill |
+| --- | --- |
+| A plan or a talk becomes work: tickets, each a vertical slice, with native blockers | `/to-tickets` |
+| A new issue gets its category, its state (the labels in `triage-labels.md`) and a brief | `/triage` |
+| A larger goal with open questions: a map issue, its frontier, claim by assigning | `/wayfinder` |
+| A ticket is built | `/implement` (with `/tdd`), then `/pr` for its pull request |
+
+What the skills leave to us:
+
+- **Nothing without an issue.** Search the open ones first (`gh issue list --search "<words>"`); nothing fits — file
+  one before the code.
+- **Claimed means assigned**, as in `/wayfinder`, for every issue, not only a map's: `gh issue edit <n>
+  --add-assignee @me` before the first line of code. One assigned to someone else is theirs: comment, ask, do not
+  start it. Stopping — unassign yourself, with a comment on where it stands.
+- **One branch per issue**, from `develop`: `<n>-<short-slug>`; its pull request goes into `develop`, a draft while
+  it grows, and says `Closes #<n>`. A decision the other should know goes into the issue as a comment.
+- **Before the next one**: `gh issue list --assignee @me` — finish or hand back what you hold.
 - **What only the owner can do** — a token, a login, a choice — is `ready-for-human`, assigned to him, with exactly
-  what is needed and where it goes. The agent that needs it says so in its session too.
+  what is needed and where it goes.
 
 ## Without `gh`
 

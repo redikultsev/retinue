@@ -210,6 +210,9 @@ def test_the_release_workflow_parses_and_pins_every_action_by_commit():
 
 def test_the_release_builds_every_image_of_retinues_own_that_compose_runs():
     """Each image compose takes from the release is built by the workflow exactly as compose builds it locally."""
+    for name, service in SERVICES.items():
+        assert not re.match(r"retinue(-[a-z-]+)?:", service.get("image", "")), \
+            f"{name}: a Retinue image by a fixed name stays behind when the stack moves to a release or a commit"
     own = {}
     for name, service in SERVICES.items():
         image = service.get("image", "")

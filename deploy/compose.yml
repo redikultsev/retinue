@@ -264,7 +264,7 @@ services:
   # mail proxy); the key comes from his Mac (deploy/mail/login.py --kind calwrite).
   calwrite:
     profiles: ["calwrite"]
-    image: retinue:local
+    image: *retinue-image
     restart: unless-stopped
     user: "10023:10023"
     command: ["retinue-calwrite"]

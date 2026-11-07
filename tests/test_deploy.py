@@ -442,6 +442,8 @@ def test_setup_with_memory_makes_the_hub_and_installs_its_checks(tmp_path, monke
     assert printed["RETINUE_MEMORY"] == "/kb" and (hub / "HEAD").is_file()
     assert (hub / "hooks" / "pre-receive").read_text() == (ROOT / "retinue" / "kbcheck.py").read_text()
     assert os.access(hub / "hooks" / "pre-receive", os.X_OK)
+    assert (hub / "hooks" / "passport.py").read_text() == (ROOT / "retinue" / "passport.py").read_text(), \
+        "the passport schema the hook imports"
     settings = subprocess.run(["git", "-C", str(hub), "config", "--list"], capture_output=True, text=True).stdout
     for setting in ("receive.denynonfastforwards=true", "receive.denydeletes=true", "core.sharedrepository=group"):
         assert setting in settings, setting

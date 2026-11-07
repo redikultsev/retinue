@@ -47,7 +47,8 @@ training in the account settings, and create a key with the `speech_to_text` per
 limit. Audio goes to ElevenLabs in the US; the router deletes each transcript there right after reading it. Then either `sudo docker compose -p retinue --env-file
 /srv/retinue/stack.env -f deploy/compose.yml up -d --build` from `/opt/retinue`, or Dokploy → project →
 *Compose* from your Git repo, compose path `./deploy/compose.yml`, with the file's lines in *Environment*. Do not set `ANTHROPIC_API_KEY`: when it is present, Claude Code bills the
-key instead of the subscription. Deploy.
+key instead of the subscription. Deploy. Once the app is on, each of these keys can also be set or replaced
+from its «Settings», which writes the same lines ([face.md](face.md#settings)).
 
 Three containers start: `router` (Telegram, the archive, the bus), `assistant` (the model; internal network
 only, no volume, config mounted read-only) and `egress` (Squid: the only way out of the internal network).

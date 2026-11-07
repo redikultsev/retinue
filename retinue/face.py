@@ -48,7 +48,7 @@ from urllib.parse import parse_qsl, quote, unquote
 
 from aiohttp import web
 
-from . import changelog, changes, computers, feed, inbox, mac, signals, spaces, tobase, topush
+from . import changelog, changes, computers, feed, inbox, mac, settings, signals, spaces, tobase, topush
 from .cliengine import UUID4
 from .collections import FILE_MAX, Full, Refused
 from .sessions import PlatformStore
@@ -283,6 +283,7 @@ class Face:
         platform.on_delta = self.hub.delta
         platform.chat.on_draft = self.hub.chat_draft
         self.spaces = spaces.Spaces(platform)   # the Base read in the app: `/api/spaces…`, behind the same guard
+        self.settings = settings.Settings(platform)  # «Settings»: keys and the lane's model, never read back
         # The owner's voice: through the platform's own proxy; transcripts still to delete in the platform's store.
         self.scribe = Scribe(self.cfg.stt_key, store=self.store, proxy=self.cfg.speech.proxy)
         self.hearing = False                    # one recording at a time
@@ -338,6 +339,8 @@ class Face:
             # A sub-session a session proposed (`subs.py`): «Start» or «Not now».
             web.post("/api/proposals/{id}/{action:start|dismiss}", self.proposal_act),
             *self.spaces.routes(),
+            # «Settings» (`settings.py`): what is set, and a change for root on the host to write.
+            *self.settings.routes(),
             # «Read» (`library.py`): the hub's pages, what was opened and finished.
             web.get("/api/library", self.library), web.post("/api/library/{id}/{action:open|done}", self.library_act),
             # «Waiting for you»: a press on the assistant's row, for the router to apply (`feed.PRESSES`).

@@ -311,6 +311,25 @@ def test_backup_units_run_the_script_nightly_and_catch_up():
     assert "sha256sum -c" in script, "the restic binary is checked against a pinned hash"
 
 
+def test_settings_units_run_root_s_writer_on_a_request_and_may_write_only_retinue_s_folder():
+    """«Settings» (docs/face.md): the platform drops a request, root's service takes it on the host."""
+    path = (ROOT / "deploy" / "settings" / "retinue-settings.path").read_text()
+    assert "DirectoryNotEmpty=/srv/retinue/settings/inbox" in path and "Unit=retinue-settings.service" in path
+    for watched in ("stack.env", "code/tokens.env", "egress/project-keys.env", "platform/platform.yaml"):
+        assert f"PathChanged=/srv/retinue/{watched}" in path, "a change by hand shows in the app as well"
+    assert "status" not in path.split("[Path]")[1], "its own status never runs it again"
+    service = (ROOT / "deploy" / "settings" / "retinue-settings.service").read_text()
+    assert "Type=oneshot" in service
+    assert "ExecStart=/usr/bin/python3 /usr/local/lib/retinue/retinue-settings.py" in service
+    assert "ProtectSystem=strict" in service and "ReadWritePaths=/srv/retinue\n" in service
+    assert "NoNewPrivileges=yes" in service and "EnvironmentFile" not in service
+    script = (ROOT / "deploy" / "setup.sh").read_text()
+    block = script.split("# Settings:")[1].split("\nfi\n")[0]
+    assert "$HOST_SETUP == 1 && $PLATFORM_ON == 1" in block, "with the platform, whose app it serves"
+    assert "/usr/local/lib/retinue/retinue-settings.py" in block and "enable --now retinue-settings.path" in block
+    assert "start retinue-settings.service" in block, "the app has its status from the start"
+
+
 def test_health_units_look_every_two_minutes_and_may_write_only_the_status_folder(tmp_path, monkeypatch):
     timer = (ROOT / "deploy" / "health" / "retinue-health.timer").read_text()
     assert "OnUnitActiveSec=2min" in timer and "OnBootSec=" in timer and "WantedBy=timers.target" in timer
@@ -957,7 +976,10 @@ def test_the_platform_and_its_lanes_are_off_until_asked_and_locked_down():
                                    "/srv/retinue/base/tree:/lanes/private/base", "/srv/retinue/memory/hub.git:/hub:ro",
                                    "/srv/retinue/memory/hub.git/objects:/hub/objects",
                                    "/srv/retinue/memory/hub.git/refs:/hub/refs", "/srv/retinue/code/mirrors:/code/mirrors",
-                                   "/srv/retinue/egress/projects:/config/projects:ro"]
+                                   "/srv/retinue/egress/projects:/config/projects:ro",
+                                   "/srv/retinue/settings/inbox:/settings/inbox",
+                                   "/srv/retinue/settings/status:/settings/status:ro"], \
+        "Settings: requests in, a status out; stack.env, the tokens' and the keys' files never mounted"
     assert platform["env_file"] == [{"path": "/srv/retinue/code/tokens.env", "required": False},
                                     {"path": "/srv/retinue/egress/project-keys.env", "required": False}], \
         "the git tokens and the projects' keys: in the platform alone; a missing file turns them off, not the platform"
@@ -1355,6 +1377,9 @@ def test_setup_with_the_platform(tmp_path, monkeypatch):
         "a project's own hosts: none until the owner writes a list"
     assert (target / "egress" / "project-keys.env").read_text() == ""
     assert oct((target / "egress" / "project-keys.env").stat().st_mode & 0o777) == "0o600"
+    # Settings (docs/face.md): the inbox the platform drops requests into, closed to everyone else; the status folder.
+    assert oct((target / "settings" / "inbox").stat().st_mode & 0o777) == "0o700"
+    assert (target / "settings" / "status").is_dir()
     assert (target / "egress" / "platform-hosts.txt").read_text().split() == ["github.com", "api.github.com",
                                                                               "gitlab.com", "api.elevenlabs.io"]
     # A list written before the voice (no marker yet, its last line without a newline): ElevenLabs added once, the

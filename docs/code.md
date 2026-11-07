@@ -79,7 +79,8 @@ pass show <entry> | sudo bash /opt/retinue/deploy/code/set-git-token.sh you   # 
 
 The script writes `RETINUE_GIT_TOKEN_YOU=…` into `/srv/retinue/code/tokens.env` (root's, 0600; the one line
 replaced), prints only the name and the length, and the restart of the platform. compose hands the file to the
-platform alone.
+platform alone. The app's «Settings» is this script's form: a token pasted under «Repositories» is piped into it on
+the server, and the restart is a button there ([face.md](face.md#settings)).
 
 **Where the token goes, and where it never does.** The platform reads it from its environment at start and takes it
 out of that environment then (`os.environ`), so no child it starts inherits it. For a git call it writes

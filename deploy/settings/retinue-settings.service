@@ -1,0 +1,18 @@
+# Installed by deploy/setup.sh. Started by retinue-settings.path; by hand: systemctl start retinue-settings; log:
+# journalctl -u retinue-settings (names and lengths only, never a value).
+[Unit]
+Description=Retinue settings: what the owner set in the app, written where the stack reads it
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=RETINUE_ROOT=/srv/retinue
+Environment=RETINUE_REPO=/opt/retinue
+ExecStart=/usr/bin/python3 /usr/local/lib/retinue/retinue-settings.py
+TimeoutStartSec=700
+# It writes the stack's environment, the git and project keys, platform.yaml and its own status, and asks Docker to
+# restart a service: nothing else on the host is its to change.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/retinue

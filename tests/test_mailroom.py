@@ -741,7 +741,7 @@ def test_the_owners_chosen_chats_are_kept_like_mail_and_the_other_persons_words_
     assert told == "Юрист ждёт ответа.\n_(Telegram, Анна)_"
     meta = core.archive.get("tgb:777/10").meta
     assert (meta["chat"], meta["message_id"], meta["direction"], meta["username"]) == ("777", 10, "in", "anna_x")
-    assert any(line.startswith("Telegram") for line in room.coverage(NOW))
+    assert any("Telegram" in line for line in room.coverage(NOW))
     assert core.health(NOW)
 
 

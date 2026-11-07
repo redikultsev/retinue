@@ -75,7 +75,7 @@ def test_what_the_owner_might_not_notice_is_named_on_the_card():
     assert "evil@other.example" in found[0] and "https://acme.example/page?ref=anna" in found[1] and \
         "www.xn--e1afmkfd.xn--p1ai" in found[2]
     assert "phone +44 20 7946 0000" in found and "number 482913 next to «код»" in found
-    assert "4111" in found and "1111" in found and "GB82WEST12345698765432" in found
+    assert any("4111 1111 1111 1111" in f for f in found) and any("GB82WEST12345698765432" in f for f in found)
     assert not any("2026" in f for f in found), "a year is not a secret"
     assert courier.findings("Буду в 7, спасибо!") == []
 

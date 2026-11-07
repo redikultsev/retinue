@@ -53,4 +53,4 @@ def test_a_rule_reads_every_page_writes_all_or_none_and_takes_back_its_own_chang
         missing = Records(platform_of(world), WAITING, "nonesuch")
         assert await missing.query([]) is None and await missing.query([]) is None
     faced(tmp_path, run)
-    assert caplog.text.count("nonesuch") == 1, "an unread collection is said once, then quiet"
+    assert sum("nonesuch" in r.getMessage() for r in caplog.records) == 1, "an unread collection is said once, then quiet"

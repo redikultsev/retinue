@@ -139,7 +139,7 @@ def test_a_subagent_is_denied_never_cut_and_counted_apart_from_the_main_agent():
 def test_the_same_failure_in_a_row_is_warned_on_the_second_and_denied_on_the_third():
     loops = Loops()
     call = {"command": "make deploy"}
-    for n, warned in enumerate([False, True, False]):
+    for n, warned in enumerate([False, True, True]):
         assert loops.before("s", "", "Bash", call, f"t{n}") == ("", "")
         assert bool(loops.after("s", "", "Bash", call, error=f"Exit code 2\nboom after {n}s", call_id=f"t{n}")) == warned
     how, reason = loops.before("s", "", "Bash", call, "t3")

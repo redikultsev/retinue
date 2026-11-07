@@ -506,9 +506,11 @@ def test_an_image_ci_may_take_from_an_earlier_commit_names_every_path_its_build_
 
         context, dockerfile = entry["context"], entry["dockerfile"]
         assert covered(dockerfile), f"{entry['image']}: its Dockerfile"
-        for ignore in (f"{context}/.dockerignore", f"{dockerfile}.dockerignore"):
-            if (ROOT / ignore).exists():
-                assert covered(posixpath.normpath(ignore)), f"{entry['image']}: {ignore}, which says what is sent"
+        # BuildKit reads <Dockerfile>.dockerignore when there is one, the context's .dockerignore otherwise
+        ignore = next((path for path in (f"{dockerfile}.dockerignore", f"{context}/.dockerignore")
+                       if (ROOT / path).exists()), None)
+        if ignore:
+            assert covered(posixpath.normpath(ignore)), f"{entry['image']}: {ignore}, which says what is sent"
         for line in (ROOT / dockerfile).read_text().splitlines():
             words = line.split()
             if not words or words[0].upper() not in ("COPY", "ADD") or any(w.startswith("--from=") for w in words):

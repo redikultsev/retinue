@@ -79,6 +79,10 @@ function laptop() {
   ];
 }
 
+/** The owner's answers to the laptop's sessions, by session (retinue/computers.py `answer`): the made-up laptop never
+ * takes them, so each card keeps saying it is on its way. */
+const laptopAnswers = new Map<string, string>();
+
 /** The laptop's sessions as the feed's rows (retinue/feed.py `_computer_rows`): by their ending's kind, or «Reply». */
 function laptopRows(): FeedRow[] {
   if (LAPTOP_OFF) return [];
@@ -90,6 +94,7 @@ function laptopRows(): FeedRow[] {
       key: `${e ? "ending" : "reply"}:laptop/${s.id}`, action, source: "computer", session: null, track: null, sphere: null, sphere_title: null, sphere_icon: null,
       project: s.project || null, title: s.title, since: s.at, essence: e ? endingLine(e) : "", ref: s.id,
       computer: { device: "laptop", id: s.id, ...(s.link ? { link: s.link } : {}) }, ...(e ? { ending: e } : {}),
+      ...(laptopAnswers.has(s.id) ? { answered: laptopAnswers.get(s.id) } : {}),
     }];
   });
 }
@@ -569,6 +574,17 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       off_s: 120,
       computers: [{ device: "laptop", at: now() - (LAPTOP_OFF ? 3600 : 5), off: LAPTOP_OFF, sessions: laptop().map(({ ending: _ending, ...s }) => s) }],
     });
+  const answering = /^\/api\/computers\/([^/]+)\/sessions\/([^/]+)\/answer$/.exec(path);
+  if (answering && method === "POST") {
+    const [, device, id] = answering.map((x) => decodeURIComponent(x ?? ""));
+    const session = LAPTOP_OFF || device !== "laptop" ? undefined : laptop().find((s) => s.id === id);
+    if (!session) return json(res, 404, { error: device === "laptop" ? "That computer does not list this session now." : "No such computer." });
+    if (session.state === "working") return json(res, 400, { error: "The session is at work: answer it when its turn ends." });
+    const text = String((await body(req)).text ?? "").trim();
+    if (!text || text.length > 4000) return json(res, 400, { error: "text: the answer, at most 4000 characters." });
+    laptopAnswers.set(session.id, text);
+    return json(res, 200, { answer: randomUUID().slice(0, 16) });
+  }
   if (path === paths.archived && method === "GET")
     return json(res, 200, { schema: 1, sessions: [...sessions.values()].filter((s) => s.archived).map((s) => ({ ...s, archived_at: s.at })).sort((a, b) => b.archived_at - a.archived_at) });
 

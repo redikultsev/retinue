@@ -152,9 +152,11 @@ class Device:
                 taken, left_out = self.platform.computers.report(device["name"], params, self.platform.clock())
             except computers.Refused as exc:
                 return error(str(exc))
+            answers = self.platform.computers.answers(device["name"])  # the owner's, until it names them delivered
             return 200, {"jsonrpc": "2.0", "id": body["id"],
                          "result": {"taken": taken, "again_s": computers.BEAT_S,
-                                    **({"left_out": left_out} if left_out else {})}}
+                                    **({"left_out": left_out} if left_out else {}),
+                                    **({"answers": answers} if answers else {})}}
         if self.spaces is None:
             return error(NO_BASE, -32000)
         try:

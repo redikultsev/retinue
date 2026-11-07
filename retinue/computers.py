@@ -18,12 +18,18 @@ out — the session stays in the list — and the answer names it (`left_out`), 
 
 Each session has a place on the operator's map (`slot`): the lowest free in its project when it first shows, kept while
 its computer lists it — as a room session's (`sessions.take_slot`), but in memory, as the rest of a report.
+
+The owner answers a computer's session where he reads it, in the app (`answer`): his words wait here, in memory too, one
+answer per session — a newer one replaces it —, for a session that is listed and not at work. The reply to that
+computer's next report hands them over (`answers`), each with an id, again on every report until the computer names it
+among `delivered` — it put the words into its session — or the session leaves its list.
 """
 
 from __future__ import annotations
 
 import posixpath
 import re
+import secrets
 import unicodedata
 
 from . import endings
@@ -38,10 +44,16 @@ SESSION_ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 BASE_FOLDER = re.compile(r"(?:[A-Za-z0-9_][A-Za-z0-9_.-]{0,63})(?:/[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}){0,7}")
 LINK = re.compile(r"claude://claude\.ai/[A-Za-z0-9/_.-]{1,200}")  # the one link a device may give: back to the session
 NOT_A_LIST = "A report is {\"sessions\": [ … ]}: the device's whole list, at most %d." % SESSIONS_MAX
+ANSWER_MAX = 4000      # the owner's answer to a computer's session: one message
+NOT_DELIVERED = "delivered: the ids of the answers put into their sessions, each a string the platform gave."
 
 
 class Refused(Exception):
     """A report the platform does not take, with why; the list before it stays."""
+
+
+class NotListed(Refused):
+    """An answer for a session its computer does not list."""
 
 
 def _line(value: object, cap: int) -> str:
@@ -101,16 +113,28 @@ class Computers:
 
     def __init__(self) -> None:
         self._last: dict[str, dict] = {}  # device name -> {"at": when reported, "sessions": [rows]}
+        self._answers: dict[str, dict[str, dict]] = {}  # device name -> session id -> the owner's answer waiting
 
     def report(self, device: str, params: object, now: float) -> tuple[int, list[dict]]:
         """A device's whole list, replacing the one before: the number of rows taken, and the endings left out with
-        why. Refused: the list before stays."""
+        why. Refused: the list before stays. The answers it names `delivered` go, and those of sessions it no longer
+        lists."""
         sessions = params.get("sessions") if isinstance(params, dict) else None
         if not isinstance(sessions, list) or len(sessions) > SESSIONS_MAX:
             raise Refused(NOT_A_LIST)
+        delivered = params.get("delivered", [])
+        if not isinstance(delivered, list) or len(delivered) > SESSIONS_MAX or \
+                not all(isinstance(d, str) for d in delivered):
+            raise Refused(NOT_DELIVERED)
         rows = [_row(raw, n) for n, raw in enumerate(sessions)]
         if len({r["id"] for r in rows}) != len(rows):
             raise Refused("Two sessions with one id: each once.")
+        listed, done = {r["id"] for r in rows}, set(delivered)
+        waiting = {sid: a for sid, a in self._answers.get(device, {}).items() if sid in listed and a["id"] not in done}
+        if waiting:
+            self._answers[device] = waiting
+        else:
+            self._answers.pop(device, None)
         left_out = [{"id": r["id"], "why": r.pop("left_out")} for r in rows if "left_out" in r]
         before = {r["id"]: r for r in (self._last.get(device) or {}).get("sessions", ())}
         taken: dict[str, set[int]] = {}
@@ -127,8 +151,33 @@ class Computers:
         return len(rows), left_out
 
     def forget(self, device: str) -> None:
-        """A revoked device: its rows go at once."""
+        """A revoked device: its rows go at once, and the answers waiting for it."""
         self._last.pop(device, None)
+        self._answers.pop(device, None)
+
+    def answer(self, device: str, session: str, text: object, now: float) -> dict:
+        """The owner's words for a session its computer lists and that is not at work, kept until the computer takes
+        them; a newer answer to that session replaces the one before."""
+        words = text.strip() if isinstance(text, str) else ""
+        if not words or len(words) > ANSWER_MAX:
+            raise Refused(f"text: the answer, at most {ANSWER_MAX} characters.")
+        row = next((r for r in (self._last.get(device) or {}).get("sessions", ()) if r["id"] == session), None)
+        if row is None:
+            raise NotListed("That computer does not list this session now.")
+        if row["state"] == "working":
+            raise Refused("The session is at work: answer it when its turn ends.")
+        given = {"id": secrets.token_hex(8), "session": session, "text": words, "at": now}
+        self._answers.setdefault(device, {})[session] = given
+        return dict(given)
+
+    def answers(self, device: str) -> list[dict]:
+        """The owner's answers waiting for a computer: what the reply to its report hands over."""
+        return [dict(a) for a in self._answers.get(device, {}).values()]
+
+    def answered(self, device: str, session: str) -> str | None:
+        """The words waiting for one session, if any: its card says them instead of asking again."""
+        given = self._answers.get(device, {}).get(session)
+        return given["text"] if given else None
 
     def listing(self, now: float, live: set[str] | None = None) -> list[dict]:
         """For the app: every device that reported, by name, with `off` when its last report is older than `OFF_S`.

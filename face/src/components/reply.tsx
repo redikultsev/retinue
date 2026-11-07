@@ -7,6 +7,7 @@ import { DictateButton } from "@/components/talk";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
+import type { FeedRow } from "@/lib/feed";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { insertAt } from "@/lib/voice";
@@ -28,8 +29,32 @@ export function Crumb({ children, session }: { children: React.ReactNode; sessio
   );
 }
 
-/** A session's text box: what the owner writes goes into it as his next message (`onSent` told the words). */
-export function Reply({ session, placeholder, onSent }: { session: string; placeholder: string; onSent?: (words: string) => void }) {
+export type Deliver = (words: string) => Promise<unknown>;
+
+/** Where the owner's words for a row go: a room session's next message, or the answer one of his computers takes on its
+ * next report and puts into its session there. */
+export function deliverTo(row: FeedRow): Deliver | null {
+  if (row.computer) {
+    const { device, id } = row.computer;
+    return (words) => api.answerComputer(device, id, words);
+  }
+  const session = row.session;
+  return session ? (words) => api.input(session, words) : null;
+}
+
+/** A session's text box: what the owner writes goes into it as his next message (`onSent` told the words) — by
+ * `deliver` when it is not a room session's (`session` then only names the box). */
+export function Reply({
+  session,
+  placeholder,
+  onSent,
+  deliver,
+}: {
+  session: string;
+  placeholder: string;
+  onSent?: (words: string) => void;
+  deliver?: Deliver;
+}) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   async function send() {
@@ -37,7 +62,7 @@ export function Reply({ session, placeholder, onSent }: { session: string; place
     if (!words || busy) return;
     setBusy(true);
     try {
-      await api.input(session, words);
+      await (deliver ? deliver(words) : api.input(session, words));
       setText("");
       toast("Sent");
       onSent?.(words);

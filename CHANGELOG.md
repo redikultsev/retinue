@@ -12,7 +12,8 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 - A server that follows develop sets up each version on its own, `setup.sh` included: nothing is left to run by hand
   after an update, and a version whose set-up fails is not started.
 - «Operator» is a place of its own, beside «Today»: the sessions' questions and results as cards, or on the map. The
-  sessions on your own computer are there too, with what they asked or brought back; you answer them on the computer.
+  sessions on your own computer are there too, with what they asked or brought back, and you answer them right on
+  their cards, from any device: the answer reaches the session when that computer next checks in.
 - Every project's passport has the same short parts — why, scope, files, rules, checks — written for the agent that
   opens the project, and the Base refuses a change that breaks one.
 - The left column is the Base's tree: its Spaces on top, every sub-project inside, folded until you open it. No

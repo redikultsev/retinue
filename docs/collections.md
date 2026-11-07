@@ -668,11 +668,18 @@ are its own, not the owner's records.
   ([face.md](face.md#the-operator)); a session that waits with none is a «Reply» row. An artifact by `path` is a file
   on the computer: the app shows its name, «on your computer»; one by `url` opens as a link. An ending off the shape is
   left out and the session stays: the answer names it, `"left_out": [{"id", "why"}]`.
+- **`answers`**, in the reply: what the owner answered its sessions on their cards in the app, on any device —
+  `"answers": [{"id": "9f2c…", "session": "local_a1", "text": "One pair, carry-on only", "at": 1767225660}]`. The
+  computer puts each `text` into its session as the owner's next message, then names the ids it put in a later report:
+  `"params": {"sessions": [ … ], "delivered": ["9f2c…"]}`. An answer comes in every reply until it is delivered or its
+  session leaves the list; a newer answer to the same session replaces it, with a new id. The app takes an answer only
+  for a session the computer lists and that is not at work (`POST /api/computers/{device}/sessions/{id}/answer`,
+  `{"text"}`, at most 4000 characters).
 - **A place on the map** (`slot` in the app's list): the lowest free in its project when it first shows, kept while
   the computer lists it.
 - **Kept in memory only**, per device: nothing on disk and nothing in a log — titles and folders are the owner's —;
-  a restart forgets the lists until each device's next report. No report for 2 minutes and the computer is off: the
-  app greys its rows. A revoked device's rows go at once.
+  a restart forgets the lists and the answers waiting until each device's next report. No report for 2 minutes and
+  the computer is off: the app greys its rows. A revoked device's rows go at once.
 - **`retinue/projects`** gives the Base's project tree, `{head, projects: [{path, title, parent}]}`, which the
   computer's helper files its own sidebar by — a group per project, its sessions in it — so the sidebar follows a
   project made or renamed in the Base by itself.

@@ -11,7 +11,7 @@ import type { Feed, FeedRow, TurnEnding } from "@/lib/feed";
 import { live } from "@/lib/live";
 import { renumber } from "@/lib/operator";
 import type { Plan } from "@/lib/plan";
-import { MODE_KEY, todaySearch } from "@/lib/today";
+import { todaySearch } from "@/lib/today";
 import { TodayView } from "@/pages/today";
 
 // «Schedule»'s grid is FullCalendar, which needs a real browser's layout: here it stands in as a mark.
@@ -126,7 +126,9 @@ describe("the operator", () => {
     expect(within(ask).getByText("#1")).toBeTruthy();
     expect(within(picture).getByText("#4")).toBeTruthy();
     expect(within(done).queryByText(/^#\d/)).toBeNull();
-    expect(within(ask).getByText(/work \/ acme · Session ask · asks · 10 min/)).toBeTruthy();
+    expect(ask.textContent).toMatch(/work \/ acme · Session ask · asks · 10 min/);
+    // the session's title on the top line is the way into its own screen
+    expect(within(ask).getByRole("link", { name: "Session ask" }).getAttribute("href")).toMatch(/^\/s\//);
 
     const options = within(within(ask).getByRole("group", { name: "Options" })).getAllByRole("button");
     expect(options.map((o) => o.textContent)).toEqual([
@@ -195,9 +197,29 @@ describe("the operator", () => {
     expect(renumber(later, ["b", "c", "d"], NOW + 31 * 60)).toEqual({ b: { n: 2 }, c: { n: 3 }, d: { n: 1 } });
   });
 
-  it("is one press away on «Today», beside «By action»", async () => {
-    localStorage.setItem(MODE_KEY, "operator");
-    mount(<TodayView feed={feedOf(ALL)} sessions={[]} spheres={[]} since={NOW} now={NOW} />);
-    expect((await screen.findAllByTestId("operator-card")).length).toBe(6);
+  it("draws a computer's session by its ending, answered on that computer by its link", async () => {
+    const computer = { device: "laptop", id: "local_q", link: "claude://claude.ai/epitaxy/local_q" };
+    const ask: TurnEnding = {
+      kind: "ask",
+      request: "Pick a plan",
+      why_owner: "goal",
+      context: "Two found",
+      options: [
+        { label: "A", effect: "cheaper" },
+        { label: "B", effect: "faster" },
+      ],
+    };
+    const rows = [
+      row("ending:laptop/local_q", "answer", ask, { source: "computer", session: null, title: "Plan", computer }),
+      row("reply:laptop/local_w", "reply", null, { source: "computer", session: null, title: "Waits", essence: "", computer: { device: "laptop", id: "local_w" } }),
+    ];
+    mount(<Operator feed={feedOf(rows)} spheres={[]} now={NOW} />);
+    const [first, second] = await screen.findAllByTestId("operator-card");
+    expect(within(first!).getByRole("link", { name: /Answer on laptop/ }).getAttribute("href")).toBe(computer.link);
+    for (const option of within(first!).getAllByRole("button", { name: /^[AB]/ })) expect((option as HTMLButtonElement).disabled).toBe(true);
+    expect(within(first!).queryByRole("textbox")).toBeNull();
+    expect(within(first!).queryByRole("link", { name: /Open the session/ })).toBeNull();
+    expect(within(second!).queryByRole("link")).toBeNull();
+    expect(within(second!).queryByRole("textbox")).toBeNull();
   });
 });

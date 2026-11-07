@@ -67,11 +67,12 @@ export function useTodayCount(source: FeedSource = feedSource, live: LiveLike = 
 const REQUESTS = new Set(["answer", "decide", "reply", "read", "step"]);
 
 /** The sessions' requests — a question, a card to decide, a message awaited, a step of his own, a finished turn to
- * look at — in the feed's order; with `project`, its and its sub-projects' only. Her world and the dates are not
- * among them. */
+ * look at — what waits first, else in the feed's order (its «Read» is newest first, a look among the results); with
+ * `project`, its and its sub-projects' only. Her world and the dates are not among them. */
 export function requests(feed: Feed | null, project?: { path: string; of: ProjectOf }): FeedRow[] {
-  const all = rowsOf(feed).filter((r) => !!r.session && REQUESTS.has(r.action));
-  return project ? all.filter((r) => within(project.of(r), project.path)) : all;
+  const all = rowsOf(feed).filter((r) => (!!r.session || !!r.computer) && REQUESTS.has(r.action));
+  const ordered = [...all.filter(waits), ...all.filter((r) => !waits(r))];
+  return project ? ordered.filter((r) => within(project.of(r), project.path)) : ordered;
 }
 
 /** The requests that wait, by key: what the operator's numbers are given to. */

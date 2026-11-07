@@ -135,6 +135,7 @@ class Platform:
         self.followups = followups.FollowUps(self)  # a session brought back to a task that waits (`followups.py`)
         self.colltools = colltools.CollTools(self)  # the agents' tools for the collections, and their proposals
         self.computers = computers.Computers()  # the sessions the owner's computers run, as they report them
+        self.feed.computers = self.computers  # their turn endings, as cards in the feed
         self.events = events.wire(self)  # the projects' events and their reactions (`events.py`)
         self.plan = plan.Plan(self)  # «Today»'s tasks, day and week, and the busy window the Router pushes
         self.chat = chat.Chat(self)  # the app's chat with the assistant: the router's rows, his words for it

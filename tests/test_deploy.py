@@ -192,6 +192,21 @@ def test_setup_refuses_to_run_without_a_channel(tmp_path):
                          env={"PATH": os.environ["PATH"], "RETINUE_ROOT": str(tmp_path / "srv"), "RETINUE_HOST_SETUP": "0"})
     assert run.returncode == 1 and "no channel" in run.stderr and not (tmp_path / "srv").exists()
 
+
+@pytest.mark.parametrize("switches", [
+    {"TELEGRAM_OWNER_ID": "42", "PLATFORM": "1", "FACE": "1", "FACE_HOST": "app.in.example.com",
+     "FACE_DEVICES": "10.8.0.3/32", "OWNER_TZ": "Europe/Berlin"},
+    {"TELEGRAM_OWNER_ID": "42", "MATRIX_SERVER_NAME": "matrix.example.com", "MATRIX_OWNER": "alice", "MEMORY": "1"},
+    {"MATRIX_SERVER_NAME": "matrix.example.com", "MATRIX_OWNER": "alice"},
+])
+def test_setup_with_no_switches_sets_up_what_the_last_run_did(tmp_path, switches):
+    """deploy.sh runs each version's setup.sh with no switches: the channel comes back from router.yaml, every other
+    part stays on by the folder or file it left."""
+    target, first = setup(tmp_path, **switches)
+    router = (target / "router.yaml").read_text()
+    _, again = setup(tmp_path)
+    assert (target / "router.yaml").read_text() == router and again == first
+
 def test_backup_is_off_until_asked_and_then_stays_on(tmp_path):
     target, _ = setup(tmp_path, TELEGRAM_OWNER_ID="42")
     assert not (target / "backup.env").exists(), "no backup unless the owner asks for it"

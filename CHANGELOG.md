@@ -9,6 +9,8 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 
 ## Unreleased
 
+- A server that follows develop sets up each version on its own, `setup.sh` included: nothing is left to run by hand
+  after an update, and a version whose set-up fails is not started.
 - «Operator» is a place of its own, beside «Today»: the sessions' questions and results as cards, or on the map. The
   sessions on your own computer are there too, with what they asked or brought back; you answer them on the computer.
 - Every project's passport has the same short parts — why, scope, files, rules, checks — written for the agent that

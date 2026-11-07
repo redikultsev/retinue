@@ -24,9 +24,14 @@
 # split DNS) is made only when MATRIX_SERVER_NAME is set.
 set -euo pipefail
 
-TELEGRAM_OWNER_ID=${TELEGRAM_OWNER_ID:-}
-MATRIX_SERVER_NAME=${MATRIX_SERVER_NAME:-}
-MATRIX_OWNER=${MATRIX_OWNER:-}
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=${RETINUE_ROOT:-/srv/retinue}      # tests point this at a temporary folder
+# The channel: a run without it keeps the one router.yaml already has, so a run with no switches at all — deploy.sh's,
+# for each version — sets up what the last one did. The other switches stay on once their folder or file exists.
+from_router() { sed -n "/^$1:/,/^[^ ]/s/^  $2: *//p" "$ROOT/router.yaml" 2>/dev/null | head -n 1 || true; }
+TELEGRAM_OWNER_ID=${TELEGRAM_OWNER_ID:-$(from_router telegram owner_id)}
+MATRIX_SERVER_NAME=${MATRIX_SERVER_NAME:-$(from_router matrix server_name)}
+MATRIX_OWNER=${MATRIX_OWNER:-$(from_router matrix owner | sed -n 's/^"@\([^:]*\):.*/\1/p')}
 if [[ -z $TELEGRAM_OWNER_ID && -z $MATRIX_SERVER_NAME ]]; then
   echo "no channel: set TELEGRAM_OWNER_ID (your Telegram user id) or MATRIX_SERVER_NAME and MATRIX_OWNER" >&2
   exit 1
@@ -36,8 +41,6 @@ if [[ -n $MATRIX_SERVER_NAME && -z $MATRIX_OWNER ]]; then
   exit 1
 fi
 
-REPO=$(cd "$(dirname "$0")/.." && pwd)
-ROOT=${RETINUE_ROOT:-/srv/retinue}      # tests point this at a temporary folder
 # The owner's time zone: reminders, the morning summary, every time shown, the nightly backup. A run without OWNER_TZ
 # keeps the zone router.yaml already has; the first one without it takes UTC.
 OWNER_TZ=${OWNER_TZ:-$(sed -n 's/^owner_tz: *//p' "$ROOT/router.yaml" 2>/dev/null | head -n 1 || true)}
@@ -359,7 +362,8 @@ if [[ $HOST_SETUP == 1 ]]; then
   if [[ $MEMORY_ON == 1 ]]; then
     getent group "$MEMORY_UID" >/dev/null || groupadd -g "$MEMORY_UID" retinue-memory
     [[ -n ${SUDO_USER:-} ]] && usermod -aG "$(getent group "$MEMORY_UID" | cut -d: -f1)" "$SUDO_USER"
-    chown -R "${SUDO_USER:-root}:$MEMORY_UID" "$HUB"
+    # Its owner: the one who ran sudo; run as root without sudo (deploy.sh, for each version) the one it has stays.
+    chown -R "${SUDO_USER:-$(stat -c %U "$HUB")}:$MEMORY_UID" "$HUB"
     chown -R root:root "$HUB/hooks"
   fi
 fi

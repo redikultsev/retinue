@@ -89,6 +89,18 @@ fi
 /usr/local/bin/restic version                         # the pinned binary for this architecture, its sha256 checked
 grep -q '^retinue-lane ' /sys/kernel/security/apparmor/profiles   # the lanes' profile, loaded by setup.sh
 
+step "4b. setup.sh with no switches, as deploy.sh runs it for each version: the same set-up"
+router_before=$(cksum < "$ROOT/router.yaml") stack_before=$(sort "$STACK" | cksum)
+hub_owner=$(stat -c %U "$ROOT/memory/hub.git")
+env -u SUDO_USER bash "$REPO/deploy/setup.sh" > /dev/null   # root without sudo, as over deploy.sh's ssh key
+if [[ $(cksum < "$ROOT/router.yaml") != "$router_before" || $(sort "$STACK" | cksum) != "$stack_before" ]]; then
+  echo "rehearsal: setup.sh with no switches changed router.yaml or stack.env" >&2; exit 1
+fi
+if [[ $(stat -c %U "$ROOT/memory/hub.git") != "$hub_owner" ]]; then
+  echo "rehearsal: setup.sh without sudo gave the hub to another owner" >&2; exit 1
+fi
+systemctl is-active retinue-settings.path
+
 step "5. build"
 compose build
 

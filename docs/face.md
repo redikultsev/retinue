@@ -1051,7 +1051,8 @@ goes on by itself, and the app reconnects. A failed restart says why, and the ch
 applies from each session's next turn after it; a run that was going is held to the model it started on.
 
 **Not installed yet.** A server set up before Settings has no service, and the screen says to run setup.sh once more;
-until then nothing can be changed here. Settings writes the files `setup.sh` reads and the stack started with
+until then nothing can be changed here. A server that follows develop runs it with each version
+([install.md](install.md#following-develop)). Settings writes the files `setup.sh` reads and the stack started with
 `docker compose -p retinue --env-file /srv/retinue/stack.env`; on Dokploy, whose Environment is its own copy, keys are
 still set there.
 

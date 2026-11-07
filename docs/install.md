@@ -160,9 +160,12 @@ A server can follow `develop` instead of releases: each push there that CI passe
 on the server. CI builds the commit's images once, as a release's (`release.yml`, both architectures), and pushes
 them as `ghcr.io/<owner>/retinue*:sha-<12 hex>`; its last job, `deploy` in `.github/workflows/ci.yml`, logs in over
 ssh with a key that can do one thing, run `deploy/deploy.sh` with the commit's sha. Only the lane's image is built on
-the server, as in «Updating»: it checks the commit out (its compose file names its images) and switches to them with `update.sh` — the steps of
-«Updating», snapshot and way back included. Not healthy: the data, `stack.env` and the checkout go back to the commit
-before. The last ten snapshots are kept. The registry's packages are public, as the repository is; for a private one,
+the server, as in «Updating»: it checks the commit out (its compose file names its images), runs the commit's
+`setup.sh` and switches to the images with `update.sh` — the steps of «Updating», snapshot and way back included.
+`setup.sh` runs with no switches: the channel comes back from `router.yaml` and every part you turned on stays on, so
+whatever a version puts on the host — a service, a hook, a profile, a file under `/srv/retinue` — comes with it, and
+nothing is left to run by hand after a version. A `setup.sh` that fails stops the version there, before anything is
+stopped. Not healthy: the data, `stack.env`, the checkout and the host's files go back to the commit before. The last ten snapshots are kept. The registry's packages are public, as the repository is; for a private one,
 log the server in as in «Updating».
 
 To turn it on, once:

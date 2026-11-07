@@ -197,6 +197,19 @@ def test_a_run_gets_exactly_the_argv_env_and_settings_built_for_it_and_its_promp
     assert journal[-1]["data"]["code"] == 0 and journal[1]["line"] == INIT
 
 
+def test_a_run_gets_the_lanes_model_and_effort_the_platform_names(lane):
+    body = run_body(model="claude-sonnet-5-5", effort="high")
+
+    async def scenario(host, client, post, items, until, event):
+        assert await post("/run", body) == (200, {"status": "started"})
+        await event("exited")
+
+    served(lane, scenario)
+    settings = f"{lane.cfg.run_dir}/r1.json"
+    assert lane.call("r1")["argv"] == cliengine.argv(settings, body["allowed"], body["disallowed"], None,
+                                                     model="claude-sonnet-5-5", effort="high")[1:]
+
+
 def test_a_forks_first_run_resumes_its_parent_with_fork_session_and_a_fork_without_a_parent_or_text_is_refused(lane):
     async def scenario(host, client, post, items, until, event):
         assert await post("/run", run_body(cli_session=CLI_SESSION, fork=True)) == (200, {"status": "started"})
@@ -553,6 +566,9 @@ def test_a_host_that_comes_up_again_journals_the_runs_left_running_as_restarted(
     ({"prompt": None}, "a new session without a prompt"),
     ({"prompt": None, "cli_session": ""}, "a new session without a prompt"),
     ({"hook_token": ""}, "hook_token: missing"),
+    ({"model": "opus"}, "argv: model 'opus' is not one of claude-opus-5-5[1m]"),
+    ({"effort": "ultra"}, "argv: effort 'ultra' is not one of low,"),
+    ({"model": ["claude-opus-5-5"]}, "model/effort: not names"),
 ])
 def test_a_run_off_its_shape_is_refused_journaled_and_nothing_is_spawned(lane, over, why):
     (lane.work / "repo" / "out").symlink_to(lane.dir)  # a directory, but outside /work

@@ -1656,6 +1656,27 @@ def test_a_session_on_another_model_is_one_line_per_model_for_all_sessions(tmp_p
     scenario(tmp_path, body)
 
 
+def test_a_lanes_model_goes_to_its_runs_and_a_run_is_held_to_the_model_it_was_given(tmp_path):
+    """Settings changes the lane's model in platform.yaml; the platform reads it at its restart. A run is checked
+    against what it was started with, so a run of before is no substitution, and a run of after is held to the new."""
+    async def body(world: World):
+        world.cfg.lanes["code"].model, world.cfg.lanes["code"].effort = "claude-sonnet-5-5", "high"
+        await a_turn(world, "tg:1", init("claude-sonnet-5-5"), answer("claude-sonnet-5-5"))
+        run = world.lanes["code"].runs()[-1]
+        assert (run["model"], run["effort"]) == ("claude-sonnet-5-5", "high")
+        assert told(world) == [], "the lane's own model is no substitution"
+        session = (await world.owner("new", {"input_id": "tg:2", "track": "retinue", "text": "почини"}))["session"]
+        started = world.lanes["code"].runs()[-1]["run"]
+        world.cfg.lanes["code"].model = cliengine.MODEL  # the lane changed while the run was going
+        world.lanes["code"].add(session, started, init("claude-sonnet-5-5"), answer("claude-sonnet-5-5"))
+        await world.poll()
+        assert told(world) == [], "held to the model it was given, not to the lane's now"
+        await a_turn(world, "tg:3", init("claude-sonnet-5-5"))
+        assert told(world) == [f"A session ran on claude-sonnet-5-5, not on {cliengine.MODEL}. Its CLI gave no reason."]
+
+    scenario(tmp_path, body)
+
+
 def test_a_subagents_model_and_the_clis_own_messages_are_no_substitution(tmp_path):
     async def body(world: World):
         await a_turn(world, "tg:1", answer("claude-haiku-5-5", parent_tool_use_id="toolu_1"), answer("<synthetic>"))

@@ -20,6 +20,11 @@ lanes:
     # Your own domains, also refused by its proxy (/srv/retinue/egress/open-deny-domains.txt), e.g.
     # ['WebFetch(domain:example.com)', 'WebFetch(domain:*.example.com)']
     deny: []
+    # What its sessions run with — «Settings» in the app sets these (docs/platform.md, «A lane's model»). Model:
+    # claude-opus-5-5[1m], claude-opus-5-5, claude-sonnet-5-5[1m] or claude-sonnet-5-5; effort: low, medium, high,
+    # xhigh or max. Left out: Opus 5.5 with 1M context, xhigh.
+    # model: "claude-opus-5-5[1m]"
+    # effort: xhigh
 # A track: `/new <name> [text]` in Telegram starts a session on it. `cwd` is relative to the lane's /work and
 # must exist there. `allow` and `deny` are always rules in Claude Code's own syntax, e.g. 'Bash(make test:*)';
 # `card` rules always come to you as a card (a lane may have them too), e.g. card: ['Bash(git commit:*)'].

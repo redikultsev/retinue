@@ -100,6 +100,32 @@ jobs:
       - run: pnpm -C face exec playwright install --with-deps chromium
       - run: pnpm -C face e2e
 
+  # Known vulnerabilities in what the server runs: the Python from uv.lock and the face's production packages.
+  # Python is red when a fix is at least two weeks old, the age face/pnpm-workspace.yaml holds (.github/dep_audit.py);
+  # the face is red on a high or critical advisory. pip-audit exits 1 on any finding, so the gate is the script after it.
+  dependencies:
+    name: Dependencies — known vulnerabilities
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.6.12"
+          python-version: "3.12"
+      - name: pip-audit
+        run: |
+          uv export --frozen --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/requirements.txt" --disable-pip -f json -o "$RUNNER_TEMP/audit.json" || true
+          python -I .github/dep_audit.py < "$RUNNER_TEMP/audit.json"
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: face/package.json
+      - name: pnpm audit
+        run: pnpm -C face audit --prod --audit-level high
+
   # A push to develop: its images are built once, here, as a release's are (release.yml, tagged sha-<12 hex>), while
   # the checks above run — the build needs none of them. Only once it passed every check does the server that follows
   # develop pull and start them (docs/install.md, «Following develop»): ssh with a key that can run only
@@ -118,7 +144,7 @@ jobs:
 
   deploy:
     name: Deploy develop to the server
-    needs: [python, probes, face, face-e2e, images]   # every check and the images; one red, and it never starts
+    needs: [python, probes, face, face-e2e, dependencies, images]   # every check and the images; one red, and it never starts
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-24.04
     environment: server

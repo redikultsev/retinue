@@ -162,7 +162,10 @@ def served(lane: Lane, scenario, host: lane_host.LaneHost | None = None):
             return await scenario(host, client, post, items, until, event)
         finally:
             for live in list(host.live.values()):
-                live.proc.kill()
+                try:
+                    live.proc.kill()
+                except ProcessLookupError:  # exited, and not let go by the host yet
+                    pass
             await asyncio.gather(*host.tasks, return_exceptions=True)
             await client.close()
 

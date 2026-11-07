@@ -394,8 +394,9 @@ def ahook(the_gate: Gate, event: str, body: dict) -> dict:
     return hook(the_gate, event, body, token="auto-token")
 
 
-def test_in_auto_a_call_nothing_names_gets_no_decision_and_the_classifier_decides(setup):
+def test_in_auto_a_call_nothing_names_gets_no_decision_and_the_classifier_decides(setup, monkeypatch):
     store, the_gate, _, _ = setup
+    monkeypatch.setattr(gate, "MARK_WAIT_S", 5.0)  # a call that does not wait takes its own time: «no wait» against seconds
     started = time.monotonic()
     assert hook(the_gate, "PreToolUse", auto(call("make test"))) == {}
     assert time.monotonic() - started < gate.MARK_WAIT_S, "no card rule in the run: no mark could change the answer"
@@ -643,13 +644,14 @@ def test_a_card_rules_tool_waits_for_its_card_mark_past_an_allow_mark_that_came_
     assert store.approvals()[0]["why"] == approvals.rule_why("Bash(git commit:*)")
 
 
-def test_a_card_rules_tool_with_only_an_allow_mark_waits_the_whole_time_then_the_rule_decides(auto_setup):
+def test_a_card_rules_tool_with_only_an_allow_mark_waits_the_whole_time_then_the_rule_decides(auto_setup, monkeypatch):
     _, the_gate, _, _ = auto_setup
     status = auto(call("git status"))
     started = time.monotonic()
     ahook(the_gate, "mark/4", status)
     assert ahook(the_gate, "PreToolUse", status) == {}
     assert time.monotonic() - started >= gate.MARK_WAIT_S
+    monkeypatch.setattr(gate, "MARK_WAIT_S", 5.0)  # a call that does not wait takes its own time: «no wait» against seconds
     started = time.monotonic()
     assert ahook(the_gate, "PreToolUse", auto(call(tool="Read", call_id="toolu_r",
                                                    tool_input={"file_path": "/work/repo/a"}))) == {}

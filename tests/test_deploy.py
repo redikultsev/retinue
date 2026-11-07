@@ -1553,7 +1553,7 @@ def test_face_nginx_serves_the_app_and_streams_the_events():
     assert '~^/assets/      "public, max-age=31536000, immutable";' in cache
     assert '~^/api/         "";' in cache and 'default         "no-cache";' in cache, \
         "index.html, sw.js and the manifest revalidate; the API keeps its own no-store"
-    assert "location ~ ^/(|login|today|sessions|new|pages|read|week|uploads|spaces|spaces/[^/]+|spaces/[^/]+/r/.+|spaces/[^/]+/p/.+|s/[^/]+|a/[^/]+|f/[^/]+|b/[^/]+|p/[^/]+)$ { try_files /index.html =404; }" in server, \
+    assert "location ~ ^/(|login|today|operator|sessions|new|pages|read|week|uploads|spaces|spaces/[^/]+|spaces/[^/]+/r/.+|spaces/[^/]+/p/.+|s/[^/]+|a/[^/]+|f/[^/]+|b/[^/]+|p/[^/]+)$ { try_files /index.html =404; }" in server, \
         "the app's routes only"
     assert "location / { try_files $uri =404; }" in server and "location ~ /\\. { return 404; }" in server
     for passed in ("Cookie $http_cookie", "Origin $http_origin", "X-Retinue $http_x_retinue", 'X-Face-Key ""',

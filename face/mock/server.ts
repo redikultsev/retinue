@@ -58,6 +58,41 @@ function endingLine(e: TurnEnding): string {
   return String(said ?? e.request ?? "");
 }
 
+/** A made-up laptop's own sessions (retinue/computers.py), as it reports them with their turn endings: one at work, two
+ * waiting on the owner (a question, a step of his), two back with a result, one elsewhere. `MOCK_LAPTOP_OFF=1`: the
+ * laptop has not reported for a while. */
+const LAPTOP_OFF = process.env.MOCK_LAPTOP_OFF === "1";
+function laptop() {
+  const link = (id: string) => `claude://claude.ai/epitaxy/${id}`;
+  return [
+    { id: "local_m1", title: "Compare the two stays", folder: "/home/anna/base/travel/lisbon", project: "travel/lisbon", state: "working", at: now() - 20, link: link("local_m1"), slot: 0 },
+    { id: "local_m2", title: "Packing list", folder: "/home/anna/base/travel", project: "travel", state: "waiting", at: now() - 600, link: link("local_m2"), slot: 0,
+      ending: { kind: "ask", request: "Make a packing list for Lisbon that fits in a carry-on", why_owner: "goal", context: "It fits in 7 kg with one pair of shoes; two pairs need a checked bag (€35).",
+        options: [{ label: "One pair, carry-on only", effect: "no bag fee; walking shoes only" }, { label: "Check a bag", effect: "+€35, room for the dinner shoes" }], without: "I keep the carry-on list." } },
+    { id: "local_m4", title: "Book the ferry", folder: "/home/anna/base/travel/lisbon", project: "travel/lisbon", state: "waiting", at: now() - 1800, link: link("local_m4"), slot: 1,
+      ending: { kind: "step", what: "Pay for the two ferry seats — the site takes cards only from the passenger", where: "the ferry company's site, «My bookings»", command: "Booking ref: FX-1042", expect: "the confirmation number" } },
+    { id: "local_m5", title: "The site's footer", folder: "/home/anna/code/acme-site", project: "work/acme/site", state: "done", at: now() - 3600, link: link("local_m5"), slot: 0,
+      ending: { kind: "look", request: "Make the footer match the new header", artifacts: [{ title: "footer.png", src: null, kind: "other", why: "On your computer.", on_computer: true }, { url: "https://example.com/acme-preview", title: "The preview", src: "https://example.com/acme-preview", kind: "link" }], checks: ["the links line up with the header's"] } },
+    { id: "local_m3", title: "Scratch notes", folder: "/tmp", project: "", state: "done", at: now() - 7200, slot: 0,
+      ending: { kind: "done", request: "Tidy my scratch notes", what: "Merged 14 notes into 3 and dropped the duplicates.", next: "Nothing: they are filed.", next_by: "me" } },
+  ];
+}
+
+/** The laptop's sessions as the feed's rows (retinue/feed.py `_computer_rows`): by their ending's kind, or «Reply». */
+function laptopRows(): FeedRow[] {
+  if (LAPTOP_OFF) return [];
+  return laptop().flatMap((s): FeedRow[] => {
+    const e = (s as { ending?: TurnEnding }).ending;
+    if (s.state === "working" || (!e && s.state !== "waiting")) return [];
+    const action = (e ? ({ ask: "answer", approve: "decide", step: "step", look: "read", done: "read" } as const)[e.kind as "ask"] : "reply") as FeedRow["action"];
+    return [{
+      key: `${e ? "ending" : "reply"}:laptop/${s.id}`, action, source: "computer", session: null, track: null, sphere: null, sphere_title: null, sphere_icon: null,
+      project: s.project || null, title: s.title, since: s.at, essence: e ? endingLine(e) : "", ref: s.id,
+      computer: { device: "laptop", id: s.id, ...(s.link ? { link: s.link } : {}) }, ...(e ? { ending: e } : {}),
+    }];
+  });
+}
+
 function mockFeed(): Feed {
   const row = (s: Session, over: Omit<FeedRow, "session" | "track" | "sphere" | "sphere_title" | "sphere_icon" | "title" | "ref" | "action"> & { action?: FeedRow["action"] }): FeedRow => ({
     session: s.id, track: s.track, sphere: null, sphere_title: null, sphere_icon: null, project: s.project ?? (s.sphere === "platform" ? "work/retinue" : (s.sphere ?? null)),
@@ -78,6 +113,7 @@ function mockFeed(): Feed {
     { action: "answer", title: "Answer the question", rows: [
       ...answer.map((a) => row(sessions.get(a.session)!, { key: `card:${a.id}`, action: "answer", source: "question", since: a.created, essence: "", approval: a, said: SAID })),
       ...ended("ask").map((r) => ({ ...r, action: "answer" as const })),
+      ...laptopRows().filter((r) => r.action === "answer"),
     ] },
     { action: "decide", title: "Decide", rows: [
       ...ended("approve").map((r) => ({ ...r, action: "decide" as const })),
@@ -85,10 +121,12 @@ function mockFeed(): Feed {
       ...offered.map((p) => row(sessions.get(p.session)!, { key: `proposal:${p.id}`, action: "decide", source: "proposal", since: p.created, essence: `Sub-session: ${p.title}`, proposal: p })),
       ...writes.map((p) => row(sessions.get(p.session!)!, { key: `cproposal:${p.id}`, action: "decide", source: "collection_proposal", since: p.created, essence: `${p.collection}: ${p.changes.length} change${p.changes.length === 1 ? "" : "s"} proposed`, collection_proposal: p })),
     ] },
-    { action: "step", title: "Your step", rows: ended("step").map((r) => ({ ...r, action: "step" as const })) },
+    { action: "step", title: "Your step", rows: [...ended("step").map((r) => ({ ...r, action: "step" as const })), ...laptopRows().filter((r) => r.action === "step")] },
+    { action: "reply", title: "Reply", rows: laptopRows().filter((r) => r.action === "reply") },
     { action: "read", title: "Read", rows: [
       ...[...ended("look"), ...ended("done")].map((r) => ({ ...r, action: "read" as const })),
       ...read.map((s) => row(s, { key: `read:${s.id}`, action: "read", source: "session", since: s.at, essence: last(s.id)?.text.split("\n")[0] ?? "" })),
+      ...laptopRows().filter((r) => r.action === "read"),
     ] },
     // her rows as feed.py makes them of the digest: a reminder is the day's, not a queue's
     { action: "assistant", title: "From the assistant", rows: digest().filter((i) => i.kind !== "reminder" && i.since <= now()).map((i) => ({
@@ -513,22 +551,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
 
   if (path === paths.sessions && method === "GET") return json(res, 200, { schema: 1, cursor: lastId, sessions: [...sessions.values()] });
-  // a made-up laptop's own sessions (retinue/computers.py): one at work in a project, one waiting, one elsewhere
+  // a made-up laptop's own sessions (retinue/computers.py, `laptop` above)
   if (path === paths.computers && method === "GET")
     return json(res, 200, {
       off_s: 120,
-      computers: [
-        {
-          device: "laptop",
-          at: now() - 5,
-          off: false,
-          sessions: [
-            { id: "local_m1", title: "Lisbon: compare the two stays", folder: "/home/anna/base/travel/lisbon", project: "travel/lisbon", state: "working", at: now() - 20, link: "claude://claude.ai/epitaxy/local_m1" },
-            { id: "local_m2", title: "Travel: packing list", folder: "/home/anna/base/travel", project: "travel", state: "waiting", at: now() - 600 },
-            { id: "local_m3", title: "Scratch notes", folder: "/tmp", project: "", state: "done", at: now() - 7200 },
-          ],
-        },
-      ],
+      computers: [{ device: "laptop", at: now() - (LAPTOP_OFF ? 3600 : 5), off: LAPTOP_OFF, sessions: laptop().map(({ ending: _ending, ...s }) => s) }],
     });
   if (path === paths.archived && method === "GET")
     return json(res, 200, { schema: 1, sessions: [...sessions.values()].filter((s) => s.archived).map((s) => ({ ...s, archived_at: s.at })).sort((a, b) => b.archived_at - a.archived_at) });

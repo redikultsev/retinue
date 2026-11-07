@@ -149,11 +149,12 @@ class Device:
 
         if body["method"] == SESSIONS:
             try:
-                taken = self.platform.computers.report(device["name"], params, self.platform.clock())
+                taken, left_out = self.platform.computers.report(device["name"], params, self.platform.clock())
             except computers.Refused as exc:
                 return error(str(exc))
             return 200, {"jsonrpc": "2.0", "id": body["id"],
-                         "result": {"taken": taken, "again_s": computers.BEAT_S}}
+                         "result": {"taken": taken, "again_s": computers.BEAT_S,
+                                    **({"left_out": left_out} if left_out else {})}}
         if self.spaces is None:
             return error(NO_BASE, -32000)
         try:

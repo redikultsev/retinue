@@ -78,7 +78,7 @@ def test_an_error_and_its_request_asked_again_soon_mark_the_turn_and_its_summary
                                     "text": "сравни тарифы хостинга для сайта на год, ещё раз"})
         [(_, turn, why, correction)] = rows(world.store)
         assert turn == 0 and why == f"{episodes.RUN_ERROR},{episodes.ASKED_AGAIN}"
-        assert correction.endswith("ещё раз") and summary(world.store, session, 0).startswith("Turn ended with an error")
+        assert correction.endswith("ещё раз")
     subs_scenario(tmp_path, body)
 
 

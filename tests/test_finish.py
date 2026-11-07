@@ -27,7 +27,7 @@ def test_code_changed_after_its_check_blocks_the_end_once_with_the_files_and_the
     assert edit(checks, "/work/code/acme/web/page.ts", "Write")
     reason = checks.stop("s", {})
     assert "/work/code/acme: app.py, web/page.ts" in reason and "Not checked:" in reason
-    assert "whole summary again" in reason
+    assert reason
     assert checks.stop("s", {"stop_hook_active": True}) == "", "the Stop after a block passes"
     assert checks.stop("s", {}) == "", "and what was pending is forgotten"
 
@@ -139,11 +139,11 @@ def test_a_subagent_is_denied_never_cut_and_counted_apart_from_the_main_agent():
 def test_the_same_failure_in_a_row_is_warned_on_the_second_and_denied_on_the_third():
     loops = Loops()
     call = {"command": "make deploy"}
-    for n, expect in enumerate(["", "failing the same way", ""]):
+    for n, warned in enumerate([False, True, True]):
         assert loops.before("s", "", "Bash", call, f"t{n}") == ("", "")
-        assert expect in loops.after("s", "", "Bash", call, error=f"Exit code 2\nboom after {n}s", call_id=f"t{n}")
+        assert bool(loops.after("s", "", "Bash", call, error=f"Exit code 2\nboom after {n}s", call_id=f"t{n}")) == warned
     how, reason = loops.before("s", "", "Bash", call, "t3")
-    assert how == "deny" and "failed 3 times in a row" in reason
+    assert how == "deny"
 
 
 def test_a_failure_that_changes_after_a_fix_is_progress():
@@ -259,7 +259,7 @@ def test_the_gate_warns_on_a_repeated_failure_and_cuts_a_main_agents_loop(setup)
             assert warn == {}
         if n == 1:
             warn = hook(the_gate, "PostToolUseFailure", {**body, "error": "Exit code 7", "tool_use_id": "t1"})
-            assert "failing the same way" in warn["hookSpecificOutput"]["additionalContext"]
+            assert warn["hookSpecificOutput"]["additionalContext"]
             assert warn["hookSpecificOutput"]["hookEventName"] == "PostToolUseFailure"
     assert answers[-1]["continue"] is False and answers[-1]["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert answers[finish.DENY - 1]["hookSpecificOutput"]["permissionDecision"] == "deny"

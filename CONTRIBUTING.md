@@ -62,6 +62,9 @@ pnpm -C face typecheck && pnpm -C face lint && pnpm -C face test
 - **A rule of the contract with the CLI moves with its code and its test, in one commit.** A numbered rule in
   [docs/platform.md](docs/platform.md#probes), the code, and a test that names the number and was seen failing when
   written. A refusal is checked by a call, not by a saved setting.
+- **A test asserts behaviour and data, never wording.** Return codes, refusal flags, parsed config, ids, paths,
+  numbers and order are checked by code; what a message, doc or prompt says is read by a person or judged by a model
+  ([AGENTS.md](AGENTS.md) has the full rule).
 - **No real personal data, anywhere.** Fixtures and examples use `example.com`, `example.org`, `acme`, `<owner-id>`,
   `123456789`, documentation IP ranges (`203.0.113.0/24`) and made-up names. No real mail, chats, notes, hostnames,
   tokens or paths from your own machine.

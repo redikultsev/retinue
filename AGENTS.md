@@ -14,6 +14,13 @@ This repository is public. It is one person's platform, and it must say nothing 
 - **When in doubt, it is personal.** Replace it with something invented, or ask.
 - Code, comments, docs, commit messages and the strings the owner reads in the product are in English (see the
   README). Behaviour changes come with their doc and tests in the same change ([CONTRIBUTING.md](CONTRIBUTING.md)).
+- **Tests check behaviour and data; people and models judge words.** An assert checks what the code did: a return
+  code, a refusal flag (`ok`, `is_error`, a status), the parsed keys and values of a config, ids, paths, numbers,
+  dates, the order of items, a marker the code itself parses, and the test's own input passing through. What a
+  sentence says — a message, a refusal's reason, a toast, a doc, a README, a prompt, a persona or instruction file,
+  a model's reply — is read by a person or judged by a model in an eval, never matched by code: no `==`, `in`,
+  `startswith` or `match=` against prose. When a message carries data, assert the data in it
+  (`"anna@example.org" in said`), not the sentence around it.
 - **Use the skills a task has.** Before any task, look for skills that fit it — the ones installed, the plugin
   catalogue, and the web (Anthropic's `claude-plugins-official` and `knowledge-work-plugins`, `anthropics/skills`,
   skill directories) — read them and work by them; say which you used. For anything the owner sees in the app, that

@@ -54,7 +54,7 @@ def test_a_tool_needs_its_grant(tmp_path, name):
     core, she, channel = make(tmp_path, *(grant for grant in GRANTS if grant != tool.grant))
     turn = core.turns.open_root("assistant")
     said = asyncio.run(run(core, she, turn.id, name, {}))
-    assert (said.ok, said.text) == (False, tool.denied) and tool.denied.startswith("Denied: this agent ")
+    assert (said.ok, said.text) == (False, tool.denied)
     assert quiet(core, channel)
 
 
@@ -84,8 +84,8 @@ def test_a_refusal_before_anything_was_done_is_not_recorded_and_an_answer_is(tmp
                 await run(core, she, turn.id, "search_archive", {"query": "  Энск "})]
 
     refused, found = asyncio.run(go())
-    assert (refused.ok, refused.text) == (False, "Not done: scope is chat, owner, mail or all.")
-    assert found.ok and found.text.startswith("Nothing found for «Энск»")
+    assert refused.ok is False and refused.text
+    assert found.ok and "Энск" in found.text
     rows = core.store.db.execute("SELECT conversation_id, source, target, status, input_chars FROM protocol "
                                  "WHERE channel = 'bus'").fetchall()
     assert rows == [(f"tree-{turn.tree.id}", "assistant", "archive", "done", 4)], "the query as searched"

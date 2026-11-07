@@ -1257,7 +1257,7 @@ def test_every_lane_is_told_the_common_rules_and_where_files_for_the_owner_go():
     assert "v[2] >= 46" in lane_image, "an older git fails the build, not every clone"
     base = (folder / "base.md").read_text()
     assert "/work/base" in base and "Do not run `git` in `/work/base`" in base and "To the Base" not in base
-    assert "its row in its Space's Showcase" in base and "python3 scripts/lint.py" in base, "the agent writes as on the Mac"
+    assert "its row in its Space's Showcase" in base and "python3 scripts/lint.py" in base, "the agent writes as on the owner's computer"
     assert "a message of its own" in base and "merge both sides" in base, "what kept files out is the session's to fix"
     assert "python3 scripts/lint.py" in base and '"commit and push?"' in base, "rule 6 is the platform's here"
     common, out = (folder / "common.md").read_text(), (folder / "out.md").read_text()
@@ -1577,16 +1577,18 @@ def test_the_face_api_is_on_a_network_of_its_own_that_no_lane_is_on():
     assert "dokploy-network" not in SERVICES["platform"]["networks"], "Traefik's neighbours never reach the platform"
 
 
-def test_face_nginx_passes_mcp_mac_to_the_platform_with_its_authorization_and_nothing_else_under_mcp():
-    """The Mac's agents (retinue/mac.py): one exact location to the face API, which inherits the server's headers —
+def test_face_nginx_passes_mcp_device_and_its_old_name_to_the_platform_with_its_authorization_and_nothing_else_under_mcp():
+    """The owner's computer's agents (retinue/device.py): one exact location to the face API, which inherits the server's headers —
     a location of its own proxy_set_header would drop them all, Traefik's key emptied included — and no cache header
     of nginx's; any other /mcp/ path is a 404."""
     nginx = (ROOT / "deploy" / "face" / "nginx.conf").read_text()
-    block = nginx[nginx.index("location = /mcp/mac {"):]
-    block = block[:block.index("}")]
-    assert f"proxy_pass http://{FACE_IP}:{PlatformConfig.face_port};" in block
-    assert "proxy_set_header" not in block and "proxy_set_header Authorization" not in nginx, "passed as it came"
-    assert re.findall(r"location\s+\S*\s*\S*/mcp\S*", nginx) == ["location = /mcp/mac"]
+    for path in ("/mcp/device", "/mcp/mac"):  # the endpoint, and its old name for the clients set up with it
+        block = nginx[nginx.index(f"location = {path} {{"):]
+        block = block[:block.index("}")]
+        assert f"proxy_pass http://{FACE_IP}:{PlatformConfig.face_port};" in block, path
+        assert "client_max_body_size 4m;" in block and "proxy_set_header" not in block, path
+    assert "proxy_set_header Authorization" not in nginx, "passed as it came"
+    assert re.findall(r"location\s+\S*\s*\S*/mcp\S*", nginx) == ["location = /mcp/device", "location = /mcp/mac"]
     assert '~^/mcp/         "";' in nginx, "the platform's own no-store, not nginx's no-cache beside it"
 
 

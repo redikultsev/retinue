@@ -1,5 +1,5 @@
 """What the router says to the owner unasked, beyond his reminders: the zone that follows him, the deadlines in his
-base, the week's numbers of his collections, a Mac that has not pushed, the base's health on Mondays, how the week of
+base, the week's numbers of his collections, a computer that has not pushed, the base's health on Mondays, how the week of
 work went, and the assistant speaking first now and then.
 
 Everything here is counted by code. The heartbeat (`HEARTBEAT_S`) runs a checklist — a deadline three days off, a
@@ -36,7 +36,7 @@ AHEAD_DAYS = 14            # the summary's «Deadlines»: dates this many days a
 PAST_DAYS = 30             # and past ones up to this age; older passed `stale_after` are only counted
 SUMMARY_ITEMS = 15         # dates named in the summary at most; the rest are counted
 PUSH_DAYS = 3              # an `until` of a profile Record, or a `deadline`, is pushed this many days before
-MAC_STALE_DAYS = 3         # «Mac has not pushed for N days» past this
+PUSH_STALE_DAYS = 3        # «The computer has not pushed for N days» past this
 NUDGE_AT = (3, 12)         # Thursday (Monday is 0), from 12:00 his time: the week's numbers at zero — one nudge
 TALKING_S = 2 * 3600       # he wrote to her this recently: she is in the conversation, no thought of her own
 BUSY_SHARE = 0.8           # the five-hour window used this much: no thought, the conversation needs what is left
@@ -602,7 +602,7 @@ class Proactive:
 
     async def summary_lines(self, now: float) -> list[str]:
         """Code's part of the morning summary, after her words: «Deadlines», on Monday last week's numbers and the
-        base's health, a Mac that has not pushed, what was worse than the week. The base's lines only with the base,
+        base's health, a computer that has not pushed, what was worse than the week. The base's lines only with the base,
         the platform's only with the platform."""
         core = self.core
         lines = []
@@ -629,8 +629,8 @@ class Proactive:
                     lines.append("\n".join(["The Base's health:", *health]))
             except Exception:
                 log.exception("the base's health not read")
-        if core.memory and (mac := await self.mac_line(now)):
-            lines.append(mac)
+        if core.memory and (push := await self.push_line(now)):
+            lines.append(push)
         if worse := await self.worse_lines(now):
             lines.append(worse)
         return [line for line in lines if line]
@@ -657,17 +657,17 @@ class Proactive:
                          "first suspect")
         return "\n".join(block)
 
-    async def mac_line(self, now: float) -> str:
+    async def push_line(self, now: float) -> str:
         try:
             last = await asyncio.to_thread(self.core.memory.last_foreign_commit)
         except Exception:
             log.exception("the hub's log not read")
             return ""
-        if last is None or now - last <= MAC_STALE_DAYS * 86400:
+        if last is None or now - last <= PUSH_STALE_DAYS * 86400:
             return ""
         moment = clock.local(last, self.core.tz)
         days = (clock.local(now, self.core.tz).date() - moment.date()).days  # by his calendar: «since 7 October»
-        return (f"Mac has not pushed for {days} {_days(days)}: its last commit in the hub is from "
+        return (f"The computer has not pushed for {days} {_days(days)}: its last commit in the hub is from "
                 f"{moment.day} {clock.MONTHS[moment.month - 1]}.")
 
     async def weekly_line(self, now: float, due: float | None = None) -> str:

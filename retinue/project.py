@@ -22,8 +22,8 @@ from typing import Any
 
 import yaml
 
-from .collections import (NAME, RIGHTS_ELSEWHERE, RIGHTS_KEYS, SPACE, Collections, Rejected, Writer, plain,
-                          parse_form, parse_views)
+from .collections import (NAME, OLD_CLASS, RIGHTS_ELSEWHERE, RIGHTS_KEYS, SPACE, Collections, Rejected, Writer,
+                          plain, parse_form, parse_views)
 
 FILE = "project.yaml"
 TEXT_MAX = 256 * 2**10      # bytes of the file
@@ -151,10 +151,12 @@ def _events(given: Any) -> dict:
             event["when"] = _when(spec["when"], where)
         by = spec.get("by", [])
         if (not isinstance(by, list) or len(by) > 8 or len(set(map(str, by))) != len(by)
-                or not all(b in ("owner", "session", "mac", "assistant") or isinstance(b, str)
-                           and re.fullmatch(r"code:[a-z][a-z0-9_-]{0,39}", b) for b in by)):
-            raise Rejected(f"{where}.by lists who fires it by a call: owner, session, mac, assistant, code:<rule>")
-        event["by"] = list(by)
+                or not all(b in ("owner", "session", "device", "mac", "assistant") or isinstance(b, str)  # mac: #66
+                           and re.fullmatch(r"code:[a-z][a-z0-9_-]{0,39}", b) for b in by)
+                or len({OLD_CLASS.get(b, b) for b in by}) != len(by)):
+            raise Rejected(f"{where}.by lists who fires it by a call, each once: owner, session, device, assistant, "
+                           "code:<rule>")
+        event["by"] = [OLD_CLASS.get(b, b) for b in by]  # `mac`, the old name of `device`, as the new one (#66)
         kept[name] = event
     return kept
 

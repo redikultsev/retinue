@@ -106,7 +106,7 @@ class Memory:
             log.warning("%d of her commits were in the hub but not in the table: added from the hub's log", added)
 
     def sync(self) -> None:
-        """The tree is the hub's `main`, exactly: whatever a turn left behind is gone, and what the Mac pushed is in."""
+        """The tree is the hub's `main`, exactly: whatever a turn left behind is gone, and what the owner's computer pushed is in."""
         branch = self.policy.branch
         self._run("fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
         self._run("reset", "-q", "--hard", f"origin/{branch}")
@@ -216,7 +216,7 @@ class Memory:
             clashing = [line for line in merged.stdout.split("\n")[1:] if line and not line.startswith("Auto-merging")
                         and not line.startswith("CONFLICT")]
             return False, (f"Not reverted: {', '.join(dict.fromkeys(clashing)) or 'a file'} changed after this "
-                           f"commit. Revert it on the Mac: git revert {sha[:12]}"), ""
+                           f"commit. Revert it on the owner's computer: git revert {sha[:12]}"), ""
         message = f"Revert: {subject}\n\nReverts: {sha}\n"
         commit = self._commit(merged.stdout.split("\n")[0], parent, message)
         try:
@@ -234,7 +234,7 @@ class Memory:
                  "deleted": json.loads(r[5]), "foreign": json.loads(r[6]), "reverted": r[7]} for r in rows]
 
     def changed_since(self, ts: float) -> dict[str, int]:
-        """Files of the base changed since `ts` by anyone — the owner from his Mac or her — by Space: what the weekly
+        """Files of the base changed since `ts` by anyone — the owner from his computer or her — by Space: what the weekly
         review counts. Files at the root are not a Space's."""
         try:
             out = self._out("log", f"--since=@{int(ts)}", "--name-only", "--format=", "HEAD")
@@ -260,7 +260,7 @@ class Memory:
         return shown.stdout if shown.returncode == 0 else None
 
     def last_foreign_commit(self, page: int = 500) -> float | None:
-        """When the hub last got a commit not made by the router (`author`): the owner's Mac, as the hub sees it —
+        """When the hub last got a commit not made by the router (`author`): the owner's computer, as the hub sees it —
         his merge after a pull counts too. The commit's own time, so a commit made days before its push reads as
         old: the line errs towards «not pushed». None when the hub has none at all. Read page by page, newest first,
         down to the first such commit however deep it lies. Git only."""
@@ -362,7 +362,7 @@ class Memory:
             log.exception("the refused change of turn %s was not kept", turn)
 
     def _drop(self) -> None:
-        """Undo the turn: the tree is the hub's again — with what came from the Mac meanwhile."""
+        """Undo the turn: the tree is the hub's again — with what came from the owner's computer meanwhile."""
         try:
             self.sync()
         except subprocess.CalledProcessError:  # the hub is unreachable: at least nothing of the turn stays

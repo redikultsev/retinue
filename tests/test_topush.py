@@ -362,9 +362,9 @@ def test_a_remote_that_changed_since_the_card_sends_the_card_back(tmp_path):
         committed(world.clone, "src/two.py", "2\n", "Two")
         toast, fresh = await world.platform.topush.open(session, "r", telegram=False)
         assert len(fresh["commits"]) == 2
-        # Someone pushed the first commit to the remote meanwhile (from the Mac): less would leave than the card says.
+        # Someone pushed the first commit to the remote meanwhile (from the owner's computer): less would leave than the card says.
         first = fresh["commits"][-1]["sha"]
-        git("push", "-q", str(world.remote.bare), f"{first}:refs/heads/from-mac", cwd=world.clone)
+        git("push", "-q", str(world.remote.bare), f"{first}:refs/heads/from-computer", cwd=world.clone)
         said = await world.platform.topush.send(world.platform.topush.card(fresh["id"]))
         assert said[0].startswith("The remote repository changed after the card")
         again = world.platform.topush.card(fresh["id"])

@@ -377,7 +377,7 @@ def test_health_lines_are_read_in_either_language():
 
 
 def test_the_pages_bring_the_base_to_the_hub_first_when_no_run_is_going(tmp_path):
-    """What the Mac pushed — the goals, a page — shows within a refresh, not after her next run; never in the
+    """What the owner's computer pushed — the goals, a page — shows within a refresh, not after her next run; never in the
     middle of a run, which owns the tree."""
     from types import SimpleNamespace
 
@@ -426,7 +426,7 @@ MARK = '<meta name="lifehub" content="publish">'
 @pytest.fixture
 def based(tmp_path, base):
     """A core with the base (its hub checks pushes; html may go into `artifacts/` and `journal/`), the pages with
-    the pages' address, and a Mac clone that pushes as the owner."""
+    the pages' address, and a computer clone that pushes as the owner."""
     import sqlite3
     import subprocess
 
@@ -449,21 +449,21 @@ def based(tmp_path, base):
     hub = pages.Pages(pages.Data(str(tmp_path / "data")), "https://pages.in.example.com", [])
     core = Core([AGENT], Store(str(tmp_path / "r.sqlite")), "owner", archive=Archive(":memory:"), memory=memory,
                 pages=hub)
-    mac = tmp_path / "mac"
-    git(tmp_path, "clone", "-q", str(hub_git), str(mac))
+    computer = tmp_path / "computer"
+    git(tmp_path, "clone", "-q", str(hub_git), str(computer))
 
-    def push(files: dict, email="owner@mac.example"):
+    def push(files: dict, email="owner@computer.example"):
         for name, text in files.items():
-            path = mac / name
+            path = computer / name
             if text is None:
                 path.unlink()
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
         identity = {"GIT_AUTHOR_EMAIL": email, "GIT_COMMITTER_EMAIL": email}
-        git(mac, "add", "-A")
-        git(mac, "commit", "-q", "-m", "pages", env=identity)
-        git(mac, "push", "-q", "origin", "main")
+        git(computer, "add", "-A")
+        git(computer, "commit", "-q", "-m", "pages", env=identity)
+        git(computer, "push", "-q", "origin", "main")
         memory.sync()
 
     return core, hub, push, subprocess

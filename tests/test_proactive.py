@@ -1,5 +1,5 @@
 """What the router says unasked: the zone that follows the owner — and the platform's screen with it —, the base's
-deadlines, the week's numbers of his collections, a Mac that has not pushed, and the heartbeat that stays silent — and
+deadlines, the week's numbers of his collections, a computer that has not pushed, and the heartbeat that stays silent — and
 runs no model — when nothing needs him."""
 
 import asyncio
@@ -183,18 +183,18 @@ def test_the_zone_is_changed_in_words_kept_across_restarts_and_checked(tmp_path)
     asyncio.run(run())
 
 
-def fake_memory(tmp_path, last_mac):
+def fake_memory(tmp_path, last_push):
     """The base: files in a folder, the hub's log as one answer."""
     tree = tmp_path / "kb"
     tree.mkdir(parents=True, exist_ok=True)
     return SimpleNamespace(tree=str(tree), cfg=SimpleNamespace(digest_at="21:00"), sync=lambda: None,
-                           last_foreign_commit=lambda: last_mac, changed_since=lambda ts: {})
+                           last_foreign_commit=lambda: last_push, changed_since=lambda ts: {})
 
 
-def test_the_monday_summary_gets_deadlines_last_weeks_numbers_and_the_mac(tmp_path, monkeypatch):
+def test_the_monday_summary_gets_deadlines_last_weeks_numbers_and_the_computers_push(tmp_path, monkeypatch):
     clock = [local(12, 8, 0)]
     monkeypatch.setattr(time, "time", lambda: clock[0])
-    memory = fake_memory(tmp_path, last_mac=local(7, 10))
+    memory = fake_memory(tmp_path, last_push=local(7, 10))
     platform = FakePlatform(tile("Follow-ups done", 1, 4, goal=10), tile("Inbound *moved*", 0, 2),
                             tile("Inbound in play", 3, None, window=None))
     record(tmp_path / "kb", "personal/profile/gym.md", title="Абонемент", until="2026-10-20")
@@ -218,7 +218,7 @@ def test_the_monday_summary_gets_deadlines_last_weeks_numbers_and_the_mac(tmp_pa
     assert parts[:4] == ["Доброе утро.", "Deadlines, 14 days:\n- in 8 days (20 October): Абонемент — valid until · "
                          "personal/profile/gym.md",
                          "Last week: Follow-ups done — 4 (goal 10); Inbound moved — 2; Inbound in play — 3 (now).",
-                         "Mac has not pushed for 5 days: its last commit in the hub is from 7 October."], \
+                         "The computer has not pushed for 5 days: its last commit in the hub is from 7 October."], \
         "on Monday the tiles' week before, a title's markup dropped, a count of now said so"
     assert parts[4].startswith("Health for the day:")
     assert ("collections/stat", {"views": WEEK, "tz": "UTC"}, 10.0) in platform.calls, \
@@ -231,7 +231,7 @@ def test_the_monday_summary_gets_deadlines_last_weeks_numbers_and_the_mac(tmp_pa
 def test_the_heartbeat_speaks_only_when_something_needs_him(tmp_path, monkeypatch):
     thursday = local(15, 13)
     monkeypatch.setattr(time, "time", lambda: thursday)
-    memory = fake_memory(tmp_path, last_mac=thursday)
+    memory = fake_memory(tmp_path, last_push=thursday)
     platform = FakePlatform(tile("Follow-ups done", 0, 4, goal=10), tile("Inbound moved", 2, 0))
     tree = tmp_path / "kb"
     record(tree, "personal/profile/gym.md", title="Абонемент", until="2026-10-17")
@@ -272,7 +272,7 @@ def test_the_heartbeat_speaks_only_when_something_needs_him(tmp_path, monkeypatc
 def test_the_first_heartbeat_after_a_deploy_takes_stock_and_bursts_nothing(tmp_path, monkeypatch):
     thursday = local(15, 23)  # deployed late on Thursday: quiet hours, and the stock is taken all the same
     monkeypatch.setattr(time, "time", lambda: thursday)
-    memory = fake_memory(tmp_path, last_mac=thursday)
+    memory = fake_memory(tmp_path, last_push=thursday)
     platform = FakePlatform(tile("Follow-ups done", 0, 0, goal=10))
     record(tmp_path / "kb", "personal/profile/gym.md", title="Абонемент", until="2026-10-17")
     record(tmp_path / "kb", "personal/profile/card.md", title="Карта", until="2026-10-14")

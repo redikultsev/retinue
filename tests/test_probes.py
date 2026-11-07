@@ -622,7 +622,7 @@ def test_a_deferral_inside_a_subagent_is_lost_so_the_gate_denies_there_and_the_s
 @pytest.mark.parametrize("sources, loaded", [("", False), ("project", True)])
 def test_a_nested_claude_md_is_not_loaded_when_a_file_below_is_read_under_no_setting_sources(lane, api, sources,
                                                                                            loaded):
-    """On the Mac a CLAUDE.md of a subfolder joins the context when the model reads a file there; under
+    """On the owner's computer a CLAUDE.md of a subfolder joins the context when the model reads a file there; under
     `--setting-sources ""` it never does — a session in the Base's root that works in /work/code/<repo> reads that
     repository's rules only because its instructions tell it to. With `project` both load: a folder's CLAUDE.md, and
     the AGENTS.md of a folder that has none."""

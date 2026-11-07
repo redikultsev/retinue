@@ -645,7 +645,7 @@ def test_an_empty_search_names_every_source_and_its_gaps(tmp_path):
     assert ok and text.startswith("Nothing found for «Лиссабон». What the archive covers:")
     assert "- mail owner@example.org: since 2025-09-09 08:53 UTC, Tuesday, last sync " in text
     assert "gap: not collected since 2025-10-09 08:51 UTC, Thursday (needs a new sign-in)" in text
-    assert "dropped letters do not go to the archive" in text and "files on the Mac" in text
+    assert "dropped letters do not go to the archive" in text and "files on the owner's computer" in text
 
 
 def test_a_kept_letter_keeps_what_a_reply_needs(tmp_path):

@@ -239,7 +239,7 @@ class Pages:
             self.fetching = asyncio.create_task(self.photos(self.pending.pop(0), self.core.travel, now))
 
     async def refresh(self, now: float) -> None:
-        """The base brought to the hub's head when no run is going — what the Mac pushed shows without waiting for
+        """The base brought to the hub's head when no run is going — what the owner's computer pushed shows without waiting for
         her next run (and the heartbeat skips its own fetch: `written`) — then the pages written. A failure is logged,
         and the next refresh comes."""
         core = self.core

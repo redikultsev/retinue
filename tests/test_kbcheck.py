@@ -232,10 +232,10 @@ def test_the_lint_copy_is_a_fresh_folder_only_its_user_can_enter(base, tmp_path)
 
 
 def stage(repo, files: dict) -> tuple[str, str]:
-    """Commit paths a Mac's file system could not hold side by side (A.md and a.md, é in NFC and NFD): straight into
+    """Commit paths a computer's file system could not hold side by side (A.md and a.md, é in NFC and NFD): straight into
     git's index, never onto the disk."""
     old = git(repo, "rev-parse", "HEAD")
-    git(repo, "config", "core.precomposeunicode", "false")  # git on a Mac would make NFD into NFC by itself
+    git(repo, "config", "core.precomposeunicode", "false")  # git on a computer would make NFD into NFC by itself
     for path, text in files.items():
         blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=repo, input=text, capture_output=True,
                               text=True, check=True).stdout.strip()
@@ -245,7 +245,7 @@ def stage(repo, files: dict) -> tuple[str, str]:
 
 
 def test_case_unicode_and_hidden_names_do_not_get_past_never(base):
-    """On the owner's Mac `claude.md` is CLAUDE.md, and a folder that starts with a dot is nobody's notes."""
+    """On the owner's computer `claude.md` is CLAUDE.md, and a folder that starts with a dot is nobody's notes."""
     for path in ("notes/knowledge/claude.md", "notes/knowledge/Claude.md", "notes/knowledge/agents.md",
                  "notes/knowledge/SKILL.MD"):
         assert verdict(base, *stage(base, {path: "x\n"})).refusals == [f"{path}: the assistant may not write here"], path
@@ -258,18 +258,18 @@ def test_case_unicode_and_hidden_names_do_not_get_past_never(base):
     assert kbcheck.match(unicodedata.normalize("NFD", "notes/knowledge/é.md"), "notes/knowledge/é.md")
 
 
-def test_two_names_that_are_one_file_on_a_mac_are_refused(base):
+def test_two_names_that_are_one_file_on_macos_or_windows_are_refused(base):
     out = verdict(base, *stage(base, {"notes/knowledge/A.md": "x\n"}), role=kbcheck.OWNER)
-    assert out.refusals == ["notes/knowledge/A.md: on a Mac it is the same as notes/knowledge/a.md — the names differ only "
+    assert out.refusals == ["notes/knowledge/A.md: on macOS or Windows it is the same as notes/knowledge/a.md — the names differ only "
                             "in case or Unicode normalization"]
     git(base, "reset", "-q", "HEAD~1")
     nfc, nfd = "notes/knowledge/é.md", unicodedata.normalize("NFD", "notes/knowledge/é.md")
     _, old = stage(base, {nfc: "x\n"})
     _, new = stage(base, {nfd: "y\n"})
     out = verdict(base, old, new, role=kbcheck.OWNER)
-    assert out.refusals == [f"{nfd}: on a Mac it is the same as {nfc} — the names differ only in case or Unicode "
+    assert out.refusals == [f"{nfd}: on macOS or Windows it is the same as {nfc} — the names differ only in case or Unicode "
                             "normalization"]
     git(base, "reset", "-q", "HEAD~2")
     out = verdict(base, *stage(base, {"Notes/x.md": "x\n"}), role=kbcheck.OWNER)
-    assert out.refusals == ["Notes: on a Mac it is the same as notes — the names differ only in case or Unicode "
+    assert out.refusals == ["Notes: on macOS or Windows it is the same as notes — the names differ only in case or Unicode "
                             "normalization"], "a folder too"

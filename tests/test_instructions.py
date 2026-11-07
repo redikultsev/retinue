@@ -60,7 +60,7 @@ def test_a_file_cannot_fake_the_end_of_its_fence_without_the_runs_nonce(work):
     assert one.index("<<<end repo-file guess>>>") < one.rindex(f"<<<end repo-file {nonce}>>>")
 
 
-# `cwd` is sub/. The CLAUDE files as 2.1.304 loads them with its default sources on the Mac (probed), in each folder
+# `cwd` is sub/. The CLAUDE files as 2.1.304 loads them with its default sources on the owner's computer (probed), in each folder
 # of the chain, top first; and every AGENTS.md and .claude/AGENTS.md of the chain after its folder's CLAUDE files —
 # which the CLI itself reads only when the chain has no CLAUDE file. Nothing below the cwd.
 @pytest.mark.parametrize("files, loaded", [
@@ -473,13 +473,13 @@ def test_a_memory_snapshot_of_markdown_files_is_read_and_its_index_framed(tmp_pa
     memory(tmp_path)
     assert instructions.check_memory(tmp_path) == ["MEMORY.md", "be-intellectual-opponent.md"]
     text = instructions.owner_memory(str(tmp_path), NONCE)
-    assert text.startswith("The owner's memory — a snapshot of his Claude Code memory from his Mac")
+    assert text.startswith("The owner's memory — a snapshot of his Claude Code memory from his computer")
     assert f"the memory's file in {tmp_path}/memory/" in text
     assert text.endswith(f"<<<owner-memory {NONCE}>>>\n{INDEX.strip()}\n<<<end owner-memory {NONCE}>>>\n")
     assert "Спорь." not in text, "only the index rides in the prompt; a memory is read when it applies"
     assert "the lane's and the repository's rules win" in text, "the lane's and the repository's rules win over a memory"
     assert "only if the owner started it that way" in text, "a memory about a session's role is not this session's"
-    assert "~/Desktop/…" in text and "belong to the Mac" in text, "the Mac's paths and workflows are the Mac's"
+    assert "~/Desktop/…" in text and "belong to the owner's computer" in text, "the owner's computer's paths and workflows are the owner's computer's"
 
 
 @pytest.mark.parametrize("make, why", [

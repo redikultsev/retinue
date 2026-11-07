@@ -74,7 +74,7 @@ does not disconnect the bot.
 1. Google Cloud console → your project → **Data access**: add `…/auth/gmail.send` (Sensitive); `openid` and
    `…/auth/userinfo.email` are basic.
 2. On the server: `sudo TELEGRAM_OWNER_ID=<your id> SEND=1 bash deploy/setup.sh` (needs `MAIL=1`).
-3. On your Mac, once per mailbox: `uv run deploy/mail/login.py --account you@gmail.com --kind send`. `gmail.send`
+3. On your computer, once per mailbox: `uv run deploy/mail/login.py --account you@gmail.com --kind send`. `gmail.send`
    cannot read the profile, so the account is checked by the e-mail Google puts in the ID token. The token goes to
    `/srv/retinue/send/keys` (uid 10004), apart from the collector's, and never into the backup.
 4. A password change kills this token too: the failed send says so, with the command to log in again.

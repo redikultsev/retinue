@@ -108,7 +108,7 @@ IMAGE=${RETINUE_IMAGE:-$(value RETINUE_IMAGE)}
 FROM_IMAGE=$(value RETINUE_IMAGE) FROM=$(value RETINUE_VERSION)
 FROM_IMAGE=${FROM_IMAGE:-retinue} FROM=${FROM:-local}    # neither set: the images built here, retinue*:local
 services=$(compose "$FROM_IMAGE" "$FROM" config --services)
-# Arrays by `while read`, not mapfile: bash 3.2 (a Mac's, where the tests run too) has none.
+# Arrays by `while read`, not mapfile: bash 3.2 (a computer's, where the tests run too) has none.
 SERVICES=(); while IFS= read -r line; do SERVICES+=("$line"); done <<< "$services"
 
 step "1/6 health before the update ($FROM)"

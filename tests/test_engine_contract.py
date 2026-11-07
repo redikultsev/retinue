@@ -55,7 +55,7 @@ FORMAT_WORDS = ("hookSpecificOutput", "permissionDecision", "deferred_tool_use",
                 "permissionMode")
 # The ratchet: the modules that may hold them. This list only shrinks. A new module speaks the platform's own words
 # and leaves the format to these; one that stops holding any word comes off the list.
-HOLDERS = {"approvals.py", "cliengine.py", "engine.py", "feed.py", "finish.py", "gate.py", "lane_host.py", "mac.py",
+HOLDERS = {"approvals.py", "cliengine.py", "engine.py", "feed.py", "finish.py", "gate.py", "lane_host.py", "device.py",
            "pings.py", "platformd.py", "questions.py", "sessions.py", "signals.py", "subs.py", "transcript.py",
            "travel.py", "voice.py"}
 

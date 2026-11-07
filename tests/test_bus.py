@@ -143,7 +143,7 @@ def test_archive_search_through_the_bus(tmp_path):
             empty = await search(turn.id, "зарплата")
             assert empty["ok"] and "Nothing found" in empty["text"] and "3 events" in empty["text"]
             assert "this one and past ones" in empty["text"]
-            assert "mail and calendar are not connected" in empty["text"] and "files on the Mac" in empty["text"], \
+            assert "mail and calendar are not connected" in empty["text"] and "files on the owner's computer" in empty["text"], \
                 "an empty result names what is not collected"
 
             assert await search(turn.id, "Энск", {"Authorization": "Bearer wrong"}) == 401

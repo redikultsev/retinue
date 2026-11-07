@@ -824,10 +824,10 @@ def test_the_health_line_tells_how_old_the_backup_is(tmp_path):
     assert health() == "backup not set up.", "no file: the host never ran a backup"
     restore = status.parent / "restore.json"
     assert health(ok=True, finished=now - 600) == \
-        "backup — under an hour ago, restore never checked: run mac.sh monthly on the Mac."
+        "backup — under an hour ago, restore never checked: run care.sh monthly on the owner's computer."
     restore.write_text(json.dumps({"checked": now - 40 * 86400}))
     assert health(ok=True, finished=now - 600) == \
-        "backup — under an hour ago, restore not checked for 40 d: run mac.sh monthly."
+        "backup — under an hour ago, restore not checked for 40 d: run care.sh monthly."
     restore.write_text(json.dumps({"checked": now - 3 * 86400}))
     assert health(ok=True, finished=now - 5.5 * hour, snapshot="4f9c2a1b") == "backup — 5 h ago.", "checked lately: not said"
     assert health(ok=True, finished=now - 600, snapshot="4f9c2a1b") == "backup — under an hour ago."
@@ -1272,7 +1272,7 @@ def test_an_old_revert_button_answers_honestly_without_the_base(tmp_path):
         return await core.press(telegram, telegram.cards[-1][1][0][1])
 
     pressed = asyncio.run(run())
-    assert pressed.ok and pressed.toast == ("The knowledge base is not connected now — not reverted. On the Mac: "
+    assert pressed.ok and pressed.toast == ("The knowledge base is not connected now — not reverted. On the owner's computer: "
                                             "git revert aaaaaaaaaaaa")
 
 

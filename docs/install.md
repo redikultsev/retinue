@@ -151,6 +151,30 @@ is not, it puts the snapshot back and starts the version before. The compose fil
 changes `deploy/compose.yml` or `setup.sh`, check out the tag and run `setup.sh` first. Under Dokploy, set the two
 lines in *Environment* and redeploy: no snapshot, no way back.
 
+## Following develop
+
+A server can follow `develop` instead of releases: each push there that CI passes is on it minutes later, with no one
+on the server (`.github/workflows/deploy.yml`). Actions logs in over ssh with a key that can do one thing, run
+`deploy/deploy.sh` with the commit's sha. It checks the commit out, builds it while the stack runs, stops the stack,
+copies its data (as `update.sh` does, into `/var/backups/retinue/deploys/`, the last five kept), starts it with
+`docker compose up --wait` and, when a service is not healthy within five minutes, puts the data back and starts the
+commit before. A server on `develop` builds from its checkout: no `RETINUE_IMAGE`, no `RETINUE_VERSION` in `stack.env`.
+
+To turn it on, once:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C retinue-deploy -f deploy-key          # on your computer
+# on the server, a line of /root/.ssh/authorized_keys:
+command="/usr/bin/bash /opt/retinue/deploy/deploy.sh",restrict ssh-ed25519 AAAA… retinue-deploy
+# in the repository: Settings → Environments → `server` (deployment branches: develop), its secrets
+#   DEPLOY_KEY          the private key, deploy-key
+#   DEPLOY_HOST         the server's address
+#   DEPLOY_KNOWN_HOSTS  ssh-keyscan -t ed25519 <address>
+```
+
+Without the environment's secrets the workflow says so and stops; a fork never has them. A deploy by hand is the same
+command: `sudo bash deploy/deploy.sh <sha>`.
+
 ## Hosts the proxy lets through
 
 `/srv/retinue/egress/allowed-hosts.txt` starts with one line, `api.anthropic.com`. If a run fails and the proxy

@@ -1,0 +1,40 @@
+# A commit pushed to develop whose CI passed is deployed to the server that follows develop (docs/install.md,
+# «Following develop»): Actions logs in with a key that can run only deploy/deploy.sh, and hands it the commit.
+# Off until the repository has the environment `server` with its three secrets; a fork never has them.
+name: deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [develop]
+
+permissions: {}
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  server:
+    name: Deploy develop to the server
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    environment: server
+    timeout-minutes: 45
+    steps:
+      - name: Deploy the commit CI passed
+        env:
+          KEY: ${{ secrets.DEPLOY_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$HOST" ] || [ -z "$KNOWN_HOSTS" ]; then
+            echo "no server to deploy to: the environment 'server' has no DEPLOY_KEY, DEPLOY_HOST, DEPLOY_KNOWN_HOSTS"
+            exit 0
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -o BatchMode=yes -o ServerAliveInterval=30 "root@$HOST" "$SHA"

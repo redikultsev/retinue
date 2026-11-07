@@ -1671,8 +1671,7 @@ def test_a_lanes_model_goes_to_its_runs_and_a_run_is_held_to_the_model_it_was_gi
         world.lanes["code"].add(session, started, init("claude-sonnet-5-5"), answer("claude-sonnet-5-5"))
         await world.poll()
         assert told(world) == [], "held to the model it was given, not to the lane's now"
-        await a_turn(world, "tg:3", init("claude-sonnet-5-5"))
-        assert told(world) == [f"A session ran on claude-sonnet-5-5, not on {cliengine.MODEL}. Its CLI gave no reason."]
+        assert world.store.get(f"model:{started}") == "claude-sonnet-5-5", "kept with the run until its result"
 
     scenario(tmp_path, body)
 

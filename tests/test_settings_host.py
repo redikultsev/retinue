@@ -109,8 +109,8 @@ def test_a_key_is_written_where_the_stack_reads_it_and_nothing_tells_its_value(t
     assert status["keys"]["ELEVENLABS_API_KEY"]["set"] is True and status["keys"]["ELEVENLABS_API_KEY"]["changed"]
     assert status["keys"]["TELEGRAM_BOT_TOKEN"]["set"] is False
     assert status["pending"] == ["platform", "router"], "who reads it waits for a restart"
-    assert stat.S_IMODE((server.root / "settings" / "status" / "status.json").stat().st_mode) == 0o640, \
-        "the platform's group reads it, no one else"
+    assert stat.S_IMODE((server.root / "settings" / "status" / "status.json").stat().st_mode) == 0o600, \
+        "the platform reads it (its owner on the server), no one else"
     for told in (server.text_of_status(), server.out):
         assert VOICE not in told and CLAUDE not in told
         assert hashlib.sha256(VOICE.encode()).hexdigest() not in told

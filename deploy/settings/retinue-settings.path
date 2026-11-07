@@ -10,8 +10,8 @@ PathChanged=/srv/retinue/code/tokens.env
 PathChanged=/srv/retinue/egress/project-keys.env
 PathChanged=/srv/retinue/platform/platform.yaml
 Unit=retinue-settings.service
-# Whatever setup.sh writes in a row; the service runs once more for each burst, never in a loop (its status is not
-# watched).
+# Whatever setup.sh writes in a row; the service runs once more for each burst, never in a loop: the file it writes
+# back is not one of these.
 TriggerLimitIntervalSec=0
 
 [Install]

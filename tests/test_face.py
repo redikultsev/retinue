@@ -656,7 +656,8 @@ def test_a_stream_that_takes_nothing_holds_back_no_one_and_the_oldest_gives_way_
 
 
 def test_a_stream_ends_with_its_login(tmp_path, monkeypatch):
-    monkeypatch.setattr(face, "PING_S", 0.05)
+    # No ping is due until the logout's stream has ended, so its end is the logout's and nothing comes before it.
+    monkeypatch.setattr(face, "PING_S", 60.0)
 
     async def body(world: FaceWorld):
         first = await world.login()
@@ -666,6 +667,8 @@ def test_a_stream_ends_with_its_login(tmp_path, monkeypatch):
         world.cookie = first
         assert (await world.call("POST", "/api/auth/logout"))[0] == 200
         assert await asyncio.wait_for(out.response.content.read(), 2) == b"", "a logout ends its streams at once"
+        monkeypatch.setattr(face, "PING_S", 0.05)
+        world.face.hub.wake()  # the other stream waits again, on the short ping
         assert await other.frame() == {"comment": "ping"}, "another login's stream goes on"
         world.clock.now += 31 * DAY
         assert await asyncio.wait_for(other.response.content.read(), 2) == b"", "an expired login, at the next ping"

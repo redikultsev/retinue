@@ -316,7 +316,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
   middle, the right panel.
 - **«＋»** is `/new`, a page in its own place, not a sheet over another ([below](#a-new-task)).
 - **On a wide screen**, the left column (272 px by default): on top, fixed, the places — “New task” (`/new`), “Today”
-  with the count, “Pages”, “Spaces”, “Numbers” — then “Projects”: its filters and the projects as places, each with
+  with the count, “Pages”, “Spaces”, “Numbers” — then “Projects”: the projects as places, the Base's tree, each with
   its sessions under it ([below](#projects-and-their-sessions)), the one part of it that scrolls. Its header, as the
   phone's, has the microphone and «Talk to Retinue» ([below](#talk-to-retinue)). Starting a session in a sphere is the composer's sphere picker, the Spaces are their page: the column holds
   only where you go and what runs (Apple's HIG: two levels at most; NN/g: the rest one step away). The middle: the page. The right is one panel with tabs: a
@@ -718,29 +718,32 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
   every row's: `/wait` in Telegram, which has no «Tasks», counts the asks too.
 - <a id="projects-and-their-sessions"></a>**The list is the projects and their sessions** (of the prototypes,
   «4 · Projects with sessions»): each project is a place — its row, its mark and its name, opens its page
-  ([below](#a-project)) and carries the amber count of what waits for you in it and its sub-projects (its sessions'
-  requests that wait, as its «Operator» tab counts them; before the feed is in, its sessions that wait) —, a sub-project indented inside its project, the project's own sessions under its row, then
-  its sub-projects. A session belongs to the nearest project of the Base folder it runs in (its row's `project`), else
-  to its sphere ([platform.md](platform.md#spheres)); one of neither is under «Other», last. A session that hangs under
-  another stays under it, in that one's project. The projects come in the order of `platform.yaml`'s spheres, then
-  the others A–Z; with no filter every top project is listed, sessions or not; with one, only those with a session
-  that passes it. The projects at any depth are `/api/spaces`' `projects`, read once a visit. A project's chevron folds
-  its sessions and sub-projects («N» on it when folded). In a project its main session comes first (a star), then the others, newest first; a fork hangs under
+  ([below](#a-project)) —, the Base's tree as a file manager's: its Spaces on top, every project inside its project
+  at any depth, sessions or not, the project's own sessions under its row, then its sub-projects. A Space opens by
+  itself; a sub-project is folded until you open it. The column has no state filter and no numbers: what waits for you
+  is the amber dot — on the session's row, and on a folded row it is inside —, and the count is «Operator»'s
+  ([below](#the-operator)). A session belongs to the nearest project of the Base folder it runs in (its row's
+  `project`), else to its sphere ([platform.md](platform.md#spheres)) when that sphere is a Base folder; one of neither
+  is under «Other», last. A session that hangs under another stays under it, in that one's project. The Spaces come in
+  the Spaces page's order (`platform.yaml`'s spheres, then the others A–Z), a project's sub-projects A–Z. The projects
+  at any depth are `/api/spaces`' `projects`, read once a visit; with no Base the spheres stand for the Spaces. A
+  project's chevron folds its sessions and sub-projects. In a project its main session comes first (a star), then the
+  pinned, then the others, newest first; a fork hangs under
   the session it came from (“fork: …”, a fork of a fork one step further, three at most), a side question under the
   session it asks about (`parent`, a read-only run), a sub-session (`sub_of`) under the session that started it — so
   a sphere reads as in Claude Code's sidebar: sphere → its main session → its sub-sessions. Each session is one
   30 px line (44 px on a touch screen): a state dot (waiting, working), its title cut to the line, and on the right
-  small marks — “waiting”, ↑N commits not pushed (a PR icon once a push opened one), the Base files N, a queued clock, the
-  unread dot; pin, peek, menu and “Open beside” show on hover with a mouse and stay on a touch screen (the pin there only once
+  small marks — “waiting”, ↑ commits not pushed (a PR icon once a push opened one), the Base files not filed, a
+  queued clock, the unread dot, each mark's number in its tooltip; pin, peek, menu and “Open beside” show on hover with a mouse and stay on a touch screen (the pin there only once
   pinned; “Pin” is in the menu; “Archive” at its foot takes the session out of every list at once, no question — the toast “Archived.” has “Undo”
-  for ten seconds, which brings it back, and the page too if it was open). The last of the list's filters, an archive
-  box, shows **“Archived”** for this visit: each archived session with its sphere and when it was archived, its title
+  for ten seconds, which brings it back, and the page too if it was open). The list's last row, **“Archived”**, opens under
+  it: each archived session with its sphere and when it was archived, its title
   opening it, and “Restore”, which puts it back in every list (the main mark is set again in its menu). A sphere's heading (small, muted) folds
-  the sphere; «⑂ N ⌄» on a row with rows under it folds them (the tooltip adds the open sub-sessions, `children`); the
-  device remembers both. A fold never hides what waits on you — a folded row and a folded heading say “N waiting” — nor
-  the session on screen (its project and parent stay open), and under “Waiting” nothing is folded. A row is “side question: …”
-  when the platform marks it `side`, or — a platform before `side` — whenever it has a `parent`. Under the list's heading “Projects”, “All · Waiting · Working · Done · 📌”, a small segmented control, filter the sessions by state (the choice is remembered on
-  the device); a waiting session shows its cards under its row on a phone. The «＋» of a sphere (on hover) starts a
+  the sphere; «⌄» on a row with rows under it folds them (the tooltip says when sub-sessions are open, `children`); the
+  device remembers both. A fold never hides what waits on you — a folded row and a folded project carry the amber dot
+  — nor the session on screen (its project and parent stay open). A row is “side question: …”
+  when the platform marks it `side`, or — a platform before `side` — whenever it has a `parent`. A waiting session
+  shows its cards under its row on a phone. The «＋» of a sphere (on hover) starts a
   session in it: a box for what to do and nothing to choose — the sphere is the one pressed, the track is the sphere's
   own, and how to work is the session's to decide (⌘/Ctrl+Enter starts it); a sphere with no session yet is started from the composer's sphere picker. A **dot** marks a session that said
   something since you last looked — a summary or a new card; opening it on a visible screen, writing into it (here or
@@ -755,10 +758,9 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
   the folder it runs in. It goes under the nearest project of the Base folder its computer gave, else under «Other» —
   never a project made up from its folder's top. It opens nothing here: on the computer itself, its link opens the
   session there (`claude://…`, the one link a device may give). It has no pin, peek or menu, no cards in «Today» and
-  no part in a project's amber count: its question stays on the computer, which alone can answer it. The filters
-  take it as a room session's (“Waiting”, “Working”, “Done”). A computer that has not reported for 2 minutes is
-  off: its rows stay where they are, greyed, “off” on the right and «laptop off · seen 14:05» in the tooltip, and
-  leave “Waiting” and “Working”.
+  its question stays on the computer, which alone can answer it. Its dot is a room session's. A computer that has
+  not reported for 2 minutes is off: its rows stay where they are, greyed, “off” on the right and «laptop off · seen
+  14:05» in the tooltip, neither waiting nor working.
 - **A session's menu** («⋯», on its row and in its header): its sphere, “Make main in the sphere” / “No longer
   main”, and **“Fork…”** with a box for the fork's first message. A fork is a new session that starts from a
   copy of this one's conversation and goes its own way, on the same track, lane and sphere and with the track's full

@@ -57,14 +57,14 @@ describe("«Archived»", () => {
     expect(await screen.findByText("Nothing archived.")).toBeTruthy();
   });
 
-  it("is the last of the list's filters, and another filter leaves it", async () => {
+  it("is the list's last row: it opens what was archived under it, and closes again", async () => {
     vi.spyOn(api, "archived").mockResolvedValue({ sessions: [row("a1")] });
     await mount(<SessionList />);
-    fireEvent.click(screen.getByRole("button", { name: "Archived" }));
+    const archived = screen.getByRole("button", { name: "Archived" });
+    fireEvent.click(archived);
     expect(await screen.findByTestId("archived-row")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Archived" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(archived.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(archived);
     expect(screen.queryByTestId("archived-row")).toBeNull();
-    expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true");
   });
 });

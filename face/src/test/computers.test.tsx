@@ -1,5 +1,5 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionList } from "@/components/session-list";
 import { type Computer, computerRows, setComputers } from "@/lib/computers";
@@ -58,6 +58,7 @@ describe("a computer's own sessions in the list", () => {
     answer([laptop()]);
     mount(<SessionList />);
     const lisbon = (await screen.findByRole("heading", { name: /Lisbon in May/ })).closest("section") as HTMLElement;
+    fireEvent.click(within(lisbon).getByRole("button", { name: "Expand: Lisbon in May" })); // a sub-project: folded until opened
     const working = within(lisbon).getByText("compare two stays").closest("a") as HTMLElement;
     expect(working.getAttribute("href")).toBe("claude://claude.ai/epitaxy/local_a1"); // opens it on the computer
     expect(working.title).toContain("on laptop");
@@ -75,14 +76,13 @@ describe("a computer's own sessions in the list", () => {
     expect(screen.queryByRole("heading", { name: /nowhere/ })).toBeNull();
   });
 
-  it("greys an off computer's rows and leaves them out of «Waiting» and «Working»", async () => {
+  it("greys an off computer's rows, none of them working or waiting", async () => {
     answer([laptop({ off: true, at: now - 3600 })]);
     mount(<SessionList />);
+    fireEvent.click(await screen.findByRole("button", { name: "Expand: Lisbon in May" }));
     const row = (await screen.findByText("compare two stays")).closest("a") as HTMLElement;
     expect(row.title).toContain("laptop off · seen");
     expect(row.textContent).toContain("off");
     expect(computerRows([laptop({ off: true })]).every((s) => s.state === "closed")).toBe(true);
-    screen.getByRole("button", { name: "Waiting" }).click();
-    await waitFor(() => expect(screen.queryByText("packing list")).toBeNull());
   });
 });

@@ -1,10 +1,12 @@
-// The projects and their sessions (lib/spheres.ts `projectGroups`): a project is a place — its row opens its page and
-// carries the amber count of what waits in it —, a sub-project indented inside it, under each its own sessions as
-// Claude Code's sidebar has them: its main session first → what hangs under it (sub-sessions, forks, side questions),
-// indented; a project and a session with rows under it fold, and the device remembers it. «Waiting» / «Working» / «Done» / «Pinned» are filters; «Archived», last, lists what
-// was archived, with «Restore» (components/archived-list.tsx), for this visit only. A waiting session shows
-// its cards under its row, with the full input and both buttons, when `cards` is set. A row opens inline (a peek):
-// the session's last words and a reply box, without leaving the list. A dot marks what came since the owner looked.
+// The projects and their sessions (lib/spheres.ts `projectGroups`), as a file manager's tree: the Base's Spaces on
+// top, every sub-project inside its project, folded until opened; a project is a place — its row opens its page. Under
+// each its own sessions as Claude Code's sidebar has them: its main session, the pinned, the others → what hangs under
+// them (sub-sessions, forks, side questions), indented; a project and a session with rows under it fold, and the
+// device remembers it. No filter and no numbers: what waits for the owner is the amber dot — on its row, and on a
+// folded row it is inside; the count is «Operator»'s. «Archived», the last row, opens what was archived, with
+// «Restore» (components/archived-list.tsx). A waiting session shows its cards under its row, with the full input and
+// both buttons, when `cards` is set. A row opens inline (a peek): the session's last words and a reply box, without
+// leaving the list. A dot marks what came since the owner looked.
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
@@ -33,21 +35,22 @@ import { ApiError, api } from "@/lib/api";
 import { type ComputerRow, computerRows, isComputer, useComputers } from "@/lib/computers";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
-import { useFeed } from "@/lib/feed";
 import { useNearestProject, useProjectOf, useProjects } from "@/lib/projects";
-import { FILTERS, type Filter, type FoldedRow, foldProjects, foldRows, isWaiting, type ProjectGroup, projectGroups } from "@/lib/spheres";
+import { type FoldedRow, foldKey, foldProjects, foldRows, isWaiting, type ProjectGroup, projectGroups } from "@/lib/spheres";
 import { approvalsOf, lastWords, listed, orderedItems, orderedSummaries, waitsOnOwner } from "@/lib/store";
 import { toast } from "@/lib/toast";
 import { QUEUED, type Session, type Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { waitingIn } from "@/lib/waiting";
 
-const FILTER_KEY = "retinue-list-filter";
 const FOLDED_KEY = "retinue-list-folded";
 const NO_SPHERES: Sphere[] = [];
-const NO_FOLDS: ReadonlySet<string> = new Set();
 
-/** What the owner folded — session ids, and spheres as `sphere:<name>` — kept on the device. */
+/** What waits for the owner, said on a row by the amber dot alone (the count is «Operator»'s). */
+function WaitDot({ label }: { label: string }) {
+  return <span role="img" aria-label={label} title={label} className="size-1.5 shrink-0 rounded-full bg-warning" />;
+}
+
+/** What the owner folded — session ids, and projects by `foldKey` — kept on the device. */
 function useFolded(): [ReadonlySet<string>, (key: string) => void] {
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => {
     try {
@@ -85,15 +88,6 @@ export function projectOfPath(pathname: string): string {
   return m[2] ? `${dec(m[1])}/${dec(m[2])}` : dec(m[1]);
 }
 
-function savedFilter(): Filter {
-  try {
-    const kept = localStorage.getItem(FILTER_KEY);
-    return FILTERS.some((f) => f.value === kept) ? (kept as Filter) : "all";
-  } catch {
-    return "all";
-  }
-}
-
 interface Props {
   /** The session open in the main panel, highlighted. */
   current?: string;
@@ -103,7 +97,7 @@ interface Props {
   beside?: (id: string) => void;
   onPick?: () => void;
   pin?: typeof api.pin;
-  /** Fill the column it stands in: the filters stay, the list under them scrolls (the wide screen's sidebar). */
+  /** Fill the column it stands in: the name stays, the list under it scrolls (the wide screen's sidebar). */
   fill?: boolean;
 }
 
@@ -261,7 +255,6 @@ function Row({
             {(s.base ?? 0) > 0 && (
               <Mini title={`Not in the Base yet: ${s.base}`}>
                 <Database />
-                {s.base}
               </Mini>
             )}
             {pr ? (
@@ -273,14 +266,11 @@ function Row({
               (s.push ?? 0) > 0 && (
                 <Mini title={`Commits not pushed: ${s.push}`}>
                   <ArrowUp />
-                  {s.push}
                 </Mini>
               )
             )}
             {s.waiting > 0 && (
-              <span className="rounded-sm bg-warning/20 px-1 text-[11px] leading-4 font-medium text-warning-foreground dark:text-warning">
-                waiting{s.waiting > 1 ? ` ${s.waiting}` : ""}
-              </span>
+              <span className="rounded-sm bg-warning/20 px-1 text-[11px] leading-4 font-medium text-warning-foreground dark:text-warning">waiting</span>
             )}
             {s.pinned && <Pin className="size-3 fill-current text-muted-foreground pointer-coarse:hidden" />}
             {s.unread && <span role="img" aria-label="unread" title="Something new" className="size-1.5 shrink-0 rounded-full bg-primary" />}
@@ -290,12 +280,8 @@ function Row({
           <button
             type="button"
             aria-expanded={!folded}
-            aria-label={
-              folded
-                ? `Expand: ${s.title} (${kids}${hiddenWaiting ? `, ${hiddenWaiting} waiting` : ""})`
-                : `Collapse nested: ${s.title}`
-            }
-            title={`${folded ? "Show" : "Collapse"} nested: ${kids}${s.children ? ` · sub-sessions open: ${s.children}` : ""}`}
+            aria-label={folded ? `Expand: ${s.title}${hiddenWaiting ? " · something waits for you" : ""}` : `Collapse nested: ${s.title}`}
+            title={`${folded ? "Show" : "Collapse"} nested${s.children ? " · sub-sessions open" : ""}`}
             onClick={onFold}
             className={cn(
               "hit inline-flex h-6 shrink-0 items-center justify-center gap-0.5 rounded px-1 text-[11px] tabular-nums hover:bg-accent pointer-coarse:h-11 pointer-coarse:min-w-11",
@@ -303,12 +289,7 @@ function Row({
             )}
           >
             <ChevronDown className={cn("size-3 transition-transform", folded && "-rotate-90")} />
-            {kids}
-            {hiddenWaiting > 0 && (
-              <span aria-hidden="true" className="ml-0.5 rounded-full bg-warning px-1 text-[11px] leading-4 font-medium text-warning-foreground">
-                {hiddenWaiting}
-              </span>
-            )}
+            {hiddenWaiting > 0 && <span aria-hidden="true" className="size-1.5 rounded-full bg-warning" />}
           </button>
         )}
         {/* Row actions: on hover with a mouse, always on a touch screen (where the pin shows only once pinned). */}
@@ -386,21 +367,22 @@ function ComputerItem({ s, depth }: { s: ComputerRow; depth: number }) {
   );
 }
 
-/** A project in the list: a place — its row opens the project's page —, its mark, its name and the amber count of
- * what waits for the owner in it (its sub-projects too); a chevron folds what is under it. «Other» is a heading only. */
+/** A project in the list: a place — its row opens the project's page —, its mark and its name; folded, the amber dot
+ * while something under it waits for the owner. A chevron folds what is under it. «Other» is a heading only. */
 function ProjectHead({
   group,
   waiting,
-  count,
+  fills,
   folded,
   onFold,
   onNew,
   on,
 }: {
   group: ProjectGroup;
-  waiting: number;
-  /** Sessions under it, its sub-projects' too: said when it is folded. */
-  count: number;
+  /** Something under it waits for the owner: said on its row while it is folded. */
+  waiting: boolean;
+  /** Something is under it — sessions or sub-projects —, so it folds. */
+  fills: boolean;
   folded: boolean;
   onFold: () => void;
   onNew?: () => void;
@@ -414,12 +396,10 @@ function ProjectHead({
       ) : (
         <Layers className="size-3.5 shrink-0 text-muted-foreground" />
       )}
-      <span className={cn("min-w-0 flex-1 truncate", group.key === "" ? "text-xs text-muted-foreground" : "font-medium text-foreground")}>{group.title}</span>
-      {waiting > 0 && (
-        <span title={`${waiting} waiting for you`} className="shrink-0 font-mono text-[11px] font-medium text-warning-foreground tabular-nums dark:text-warning">
-          {waiting}
-        </span>
-      )}
+      <span className={cn("min-w-0 flex-1 truncate", group.key === "" ? "text-xs text-muted-foreground" : group.depth ? "text-foreground/85" : "font-medium text-foreground")}>
+        {group.title}
+      </span>
+      {waiting && folded && <WaitDot label="Something waits for you in it" />}
     </>
   );
   const line = "flex h-[30px] min-w-0 flex-1 items-center gap-2 self-stretch pl-2 text-[13px] pointer-coarse:min-h-11 pointer-coarse:text-[15px]";
@@ -435,7 +415,7 @@ function ProjectHead({
           <ProjectLink
             path={group.key}
             className={line}
-            label={`Open the project ${group.title}${waiting ? ` · ${waiting} waiting for you` : ""}`}
+            label={`Open the project ${group.title}`}
             current={on}
           >
             {inner}
@@ -453,19 +433,18 @@ function ProjectHead({
           <Plus />
         </button>
       )}
-      {(count > 0 || folded) && (
+      {fills && (
         <button
           type="button"
           aria-expanded={!folded}
-          aria-label={folded ? `Expand: ${group.title} (${count})` : `Collapse: ${group.title}`}
-          title={folded ? `Show ${count}` : "Collapse"}
+          aria-label={folded ? `Expand: ${group.title}` : `Collapse: ${group.title}`}
+          title={folded ? "Show" : "Collapse"}
           onClick={onFold}
           className={cn(
             "hit inline-flex h-6 shrink-0 items-center justify-center gap-0.5 rounded px-1 text-[11px] tabular-nums hover:bg-accent pointer-coarse:h-11 pointer-coarse:min-w-11",
             folded ? "text-foreground" : "text-muted-foreground",
           )}
         >
-          {folded && count}
           <ChevronDown className={cn("size-3 transition-transform", folded && "-rotate-90")} />
         </button>
       )}
@@ -492,12 +471,10 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
   const state = useLiveState();
   const { sessions, approvals } = state;
   const spheres = live.meta?.spheres ?? NO_SPHERES;
-  const [filter, setFilter] = useState<Filter>(savedFilter);
   const [archived, setArchived] = useState(false);
   const [starting, setStarting] = useState<string | null | undefined>(undefined); // a sphere's «＋»: its name
   const [folded, fold] = useFolded();
   const nodes = useProjects();
-  const feed = useFeed();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const of = useProjectOf(spheres);
   const nearestOf = useNearestProject(spheres);
@@ -505,23 +482,11 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
   // a computer's session goes under the nearest project of the Base folder its computer gave, else «Other»
   const where = useCallback((s: Session) => (isComputer(s) ? nearestOf(s.project) : of(s)), [of, nearestOf]);
   const groups = useMemo(
-    () => projectGroups([...listed(sessions), ...computerRows(machines)], spheres, nodes ?? [], filter, Date.now() / 1000, where),
-    [sessions, machines, spheres, nodes, filter, where],
+    () => projectGroups([...listed(sessions), ...computerRows(machines)], spheres, nodes ?? [], Date.now() / 1000, where),
+    [sessions, machines, spheres, nodes, where],
   );
-  // what waits for the owner in each project, its sub-projects' too: the number of its «Operator» tab
-  const waitsIn = useMemo(() => waitingIn(feed, listed(sessions), of), [feed, sessions, of]);
   const opened = projectOfPath(pathname);
-  function pick(value: Filter) {
-    setFilter(value);
-    setArchived(false);
-    try {
-      localStorage.setItem(FILTER_KEY, value);
-    } catch {
-      // storage unavailable: the filter lasts this visit
-    }
-  }
-  // Under «Waiting» nothing is folded: the filter is there to see what waits.
-  const folds = filter === "waiting" ? NO_FOLDS : folded;
+  const folds = folded;
   const row = ({ session: s, depth, side, kids, folded: shut, waiting }: FoldedRow) =>
     isComputer(s) ? (
       <ComputerItem key={s.id} s={s} depth={depth} />
@@ -548,65 +513,20 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
     );
   return (
     <nav aria-label="Projects" className={cn("flex flex-col gap-1", fill && "min-h-0 flex-1 px-2")}>
-      {/* what the list is: the projects, each with its sessions; the chips under it filter the sessions by state */}
+      {/* what the list is: the projects, each with its sessions */}
       <h2 className="mx-1 shrink-0 px-1 pt-1 text-xs font-normal text-muted-foreground">Projects</h2>
-      <fieldset className="mx-1 flex shrink-0 rounded-md bg-muted p-0.5">
-        <legend className="sr-only">Show</legend>
-        {FILTERS.map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            aria-pressed={!archived && filter === f.value}
-            title={f.label}
-            onClick={() => pick(f.value)}
-            className={cn(
-              "flex h-6 min-w-0 flex-auto items-center justify-center rounded px-1.5 text-xs pointer-coarse:h-9",
-              !archived && filter === f.value ? "bg-background font-medium text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
-              f.value === "pinned" && "flex-none px-2",
-            )}
-          >
-            {f.value === "pinned" ? (
-              <>
-                <Pin className="size-3" />
-                <span className="sr-only">{f.label}</span>
-              </>
-            ) : (
-              <span className="truncate">{f.label}</span>
-            )}
-          </button>
-        ))}
-        <button
-          type="button"
-          aria-pressed={archived}
-          title="Archived"
-          onClick={() => setArchived(true)}
-          className={cn(
-            "flex h-6 flex-none items-center justify-center rounded px-2 pointer-coarse:h-9",
-            archived ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <Archive className="size-3" />
-          <span className="sr-only">Archived</span>
-        </button>
-      </fieldset>
       <div className={cn("flex flex-col gap-1", fill && "min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4")}>
-      {archived && <ArchivedList />}
-      {!archived && groups.length === 0 && (
-        <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-          {filter === "all" ? "No sessions. Start one with “+”." : "Nothing here right now."}
-        </p>
-      )}
-      {!archived &&
-        foldProjects(groups, folds, current).map((g) => {
+      {groups.length === 0 && <p className="px-3 py-8 text-center text-sm text-muted-foreground">No sessions. Start one with “+”.</p>}
+      {foldProjects(groups, folds, current).map((g) => {
           const under = groups.filter((x) => x.key === g.key || (g.key !== "" && x.key.startsWith(`${g.key}/`)));
           return (
             <section key={g.key || "-"} aria-label={g.title} className="flex flex-col">
               <ProjectHead
                 group={g}
-                waiting={waitsIn(g.key)}
-                count={under.reduce((n, x) => n + x.rows.length, 0)}
+                waiting={under.some((x) => x.rows.some((r) => isWaiting(r.session)))}
+                fills={g.rows.length > 0 || under.length > 1}
                 folded={g.folded}
-                onFold={() => fold(`project:${g.key}`)}
+                onFold={() => fold(foldKey(g))}
                 onNew={spheres.some((s) => s.name === g.key) ? () => setStarting(g.key) : undefined}
                 on={opened === g.key}
               />
@@ -618,6 +538,17 @@ export function SessionList({ current, cards, beside, onPick, pin = api.pin, fil
             </section>
           );
         })}
+      <button
+        type="button"
+        aria-expanded={archived}
+        onClick={() => setArchived(!archived)}
+        className="mt-2 flex h-[30px] shrink-0 items-center gap-2 rounded-md pr-1 pl-2 text-left text-[13px] text-muted-foreground hover:bg-accent/70 hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:text-[15px]"
+      >
+        <Archive className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Archived</span>
+        <ChevronDown className={cn("size-3 transition-transform", !archived && "-rotate-90")} />
+      </button>
+      {archived && <ArchivedList />}
       </div>
       <NewSession
         key={starting ?? ""}

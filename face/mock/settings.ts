@@ -53,6 +53,12 @@ const lane = {
   model: "claude-opus-5-5[1m]", effort: "xhigh",
   running: { model: "claude-opus-5-5[1m]", effort: "xhigh" },
 };
+// The owner's computers (`collections device add`): one in use, one that only reads, one taken back.
+const devices: SettingsView["devices"] & object = [
+  { name: "laptop", scope: "write", created: now() - 40 * DAY, seen: now() - 90, revoked: null },
+  { name: "office-pc", scope: "read", created: now() - 25 * DAY, seen: now() - 3 * DAY, revoked: null },
+  { name: "old-laptop", scope: "write", created: now() - 60 * DAY, seen: now() - 41 * DAY, revoked: now() - 40 * DAY },
+];
 const pending = new Set<string>();
 const restarting: string[] = [];
 let restarted: number | null = null;
@@ -73,7 +79,7 @@ export function settingsView(): SettingsView {
       { id: "xhigh", label: "Extra high" }, { id: "max", label: "Max" },
     ],
     keys: keys.map(({ services: _s, shape: _p, ...k }) => k),
-    git, project_keys: projectKeys, done,
+    git, project_keys: projectKeys, done, devices,
   };
 }
 
@@ -89,6 +95,13 @@ const BAD = "This does not look like the right key: check you copied all of it, 
 
 /** A POST to `/api/settings/<op>`: 202 with the request's id, or 400 with why. */
 export function settingsPost(op: string, b: Record<string, unknown>): [number, unknown] {
+  if (op === "device/revoke") {
+    // the platform's own file, not the host's: no service needed
+    const device = devices.find((d) => d.name === b.name);
+    if (!device) return [400, { error: `There is no device ${JSON.stringify(b.name)}.` }];
+    device.revoked ??= now();
+    return [200, { revoked: true }];
+  }
   if (process.env.MOCK_SETTINGS_OFF === "1")
     return [503, { error: "The server's settings service is not installed yet: run deploy/setup.sh once more on the server." }];
   const id = randomBytes(16).toString("hex");

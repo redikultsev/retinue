@@ -110,6 +110,8 @@ export interface FeedRow {
   computer?: { device: string; id: string; link?: string };
   /** A computer's session: his answer, waiting until that computer puts it into the session. */
   answered?: string;
+  /** A computer's session: his answer that computer did not put in, and why (retinue/computers.py `WHYS`). */
+  undelivered?: { text: string; why: string };
   /** «From the assistant»: a person's row's token — what «Done», «Not a task», «Tomorrow» name it by. Absent on a draft
    * and a date. */
   t?: string;

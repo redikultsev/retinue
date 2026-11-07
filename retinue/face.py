@@ -466,7 +466,8 @@ class Face:
 
     async def answer_computer(self, request: web.Request) -> web.Response:
         """The owner's answer to a session on one of his computers, from its card: kept until that computer's next
-        report takes it (`computers.Computers.answer`). A revoked device's sessions are not answered."""
+        report takes it (`computers.Computers.answer`), for the turn the card showed (`at`). Only here, by the owner's
+        login: a device's token opens nothing of `/api/*`. A revoked device's sessions are not answered."""
         body, device, session = await _body(request), request.match_info["device"], request.match_info["id"]
         try:
             live = {d["name"] for d in await self.platform.collections.devices() if d["revoked"] is None}
@@ -475,9 +476,11 @@ class Face:
         if device not in live:
             return _error(404, "No such computer.")
         try:
-            given = self.platform.computers.answer(device, session, body.get("text"), self.clock())
+            given = self.platform.computers.answer(device, session, body.get("text"), body.get("at"), self.clock())
         except computers.NotListed as exc:
             return _error(404, str(exc))
+        except computers.MovedOn as exc:
+            return _error(409, str(exc))
         except computers.Refused as exc:
             return _error(400, str(exc))
         return web.json_response({"answer": given["id"]})

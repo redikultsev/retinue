@@ -571,7 +571,7 @@ class Feed:
     def _computer_rows(self, device: str, sessions: list[dict]):
         """A computer's sessions as rows (`computers.py`): one that ended its turn with a word for him, by its ending;
         one that waits on him with none, «Reply». He answers it on its card (`answered`: his words, until the computer
-        takes them); the row also says which computer and its link back."""
+        takes them, or `undelivered` with why it refused them); the row also says which computer and its link back."""
         machines = getattr(self, "computers", None)
         for s in sessions:
             if s["state"] == "working":
@@ -586,7 +586,7 @@ class Feed:
                    "essence": _ending_essence(ending) if ending else "", "ref": s["id"],
                    "computer": {"device": device, "id": s["id"], **({"link": s["link"]} if s.get("link") else {})},
                    **({"ending": ending} if ending else {}),
-                   **({"answered": said} if machines and (said := machines.answered(device, s["id"])) else {})}
+                   **(machines.answer_state(device, s["id"], s["at"]) if machines else {})}
 
     def session_project(self, lane: str, track: str, cwd: str | None) -> str | None:
         """A session's project: its folder in the Base (`project_of`) — the folder it was made with, its track's for

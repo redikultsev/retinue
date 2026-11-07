@@ -4,7 +4,8 @@
 // command to copy, what a finished turn came to and what is next. Every answer goes to the session as the owner's next
 // message, and the card says it in place («You: …») instead of its buttons. A session on one of the owner's computers
 // (`computer` on the row) is answered here too: the answer waits on the platform until that computer takes it on its
-// next report (`answered` on the row meanwhile), and the card says so.
+// next report (`answered` on the row meanwhile), and the card says so — or, when the computer could not put it in,
+// what it said and why (`undelivered`), and asks again.
 import { useState } from "react";
 import { FileRow, type Kind } from "@/components/files";
 import { ArrowUpRight } from "@/components/icons";
@@ -101,6 +102,24 @@ export function mainOf(e: TurnEnding): string {
   return e.what || "";
 }
 
+/** Why one of his computers did not put his answer into its session (retinue/computers.py `WHYS`). */
+const NOT_IN: Record<string, string> = {
+  moved_on: "the session moved on",
+  unknown_session: "the computer no longer has that session",
+  too_long: "it was too long for the session",
+  failed: "the computer could not put it in",
+};
+
+/** His answer a computer did not put in: what he said and why, above the way to answer again. */
+export function Undelivered({ row }: { row: FeedRow }) {
+  if (!row.undelivered) return null;
+  return (
+    <p className={META}>
+      Not delivered: «{row.undelivered.text}» — {NOT_IN[row.undelivered.why] ?? "the computer did not take it"}.
+    </p>
+  );
+}
+
 /** «Answer on the computer ↗»: the session's own link on the computer it runs on, or where it is when there is none. */
 export function OnComputer({ computer, verb = "Answer" }: { computer: NonNullable<FeedRow["computer"]>; verb?: "Answer" | "Open" }) {
   if (!computer.link) return <p className={META}>{verb} it on {computer.device}: the session runs there.</p>;
@@ -178,6 +197,7 @@ export function EndingCard({ row, e }: { row: FeedRow; e: TurnEnding }) {
         </div>
       ) : (
         <>
+          <Undelivered row={row} />
           {options.length > 0 && (
             <fieldset aria-label="Options" className="flex min-w-0 flex-col gap-1.5">
               {options.map((o, i) => (

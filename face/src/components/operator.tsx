@@ -7,7 +7,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { CollectionProposalCard } from "@/components/collection-proposal-card";
-import { EndingCard, FRAME } from "@/components/ending-card";
+import { EndingCard, FRAME, Undelivered } from "@/components/ending-card";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
 import { QuestionDecide } from "@/components/question-decide";
@@ -85,7 +85,10 @@ function ComputerWaits({ row, computer }: { row: FeedRow; computer: NonNullable<
           <p className="text-[13px] text-muted-foreground">It reaches the session when {computer.device} next checks in.</p>
         </div>
       ) : (
-        deliver && <Reply session={`${computer.device}/${computer.id}`} deliver={deliver} placeholder="It waits for your message" onSent={setSaid} />
+        <>
+          <Undelivered row={row} />
+          {deliver && <Reply session={`${computer.device}/${computer.id}`} deliver={deliver} placeholder="It waits for your message" onSent={setSaid} />}
+        </>
       )}
     </div>
   );

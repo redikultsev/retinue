@@ -36,8 +36,9 @@ export type Deliver = (words: string) => Promise<unknown>;
 export function deliverTo(row: FeedRow): Deliver | null {
   if (row.computer) {
     const { device, id } = row.computer;
+    const at = row.since; // the turn the card shows: the computer puts the answer in only while it is still there
     return async (words) => {
-      const given = await api.answerComputer(device, id, words);
+      const given = await api.answerComputer(device, id, words, at);
       void feedSource.refresh(); // no event says it: the row is answered now, and waits on him no more
       return given;
     };

@@ -136,8 +136,10 @@ export const api = {
       paths.sessionDo(session, "input"),
       attachments.length ? { input_id: id, text, attachments } : { input_id: id, text },
     ),
-  /** His answer to a session on one of his computers: it waits on the platform until that computer takes it. */
-  answerComputer: (device: string, id: string, text: string) => request<{ answer: string }>(paths.computerAnswer(device, id), { text }),
+  /** His answer to a session on one of his computers, at the turn its card showed (`at`, the session's last activity):
+   * it waits on the platform until that computer takes it. 409: the session moved on since. */
+  answerComputer: (device: string, id: string, text: string, at: number) =>
+    request<{ answer: string }>(paths.computerAnswer(device, id), { text, at }),
   /** A picture the owner sent: the platform's own thumbnail of it. */
   thumbUrl: (session: string, input: string, n: number) =>
     paths.thumb(session, input, n),

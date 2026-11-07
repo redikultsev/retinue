@@ -9,6 +9,8 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 
 ## Unreleased
 
+- «Settings» lists your computers that reach your collections: what each may do, when it was last seen, and
+  «Revoke» to shut one out at once.
 - A server that follows develop sets up each version on its own, `setup.sh` included: nothing is left to run by hand
   after an update, and a version whose set-up fails is not started.
 - «Operator» is a place of its own, beside «Today»: the sessions' questions and results as cards, or on the map. The

@@ -20,6 +20,9 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
   Space by its mark and name.
 - «Pages» says why it is empty: the pages service is not set up, has not sent its list, is late, or has no page
   published yet — each with the next step.
+- Tasks are grouped by project now, in the same order as the projects on the left, with «No project» last; a
+  project's group shows its first five and «Show all» the rest. A task's «⋯» moves it to another project, and «＋» on
+  a group adds a task right into it. The other grouping, «Days», is the old «By when»; «By goal» is gone.
 - The sessions you run on your own computer show in the list too, under their projects, with whether they are at work
   or waiting for you.
 - «Settings» in the app, behind the gear: your Claude subscription, ElevenLabs, the Telegram bots, the repositories'

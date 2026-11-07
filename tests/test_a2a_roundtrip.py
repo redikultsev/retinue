@@ -48,14 +48,16 @@ class FakeEngine:
         return EngineResult(text=f"echo: {prompt}", is_error=False, num_turns=1, session_id=session_id or f"s{len(self.calls)}")
 
 
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def bound():
+    """A socket already bound to a port of its own, which the server is handed: a port picked, let go and bound again
+    later could be taken in between by another test running at the same time (pytest -n)."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    return sock, sock.getsockname()[1]
 
 
 async def _run(tmp_path):
-    port = free_port()
+    sock, port = bound()
     cfg = AgentConfig(id="t", name="Test", description="d", trust_class="web",
                       skills=[Skill(id="chat", name="Chat", description="d")], engine=EngineConfig(),
                       public_url=f"http://127.0.0.1:{port}")
@@ -66,7 +68,7 @@ async def _run(tmp_path):
                                     task_store=InMemoryTaskStore(), agent_card=card)
     app = Starlette(routes=[*create_agent_card_routes(card), *create_jsonrpc_routes(handler, "/")])
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    serve = asyncio.create_task(server.serve())
+    serve = asyncio.create_task(server.serve(sockets=[sock]))
     while not server.started:
         await asyncio.sleep(0.05)
     try:
@@ -131,7 +133,7 @@ async def _signed(tmp_path):
 
     from retinue.agent_host import app_of
 
-    port = free_port()
+    sock, port = bound()
     cfg = AgentConfig(id="t", name="Test", description="d", trust_class="web",
                       skills=[Skill(id="chat", name="Chat", description="d")], engine=EngineConfig(),
                       public_url=f"http://127.0.0.1:{port}")
@@ -141,7 +143,7 @@ async def _signed(tmp_path):
                                     task_store=InMemoryTaskStore(), agent_card=card)
     server = uvicorn.Server(uvicorn.Config(app_of(card, handler, "s3cret"), host="127.0.0.1", port=port,
                                            log_level="warning"))
-    serve = asyncio.create_task(server.serve())
+    serve = asyncio.create_task(server.serve(sockets=[sock]))
     while not server.started:
         await asyncio.sleep(0.05)
     url = f"http://127.0.0.1:{port}"

@@ -114,13 +114,27 @@ SERVICES=(); while IFS= read -r line; do SERVICES+=("$line"); done <<< "$service
 step "1/6 health before the update ($FROM)"
 wait_healthy running || die "the stack is not healthy before the update: $LAST — nothing was changed"
 
-step "2/6 pull $TAG"
+step "2/6 pull $TAG, build what no registry has"
 images=$(compose "$IMAGE" "$TAG" config --images)
 IMAGES=(); while IFS= read -r line; do IMAGES+=("$line"); done < <(grep -E "^${IMAGE//./\\.}(-[a-z-]+)?:${TAG//./\\.}\$" <<< "$images" | awk '!seen[$0]++')
 for image in "${IMAGES[@]}"; do
   echo "   $image"
   docker pull "$image" > /dev/null || die "$image could not be pulled (is $TAG published?); nothing was changed"
 done
+# The images no registry has (the lane's: it carries Claude Code, see compose.yml), built from the checkout under the
+# tag, still before the stop: a failed build leaves the version running as it was.
+built=$(compose "$IMAGE" "$TAG" config --format json | "$PYTHON" -c '
+import json, sys
+image, tag = sys.argv[1], sys.argv[2]
+for name, service in json.load(sys.stdin)["services"].items():
+    own = service.get("image", "")
+    if "build" in service and own.endswith(":" + tag) and not own.startswith(image):
+        print(name)' "$IMAGE" "$TAG")
+BUILT=(); while IFS= read -r line; do BUILT+=("$line"); done < <(sed '/^$/d' <<< "$built")
+if (( ${#BUILT[@]} )); then
+  echo "   built here: ${BUILT[*]}"
+  compose "$IMAGE" "$TAG" build "${BUILT[@]}" || die "${BUILT[*]} could not be built from the checkout; nothing was changed"
+fi
 
 step "3/6 stop"
 volumes=$(docker volume ls -q --filter label=com.docker.compose.project=retinue)

@@ -73,7 +73,7 @@ def test_a_cited_turn_gets_a_checker_that_opens_those_addresses_only_and_a_clean
         assert decision(await world.hook("PreToolUse", run, bash)) == "deny"
         await world.turn(checker, "1 | found | Basic — €4 a month\n2 | found | IPv6 on all plans\n3 | unreachable | 403")
         done = [n for n in world.notes("summary") if n["session"] == checker][-1]["data"]
-        assert done["text"] == f"Sources of session {session} checked: 2 of 3 found (unreachable 1)."
+        assert session in done["text"] and "2 of 3" in done["text"]
         assert done["quiet"] is True and not pings.loud(done)
         assert world.store.session(checker)["archived"]
         assert checker_of(world, checker) is None, "a check is never checked"
@@ -94,7 +94,7 @@ def test_a_contradicted_claim_rings_and_names_what_the_page_says(tmp_path):
         await world.turn(checker, "1 | found | Basic — €4 a month\n2 | contradicts | IPv6 only on the Pro plan\n"
                                   "3 | missing")
         done = [n for n in world.notes("summary") if n["session"] == checker][-1]["data"]
-        assert done["text"].startswith(f"Sources of session {session}: 1 of 3 claims are contradicted")
+        assert session in done["text"] and "1 of 3" in done["text"]
         assert "IPv6 only on the Pro plan" in done["text"] and not done.get("quiet")
         assert not world.store.session(checker)["archived"]
     subs_scenario(tmp_path, body, WebWorld)

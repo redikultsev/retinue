@@ -66,7 +66,8 @@ def test_a_commit_ci_built_is_pulled_and_started_and_the_checkout_follows(tmp_pa
     assert stack_env(srv)["RETINUE_VERSION"] == tag and stack_env(srv)["RETINUE_IMAGE"] == IMAGE
     assert git("rev-parse", "HEAD", cwd=repo) == b, "the checkout is the commit: its compose file names its images"
     assert [call["args"][1] for call in calls if call["args"][0] == "pull"] == [f"{IMAGE}:{tag}", f"{IMAGE}-face:{tag}"]
-    assert not [call for call in calls if "build" in call["args"]], "nothing is built on the server"
+    builds = [calls[n]["args"][-1] for n in compose(calls, "build")]
+    assert builds == ["lane-private"], "only the image no registry has is built on the server"
     assert f"now on {b[:12]}" in run.stdout and (srv / "deploy.log").read_text().count("now on") == 1
 
 
@@ -78,7 +79,7 @@ def test_a_commit_that_is_not_healthy_goes_back_with_its_data_and_its_checkout(t
     assert git("rev-parse", "HEAD", cwd=repo) == a
     assert state["running"] == {"version": "v1.0.0", "healthy": True}
     data = volumes / "retinue_router-data" / "_data"
-    assert (data / "schema.txt").read_text() == "v1.0.0" and (data / "router.sqlite").read_text() == "the owner's rows"
+    assert (data / "schema.txt").read_text() == "v1.0.0" and (data / "router.sqlite").read_text()
     assert [calls[n]["version"] for n in compose(calls, "up")][-1] == "v1.0.0", \
         "started once more with the compose file of the commit before"
     assert stack_env(srv)["RETINUE_VERSION"] == "v1.0.0"

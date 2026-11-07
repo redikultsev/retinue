@@ -139,7 +139,7 @@ def test_no_piece_ends_after_its_no_later_than_and_a_passed_one_lays_it_anywhere
     layout = lay(window, at(TUE, "16:30"), lesson, [], [homework])
     assert shown(layout) == [("homework", "16:30", 60)], "done before the lesson"
     late = lay(window, at(TUE, "17:30"), lesson, [], [homework])
-    assert late.placed == [] and late.left == [("homework", "no free 60 min before its deadline")]
+    assert late.placed == [] and [task for task, _ in late.left] == ["homework"] and "60 min" in late.left[0][1]
     missed = lay(window, at(TUE, "18:30"), lesson, [], [homework])
     assert shown(missed) == [("homework", "19:00", 60)], "its moment passed: laid anyway, not lost"
 

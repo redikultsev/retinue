@@ -542,7 +542,9 @@ services:
       context: ..
       dockerfile: deploy/lanes/Dockerfile
       args: { LANE: private, LANE_UID: "10005" }
-    image: ${RETINUE_IMAGE:-retinue}-lane-private:${RETINUE_VERSION:-local}   # the retired lanes: built here only
+    # Built on the server, from the checkout, by update.sh for every version, never pulled: the image carries Claude
+    # Code, whose licence lets no one but Anthropic hand it out, so no registry has it (docs/install.md, «Updating»).
+    image: retinue-lane-private:${RETINUE_VERSION:-local}
     restart: unless-stopped
     # The lane host takes SIGTERM from Docker's init (which also reaps the CLIs' orphaned grandchildren): every run
     # stopped as /stop stops it (SIGINT, SIGTERM after 10 s, SIGKILL after 5 more) and its end journaled.

@@ -11,4 +11,7 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 
 - The sessions you run on your own computer show in the list too, under their projects, with whether they are at work
   or waiting for you.
+- «Settings» in the app, behind the gear: your Claude subscription, ElevenLabs, the Telegram bots, the repositories'
+  tokens, the projects' keys and the sessions' model and effort, each set or replaced there and never shown again,
+  with one «Restart» to apply. Run `deploy/setup.sh` once more on the server to install its service.
 - After an update, the app shows once what changed in it.

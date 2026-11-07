@@ -178,6 +178,21 @@ things belong in different views. Of three prototypes, B was taken. What it deci
 - **A row of «Results»** is the `LIST` row: a 16 px type icon, the name (a path in mono) over what it is (12 px), its
   own button at the right («Undo», «Push · N»), its time in mono, a chevron when it opens.
 
+## Settings
+
+The ask: keys, tokens and the lane's model were set in files and terminal commands; one place for them, each saying
+what it is for and whether it is set, a key typed once and never shown again. From GitHub's and Vercel's secrets
+([face.md](face.md#settings)):
+
+- **A secret is write-only.** Its row is its name, what it does and «Set · <day>»; «Set» or «Replace» opens a password
+  field under it, emptied the moment it is sent. No masked value, no «show», no last four characters.
+- **Nothing on a row moves.** The state sits on the title's line; the button keeps its place and width as «Set»,
+  «Replace» or «Cancel»; a choice in a list stays what he picked while it saves.
+- **A change waits in words.** «After the restart» on the field, one bar on top with what restarts and the one
+  «Restart»; a refusal in the host's words, on the row that sent it.
+- **Only what can be changed.** A lane's engine is shown, not offered; Remove only where the part is optional, after a
+  confirm. The system's own secrets (the bus secret, the lanes' tokens) are setup.sh's, never on this screen.
+
 ## Copy
 
 What the owner reads is in his words: a form's `labels` for values, no field names or zones on screen, no trailing

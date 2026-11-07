@@ -36,7 +36,7 @@ import { RecordPage } from "@/pages/spaces";
 const Changes = lazy(() => import("@/components/changes").then((m) => ({ default: m.Changes })));
 
 /** The screens the tab bar stands under on a phone. */
-export const TABBED = /^\/(today|sessions|new|pages|read|spaces|week)(\/|$)/;
+export const TABBED = /^\/(today|sessions|new|pages|read|spaces|week|settings)(\/|$)/;
 
 const TABS = [
   { to: "/today", label: "Today", Icon: Home },

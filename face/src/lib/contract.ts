@@ -5,6 +5,7 @@ import type { Press as PlanPress } from "./plan";
 
 export type { Feed, FeedGroup, FeedRow, Press as RowPress, TurnEnding, WaitingDetail } from "./feed";
 export type { Library, LibraryPage } from "./library";
+export type { SettingsView } from "./settings";
 export type { Activity, Block, Plan, PlanReminder, PlanWindow, Press, Task, TaskFields } from "./plan";
 
 const seg = (s: string) => encodeURIComponent(s);
@@ -57,6 +58,9 @@ export const paths = {
   chat: "/api/chat",
   chatPress: "/api/chat/press",
   chatFile: (id: string) => `/api/chat/files/${seg(id)}`,
+  /** «Settings» (retinue/settings.py): what is set (GET), a change for the host to write (POST). */
+  settings: "/api/settings",
+  settingsDo: (op: "key" | "git" | "project_key" | "lane" | "restart") => `/api/settings/${op}`,
 } as const;
 
 /** One of her files on a row of the chat: kept for the app (`id`), or only named, with why. */

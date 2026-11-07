@@ -17,6 +17,7 @@ import { mockChat } from "./chat.ts";
 import { closed, digest, pressRow } from "./digest.ts";
 import * as fx from "./fixtures.ts";
 import { cleanPress, mockAssistantMove, mockPlan, mockPlanPress } from "./plan.ts";
+import { settingsPost, settingsView } from "./settings.ts";
 import { mockBase, mockSpaces } from "./spaces.ts";
 
 const PORT = Number(process.env.MOCK_PORT ?? 9601);
@@ -365,6 +366,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
   if (path === paths.meta) return json(res, 200, { schema: 1, owner_ok: true, tracks: fx.tracks, general: "notes", spheres: fx.spheres, face_origin: "http://127.0.0.1:5173", speech: true, version: "v0.2.0", whats_new: fx.whatsNew });
 
+  if (path === paths.settings && method === "GET") return json(res, 200, settingsView());
+  if (path.startsWith(`${paths.settings}/`) && method === "POST") {
+    const [status, answer] = settingsPost(path.slice(paths.settings.length + 1), await body(req));
+    return json(res, status, answer);
+  }
   if (path === paths.chat && method === "GET") return json(res, 200, chat.snapshot());
   if (path === paths.chat && method === "POST") {
     const b = await body(req);

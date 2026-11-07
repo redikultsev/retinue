@@ -11,6 +11,8 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 
 - «Settings» lists your computers that reach your collections: what each may do, when it was last seen, and
   «Revoke» to shut one out at once.
+- «Settings» → «Repositories» → «Add repository»: a GitHub or GitLab address and its account's token, written on
+  the server for you, `code:` section and all. No more editing platform.yaml over ssh to connect a repository.
 - A server that follows develop sets up each version on its own, `setup.sh` included: nothing is left to run by hand
   after an update, and a version whose set-up fails is not started.
 - «Operator» is a place of its own, beside «Today»: the sessions' questions and results as cards, or on the map. The

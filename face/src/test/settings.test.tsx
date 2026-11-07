@@ -72,8 +72,9 @@ function view(over: Partial<SettingsView> = {}): SettingsView {
         changed: null,
       },
     ],
-    git: [{ key: "example_gitlab", repos: ["example-group/notes"], set: false, changed: null }],
+    git: [{ key: "example_gitlab", repos: ["example-group/notes"], added: [], set: false, changed: null }],
     project_keys: [],
+    author_needed: false,
     done: {},
     devices: [
       { name: "old-laptop", scope: "write", created: 1_790_000_000, seen: 1_790_100_000, revoked: 1_790_200_000 },
@@ -92,6 +93,63 @@ function row(title: string) {
 }
 
 describe("Settings", () => {
+  it("shows Repositories with «Add repository» even before there is one", () => {
+    render(<SettingsBody view={view({ git: [] })} waiting={{}} send={vi.fn()} />);
+    const repos = within(screen.getByRole("region", { name: "Repositories" }));
+    expect(repos.getByTestId("add-repo")).toBeTruthy();
+    expect(row("Add repository").getByRole("button", { name: "Add" })).toBeTruthy();
+  });
+
+  it("adds a repository with its token in one request and drops the token from the page", async () => {
+    const send = vi.fn().mockResolvedValue("b".repeat(32));
+    const { container } = render(<SettingsBody view={view()} waiting={{}} send={send} />);
+    fireEvent.click(row("Add repository").getByRole("button", { name: "Add" }));
+    expect(screen.queryByLabelText("Commits as")).toBeNull(); // platform.yaml names the author already
+    fireEvent.change(screen.getByLabelText("Repository address"), {
+      target: { value: " https://github.com/example-org/widgets " },
+    });
+    const token = screen.getByLabelText("Token") as HTMLInputElement;
+    expect(token.type).toBe("password");
+    fireEvent.change(token, { target: { value: TYPED } });
+    fireEvent.submit(token.closest("form") as HTMLFormElement);
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    expect(send).toHaveBeenCalledWith("repo", "repo", { url: "https://github.com/example-org/widgets", value: TYPED });
+    await waitFor(() => expect(screen.queryByLabelText("Token")).toBeNull());
+    expect(container.innerHTML).not.toContain(TYPED);
+  });
+
+  it("sends no token for an account that has one, and asks for the commits' author when the file has none", async () => {
+    const send = vi.fn().mockResolvedValue("c".repeat(32));
+    render(<SettingsBody view={view({ author_needed: true })} waiting={{}} send={send} />);
+    fireEvent.click(row("Add repository").getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText("Repository address"), { target: { value: "gitlab.com/example-group/api" } });
+    const add = within(screen.getByTestId("add-repo")).getAllByRole("button", { name: "Add" }).at(-1) as HTMLButtonElement;
+    expect(add.disabled).toBe(true); // the author first
+    fireEvent.change(screen.getByLabelText("Commits as"), { target: { value: "Ann Example <ann@example.com>" } });
+    expect(add.disabled).toBe(false);
+    fireEvent.click(add);
+    await waitFor(() =>
+      expect(send).toHaveBeenCalledWith("repo", "repo", {
+        url: "gitlab.com/example-group/api",
+        author: "Ann Example <ann@example.com>",
+      }),
+    );
+  });
+
+  it("says a repository added waits for the restart, and keeps a refusal's words", async () => {
+    const git = [{ key: "example_org", repos: [], added: ["example-org/widgets"], set: true, changed: 1_800_000_000 }];
+    render(<SettingsBody view={view({ git })} waiting={{}} send={vi.fn()} />);
+    expect(row("example_org").getByText("example-org/widgets after the restart")).toBeTruthy();
+    const send = vi.fn().mockRejectedValue(new Error("This repository is here already, as widgets."));
+    render(<SettingsBody view={view({ git: [] })} waiting={{}} send={send} />);
+    const rows = screen.getAllByTestId("add-repo");
+    const last = within(rows.at(-1) as HTMLElement);
+    fireEvent.click(last.getByRole("button", { name: "Add" }));
+    fireEvent.change(last.getByLabelText("Repository address"), { target: { value: "https://github.com/a/widgets" } });
+    fireEvent.submit(last.getByLabelText("Repository address").closest("form") as HTMLFormElement);
+    await waitFor(() => expect(last.getByText("This repository is here already, as widgets.")).toBeTruthy());
+  });
+
   it("offers Set or Replace by whether a key is set, and hides a section with nothing in it", () => {
     render(<SettingsBody view={view()} waiting={{}} send={vi.fn()} />);
     expect(row("Claude subscription").getByRole("button", { name: "Replace" })).toBeTruthy();

@@ -62,7 +62,7 @@ export const paths = {
   chatFile: (id: string) => `/api/chat/files/${seg(id)}`,
   /** «Settings» (retinue/settings.py): what is set (GET), a change for the host to write (POST). */
   settings: "/api/settings",
-  settingsDo: (op: "key" | "git" | "project_key" | "lane" | "restart") => `/api/settings/${op}`,
+  settingsDo: (op: "key" | "git" | "project_key" | "lane" | "repo" | "restart") => `/api/settings/${op}`,
   /** A computer of /mcp/device taken back at once (POST {name}). */
   settingsRevoke: "/api/settings/device/revoke",
 } as const;

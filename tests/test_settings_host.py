@@ -288,3 +288,96 @@ def test_the_hosts_lists_are_the_platforms():
         if profile:
             block = compose.split(f"\n  {service}:\n", 1)[1].split("\n  ", 1)[0]
             assert block.startswith(f'    profiles: ["{profile}"]'), (service, profile)
+
+
+EXAMPLE = REPO / "deploy" / "platform" / "platform.example.yaml"
+WIDGETS = "https://github.com/example-org/widgets.git"
+
+
+def load_written(tmp_path, monkeypatch, text: str):
+    """platform.yaml as the platform loads it, every token of the example's lanes and of the account set."""
+    from test_config import load_platform
+    for lane in ("PRIVATE", "WEB", "CODE"):
+        monkeypatch.setenv(f"RETINUE_LANE_TOKEN_{lane}", "lane")
+    monkeypatch.setenv("RETINUE_GIT_TOKEN_EXAMPLE_ORG", GIT)
+    return load_platform(tmp_path / "loaded", monkeypatch, text)
+
+
+def test_the_first_repository_writes_the_section_its_token_and_the_file_still_loads(tmp_path, monkeypatch):
+    server = Server(tmp_path)
+    example = EXAMPLE.read_text()
+    server.yaml.write_text(example)
+    rid = server.drop({"op": "repo", "url": WIDGETS, "lane": "private", "track": "code",
+                       "author": "Ann Example <ann@example.com>", "value": GIT})
+    status = server.run()
+    assert status["done"][rid]["ok"] is True, status["done"][rid]
+    assert env_of(server.root / "code" / "tokens.env") == {"RETINUE_GIT_TOKEN_EXAMPLE_ORG": GIT}
+    written = server.yaml.read_text()
+    assert written.startswith(example), "nothing of the file before it moves"
+    assert status["repos"] == [{"name": "widgets", "url": WIDGETS, "token": "example_org"}]
+    assert status["git"]["example_org"]["set"] is True and status["pending"] == ["platform"]
+    assert GIT not in server.text_of_status() and GIT not in server.out
+    (tmp_path / "loaded").mkdir()
+    cfg = load_written(tmp_path, monkeypatch, written)
+    assert [(r.name, r.url, r.token, r.off) for r in cfg.code.repos] == [("widgets", WIDGETS, "example_org", "")]
+    assert (cfg.code.lane, cfg.code.track, cfg.code.proxy, cfg.code.author) == (
+        "private", "code", "http://platform-egress:3128", "Ann Example <ann@example.com>")
+
+
+def test_a_repository_joins_the_list_as_written_and_its_account_needs_no_second_token(tmp_path, monkeypatch):
+    server = Server(tmp_path)
+    head = EXAMPLE.read_text() + ('code:\n  author: "Ann Example <ann@example.com>"\n  proxy: http://platform-egress:3128'
+                                  '\n  repos:\n  - name: widgets\n    url: https://github.com/example-org/widgets.git'
+                                  '\n    token: example_org\n# the next section\n')
+    server.yaml.write_text(head)
+    (server.root / "code").mkdir()
+    (server.root / "code" / "tokens.env").write_text(f"RETINUE_GIT_TOKEN_EXAMPLE_ORG={GIT}\n")
+    rid = server.drop({"op": "repo", "url": "https://github.com/example-org/api.git"})
+    status = server.run()
+    assert status["done"][rid]["ok"] is True, status["done"][rid]
+    assert [r["name"] for r in status["repos"]] == ["widgets", "api"]
+    (tmp_path / "loaded").mkdir()
+    cfg = load_written(tmp_path, monkeypatch, server.yaml.read_text())
+    assert [r.name for r in cfg.code.repos] == ["widgets", "api"]
+
+
+@pytest.mark.parametrize("yaml_tail, request_", [
+    ("", {"url": "https://github.com/example-org/widgets.git"}),  # a new account and no token
+    ("", {"url": "https://bitbucket.org/example-org/widgets.git", "value": GIT}),
+    ("", {"url": "https://github.com/example-org/widgets.git", "value": GIT, "author": "not an author"}),
+    ("", {"url": "https://github.com/example-org/widgets.git", "value": GIT, "lane": "../x"}),
+    ("code: {repos: []}\n", {"url": "https://github.com/example-org/widgets.git", "value": GIT}),
+    ("code:\n  repos: [{name: widgets}]\n", {"url": "https://github.com/example-org/widgets.git", "value": GIT}),
+    ('code:\n  repos:\n    - {name: widgets, url: "https://github.com/example-org/widgets.git", token: example_org}\n',
+     {"url": "https://github.com/Example-Org/Widgets", "value": GIT}),
+    ('code:\n  repos:\n    - {name: widgets, url: "https://gitlab.com/another/widgets.git", token: another}\n',
+     {"url": "https://github.com/example-org/widgets.git", "value": GIT}),
+])
+def test_a_repository_off_the_list_writes_nothing(tmp_path, yaml_tail, request_):
+    server = Server(tmp_path)
+    server.yaml.write_text(PLATFORM_YAML + yaml_tail)
+    before = server.yaml.read_text()
+    rid = server.drop({"op": "repo", **request_})
+    status = server.run()
+    assert status["done"][rid]["ok"] is False and status["done"][rid]["why"]
+    assert server.yaml.read_text() == before
+    assert not (server.root / "code" / "tokens.env").exists(), "the token is written only with its repository"
+    assert status["pending"] == []
+
+
+def test_the_hosts_repository_rules_are_the_platforms():
+    from retinue import config
+    host = host_module()
+    assert host.REPO_URL.pattern == config.REPO_URL.pattern and host.REPO_NAME.pattern == config.REPO_NAME.pattern
+    assert host.TRACK.pattern == config.TRACK_NAME.pattern and host.GIT_VALUE == settings.GIT_VALUE.pattern
+    assert host.AUTHOR.pattern == settings.AUTHOR.pattern
+    for author in ("Ann Example <ann@example.com>", "A  <a@b.c>", "Ann <ann@example.com", "<a@b.c>", "Ann a@b.c",
+                   "Ann <a b@c.d>", "Ann <a@b> <c@d>", "A\nB <a@b.c>", "A " * 200 + "<a@b.c>", "; " * 50 + " <a@b.c>",
+                   "Ann <a@b@c>", "Ann <@b>", "Ann <a@>", "Ann <a@b>>", "Ann\t<a@b>", "Ann <a@b\u00a0c>", " <a@b>"):
+        want = bool(settings.AUTHOR.fullmatch(author)) and len(author) <= 256
+        assert settings.author_ok(author) is want and host.author_ok(author) is want, author[:40]
+    assert settings.AUTHOR.pattern in Path(config.__file__).read_text(), "config's check of code: author"
+    assert host.CODE_PROXY in EXAMPLE.read_text()
+    for url in ("https://github.com/Example-Org/Widgets", "https://github.com/a/b.git/", "https://gitlab.com/g/s/My.P",
+                "https://github.com/a_b-c/x_y-z.git"):
+        assert host.repo_of(url) == settings.repo_of(url), url

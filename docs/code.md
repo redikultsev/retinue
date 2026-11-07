@@ -70,7 +70,9 @@ pull request): the platform never pushes there, and then GitHub refuses it too.
 **`read_repository`** and **`write_repository`**. No `api`: the merge request is made by the push itself (push options
 `merge_request.create`, `.target`, `.title`, `.description`), and its link comes back in the push's answer.
 
-**Putting one in.** On the server, in your SSH terminal — never in a chat, an issue or a session:
+**Putting one in.** In the app: «Settings» → «Repositories» — «Add repository» takes it with the address, «Set» or
+«Replace» on its account's row later ([face.md](face.md#settings)). Or on the server, in your SSH terminal — never in
+a chat, an issue or a session:
 
 ```bash
 sudo bash /opt/retinue/deploy/code/set-git-token.sh you     # reads it with echo off
@@ -244,7 +246,11 @@ GitHub refuse it as well.
 
 ## Turning it on
 
-Needs the platform (`PLATFORM=1`). On the server:
+Needs the platform (`PLATFORM=1`). **From the app:** «Settings» → «Repositories» → «Add repository», with the
+address and its account's token, then «Restart». Root's settings service writes the repository's line, and the
+`code:` section when there is none — `lane: private`, `track: code` (when that track exists, else none),
+`proxy: http://platform-egress:3128`, and the commits' author unless `base:` names you
+([face.md](face.md#settings)). Anything else of `code:` stays yours to edit by hand. **By hand,** on the server:
 
 ```bash
 cd /opt/retinue && git pull

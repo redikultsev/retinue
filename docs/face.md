@@ -231,9 +231,9 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/spaces` | `{head, spaces: [{name, title, questions, tasks, waiting, working}], projects: [{name, title, parent, questions, tasks}]}` — the Base's Spaces as its `main` commit has them; `waiting`/`working` count the sessions of the sphere of that name; `projects`: every project at any depth, the one it is in (`""` the root) — the left panel's ([base.md](base.md#reading-the-base-in-the-app)) |
 | `GET /api/spaces/{space}` | `{head, space: {name, title, passport: {why, in_scope, not_in_scope, scope, files, rules, checks, imports, problems}, rules, marker, sections: [{heading, kind, items: [{text, list}]}], counts, records: {knowledge, profile, journal, artifacts}}}`; 404 for no such Space |
 | `GET /api/spaces/{space}/r/{path}` | `{head, record: {space, path, nature, title, head, bad_head, body}}`; 404 for a path the rules refuse, 413 for a Record over 512 KB; 404 “The Base is not connected.” with no Base, 503 while it cannot be read |
-| `GET /api/settings` | `{schema, ready, at, pending, restarting, restarted, lanes: [{name, engine, engine_label, model, effort, running: {model, effort}}], models: [{id, label}], efforts: [{id, label}], keys: [{name, group, title, what, where, hint, clear, on, set, changed}], git: [{key, repos, set, changed}], project_keys: [{name, project, set, changed}], done: {<id>: {ok, at, why?, services?}}, devices: [{name, scope, created, seen, revoked}] \| null}` — [Settings](#settings): never a value; `ready` false while the host's service is not installed; a lane's `model` is the file's, `running` what it runs with until the restart; a device's `seen` is its last call since the platform started, else its last change, and never its token or hash |
+| `GET /api/settings` | `{schema, ready, at, pending, restarting, restarted, lanes: [{name, engine, engine_label, model, effort, running: {model, effort}}], models: [{id, label}], efforts: [{id, label}], keys: [{name, group, title, what, where, hint, clear, on, set, changed}], git: [{key, repos, added, set, changed}], project_keys: [{name, project, set, changed}], author_needed, done: {<id>: {ok, at, why?, services?}}, devices: [{name, scope, created, seen, revoked}] \| null}` — [Settings](#settings): never a value; `ready` false while the host's service is not installed; a lane's `model` is the file's, `running` what it runs with until the restart; a device's `seen` is its last call since the platform started, else its last change, and never its token or hash; a token's `added` are repositories in `platform.yaml` not in use before the restart; `author_needed`: the first repository makes `code:`, whose commits need «Name <email>» |
 | `POST /api/settings/device/revoke {name}` | 200 `{revoked: true}`: the device taken back by the platform at once (`Collections.revoke_device`), its token opening nothing at its next call and its sessions gone from `/api/computers`; a device taken back already, the same; 400 for no such device |
-| `POST /api/settings/key {name, value \| clear}` · `/git {key, value}` · `/project_key {name, value}` · `/lane {lane, model?, effort?}` · `/restart {}` | 202 `{id}`: the request dropped for the host, its answer later in `done`; 400 with the words when it is off the lists, before anything is dropped; 503 while the host's service is not installed |
+| `POST /api/settings/key {name, value \| clear}` · `/git {key, value}` · `/project_key {name, value}` · `/lane {lane, model?, effort?}` · `/repo {url, value?, author?}` · `/restart {}` | 202 `{id}`: the request dropped for the host, its answer later in `done`; 400 with the words when it is off the lists, before anything is dropped; 503 while the host's service is not installed |
 | `POST /api/speech?mode=dictate\|en` (body: the recording, `Content-Type` its type) | `{text}`; in `en` also `{message}`, the text as the session gets it, “(by voice, verbatim) …” — [Voice](#voice) |
 | `GET /api/library` | `{schema, hub, at, pages: [{id, title, url, updated, section, section_title, section_icon, minutes, opened, done}]}` — “Pages”, [below](#pages) |
 | `POST /api/library/{id}/open` · `/done {done}` | `{page}`: you opened the page; “Finished” (`done: true`) or taken back (`false`); 404 for a page not in the list |
@@ -1052,7 +1052,22 @@ link, deleting it before it looks inside, and checking it against its own closed
 - a project's key: `RETINUE_PROJECT_KEY_<NAME>` in `egress/project-keys.env`;
 - a lane's `model` and `effort`: their lines in that lane's block of `platform.yaml`, from `cliengine.MODELS` and
   `EFFORTS` alone ([platform.md](platform.md#a-lanes-model)). A lane written on one line in the file is yours to edit
-  by hand; Settings says so.
+  by hand; Settings says so;
+- a repository: one more line in `code: repos:` of `platform.yaml`, its folder's name and its token's key derived
+  by root from the address alone, and its account's token through `set-git-token.sh` when one comes with it. Nothing
+  else of the file changes this way ([code.md](code.md#turning-it-on)).
+
+**Adding a repository.** «Repositories» → «Add repository»: the address of a GitHub or GitLab repository
+(`https://github.com/you/repo`, or without `https://`), and the token of its account when that account has none
+yet — one fine-grained token per resource owner, *Only select repositories*, Contents and Pull requests read and
+write. The repository is named after its last part (`repo`, its folder `/work/code/repo`), and its token after the
+account (`you`, `RETINUE_GIT_TOKEN_YOU`). A file with no `code:` yet gets the section with
+[code.md](code.md#turning-it-on)'s defaults (the lane `private`, the track `code` when there is one,
+`platform-egress` as the way out); the first repository then asks whose commits these are, unless `base:` names
+you. The row shows the repository «after the restart» at once; «Restart» puts it in use, and the platform mirrors
+it. An address or a name already in the file, a host other than GitHub or GitLab, and a `code:` or `repos:` written
+on one line are refused with the reason, and nothing is written. This lasts until repositories leave
+`platform.yaml` for the projects' own `code:` lines (#55).
 
 What it did comes back in `/srv/retinue/settings/status/status.json` (the platform's to read alone, mode 600, mounted
 read-only): set or not, when

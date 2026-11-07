@@ -638,6 +638,34 @@ Mac ── WireGuard ── Traefik (allow list: your devices) ── face nginx
 - **Unreachable** — the Mac off the VPN, the platform down — the tools are missing from the Mac's session, and nothing
   is kept to send later: the agent says what it could not record.
 
+### Its sessions
+
+A Mac — any computer with a device's token — also tells the app which Claude Code sessions it runs, so the owner sees
+them beside the room's, under the same projects ([face.md](face.md#from-the-computers)). Two JSON-RPC methods of
+`/mcp/mac` do it, beside the tools and never listed among them: a session on the Mac neither sees them nor calls them.
+Both take the device's token and an MCP session, as a tool does, in either scope — the device's sessions are its own,
+not the owner's records.
+
+- **`retinue/sessions`** takes the device's whole list, which replaces the one before (`retinue/computers.py`):
+
+  ```json
+  {"jsonrpc": "2.0", "id": 7, "method": "retinue/sessions", "params": {"sessions": [
+    {"id": "local_a1", "title": "Garden: the spring plan", "folder": "/home/anna/base/garden", "project": "garden",
+     "state": "working", "at": 1767225600, "link": "claude://claude.ai/epitaxy/local_a1"}]}}
+  ```
+
+  `state` is `working`, `waiting` (on the owner) or `done`; `at` its last activity, in seconds; `project` the Base
+  folder the Mac files it under — the platform does not know a Mac's paths, so the Mac maps its own folders —, none
+  for a session outside every project; `link`, optional, only `claude://claude.ai/…`. At most 500 sessions; a report
+  with a row it does not take is refused whole, with why, and the list before stays. The answer is
+  `{"taken": N, "again_s": 30}`: the Mac reports on each change and every 30 s at the latest.
+- **Kept in memory only**, per device: nothing on disk and nothing in a log — titles and folders are the owner's —;
+  a restart forgets the lists until each Mac's next report. No report for 2 minutes and the Mac is off: the app
+  greys its rows. A revoked device's rows go at once.
+- **`retinue/projects`** gives the Base's project tree, `{head, projects: [{path, title, parent}]}`, which a Mac's
+  helper files its own sidebar by — a group per project, its sessions in it — so the sidebar follows a project made
+  or renamed in the Base by itself.
+
 ### Setting up a Mac
 
 1. **The network.** The Mac is a WireGuard peer of the server's VPN, and its address is in `DEVICES` — the list

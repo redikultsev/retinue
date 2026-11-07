@@ -94,11 +94,24 @@ export function useProjects(): ProjectNode[] | null {
   return useSyncExternalStore(subscribe, () => nodes, () => nodes);
 }
 
-/** Where a session or a feed row belongs, by the one rule ({@link projectOf}) over every project known now. */
-export function useProjectOf(spheres: Sphere[]): ProjectOf {
+/** Every project known now: the Base's list, the spheres, and those a project's page read. */
+function useKnown(spheres: Sphere[]): ReadonlySet<string> {
   const list = useProjects();
   const also = useSyncExternalStore(subscribe, () => learned, () => learned);
-  return useMemo(() => projectOf(new Set([...(list ?? []).map((n) => n.name), ...spheres.map((s) => s.name), ...also])), [list, spheres, also]);
+  return useMemo(() => new Set([...(list ?? []).map((n) => n.name), ...spheres.map((s) => s.name), ...also]), [list, spheres, also]);
+}
+
+/** Where a session or a feed row belongs, by the one rule ({@link projectOf}) over every project known now. */
+export function useProjectOf(spheres: Sphere[]): ProjectOf {
+  const known = useKnown(spheres);
+  return useMemo(() => projectOf(known), [known]);
+}
+
+/** The nearest project of a Base folder among those known now, else "" («Other») — for a row with no sphere and no
+ * folder of the room to fall back on: a computer's session (lib/computers.ts). */
+export function useNearestProject(spheres: Sphere[]): (folder: string | null | undefined) => string {
+  const known = useKnown(spheres);
+  return useMemo(() => (folder) => nearest(folder, known), [known]);
 }
 
 /** A project's title: its Showcase's, a top one's sphere's, else its folder's last name. */

@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from retinue import colltools, mac
+from retinue import colltools, computers, mac
 from retinue.collections import Writer
 from retinue.face import COOKIE
 from test_face import FaceWorld, faced
@@ -316,5 +316,108 @@ def test_a_devices_proposals_are_limited_in_all_its_sessions_and_a_revoked_ones_
         status, answer, _ = await world.call("POST", f"/api/c/_proposals/{proposal}/apply", {}, cookie=cookie)
         assert status == 409 and answer["kind"] == "revoked" and answer["error"] == colltools.REVOKED, answer
         assert tools.face_proposal(proposal)["state"] == "open", "left to read and dismiss"
+
+    faced(tmp_path, body)
+
+
+# --- the device's own sessions and the project tree (retinue/computers.py) ---------------------------------------------
+
+def report_of(n: int, sessions: list) -> dict:
+    return {"jsonrpc": "2.0", "id": n, "method": mac.SESSIONS, "params": {"sessions": sessions}}
+
+
+def test_a_device_reports_its_sessions_and_the_app_lists_them_until_it_goes_off(tmp_path, caplog):
+    async def body(world: FaceWorld):
+        store = world.platform.collections
+        token = await store.add_device("laptop", "read", world.clock.now)
+        device = Device(world, token)
+        await device.start()
+        assert mac.SESSIONS not in await device.tools() and mac.PROJECTS not in await device.tools(), \
+            "the device's own methods are never listed among the tools a session sees"
+        rows = [{"id": "local_a1", "title": "Garden plan\nsecond line", "folder": "/home/anna/garden",
+                 "project": "garden/roses/", "state": "waiting", "at": world.clock.now - 5,
+                 "link": "claude://claude.ai/epitaxy/local_a1"},
+                {"id": "local_b2", "title": "Scratch", "folder": "/tmp", "state": "working", "at": world.clock.now}]
+        status, answer, _ = await device.post(report_of(2, rows))
+        assert status == 200 and answer["result"] == {"taken": 2, "again_s": computers.BEAT_S}, \
+            "any scope: the device's sessions are its own, not the owner's records"
+
+        assert (await world.call("GET", "/api/computers"))[0] == 401, "the app's login, as every /api/*"
+        await world.login()
+        [laptop] = (await world.get("/api/computers"))["computers"]
+        assert (laptop["device"], laptop["off"]) == ("laptop", False)
+        first, second = laptop["sessions"]
+        assert first == {"id": "local_a1", "title": "Garden plan second line", "folder": "/home/anna/garden",
+                         "project": "garden/roses", "state": "waiting", "at": world.clock.now - 5,
+                         "link": "claude://claude.ai/epitaxy/local_a1"}
+        assert second["project"] == "" and "link" not in second, "no project: the list's «Other»"
+        assert "Garden plan" not in caplog.text and "/home/anna" not in caplog.text, "titles and folders: no log"
+
+        status, answer, _ = await device.post(report_of(3, rows[1:]))
+        assert answer["result"]["taken"] == 1
+        assert [s["id"] for s in (await world.get("/api/computers"))["computers"][0]["sessions"]] == ["local_b2"], \
+            "a report is the whole list: one that left is gone"
+
+        world.clock.now += computers.OFF_S + 1
+        [laptop] = (await world.get("/api/computers"))["computers"]
+        assert laptop["off"] is True and laptop["sessions"], "off: the rows stay, the app greys them"
+
+        await store.revoke_device("laptop", world.clock.now)
+        assert (await world.get("/api/computers"))["computers"] == [], "a revoked device's rows go at once"
+
+    faced(tmp_path, body)
+
+
+def test_a_report_the_platform_does_not_take_keeps_the_list_before(tmp_path):
+    async def body(world: FaceWorld):
+        token = await world.platform.collections.add_device("laptop", "write", world.clock.now)
+        device = Device(world, token)
+        status, _, _ = await device.post(report_of(1, []), headers={"Authorization": f"Bearer {token}"})
+        assert status == 400, "a session first, as for a tool"
+        await device.start()
+        good = {"id": "local_a1", "title": "Plan", "state": "done", "at": 1.0}
+        assert (await device.post(report_of(2, [good])))[1]["result"]["taken"] == 1
+        bad = [
+            {"sessions": "nope"},
+            {"sessions": [good] * (computers.SESSIONS_MAX + 1)},
+            {"sessions": [good, good]},
+            {"sessions": [{**good, "state": "sleeping"}]},
+            {"sessions": [{**good, "id": "../x"}]},
+            {"sessions": [{**good, "at": "yesterday"}]},
+            {"sessions": [{**good, "project": "../etc"}]},
+            {"sessions": [{**good, "link": "https://example.com/x"}]},
+            {"sessions": [{**good, "link": "javascript:alert(1)"}]},
+        ]
+        for n, params in enumerate(bad, start=3):
+            status, answer, _ = await device.post({"jsonrpc": "2.0", "id": n, "method": mac.SESSIONS,
+                                                   "params": params})
+            assert status == 200 and answer["error"]["code"] == -32602 and answer["error"]["message"], params
+        listed = world.platform.computers.listing(world.clock.now)
+        assert [s["id"] for s in listed[0]["sessions"]] == ["local_a1"], "the list before stays"
+
+    faced(tmp_path, body)
+
+
+def test_a_device_reads_the_project_tree_its_sidebar_is_filed_by(tmp_path):
+    from test_spaces import _Base, make_base, reader
+
+    work = make_base(tmp_path, {"AGENTS.md": "# Base\n", "garden/AGENTS.md": "# Garden\n",
+                                "garden/roses/AGENTS.md": "# Roses\n", "garden/roses/knowledge/soil.md": "Loam.\n",
+                                "ledger/AGENTS.md": "# Ledger\n"})
+
+    async def body(world: FaceWorld):
+        token = await world.platform.collections.add_device("laptop", "read", world.clock.now)
+        device = Device(world, token)
+        await device.start()
+        world.platform.base = None
+        status, answer, _ = await device.post({"jsonrpc": "2.0", "id": 2, "method": mac.PROJECTS})
+        assert answer["error"]["message"] == mac.NO_BASE
+        world.platform.base = _Base(reader(work))
+        status, answer, _ = await device.post({"jsonrpc": "2.0", "id": 3, "method": mac.PROJECTS})
+        assert status == 200 and answer["result"]["head"]
+        assert answer["result"]["projects"] == [
+            {"path": "garden", "title": "Garden", "parent": ""},
+            {"path": "garden/roses", "title": "Roses", "parent": "garden"},
+            {"path": "ledger", "title": "Ledger", "parent": ""}]
 
     faced(tmp_path, body)

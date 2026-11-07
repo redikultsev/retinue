@@ -23,6 +23,8 @@ export const paths = {
   planPress: "/api/plan/press",
   sessions: "/api/sessions",
   archived: "/api/archived",
+  /** The sessions the owner's computers run, as each last reported them (retinue/computers.py). */
+  computers: "/api/computers",
   session: (id: string) => `/api/sessions/${seg(id)}`,
   /** A session's own route: `input`, `pin`, `archive`, `diff`, `push`, … */
   sessionDo: (id: string, what: string) => `/api/sessions/${seg(id)}/${what}`,

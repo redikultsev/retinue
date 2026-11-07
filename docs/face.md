@@ -195,6 +195,7 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `POST /api/sessions/{id}/stop` | `{ok}`: the lane interrupts the running turn |
 | `POST /api/sessions/{id}/pin {pinned}` | `{session}`: the pin is the session's row (`pinned`), so every device agrees; its `at` stays |
 | `POST /api/sessions/{id}/archive` | `{session}`: “Archive” — the session, its sub-sessions and side questions end where they stand (queue dropped, run stopped, cards stale) and leave every list (`archived`); a turn of it beginning again, a message from you, brings it back ([platform.md](platform.md#archive)) |
+| `GET /api/computers` | `{computers, off_s}` — the owner's computers' own sessions ([above](#from-the-computers)): per device `{device, at, off, sessions}`, each session `{id, title, folder, project, state, at, link?}` as its device last reported it (`state`: `working`, `waiting`, `done`; `at` in seconds); a revoked device is left out |
 | `GET /api/archived` | `{schema, sessions}` — “Archived”: the archived sessions, the latest first, 200 at most, each a session row with `archived_at`; kin archived with its session is not listed apart |
 | `POST /api/sessions/{id}/unarchive {main?}` | `{session}`: “Undo” in the toast “Archived.” — the session and the kin archived with it back in every list; their stopped turns stay stopped. `main: true`: it was its sphere's main session, and is again unless another one is by now |
 | `POST /api/sessions/{id}/side {input_id, text}` | `{session, say}`: a side question — see below |
@@ -746,6 +747,18 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
   in Telegram) or deciding its card clears it, on every device (`seen_at`, one per session). The pin on a row pins it
   on the platform. The arrow opens a **peek** under the row: the session's last words (the text being written, else
   its last message, else its last summary) and a reply box, without leaving the list.
+- <a id="from-the-computers"></a>**From the computers.** The Claude Code sessions the owner runs on his own computers
+  are in the same list, under the same projects, beside the room's ([collections.md](collections.md#its-sessions)):
+  each computer with a device's token reports them, and the app reads `/api/computers` every 15 s while it is on
+  screen (`lib/computers.ts`). Such a row is a session row's height: the state dot (waiting, working), its title, on
+  the right “waiting” when it waits on you, a laptop mark and its last activity; its tooltip says the computer and
+  the folder it runs in. It goes under the nearest project of the Base folder its computer gave, else under «Other» —
+  never a project made up from its folder's top. It opens nothing here: on the computer itself, its link opens the
+  session there (`claude://…`, the one link a device may give). It has no pin, peek or menu, no cards in «Today» and
+  no part in a project's amber count: its question stays on the computer, which alone can answer it. The filters
+  take it as a room session's (“Waiting”, “Working”, “Done”). A computer that has not reported for 2 minutes is
+  off: its rows stay where they are, greyed, “off” on the right and «laptop off · seen 14:05» in the tooltip, and
+  leave “Waiting” and “Working”.
 - **A session's menu** («⋯», on its row and in its header): its sphere, “Make main in the sphere” / “No longer
   main”, and **“Fork…”** with a box for the fork's first message. A fork is a new session that starts from a
   copy of this one's conversation and goes its own way, on the same track, lane and sphere and with the track's full

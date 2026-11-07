@@ -513,6 +513,23 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
 
   if (path === paths.sessions && method === "GET") return json(res, 200, { schema: 1, cursor: lastId, sessions: [...sessions.values()] });
+  // a made-up laptop's own sessions (retinue/computers.py): one at work in a project, one waiting, one elsewhere
+  if (path === paths.computers && method === "GET")
+    return json(res, 200, {
+      off_s: 120,
+      computers: [
+        {
+          device: "laptop",
+          at: now() - 5,
+          off: false,
+          sessions: [
+            { id: "local_m1", title: "Lisbon: compare the two stays", folder: "/home/anna/base/travel/lisbon", project: "travel/lisbon", state: "working", at: now() - 20, link: "claude://claude.ai/epitaxy/local_m1" },
+            { id: "local_m2", title: "Travel: packing list", folder: "/home/anna/base/travel", project: "travel", state: "waiting", at: now() - 600 },
+            { id: "local_m3", title: "Scratch notes", folder: "/tmp", project: "", state: "done", at: now() - 7200 },
+          ],
+        },
+      ],
+    });
   if (path === paths.archived && method === "GET")
     return json(res, 200, { schema: 1, sessions: [...sessions.values()].filter((s) => s.archived).map((s) => ({ ...s, archived_at: s.at })).sort((a, b) => b.archived_at - a.archived_at) });
 

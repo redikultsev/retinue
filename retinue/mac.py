@@ -22,10 +22,16 @@ assistant's is her turn's: two conversations on one Mac that both say `add-1` ar
 
 Unreachable — the Mac off the VPN, the platform down — the tools are missing from the Mac's session, and nothing is
 kept to send later: the agent says what it could not record.
+
+**The device's own methods**, beside the tools and never listed among them, so a Claude Code session on the Mac neither
+sees nor calls them: `retinue/sessions` takes the device's whole list of its local sessions (`computers.py`), any scope —
+they are the device's, not the owner's records —, and `retinue/projects` gives the Base's project tree (folder, title,
+parent), which the Mac's helper files its sidebar groups by. Neither puts a title or a folder in a log.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import re
@@ -34,11 +40,13 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from . import colltools, subs
+from . import colltools, computers, subs
 from .collections import Refused, Writer
+from .spaces import Refused as SpacesRefused, Unreadable
 
 if TYPE_CHECKING:
     from .platformd import Platform
+    from .spaces import Spaces
 
 PATH = "/mcp/mac"
 BODY_MAX = 4 * 2**20        # 200 operations of records up to 16 KB each, and their JSON; nginx's 4m says the same
@@ -53,11 +61,14 @@ DEVICE = web.RequestKey("device", dict)  # the device the token is: `{name, scop
 NO_SESSION = f"No {SESSION_HEADER}: initialize first, then send the id it gave with every request."
 UNKNOWN_SESSION = f"No such session: initialize again, then send the {SESSION_HEADER} it gives."
 TOO_LONG = f"A request of {BODY_MAX // 2**20} MB at most, its Content-Length given: split the operations."
+SESSIONS, PROJECTS = "retinue/sessions", "retinue/projects"  # the device's own methods, not tools
+NO_BASE = "This platform has no Base: no projects to file sessions under."
 
 
 class Mac:
-    def __init__(self, platform: Platform) -> None:
+    def __init__(self, platform: Platform, spaces: Spaces | None = None) -> None:
         self.platform = platform
+        self.spaces = spaces  # the face's reader of the Base: `retinue/projects`
 
     def app(self) -> web.Application:
         # aiohttp reads a body by its root app's `client_max_size` (the face's), never a sub-app's: `mcp` checks its own.
@@ -103,6 +114,9 @@ class Mac:
                 return _refused(NO_SESSION, 400)
             if not SESSION.fullmatch(session) or signed(device, session.split("-")[0]) != session:
                 return _refused(UNKNOWN_SESSION, 404)
+        if isinstance(body, dict) and body.get("method") in (SESSIONS, PROJECTS) and "id" in body:
+            status, answer = await self._own(device, body)
+            return web.json_response(answer, status=status)
         writer = Writer(f"mac:{device['name']}/{session}", "mac")
         tools = TOOLS[device["scope"]]
 
@@ -121,6 +135,30 @@ class Mac:
         if answer is None:
             return web.Response(status=status, headers=headers)
         return web.json_response(answer, status=status, headers=headers)
+
+
+    async def _own(self, device: dict, body: dict) -> tuple[int, dict]:
+        """`retinue/sessions` and `retinue/projects`: JSON-RPC answers of their own, no tool's content blocks."""
+        params = body.get("params") if isinstance(body.get("params"), dict) else {}
+
+        def error(message: str, code: int = -32602) -> tuple[int, dict]:
+            return 200, {"jsonrpc": "2.0", "id": body["id"], "error": {"code": code, "message": message}}
+
+        if body["method"] == SESSIONS:
+            try:
+                taken = self.platform.computers.report(device["name"], params, self.platform.clock())
+            except computers.Refused as exc:
+                return error(str(exc))
+            return 200, {"jsonrpc": "2.0", "id": body["id"],
+                         "result": {"taken": taken, "again_s": computers.BEAT_S}}
+        if self.spaces is None:
+            return error(NO_BASE, -32000)
+        try:
+            head, rows = await asyncio.to_thread(lambda: self.spaces.tree().every())
+        except (SpacesRefused, Unreadable):
+            return error(NO_BASE, -32000)
+        return 200, {"jsonrpc": "2.0", "id": body["id"], "result": {
+            "head": head, "projects": [{"path": r["name"], "title": r["title"], "parent": r["parent"]} for r in rows]}}
 
 
 def signed(device: dict, nonce: str) -> str:

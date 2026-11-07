@@ -6,10 +6,10 @@
 #
 # Nothing is built here. The checkout goes to the commit (its compose file names its images); its deploy/setup.sh puts
 # what the version needs on the host — units, hooks, profiles, the files under /srv/retinue — run with no switches, so
-# it sets up what the last run did; and deploy/update.sh switches to the images as to a release — health, pull, stop,
-# snapshot of the data, start, health, back to what ran before with its data when it is not healthy. A setup.sh that
-# fails stops the version there, before anything is stopped. Then the checkout follows: the commit's, or back to the
-# one before, whose setup.sh runs again so the host is that version's.
+# it sets up what the last run did; and deploy/update.sh switches to the images as to a release — health, pull, stop of
+# what the version changes, snapshot of its data, start, health, back to what ran before with its data when it is not
+# healthy. A setup.sh that fails stops the version there, before anything is stopped. Then the checkout follows: the
+# commit's, or back to the one before, whose setup.sh runs again so the host is that version's.
 set -euo pipefail
 
 REPO=${RETINUE_REPO:-/opt/retinue}
@@ -19,6 +19,10 @@ KEEP=${RETINUE_DEPLOY_KEEP:-10}   # the snapshots of the last ten switches stay
 
 say() { printf 'deploy: %s\n' "$*"; }
 value() { sed -n "s/^$1=//p" "$ROOT/stack.env" | tail -n 1; }   # never printed: stack.env holds secrets
+old_compose() {   # the version stack.env names, with the checkout's compose file
+  RETINUE_IMAGE=$(value RETINUE_IMAGE) RETINUE_VERSION=$(value RETINUE_VERSION) \
+    docker compose -p retinue --env-file "$ROOT/stack.env" -f "$REPO/deploy/compose.yml" "$@"
+}
 
 # All in a function: bash reads a script as it runs, and this one checks out another version of itself.
 main() {
@@ -49,6 +53,7 @@ main() {
     say "${sha:0:12} was not deployed (its setup.sh failed, nothing was stopped); the checkout is back on ${was:0:12}"
     exit 1
   fi
+  rm -f "$ROOT/update-touched"
   if RETINUE_IMAGE=$image bash "$REPO/deploy/update.sh" "sha-${sha:0:12}"; then
     ls -1d "$SNAPSHOTS"/*/ 2>/dev/null | head -n "-$KEEP" | xargs -r rm -rf
     say "now on ${sha:0:12}"
@@ -59,9 +64,18 @@ main() {
   git -C "$REPO" checkout -q --detach "$was"
   bash "$REPO/deploy/setup.sh" || { say "setup.sh of ${was:0:12} failed: run it by hand"; code=3; }
   if (( code == 1 )); then   # update.sh went back with the commit's compose file and host files: the one before's, once more
-    RETINUE_IMAGE=$(value RETINUE_IMAGE) RETINUE_VERSION=$(value RETINUE_VERSION) \
-      docker compose -p retinue --env-file "$ROOT/stack.env" -f "$REPO/deploy/compose.yml" up -d --no-build \
-      --force-recreate || code=3
+    # Only for what it started again (update-touched); what it never stopped runs the one before's already. No list
+    # (an update.sh older than it): all of them.
+    local names=() name all
+    if [[ -f $ROOT/update-touched ]]; then
+      all=$(old_compose config --services)
+      while IFS= read -r name; do
+        if [[ -n $name ]] && grep -qxF "$name" <<< "$all"; then names+=("$name"); fi
+      done < "$ROOT/update-touched"
+      (( ! ${#names[@]} )) || old_compose up -d --no-build --no-deps --force-recreate "${names[@]}" || code=3
+    else
+      old_compose up -d --no-build --force-recreate || code=3
+    fi
   fi
   say "${sha:0:12} was not deployed (update.sh exit $code); the checkout is back on ${was:0:12}"
   exit "$code"

@@ -2,7 +2,7 @@
 // effort, the keys, the channels' tokens, the repositories' and the projects' keys — in one place, each row saying
 // what it is for and whether it is set. A key is typed once: it goes to the server and is never shown again, not
 // here, not to the platform (retinue/settings.py). A change that waits for a restart says so at the top, and the
-// owner's «Restart» does it.
+// owner's «Restart» does it. A repository is added here too: its address, and its account's token when it has none.
 import { useEffect, useState } from "react";
 import { PageHeader, PAGE_X } from "@/components/page-header";
 import { Check } from "@/components/icons";
@@ -199,6 +199,138 @@ function SecretRow({
               )}
             </div>
           )}
+        </form>
+      )}
+    </li>
+  );
+}
+
+/** What an account's token is used for: the repositories in use, and those that will be after the restart. */
+function reposWords(g: SettingsView["git"][number]): string {
+  const words = [
+    g.repos.length ? `Fetches and pushes ${g.repos.join(", ")}` : "",
+    g.added.length ? `${g.added.join(", ")} after the restart` : "",
+  ].filter(Boolean);
+  return words.join(" · ") || "No repository in platform.yaml uses it";
+}
+
+/**
+ * «Add repository»: a GitHub or GitLab address and, for an account without one yet, its token — one request, which
+ * root writes into platform.yaml and set-git-token.sh. The token's text is dropped the moment it is sent.
+ */
+function AddRepoRow({ view, ready, waiting, send }: { view: SettingsView; ready: boolean; waiting: Waiting; send: Send }) {
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [author, setAuthor] = useState("");
+  const [sent, setSent] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const state = requestState(sent, waiting, view);
+  const why = refusal ?? (state === "refused" && sent ? (view.done[sent]?.why ?? null) : null);
+  const status = state === "waiting" ? "Adding…" : state === "lost" ? "No answer from the server yet" : null;
+
+  async function add() {
+    const body: Record<string, unknown> = { url: url.trim() };
+    if (token.trim()) body.value = token.trim();
+    if (view.author_needed) body.author = author.trim();
+    setToken(""); // gone from the page whatever the server says
+    setRefusal(null);
+    try {
+      setSent(await send("repo", "repo", body));
+      setOpen(false);
+      setUrl("");
+    } catch (e) {
+      setSent(null);
+      setRefusal(errorText(e));
+    }
+  }
+
+  return (
+    <li data-testid="add-repo" className="flex flex-col gap-3 px-3 py-2.5">
+      <div className="flex items-start gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 truncate text-[15px] font-medium md:text-[13px]">Add repository</span>
+            {status && (
+              <span role="status" className="shrink-0 text-xs text-muted-foreground">
+                {status}
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-muted-foreground">A GitHub or GitLab repository your sessions work in</span>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="min-w-20"
+          aria-expanded={open}
+          disabled={!ready || state === "waiting"}
+          onClick={() => {
+            setToken("");
+            setRefusal(null);
+            setOpen(!open);
+          }}
+        >
+          {open ? "Cancel" : "Add"}
+        </Button>
+      </div>
+      {why && !open && <p className="text-xs text-destructive">{why}</p>}
+      {open && (
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (url.trim()) void add();
+          }}
+        >
+          <Input
+            type="text"
+            inputMode="url"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            aria-label="Repository address"
+            placeholder="https://github.com/you/repo"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            autoFocus
+          />
+          <Input
+            type="password"
+            autoComplete="new-password"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            data-1p-ignore
+            data-lpignore="true"
+            aria-label="Token"
+            placeholder="github_pat_…"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            className="font-mono"
+          />
+          {view.author_needed && (
+            <Input
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-label="Commits as"
+              placeholder="Your Name <you@example.com>"
+              value={author}
+              onChange={(e) => setAuthor(e.target.value)}
+            />
+          )}
+          {why && <p className="text-xs text-destructive">{why}</p>}
+          <p className="text-xs text-muted-foreground">
+            Leave the token empty if its account has one above. A GitHub token: Fine-grained, Only select repositories
+            with this one, Contents and Pull requests read and write. Saved on the server and never shown again; the
+            repository is in use after the restart.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" type="submit" disabled={!url.trim() || (view.author_needed && !author.trim())}>
+              Add
+            </Button>
+          </div>
         </form>
       )}
     </li>
@@ -406,30 +538,29 @@ export function SettingsBody({ view, waiting, send }: { view: SettingsView; wait
       ))}
       <Section title="Keys">{keysOf("keys")}</Section>
       <Section title="Channels">{keysOf("channels")}</Section>
-      {view.git.length > 0 && (
-        <Section
-          title="Repositories"
-          note="A GitHub token is fine-grained: only these repositories, Contents and Pull requests read and write."
-        >
-          {view.git.map((g) => (
+      <Section
+        title="Repositories"
+        note="A GitHub token is fine-grained: only these repositories, Contents and Pull requests read and write."
+      >
+        {view.git.map((g) => (
             <SecretRow
               key={g.key}
               title={g.key}
-              what={g.repos.length ? `Fetches and pushes ${g.repos.join(", ")}` : "No repository in platform.yaml uses it"}
+              what={reposWords(g)}
               where="GitHub → Settings → Developer settings → Fine-grained tokens, or a GitLab access token with read and write of the repository."
               hint="github_pat_…"
               set={g.set}
               changed={g.changed}
-              needed={g.repos.length > 0}
+              needed={g.repos.length + g.added.length > 0}
               canClear={false}
               ready={ready}
               waiting={waiting}
               view={view}
               onSave={(value) => send("git", `git:${g.key}`, { key: g.key, value })}
             />
-          ))}
-        </Section>
-      )}
+        ))}
+        <AddRepoRow view={view} ready={ready} waiting={waiting} send={send} />
+      </Section>
       {view.project_keys.length > 0 && (
         <Section title="Projects" note="Sent by the server with a project's calls to its own hosts; its sessions never see it.">
           {view.project_keys.map((p) => (

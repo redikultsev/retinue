@@ -13,6 +13,9 @@ takes each one out, deletes it before anything else, checks it against the close
 - a project's key, RETINUE_PROJECT_KEY_<NAME>: its line in egress/project-keys.env, the same way;
 - a lane's `model` and `effort`: their lines in that lane's block of platform.yaml, values from the closed lists of
   retinue/cliengine.py (MODELS, EFFORTS; tests/test_settings_host.py keeps the copies equal);
+- a repository: one more line in `code: repos:` of platform.yaml, its name and token key derived here from a GitHub or
+  GitLab address, and its account's token through set-git-token.sh when one comes with it. A file without `code:`
+  gets the section with docs/code.md's defaults. Nothing else of the file changes this way;
 - a restart: `docker compose up -d --force-recreate` of the services a change is waiting on (`SERVICES`), and of no
   other.
 
@@ -80,6 +83,14 @@ LANE = re.compile(r"[a-z][a-z0-9]{1,30}")      # retinue/config.py LANE_NAME
 # retinue/cliengine.py MODELS and EFFORTS: what the lanes may run with, each probed on the pinned CLI.
 MODELS = ("claude-opus-5-5[1m]", "claude-opus-5-5", "claude-sonnet-5-5[1m]", "claude-sonnet-5-5")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# retinue/config.py's REPO_URL, REPO_NAME, TRACK_NAME and the commits' author, and retinue/settings.py's derivation of
+# a repository's name and key (`repo_of`): the copies are kept equal by tests/test_settings_host.py.
+REPO_URL = re.compile(r"https://(github\.com|gitlab\.com)/((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+?)(?:\.git)?/?")
+REPO_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
+TRACK = re.compile(r"[a-z][a-z0-9-]{1,30}")
+AUTHOR = re.compile(r"[^<>\n]+ <[^<>@\s]+@[^<>\s]+>")
+GIT_VALUE = r"[^\s=]{1,512}"
+CODE_PROXY = "http://platform-egress:3128"     # docs/code.md: the platform's one way out to GitHub and GitLab
 
 
 class Refusal(Exception):
@@ -161,6 +172,143 @@ def lane_block(lines: list[str], lane: str) -> tuple[int, int, int]:
     raise Refusal(f"There is no lane {lane} in platform.yaml")
 
 
+def repo_of(url: object) -> tuple[str, str, str]:
+    """A repository's address as platform.yaml keeps it (with `.git`: GitLab answers 301 without it), its folder's
+    name and its token's key — the account's, one token per resource owner — all from the address alone."""
+    found = REPO_URL.fullmatch(url) if isinstance(url, str) else None
+    if not found or ".." in url:
+        raise Refusal("Not a repository's address: https://github.com/<owner>/<repo> or https://gitlab.com/<group>/<project>")
+    host, path = found.groups()
+    name = re.sub(r"[^a-z0-9_-]+", "-", path.rsplit("/", 1)[-1].lower()).strip("-_")[:63]
+    key = re.sub(r"[^a-z0-9_]+", "_", path.split("/", 1)[0].lower()).strip("_")[:40]
+    if not REPO_NAME.fullmatch(name) or not GIT_KEY.fullmatch(key):
+        raise Refusal("This address gives no folder name or account key: add it to platform.yaml by hand")
+    return f"https://{host}/{path}.git", name, key
+
+
+def same_repo(a: str, b: str) -> bool:
+    def bare(url: str) -> str:
+        return url.lower().removeprefix("https://").rstrip("/").removesuffix(".git")
+    return bare(a) == bare(b)
+
+
+def code_block(lines: list[str]) -> tuple[int, int, int] | None:
+    """Where `code:` is in platform.yaml's lines: its header, the end of its block (exclusive) and its fields'
+    indent; None when the file has no such section. One written on one line is the owner's to edit by hand."""
+    for i, line in enumerate(lines):
+        found = re.fullmatch(r"code:(.*)", line)
+        if not found:
+            continue
+        rest = found.group(1).strip()
+        if rest and not rest.startswith("#"):
+            raise Refusal("code: is written on one line in platform.yaml: edit it there by hand")
+        end = next((j for j in range(i + 1, len(lines)) if content(lines[j]) and indent(lines[j]) == 0), len(lines))
+        field = next((indent(lines[j]) for j in range(i + 1, end) if content(lines[j])), 2)
+        return i, end, field
+    return None
+
+
+def repos_block(lines: list[str], start: int, end: int, field: int) -> tuple[int, int, int, bool] | None:
+    """`repos:` in the code block: its line, the end of its list, its items' indent, and whether it is `repos: []`.
+    An item may sit at `repos:`'s own indent, as YAML allows."""
+    for i in range(start + 1, end):
+        found = re.fullmatch(rf" {{{field}}}repos:(.*)", lines[i])
+        if not found:
+            continue
+        rest = found.group(1).split("#", 1)[0].strip()
+        if rest == "[]":
+            return i, i + 1, field + 2, True
+        if rest:
+            raise Refusal("code: repos: is written on one line in platform.yaml: edit it there by hand")
+        stop = next((j for j in range(i + 1, end) if content(lines[j]) and (
+            indent(lines[j]) < field or (indent(lines[j]) == field and not lines[j].lstrip().startswith("-")))), end)
+        item = next((indent(lines[j]) for j in range(i + 1, stop) if lines[j].lstrip().startswith("-")), field + 2)
+        return i, stop, item, False
+    return None
+
+
+def repo_items(lines: list[str], head: int, stop: int, item: int) -> list[dict]:
+    """The repositories' `name`, `url` and `token`, flow or block style alike."""
+    out: list[dict] = []
+    current: dict | None = None
+    for line in lines[head + 1:stop]:
+        if not content(line):
+            continue
+        text = line.strip()
+        if indent(line) == item and text.startswith("-"):
+            current = {}
+            out.append(current)
+            text = text[1:]
+        if current is None:
+            continue
+        for name, value in re.findall(r"\b(name|url|token):\s*(\"[^\"]*\"|'[^']*'|[^,}\s#]+)", text):
+            current[name] = value.strip("\"'")
+    return out
+
+
+def file_repos(text: str) -> list[dict]:
+    """The repositories platform.yaml lists, for the status: never more than their names, addresses and keys."""
+    lines = text.splitlines()
+    try:
+        block = code_block(lines)
+        found = repos_block(lines, *block) if block else None
+    except Refusal:
+        return []
+    if found is None:
+        return []
+    head, stop, item, _ = found
+    return [{"name": e["name"], "url": e["url"], "token": e.get("token", "")}
+            for e in repo_items(lines, head, stop, item) if e.get("name") and e.get("url")]
+
+
+def add_repo(text: str, url: str, name: str, key: str, lane: str, track: str, author: str) -> str:
+    """platform.yaml with one more repository at the end of `code: repos:`, or with the section itself, written with
+    docs/code.md's defaults, when there is none. `proxy` is added when the section lacks it (the config refuses
+    repositories without one); `lane`, `track` and `author` only into a new section, `author` also when given and
+    missing. A name or an address the file has already is refused."""
+    lines = text.splitlines()
+    entry = "- {" + f"name: {json.dumps(name)}, url: {json.dumps(url)}, token: {json.dumps(key)}" + "}"
+    block = code_block(lines)
+    if block is None:
+        new = ["", "# Your repositories in the room (docs/code.md), added from the app's Settings.", "code:",
+               f"  lane: {lane}", f"  track: {json.dumps(track)}", f"  proxy: {CODE_PROXY}"]
+        if author:
+            new.append(f"  author: {json.dumps(author)}")
+        return "\n".join([*lines, *new, "  repos:", f"    {entry}"]) + "\n"
+    start, end, field = block
+    pad = " " * field
+    missing = []
+    if not any(re.match(rf" {{{field}}}proxy:", line) for line in lines[start + 1:end]):
+        missing.append(f"{pad}proxy: {CODE_PROXY}")
+    if author and not any(re.match(rf" {{{field}}}author:", line) for line in lines[start + 1:end]):
+        missing.append(f"{pad}author: {json.dumps(author)}")
+    found = repos_block(lines, start, end, field)
+    if found is None:
+        last = max([start] + [j for j in range(start + 1, end) if content(lines[j])])
+        lines[last + 1:last + 1] = [f"{pad}repos:", f"{pad}  {entry}"]
+    else:
+        head, stop, item, empty = found
+        for known in repo_items(lines, head, stop, item):
+            if known.get("name") == name:
+                raise Refusal(f"A repository named {name} is in platform.yaml already")
+            if same_repo(known.get("url", ""), url):
+                raise Refusal(f"This repository is in platform.yaml already, as {known.get('name', '?')}")
+        if empty:
+            lines[head] = f"{pad}repos:"
+        last = max([head] + [j for j in range(head + 1, stop) if content(lines[j])])
+        lines[last + 1:last + 1] = [f"{' ' * item}{entry}"]
+    lines[start + 1:start + 1] = missing
+    return "\n".join(lines) + "\n"
+
+
+def write_yaml(text: str) -> None:
+    """platform.yaml replaced whole, its mode kept: a temporary file beside it, renamed over it."""
+    tmp = PLATFORM_YAML.with_name(f".platform.yaml.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    os.chmod(tmp, PLATFORM_YAML.stat().st_mode & 0o777)
+    os.replace(tmp, PLATFORM_YAML)
+
+
 def lane_values(text: str, lane: str) -> dict[str, str]:
     """The lane's `engine`, `model` and `effort` as the file has them; a field not written is left out."""
     lines = text.splitlines()
@@ -240,9 +388,10 @@ def build_status(changed: dict, pending: set[str], done: dict, now: float,
            for name, value in tokens.items() if name.startswith(GIT_PREFIX)}
     project = {name[len(PROJECT_PREFIX):]: {"set": bool(value), "changed": changed.get(name)}
                for name, value in project_keys.items() if name.startswith(PROJECT_PREFIX)}
-    lanes = {}
+    lanes, repos = {}, []
     try:
         text = PLATFORM_YAML.read_text()
+        repos = file_repos(text)
         for lane in lane_names(text):
             try:
                 lanes[lane] = lane_values(text, lane)
@@ -251,7 +400,7 @@ def build_status(changed: dict, pending: set[str], done: dict, now: float,
     except FileNotFoundError:
         pass
     return {"schema": SCHEMA, "at": now, "profiles": profiles(), "keys": keys, "git": git, "project_keys": project,
-            "lanes": lanes, "pending": sorted(pending), "restarted": restarted, "changed": changed,
+            "lanes": lanes, "repos": repos, "pending": sorted(pending), "restarted": restarted, "changed": changed,
             "done": dict(list(done.items())[-DONE_KEEP:])}
 
 
@@ -301,6 +450,17 @@ def value_of(request: dict, shape: str) -> str:
     return value
 
 
+def set_git(key: str, value: str, changed: dict, pending: set[str], now: float) -> None:
+    """A git token, piped into set-git-token.sh itself: Settings is that script's form, not a second store."""
+    done = subprocess.run(["bash", str(GIT_SCRIPT), key], input=value + "\n", text=True, capture_output=True,
+                          env={**os.environ, "RETINUE_ROOT": str(ROOT)}, timeout=60)
+    if done.returncode != 0:
+        raise Refusal("The token was not written: " + (done.stderr.strip().splitlines() or ["no reason"])[-1])
+    changed[GIT_PREFIX + key.upper()] = now
+    pending.update(running(["platform"]))
+    log(f"set {GIT_PREFIX}{key.upper()} through set-git-token.sh")
+
+
 def apply(request: dict, changed: dict, pending: set[str], now: float) -> None:
     op = request.get("op")
     if op == "key":
@@ -326,14 +486,7 @@ def apply(request: dict, changed: dict, pending: set[str], now: float) -> None:
         key = request.get("key")
         if not isinstance(key, str) or not GIT_KEY.fullmatch(key):
             raise Refusal("An account's key is a-z, 0-9 and _, as the repository's token: in platform.yaml")
-        value = value_of(request, r"[^\s=]{1,512}")
-        done = subprocess.run(["bash", str(GIT_SCRIPT), key], input=value + "\n", text=True, capture_output=True,
-                              env={**os.environ, "RETINUE_ROOT": str(ROOT)}, timeout=60)
-        if done.returncode != 0:
-            raise Refusal("The token was not written: " + (done.stderr.strip().splitlines() or ["no reason"])[-1])
-        changed[GIT_PREFIX + key.upper()] = now
-        pending.update(running(["platform"]))
-        log(f"set {GIT_PREFIX}{key.upper()} through set-git-token.sh")
+        set_git(key, value_of(request, GIT_VALUE), changed, pending, now)
     elif op == "project_key":
         name = request.get("name")
         if not isinstance(name, str) or not PROJECT_NAME.fullmatch(name):
@@ -357,13 +510,28 @@ def apply(request: dict, changed: dict, pending: set[str], now: float) -> None:
         text = PLATFORM_YAML.read_text()
         new = set_lane(text, lane, fields)
         if new != text:
-            tmp = PLATFORM_YAML.with_name(f".platform.yaml.{os.getpid()}.tmp")
-            tmp.write_text(new)
-            os.chmod(tmp, PLATFORM_YAML.stat().st_mode & 0o777)
-            os.replace(tmp, PLATFORM_YAML)
+            write_yaml(new)
             changed[f"lane:{lane}"] = now
             pending.update(running(["platform"]))
         log(f"lane {lane}: {', '.join(f'{k} {v}' for k, v in fields.items())}")
+    elif op == "repo":
+        url, name, key = repo_of(request.get("url"))
+        lane, track, author = request.get("lane", "private"), request.get("track", ""), request.get("author", "")
+        if not isinstance(lane, str) or not LANE.fullmatch(lane):
+            raise Refusal("Not a lane's name")
+        if not isinstance(track, str) or (track and not TRACK.fullmatch(track)):
+            raise Refusal("Not a track's name")
+        if not isinstance(author, str) or (author and not AUTHOR.fullmatch(author)):
+            raise Refusal("The commits' author is «Name <email>»")
+        new = add_repo(PLATFORM_YAML.read_text(), url, name, key, lane, track, author)  # refused before any write
+        if "value" in request:
+            set_git(key, value_of(request, GIT_VALUE), changed, pending, now)
+        elif not env_values(TOKENS).get(GIT_PREFIX + key.upper()):
+            raise Refusal(f"The account {key} has no token yet: paste one with the address")
+        write_yaml(new)
+        changed[f"repo:{name}"] = now
+        pending.update(running(["platform"]))
+        log(f"repo {name} added, its token {GIT_PREFIX}{key.upper()}")
     else:
         raise Refusal("Not a request this script takes")
 

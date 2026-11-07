@@ -20,7 +20,8 @@ export type SettingsKey = {
   /** When Settings last changed it (seconds); null: set by hand or never. */
   changed: number | null;
 };
-export type GitToken = { key: string; repos: string[]; set: boolean; changed: number | null };
+/** An account's token: the repositories in use with it, and those added to platform.yaml, in use after the restart. */
+export type GitToken = { key: string; repos: string[]; added: string[]; set: boolean; changed: number | null };
 export type ProjectKey = { name: string; project: string; set: boolean; changed: number | null };
 export type Lane = {
   name: string;
@@ -48,9 +49,11 @@ export type SettingsView = {
   keys: SettingsKey[];
   git: GitToken[];
   project_keys: ProjectKey[];
+  /** The first repository makes the `code:` section, and its commits need an author: none in platform.yaml yet. */
+  author_needed: boolean;
   done: Record<string, Done>;
 };
-export type SettingsOp = "key" | "git" | "project_key" | "lane" | "restart";
+export type SettingsOp = "key" | "git" | "project_key" | "lane" | "repo" | "restart";
 
 export const settingsApi = {
   get: () => request<SettingsView>(paths.settings),

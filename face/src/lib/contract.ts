@@ -60,7 +60,7 @@ export const paths = {
   chatFile: (id: string) => `/api/chat/files/${seg(id)}`,
   /** «Settings» (retinue/settings.py): what is set (GET), a change for the host to write (POST). */
   settings: "/api/settings",
-  settingsDo: (op: "key" | "git" | "project_key" | "lane" | "restart") => `/api/settings/${op}`,
+  settingsDo: (op: "key" | "git" | "project_key" | "lane" | "repo" | "restart") => `/api/settings/${op}`,
 } as const;
 
 /** One of her files on a row of the chat: kept for the app (`id`), or only named, with why. */

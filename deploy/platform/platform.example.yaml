@@ -58,8 +58,8 @@ speech:
 # fetches with your token; «Push» under a session's summary pushes its branch as a new branch and opens a PR
 # (GitHub) or an MR (GitLab) — never the default branch. One token per owner (you, each org; a GitLab project
 # token), put in by `sudo bash deploy/code/set-git-token.sh <key>` — never pasted into a chat. A repository whose
-# token is missing is listed as off. `/new code <name> [task]` starts a session in it (the track `code`, on the
-# lane `private`). To turn it on, remove the `#` at the start of `#code:` and of the lines under it, then
+# token is missing is listed as off. The app's Settings → Repositories → Add repository writes this section and
+# the token for you. `/new code <name> [task]` starts a session in it (the track `code`, on the lane `private`). To turn it on, remove the `#` at the start of `#code:` and of the lines under it, then
 # `docker compose up -d platform-egress platform lane-private`.
 #code:
 #  lane: private                        # the room: the lane whose /work holds the clones

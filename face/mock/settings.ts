@@ -43,10 +43,12 @@ const keys: Key[] = [
     services: [], shape: TELEGRAM,
   },
 ];
-const git = [
-  { key: "acme", repos: ["acme/site", "acme/api"], set: true, changed: now() - 3 * DAY },
-  { key: "example_gitlab", repos: ["example-group/notes"], set: false, changed: null },
+const git: SettingsView["git"] = [
+  { key: "acme", repos: ["acme/site", "acme/api"], added: [], set: true, changed: now() - 3 * DAY },
+  { key: "example_gitlab", repos: ["example-group/notes"], added: [], set: false, changed: null },
 ];
+// retinue/settings.py's REPO_URL and repo_of: the address, its folder's name, its account's key.
+const REPO_URL = /^https:\/\/(github\.com|gitlab\.com)\/((?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
 const projectKeys = [{ name: "BOOKING", project: "travel", set: true, changed: null as number | null }];
 const lane = {
   name: "private", engine: "claude-code", engine_label: "Claude Code",
@@ -73,7 +75,7 @@ export function settingsView(): SettingsView {
       { id: "xhigh", label: "Extra high" }, { id: "max", label: "Max" },
     ],
     keys: keys.map(({ services: _s, shape: _p, ...k }) => k),
-    git, project_keys: projectKeys, done,
+    git, project_keys: projectKeys, author_needed: false, done,
   };
 }
 
@@ -118,6 +120,34 @@ export function settingsPost(op: string, b: Record<string, unknown>): [number, u
       pending.add("platform");
       return null;
     });
+  } else if (op === "repo") {
+    let url = typeof b.url === "string" ? b.url.trim() : "";
+    if (url && !url.includes("://")) url = `https://${url}`;
+    const found = REPO_URL.exec(url);
+    if (!found || url.includes(".."))
+      return [400, { error: "Not a repository's address: https://github.com/<owner>/<repo> or https://gitlab.com/<group>/<project>." }];
+    const path = found[2] as string;
+    const key = path.split("/")[0]!.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+    if (git.some((g) => [...g.repos, ...g.added].some((r) => r.toLowerCase() === path.toLowerCase())))
+      return [400, { error: "This repository is here already." }];
+    if (value && !/^[^\s=]{1,512}$/.test(value)) return [400, { error: BAD }];
+    later(id, () => {
+      let g = git.find((x) => x.key === key);
+      if (!g && !value) return `The account ${key} has no token yet: paste one with the address`;
+      if (!g) {
+        g = { key, repos: [], added: [], set: false, changed: null };
+        git.push(g);
+        git.sort((x, y) => x.key.localeCompare(y.key));
+      }
+      if (!value && !g.set) return `The account ${key} has no token yet: paste one with the address`;
+      if (value) {
+        g.set = true;
+        g.changed = now();
+      }
+      g.added.push(path);
+      pending.add("platform");
+      return null;
+    });
   } else if (op === "project_key") {
     const p = projectKeys.find((x) => x.name === b.name);
     if (!p) return [400, { error: "A project key's name is A-Z, 0-9 and _." }];
@@ -147,6 +177,7 @@ export function settingsPost(op: string, b: Record<string, unknown>): [number, u
       restarting.length = 0;
       pending.clear();
       lane.running = { model: lane.model, effort: lane.effort };
+      for (const g of git) g.repos.push(...g.added.splice(0));
       restarted = now();
       done[id] = { ok: true, at: now() };
     }, 3500);

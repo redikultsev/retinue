@@ -70,7 +70,7 @@ def test_the_view_says_what_is_set_and_how_the_lanes_run_and_never_a_value(tmp_p
         assert keys["TELEGRAM_BUSINESS_TOKEN"]["on"] is False, "its profile is off on this server"
         assert all({"what", "where", "hint", "title"} <= set(k) and "shape" not in k and "value" not in k
                    for k in view["keys"])
-        assert view["git"] == [{"key": "example_gitlab", "repos": [], "set": True, "changed": NOW - 60}]
+        assert view["git"] == [{"key": "example_gitlab", "repos": [], "added": [], "set": True, "changed": NOW - 60}]
         lanes = {lane["name"]: lane for lane in view["lanes"]}
         assert lanes["code"]["model"] == "claude-sonnet-5-5", "what the file says now"
         assert lanes["code"]["running"] == {"model": cliengine.MODEL, "effort": cliengine.EFFORT}, \
@@ -117,6 +117,12 @@ def test_a_key_is_dropped_once_for_root_and_never_answered_back(tmp_path):
     ("lane", {"lane": "code", "model": "claude-haiku-5-5"}),
     ("lane", {"lane": "code", "effort": "ultra"}),
     ("lane", {"lane": "code"}),
+    ("repo", {"url": "https://bitbucket.org/example-org/widgets", "author": "Ann Example <ann@example.com>"}),
+    ("repo", {"url": "https://github.com/example-org/../widgets", "author": "Ann Example <ann@example.com>"}),
+    ("repo", {"url": "https://github.com/example-org/widgets"}),  # the first one names the commits' author
+    ("repo", {"url": "https://github.com/example-org/widgets", "author": "Ann <not an email>"}),
+    ("repo", {"url": "https://github.com/example-org/widgets", "author": "Ann Example <ann@example.com>",
+              "value": "has space"}),
 ])
 def test_what_settings_does_not_take_is_refused_and_nothing_is_dropped(tmp_path, op, body):
     async def go(world: FaceWorld):
@@ -159,3 +165,51 @@ def test_a_request_file_is_written_beside_and_renamed(tmp_path, monkeypatch):
         monkeypatch.setattr(settings.os, "replace", real)
 
     faced(tmp_path, body)
+
+
+GIT_TOKEN = "github_pat_invented_example_0123456789"
+AUTHOR = "Ann Example <ann@example.com>"
+
+
+def test_the_first_repository_names_the_section_and_its_token_goes_with_it(tmp_path):
+    async def body(world: FaceWorld):
+        inbox, _ = wire(world, status())
+        await world.login()
+        assert (await world.get("/api/settings"))["author_needed"] is True, "no code: and no base: author yet"
+        code, answer, _ = await world.call("POST", "/api/settings/repo", {
+            "url": " github.com/Example-Org/Widgets ", "value": f"{GIT_TOKEN}\n", "author": AUTHOR})
+        assert code == 202
+        [request] = requests_in(inbox)
+        assert request == {"id": answer["id"], "op": "repo", "url": "https://github.com/Example-Org/Widgets.git",
+                           "lane": "private", "track": "", "author": AUTHOR, "value": GIT_TOKEN}, \
+            "the address as the file keeps it; no track named code here, so none"
+        assert GIT_TOKEN not in json.dumps(await world.get("/api/settings"))
+
+    faced(tmp_path, body)
+
+
+def test_a_repository_in_the_file_shows_before_the_restart_and_the_next_needs_no_section(tmp_path):
+    async def body(world: FaceWorld):
+        written = status(repos=[{"name": "widgets", "url": "https://github.com/example-org/widgets.git",
+                                 "token": "example_org"}],
+                         git={"example_org": {"set": True, "changed": NOW}})
+        inbox, _ = wire(world, written)
+        await world.login()
+        view = await world.get("/api/settings")
+        assert view["git"] == [{"key": "example_org", "repos": [], "added": ["example-org/widgets"], "set": True,
+                                "changed": NOW}]
+        assert view["author_needed"] is False, "the file has code: now"
+        code, answer, _ = await world.call("POST", "/api/settings/repo", {"url": "https://github.com/example-org/api"})
+        assert code == 202
+        assert requests_in(inbox) == [{"id": answer["id"], "op": "repo", "url": "https://github.com/example-org/api.git"}]
+        for again in ("https://github.com/example-org/widgets", "https://github.com/someone-else/widgets"):
+            code, refused, _ = await world.call("POST", "/api/settings/repo", {"url": again})
+            assert code == 400 and refused["error"], "an address or a name the file has already"
+        assert len(requests_in(inbox)) == 1
+
+    faced(tmp_path, body)
+
+
+def test_a_repositorys_name_and_key_come_from_its_address():
+    assert settings.repo_of("https://gitlab.com/Example-Group/sub/My.Project") == (
+        "https://gitlab.com/Example-Group/sub/My.Project.git", "my-project", "example_group")

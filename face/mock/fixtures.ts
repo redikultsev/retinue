@@ -6,11 +6,12 @@ import type { About, BaseCard, Approval, CardView, Input, Item, ItemData, OutFil
 
 export const T0 = Math.floor(Date.now() / 1000);
 
-/** «What's new» after an update from v0.1.0: two releases' notes; «Got it» empties it (server.ts). */
-export const whatsNew: Release[] = [
+/** «What's new» after an update from v0.1.0: two releases' notes; «Got it» empties it (server.ts). Only with
+ * MOCK_WHATS_NEW=1: the dialog covers the page, and the browser tests (e2e/) click through it. */
+export const whatsNew: Release[] = process.env.MOCK_WHATS_NEW === "1" ? [
   { version: "v0.2.0", date: "2026-11-20", notes: ["Reminders can repeat every week.", "Voice messages are read back faster."] },
   { version: "v0.1.1", date: "2026-11-12", notes: ["A long reply no longer cuts off in Telegram."] },
-];
+] : [];
 
 export const tracks: Track[] = [
   { name: "retinue", lane: "code", kind: "code" },

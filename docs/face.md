@@ -973,6 +973,11 @@ each, the latest changed first), with a search over titles and sections. On top,
 and have not marked “Finished”, the last opened first. A row says the reading time, the day the page changed, and when
 you opened it — or “finished”, or “changed since you finished it” when it changed on a later day than you finished it.
 
+**When it lists nothing, it says why** (`lib/library.ts` `libraryState`): the pages service is not set up (no
+`pages_origin`), it has never sent its list, its list is late (none for two hours, twice its hourly push: it may be
+down — the pages it last sent stay listed under that line), or it sent a list with no page. Each line names the next
+step. The mock shows each: `MOCK_PAGES_OFF=1`, `MOCK_PAGES_DOWN=1`, `MOCK_PAGES_NONE=1`.
+
 **Where the list comes from.** The router owns the pages and pushes the list to the platform (`POST /owner/library`,
 the router's token, as the assistant's digest): `{pages: [{id, title, url, updated, section?, minutes?}]}`, replacing
 the one there whole, looked at every 30 s, pushed when it changed and at least hourly (the mirror's `library`, [platform.md](platform.md#the-routers-mirror)). No

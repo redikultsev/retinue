@@ -36,6 +36,21 @@ export interface Library {
   pages: LibraryPage[];
 }
 
+/** The router sends the list when it starts and every hour at the latest (retinue/library.py); twice that and it is
+ * late — the pages service may be down. */
+export const LIBRARY_LATE_S = 2 * 3600;
+
+/** Where the list stands, so an empty «Pages» says which case it is: the service is not set up (no origin in the
+ * platform's config), has never sent its list, has not sent it for a while, sent it with no page, or lists pages. */
+export type LibraryState = "off" | "never" | "late" | "empty" | "listed";
+
+export function libraryState(library: Library, now: number): LibraryState {
+  if (!library.origin) return "off";
+  if (library.at === null) return "never";
+  if (now - library.at > LIBRARY_LATE_S) return "late";
+  return library.pages.length ? "listed" : "empty";
+}
+
 export const libraryApi = {
   list: () => request<Library>(paths.library),
   open: (id: string) => request<{ page: LibraryPage }>(paths.libraryPage(id, "open"), {}),

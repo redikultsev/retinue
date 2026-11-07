@@ -9,6 +9,8 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 
 ## Unreleased
 
+- «Pages» says why it is empty: the pages service is not set up, has not sent its list, is late, or has no page
+  published yet — each with the next step.
 - The sessions you run on your own computer show in the list too, under their projects, with whether they are at work
   or waiting for you.
 - After an update, the app shows once what changed in it.

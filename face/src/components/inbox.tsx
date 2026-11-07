@@ -22,6 +22,7 @@ import { WaitingPane } from "@/components/waiting-sheet";
 import { RecordPage } from "@/pages/spaces";
 import { ApiError, api } from "@/lib/api";
 import { pressAsk } from "@/lib/asks";
+import { computersLine, useComputers } from "@/lib/computers";
 import { type Deadline, type Feed, type FeedRow, feedSource, herLine, STALE_DIGEST_S, waited } from "@/lib/feed";
 import { when } from "@/lib/format";
 import { live, useLiveState } from "@/lib/live";
@@ -462,6 +463,7 @@ export function Inbox({
     setOpened(true);
   };
   const stale = feed?.assistant_at != null && now - feed.assistant_at > STALE_DIGEST_S;
+  const machines = useComputers();
   const list = (
     <nav aria-label="Today" className="min-h-0 overflow-y-auto p-2 pb-16">
       {head && <div className="px-0.5 pt-1 pb-2">{head}</div>}
@@ -469,7 +471,11 @@ export function Inbox({
         <p className="px-2.5 py-2 text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
-          {lists.waiting.length === 0 && <p className="px-2.5 py-2 text-sm text-muted-foreground">Nothing is waiting for you.</p>}
+          {lists.waiting.length === 0 && (
+            <p data-testid="empty-why" className="px-2.5 py-2 text-sm text-muted-foreground">
+              {["Nothing is waiting for you.", computersLine(machines)].filter(Boolean).join(" ")}
+            </p>
+          )}
           <Part items={waitingNow} sel={key} now={now} today={today} onPick={pick} />
           <Part title="Working" items={lists.running} sel={key} now={now} today={today} onPick={pick} />
           <Part title="Done since you looked" items={lists.done} sel={key} now={now} today={today} onPick={pick} />

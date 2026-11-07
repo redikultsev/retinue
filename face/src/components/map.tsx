@@ -10,7 +10,7 @@ import { RelationIcon, upOf } from "@/components/relation";
 import { OnComputer } from "@/components/ending-card";
 import { Crumb, Reply } from "@/components/reply";
 import { Dialog } from "@/components/ui/dialog";
-import { computerRows, isComputer, useComputers } from "@/lib/computers";
+import { computerRows, computersLine, isComputer, useComputers } from "@/lib/computers";
 import type { Feed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { type Area, mapAreas, onMap, type Tile, tileOf } from "@/lib/map";
@@ -209,7 +209,9 @@ export function MapView({
         <div className="flex min-w-0 flex-col gap-4">
           {head}
           {sessions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No session is on the map now.</p>
+            <p data-testid="empty-why" className="text-sm text-muted-foreground">
+              {[project ? "No session of this project is on the map now." : "No session is on the map now: none runs in the room.", computersLine(machines)].filter(Boolean).join(" ")}
+            </p>
           ) : (
             <section ref={grid} className="grid grid-cols-[repeat(auto-fill,minmax(18.75rem,1fr))] items-start gap-4" aria-label="The map">
               {areas.map((a) => (

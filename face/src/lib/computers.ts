@@ -53,6 +53,16 @@ const subs = new Set<() => void>();
 let timer: ReturnType<typeof setInterval> | null = null;
 let users = 0;
 
+/** What an empty screen adds of the computers (#91), so it says whether empty is right: how many sessions a computer
+ * that reports lists, or that it has not reported for a while; "" with no computer at all. */
+export function computersLine(list: Pick<Computer, "off" | "sessions">[]): string {
+  if (!list.length) return "";
+  const on = list.filter((c) => !c.off);
+  if (!on.length) return "Your computer has not reported for a while: it may be asleep.";
+  const listed = on.reduce((n, c) => n + c.sessions.length, 0);
+  return `Your computer lists ${listed} session${listed === 1 ? "" : "s"}, none waiting on you.`;
+}
+
 /** For tests and the mock: the computers as given. */
 export function setComputers(list: Computer[]): void {
   computers = list;

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { AppHeader } from "@/components/app-header";
 import { MapView } from "@/components/map";
 import { Operator, OperatorSwitch } from "@/components/operator";
-import { useComputers } from "@/lib/computers";
+import { type Computer, computersLine, useComputers } from "@/lib/computers";
 import { type Feed, useFeed } from "@/lib/feed";
 import { live } from "@/lib/live";
 import { useWide } from "@/lib/media";
@@ -22,13 +22,9 @@ function useNow(everyMs = 30_000): number {
 }
 
 /** Why the cards are none: what was looked at, so an empty screen says whether that is right. */
-export function emptyWhy(feed: Feed | null, computers: { off: boolean; sessions: unknown[] }[]): string {
+export function emptyWhy(feed: Feed | null, computers: Pick<Computer, "off" | "sessions">[]): string {
   if (!feed) return "Loading…";
-  const on = computers.filter((c) => !c.off);
-  const listed = on.reduce((n, c) => n + c.sessions.length, 0);
-  if (computers.length && !on.length) return "No session is asking you for anything. Your computer has not reported for a while: it may be asleep.";
-  if (on.length) return `No session is asking you for anything. Your computer lists ${listed} session${listed === 1 ? "" : "s"}, none waiting on you.`;
-  return "No session is asking you for anything.";
+  return ["No session is asking you for anything.", computersLine(computers)].filter(Boolean).join(" ");
 }
 
 export function OperatorPage({ view: asked }: { view?: OperatorView }) {

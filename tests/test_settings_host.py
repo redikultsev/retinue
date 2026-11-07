@@ -371,6 +371,12 @@ def test_the_hosts_repository_rules_are_the_platforms():
     assert host.REPO_URL.pattern == config.REPO_URL.pattern and host.REPO_NAME.pattern == config.REPO_NAME.pattern
     assert host.TRACK.pattern == config.TRACK_NAME.pattern and host.GIT_VALUE == settings.GIT_VALUE.pattern
     assert host.AUTHOR.pattern == settings.AUTHOR.pattern
+    assert (host.AUTHOR_NAME.pattern, host.AUTHOR_EMAIL.pattern) == (settings.AUTHOR_NAME.pattern,
+                                                                     settings.AUTHOR_EMAIL.pattern)
+    for author in ("Ann Example <ann@example.com>", "A  <a@b.c>", "Ann <ann@example.com", "<a@b.c>", "Ann a@b.c",
+                   "Ann <a b@c.d>", "Ann <a@b> <c@d>", "A\nB <a@b.c>", "A " * 200 + "<a@b.c>", "; " * 50 + " <a@b.c>"):
+        want = bool(settings.AUTHOR.fullmatch(author)) and len(author) <= 256
+        assert settings.author_ok(author) is want and host.author_ok(author) is want, author[:40]
     assert settings.AUTHOR.pattern in Path(config.__file__).read_text(), "config's check of code: author"
     assert host.CODE_PROXY in EXAMPLE.read_text()
     for url in ("https://github.com/Example-Org/Widgets", "https://github.com/a/b.git/", "https://gitlab.com/g/s/My.P",

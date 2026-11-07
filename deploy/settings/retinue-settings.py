@@ -89,6 +89,7 @@ REPO_URL = re.compile(r"https://(github\.com|gitlab\.com)/((?:[A-Za-z0-9_.-]+/)+
 REPO_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
 TRACK = re.compile(r"[a-z][a-z0-9-]{1,30}")
 AUTHOR = re.compile(r"[^<>\n]+ <[^<>@\s]+@[^<>\s]+>")
+AUTHOR_NAME, AUTHOR_EMAIL = re.compile(r"[^<>\n]+"), re.compile(r"[^<>@\s]+@[^<>\s]+>")  # its halves: author_ok
 GIT_VALUE = r"[^\s=]{1,512}"
 CODE_PROXY = "http://platform-egress:3128"     # docs/code.md: the platform's one way out to GitHub and GitLab
 
@@ -184,6 +185,14 @@ def repo_of(url: object) -> tuple[str, str, str]:
     if not REPO_NAME.fullmatch(name) or not GIT_KEY.fullmatch(key):
         raise Refusal("This address gives no folder name or account key: add it to platform.yaml by hand")
     return f"https://{host}/{path}.git", name, key
+
+
+def author_ok(author: str) -> bool:
+    """`AUTHOR`, checked in two linear halves: split at its one « <» (the name holds no «<»), so no pattern backtracks
+    over a long value. Capped like a line of the file."""
+    name, sep, email = author.rpartition(" <")
+    return (bool(sep) and len(author) <= 256 and AUTHOR_NAME.fullmatch(name) is not None
+            and AUTHOR_EMAIL.fullmatch(email) is not None)
 
 
 def same_repo(a: str, b: str) -> bool:
@@ -521,7 +530,7 @@ def apply(request: dict, changed: dict, pending: set[str], now: float) -> None:
             raise Refusal("Not a lane's name")
         if not isinstance(track, str) or (track and not TRACK.fullmatch(track)):
             raise Refusal("Not a track's name")
-        if not isinstance(author, str) or (author and not AUTHOR.fullmatch(author)):
+        if not isinstance(author, str) or (author and not author_ok(author)):
             raise Refusal("The commits' author is «Name <email>»")
         new = add_repo(PLATFORM_YAML.read_text(), url, name, key, lane, track, author)  # refused before any write
         if "value" in request:

@@ -47,7 +47,8 @@ training in the account settings, and create a key with the `speech_to_text` per
 limit. Audio goes to ElevenLabs in the US; the router deletes each transcript there right after reading it. Then either `sudo docker compose -p retinue --env-file
 /srv/retinue/stack.env -f deploy/compose.yml up -d --build` from `/opt/retinue`, or Dokploy → project →
 *Compose* from your Git repo, compose path `./deploy/compose.yml`, with the file's lines in *Environment*. Do not set `ANTHROPIC_API_KEY`: when it is present, Claude Code bills the
-key instead of the subscription. Deploy.
+key instead of the subscription. Deploy. Once the app is on, each of these keys can also be set or replaced
+from its «Settings», which writes the same lines ([face.md](face.md#settings)).
 
 Three containers start: `router` (Telegram, the archive, the bus), `assistant` (the model; internal network
 only, no volume, config mounted read-only) and `egress` (Squid: the only way out of the internal network).
@@ -59,8 +60,8 @@ share ([pages.md](pages.md)); `TGBUSINESS=1` and `SEND=1` — your chosen Telegr
 sent only by your «Send» under the exact text ([courier.md](courier.md)); `PLATFORM=1` — Claude Code sessions
 in lane containers, driven from the same chat, in auto mode: what its classifier blocks approved by you
 ([platform.md](platform.md)); `FACE=1 FACE_HOST=app.in.<your domain>` — the platform's app on your phone, over WireGuard only ([face.md](face.md)), and at
-`/mcp/mac` on the same host your collections for Claude Code on your Mac, by a device's token — the Mac a WireGuard peer
-in `DEVICES` ([collections.md](collections.md#from-the-mac)).
+`/mcp/device` on the same host your collections for Claude Code on your computer, by a device's token — the owner's computer a WireGuard peer
+in `DEVICES` ([collections.md](collections.md#from-the-owners-computer)).
 
 ## 4. Check
 

@@ -43,14 +43,13 @@ afterEach(() => {
 });
 
 describe("SessionList", () => {
-  it("test_the_list_says_it_is_the_projects_and_its_chips_filter_their_sessions_by_state", async () => {
+  it("says it is the projects, has no state filter, and ends with «Archived»", async () => {
     seed([session("a1", { title: "lodging" })]);
     mount(<SessionList />);
     const nav = await screen.findByRole("navigation", { name: "Projects" });
-    const heading = within(nav).getByRole("heading", { name: "Projects" });
-    const chips = within(nav).getByRole("group", { name: "Show" });
-    expect(heading.compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // the name above the chips
-    expect(within(chips).getAllByRole("button").map((b) => b.textContent)).toEqual(expect.arrayContaining(["Waiting", "Working", "Done"]));
+    expect(within(nav).getAllByRole("heading")[0]!.textContent).toBe("Projects");
+    expect(within(nav).queryByRole("group", { name: "Show" })).toBeNull();
+    expect(within(nav).getAllByRole("button").at(-1)!.textContent).toBe("Archived");
   });
 
   it("says when a session waits for room in the lane, and in its own header too", async () => {
@@ -87,7 +86,7 @@ describe("SessionList", () => {
     expect(screen.queryByTestId("peek")).toBeNull();
   });
 
-  it("pins on the server, the pinned filter shows it, and side sessions hang under theirs", async () => {
+  it("pins on the server, a pinned one goes first in its project, and side sessions hang under theirs", async () => {
     seed([
       session("old", { at: 1 }),
       session("new", { at: 9 }),
@@ -105,10 +104,9 @@ describe("SessionList", () => {
       expect(screen.getByRole("button", { name: "Unpin: Session old" }).getAttribute("aria-pressed")).toBe("true"),
     );
     expect(pin).toHaveBeenCalledWith("old", true);
-    fireEvent.click(screen.getByRole("button", { name: "Pinned" }));
-    expect(titles()).toHaveLength(1);
     expect(titles()[0]).toContain("Session old");
-    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(titles()[1]).toContain("side question: why so?");
+    expect(titles()[2]).toContain("Session new");
   });
 });
 

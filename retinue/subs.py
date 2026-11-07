@@ -1,5 +1,5 @@
 """Sub-sessions: a session the owner started hands separable work to sessions of its own — as his main session per
-sphere does in Claude Code on his Mac — and is told when each one's turn ends.
+sphere does in Claude Code on his computer — and is told when each one's turn ends.
 
 **The mechanism is an MCP server the platform serves to a run** (`POST /hook/mcp`, beside the hooks, under the run's
 own hook token: no new address, no new secret). It offers `start_subsession`, `propose_subsession`,
@@ -13,7 +13,7 @@ gate answered that very call's PreToolUse without a deny or a deferral, matched 
 `_meta["claudecode/toolUseId"]` (`call_id_of`) and by its arguments (`gate.Gate.passed`). Another engine needs its own
 argv and its own proof; the rest stays.
 
-**Limits** (constants below), loose as Claude Code's own on the owner's Mac: depth 1 — a sub-session, a side question
+**Limits** (constants below), loose as Claude Code's own on the owner's computer: depth 1 — a sub-session, a side question
 and a subagent's call never start one, and a start asked for in a turn a report started is the owner's card (a page a
 child read must not grow the family); 10 open per parent; none started while a subscription limit is waited out; as
 many running as the room holds, but one place is always left for the owner's own message (`platformd.drain`); a

@@ -4,7 +4,7 @@ Records the owner keeps in tables rather than in the Base — what came in, what
 SQLite file of the platform's, `collections.sqlite`, beside `platform.sqlite` on the `platform-data` volume
 (`retinue/collections.py`). It holds the files you upload and the records below. Records are written by the commands
 on the server's terminal ([below](#from-the-servers-terminal)), by the owner [from a Space's screen](#from-the-screen),
-which shows them in its [views](#views), by [a session he started](#from-a-session), by [the agents on his Mac](#from-the-mac)
+which shows them in its [views](#views), by [a session he started](#from-a-session), by [the agents on his computer](#from-the-owners-computer)
 and by [the assistant](#from-the-assistant) — each through the same one `apply`.
 
 ## One thread, one connection
@@ -147,9 +147,9 @@ change it made and the record after it.
   slack either side, for the owner's zone); an add may be dated back — the honest way to record late.
 - **`src`** says where it came from, of a closed kind: `mail:<account>/<msgid>`, `tg:<chat>/<msg>`,
   `owner_words:<event>`, `cal:<account>/<event>`, `file:<sha256>#row=<n>`, `record:<id>`, `web:<url>`.
-- **The writer** is kept with every change: `actor` (`owner`, `assistant`, `session:<id>`, `mac:<device>/<session>`,
-  `code:<rule>`, `import:<batch>`, `define:<rev>`), `via` (`screen`, `session`, `mac`, `assistant`, `mail`, `import`,
-  `define`), the model, and the marks of foreign text it had read.
+- **The writer** is kept with every change: `actor` (`owner`, `assistant`, `session:<id>`, `device:<device>/<session>`,
+  `code:<rule>`, `import:<batch>`, `define:<rev>`), `via` (`screen`, `session`, `device`, `assistant`, `mail`, `import`,
+  `define`; a writer kept before #66 may say `mac:` and `mac`, the old names of `device:` and `device`), the model, and the marks of foreign text it had read.
 - **A revert** is refused when something has changed the same field since — naming who, what and which change — and
   taking back an `add` deletes the record. A revert is a change like any other, so it is taken back the same way.
 
@@ -169,13 +169,14 @@ day propose, and rights it could widen with one press would be no rights. They a
     "assistant": {"set": ["state"]},
     "code:invoice-paid": {"set": ["state"]},
     "session": {"add": true, "set": "*", "delete": "propose"},
-    "mac": {"add": true, "set": "*", "delete": false}
+    "device": {"add": true, "set": "*", "delete": false}
   },
   "set_by": {"state": {"done": ["owner", "code:invoice-paid"]}}
 }
 ```
 
-- **`writers`**, for each class of writer — `assistant`, `session`, `mac`, `code:<rule>` — whether it adds records,
+- **`writers`**, for each class of writer — `assistant`, `session`, `device` (the owner's computer; `mac`, #66, is its
+  old name and counts as it), `code:<rule>` — whether it adds records,
   which fields it gives a value (a list of the form's fields, each once and as many as the form has; `"*"` all of
   them; an `add`'s fields too) and whether it deletes and restores:
   `true`, `false`, or `"propose"`, a proposal the owner applies. What a class is not given it does not do: the
@@ -185,7 +186,7 @@ day propose, and rights it could widen with one press would be no rights. They a
   `done` by itself; the owner's button, or the rule that saw the invoice paid, does.
 - **The owner may do anything**, and so may what he runs from the server's terminal (`import:<batch>`,
   `define:<rev>`): they are not listed. Those two write only through an import and a define; `apply` refuses them.
-- **A new collection's rights** are narrow: a session adds and sets every field and deletes by a proposal; the Mac
+- **A new collection's rights** are narrow: a session adds and sets every field and deletes by a proposal; the owner's computer
   adds and sets every field and does not delete; the assistant and every `code:` rule do nothing until the owner
   gives them something.
 
@@ -198,7 +199,7 @@ came by.
   collection — a retry after a timeout, a tool call repeated — changes nothing and answers the first call's
   `change_ids`, with the records as they are now. The same idem with other operations is refused (“idem … was used
   for other operations”). A session's idems are that session's own, so another session's `add-1` is another call; a
-  Mac's are its device's, whatever MCP session made the call (Claude Code makes an idempotent call again on a new
+  computer's are its device's, whatever MCP session made the call (Claude Code makes an idempotent call again on a new
   connection); the assistant's and a `code:` rule's are their class's. A refused call leaves no idem behind, so it
   can be made again, corrected. Each change keeps the idem of the call that made it.
 - **A mail** (`src` `mail:…`) needs none: the store derives one for each field an operation sets, from the class of
@@ -420,7 +421,7 @@ until the owner gives her some.
 - **Who writes is the router's word, and only from a closed list.** The router names the writer: `assistant` via
   `assistant`, or via `mail` while she judges mail; and with it the marks of someone else's text her turn has read
   (`foreign`: `mail`, `forwarded`, `archive`, …). The platform takes no other writer from the router than `assistant`,
-  or a `code:<rule>` some collection's rights name — never `owner`, a session or the Mac: the router's token proves who
+  or a `code:<rule>` some collection's rights name — never `owner`, a session or the owner's computer: the router's token proves who
   sent the call, not who acts in it. Nothing the model says changes either.
 - **From mail, every operation names its letter**: `src` is the item's archive id (`mail:<account>/<id>`), else the
   router refuses the call, naming the ids. The store derives the idem of such a change from the letter, the record and
@@ -429,7 +430,7 @@ until the owner gives her some.
   her writes to the Base.
 - **A record someone else's text wrote marks her turn.** An answer that shows her records — a query's rows, a write's
   records, a refusal's record as it is now — any of which a writer changed after reading someone else's text, or a
-  session or the Mac wrote, which carry no mark of their own, adds `collection` to the turn's marks: her commit, her
+  session or the owner's computer wrote, which carry no mark of their own, adds `collection` to the turn's marks: her commit, her
   draft's card and her own later changes say so. A write's records come framed as data, as a query's do.
 - **Once, within her turn.** The router names her call by its arguments within the turn, so the same call made again
   — a retry — writes once; an `idem` she gives is hers within that turn alone (`<turn>:<idem>`). A calendar item's
@@ -452,7 +453,7 @@ until the owner gives her some.
 | `collections/describe` · `query` · `apply` · `propose` | `{actor, via, model?, foreign, call, arguments}` → `{ok, text}`, always 200: a refusal is words for the model. An answer that shows records adds `foreign` (one someone else's text wrote); `describe` without a collection adds `writable`, `[{name, space, add, set}]`: what the writer may change, for the note of her judgement of mail |
 | `collections/changes` | `{after?, since?, limit?, exclude_actors?}` → `{changes, words, next}`: the assistant's and the rules' changes to records, oldest first, after the change_id `after` (else since the moment `since`), at most 200, without the rules `exclude_actors` names (up to 8 `code:<rule>`; the evening list leaves out `code:plan` and `code:calsync`, the owner's own presses carried out); each with its collection's `space`, its record's `title`, `reverted`, and for a revert `reverts_actor`, whose change it took back |
 | `collections/revert` | `{change_id}` → `{ok, text}`: takes back that change, as `owner` via `assistant`, if the assistant or a rule made it |
-| `collections/present` | `{since, until}` → `{present}`: whether the owner or a Mac changed any record in that span — a sign for the day plan's count |
+| `collections/present` | `{since, until}` → `{present}`: whether the owner or a computer changed any record in that span — a sign for the day plan's count |
 
 ### Tasks
 
@@ -475,12 +476,12 @@ owner's spheres):
 
 The rights the files give: the assistant adds and sets the title, goal, project, due, by, minutes, notes, state and
 ask — and closes a task only in a turn that read no one else's text (the router refuses it otherwise: a letter that
-says «done» is not the owner saying it); sessions and the Mac add and set the same but `by` and `ask`; `code:waiting`
+says «done» is not the owner saying it); sessions and the owner's computer add and set the same but `by` and `ask`; `code:waiting`
 adds and sets the title, state, ask, due and by; nobody but the owner deletes. A task has no time of its own: its
 pieces of time are [blocks](#blocks).
 
 A task is filed under a project, and moved, by setting its `project` — the owner in its record, the assistant, a
-session, the Mac; never the Router. An install made before the field takes it with `collections define` and
+session, the owner's computer; never the Router. An install made before the field takes it with `collections define` and
 `collections rights` of the two files again: the tasks there keep their fields, `goal` too, and have no project.
 
 **«Plan»** on a person's row in Tasks' «From people», or on a reminder, is one press in the app — a plan press `place`
@@ -551,9 +552,9 @@ plans' blocks in it that are not his — the one running cut at the press, those
 next seven windows (none free: `skipped`, said; one now past its deadline named) — his own blocks and holds stay; its
 «Undo» puts every block back and takes the hold off; a second press while it holds is the first. At each look (30 s) a block whose time is over is counted once the next window
 has opened: `passed` — its minutes off its task — if the owner was seen in its window (from its opening to the next
-one's: a message of his, a press in the app or in Telegram, a record he changed on his screen or from a Mac), else
+one's: a message of his, a press in the app or in Telegram, a record he changed on his screen or from a computer), else
 `skipped` with «no sign of you that day», said in Telegram, and its time goes back to the task; one he put or stretched
-himself counts always. Till then it stays `planned`, in the past, holding its time. A day of work only in Mac sessions
+himself counts always. Till then it stays `planned`, in the past, holding its time. A day of work only in sessions on his computer
 that wrote nothing leaves no sign. A closed task's blocks ahead are `skipped`; then, whenever the calendar, the holds, the blocks or the tasks changed since the last look —
 the owner's own moves included — the plans' blocks are laid again where something crosses them, in every window from
 today's on that a plan holds a block in: moved (`start`), not taken off and added again, and a task's plan pieces beyond
@@ -599,52 +600,55 @@ C2. 18:40 · followups «Acme»: added: deal Acme, state draft
 - The platform away: “Collections: the platform did not answer — their changes come in the next list.”, and the cursor
   stays.
 
-## From the Mac
+## From the owner's computer
 
-The agents on the owner's Mac — Claude Code in his own sessions, and his scripts — get the same four tools as an MCP
-server at `https://<face host>/mcp/mac` (`retinue/mac.py`), as `mac:<device>/<session>` via `mac`:
+The agents on the owner's own computer — macOS, Windows or Linux: Claude Code in his own sessions, and his scripts —
+get the same four tools as an MCP server at `https://<face host>/mcp/device` (`retinue/device.py`), as
+`device:<device>/<session>` via `device`. `/mcp/mac`, its old address (#66), answers the same for the clients set up with it;
+the history keeps the old `mac:` writers as they were written (#66).
 
 ```
-Mac ── WireGuard ── Traefik (allow list: your devices) ── face nginx (location = /mcp/mac) ── platform :9600
+your computer ── WireGuard ── Traefik (allow list: your devices) ── face nginx (location = /mcp/device) ── platform :9600
 ```
 
 - **A device's token, nothing else.** `Authorization: Bearer <token>`, which the platform looks up by its SHA-256 in
-  the collections' file (`devices`); the token itself is only on the Mac. No token, a wrong one or a revoked one: 401,
-  before anything is read. The face's login cookie and its `X-Retinue` header play no part there — the cookie opens
-  nothing at `/mcp/mac`, and a device's token opens nothing of the face's `/api/*`.
+  the collections' file (`devices`); the token itself is only on the computer. No token, a wrong one or a revoked one:
+  401, before anything is read. The face's login cookie and its `X-Retinue` header play no part there — the cookie
+  opens nothing at `/mcp/device`, and a device's token opens nothing of the face's `/api/*`.
 - **Its scope.** `read`: `collection_describe` and `collection_query` alone are listed and served — for a script that
   only reads, a projection, say. `write`: the four. A call outside the scope is the tool's error: “This device's token
   only reads (collection_apply is not in its scope)…”.
-- **The rights of the class `mac` decide the rest**, as a session's do ([Rights](#rights)): by default it adds and
-  sets every field and never deletes; what `set_by` keeps for the owner (`sent`) becomes his card, “Mac <device>” in
-  «Waiting for you», carrying the mark `mac` once he applies it. Narrow `writers.mac` with
-  `collections rights` if a Mac's session ever writes what it should not.
-- **No gate and no mark of foreign text.** The owner runs a Mac's session himself and watches it work; a session there
-  that read a hostile page can change a field of any record its rights open. That risk is taken knowingly: every
-  change is in the Space's «Changes», each with «Undo». The assistant, reading a record a Mac wrote, counts it as
-  someone else's text.
+- **The rights of the class `device` decide the rest**, as a session's do ([Rights](#rights)): by default it adds and
+  sets every field and never deletes; what `set_by` keeps for the owner (`sent`) becomes his card, “Computer
+  <device>” in «Waiting for you», carrying the mark `device` once he applies it. Narrow `writers.device` with
+  `collections rights` if a session there ever writes what it should not. Rights kept with `mac`, the class's old name (#66),
+  count as `device`'s.
+- **No gate and no mark of foreign text.** The owner runs a session on his computer himself and watches it work; a
+  session there that read a hostile page can change a field of any record its rights open. That risk is taken
+  knowingly: every change is in the Space's «Changes», each with «Undo». The assistant, reading a record the computer
+  wrote, counts it as someone else's text.
 - **The session** is the MCP session the server gives at `initialize` (`Mcp-Session-Id`, which every later request
   carries; without it, 400): it tells one conversation's changes from another's. Its id is signed for the device — an
   HMAC keyed by the SHA-256 of its token —, so one the server did not give that device is 404, and the client
-  initializes again, as MCP has it: a Mac neither names its sessions nor writes as another's. A call's idem is
+  initializes again, as MCP has it: a device neither names its sessions nor writes as another's. A call's idem is
   Claude Code's own id of the tool call, the device's, so the call made again — on a new connection too — writes
   once; an `idem` the model names is its session's alone, so two conversations that both say `add-1` are two calls.
 - **Proposals** are limited, and their repeats found, by the device in all its sessions: a session is the client's
-  to start, so ten wait at most from one Mac however many it opens. A revoked Mac's cards stay in «Waiting for you»
-  to read and dismiss; «Apply» refuses them (409, `revoked`).
-- **4 MB a request**, its `Content-Length` given (413 otherwise): the Mac's app checks it itself — aiohttp reads a
-  body by the face's own limit — and nginx's `client_max_body_size 4m` says the same in front.
+  to start, so ten wait at most from one device however many it opens. A revoked device's cards stay in «Waiting for
+  you» to read and dismiss; «Apply» refuses them (409, `revoked`).
+- **4 MB a request**, its `Content-Length` given (413 otherwise): the app checks it itself — aiohttp reads a body by
+  the face's own limit — and nginx's `client_max_body_size 4m` says the same in front.
 - **Plain JSON over POST**: no server-sent stream (`GET` and `DELETE` answer 405).
-- **Unreachable** — the Mac off the VPN, the platform down — the tools are missing from the Mac's session, and nothing
+- **Unreachable** — the computer off the VPN, the platform down — the tools are missing from its sessions, and nothing
   is kept to send later: the agent says what it could not record.
 
 ### Its sessions
 
-A Mac — any computer with a device's token — also tells the app which Claude Code sessions it runs, so the owner sees
+The computer — any device with a token — also tells the app which Claude Code sessions it runs, so the owner sees
 them beside the room's, under the same projects ([face.md](face.md#from-the-computers)). Two JSON-RPC methods of
-`/mcp/mac` do it, beside the tools and never listed among them: a session on the Mac neither sees them nor calls them.
-Both take the device's token and an MCP session, as a tool does, in either scope — the device's sessions are its own,
-not the owner's records.
+`/mcp/device` do it, beside the tools and never listed among them: a session on the computer neither sees them nor
+calls them. Both take the device's token and an MCP session, as a tool does, in either scope — the device's sessions
+are its own, not the owner's records.
 
 - **`retinue/sessions`** takes the device's whole list, which replaces the one before (`retinue/computers.py`):
 
@@ -655,60 +659,95 @@ not the owner's records.
   ```
 
   `state` is `working`, `waiting` (on the owner) or `done`; `at` its last activity, in seconds; `project` the Base
-  folder the Mac files it under — the platform does not know a Mac's paths, so the Mac maps its own folders —, none
-  for a session outside every project; `link`, optional, only `claude://claude.ai/…`. At most 500 sessions; a report
-  with a row it does not take is refused whole, with why, and the list before stays. The answer is
-  `{"taken": N, "again_s": 30}`: the Mac reports on each change and every 30 s at the latest.
+  folder the computer files it under — the platform does not know a computer's paths, so the computer maps its own
+  folders —, none for a session outside every project; `link`, optional, only `claude://claude.ai/…`. At most 500
+  sessions; a report with a row it does not take is refused whole, with why, and the list before stays. The answer
+  is `{"taken": N, "again_s": 30}`: the computer reports on each change and every 30 s at the latest.
+- **`ending`**, optional on a session not at work: its current turn ending, the shape of a room session's
+  `turn_ending` ([platform.md](platform.md#turn-endings)). The feed shows it as that session's card, by its kind
+  ([face.md](face.md#the-operator)); a session that waits with none is a «Reply» row. An artifact by `path` is a file
+  on the computer: the app shows its name, «on your computer»; one by `url` opens as a link. An ending off the shape is
+  left out and the session stays: the answer names it, `"left_out": [{"id", "why"}]`.
+- **A place on the map** (`slot` in the app's list): the lowest free in its project when it first shows, kept while
+  the computer lists it.
 - **Kept in memory only**, per device: nothing on disk and nothing in a log — titles and folders are the owner's —;
-  a restart forgets the lists until each Mac's next report. No report for 2 minutes and the Mac is off: the app
-  greys its rows. A revoked device's rows go at once.
-- **`retinue/projects`** gives the Base's project tree, `{head, projects: [{path, title, parent}]}`, which a Mac's
-  helper files its own sidebar by — a group per project, its sessions in it — so the sidebar follows a project made
-  or renamed in the Base by itself.
+  a restart forgets the lists until each device's next report. No report for 2 minutes and the computer is off: the
+  app greys its rows. A revoked device's rows go at once.
+- **`retinue/projects`** gives the Base's project tree, `{head, projects: [{path, title, parent}]}`, which the
+  computer's helper files its own sidebar by — a group per project, its sessions in it — so the sidebar follows a
+  project made or renamed in the Base by itself.
 
-### Setting up a Mac
+### Setting up the computer
 
-1. **The network.** The Mac is a WireGuard peer of the server's VPN, and its address is in `DEVICES` — the list
+1. **The network.** The computer is a WireGuard peer of the server's VPN, and its address is in `DEVICES` — the list
    `deploy/setup.sh` renders into Traefik's allow list (`FACE_RANGES`, [face.md](face.md#turning-it-on)). Add it and
-   run `setup.sh` again: a Mac that is not on the list gets 404, as anyone else does. Traefik sees the Mac's VPN
-   address only when the face's host resolves, on the Mac, to the server's address in the tunnel and the Mac's
-   `AllowedIPs` sends that address through it; otherwise the request comes from the Mac's public address and is a
-   stranger's. Check it from the Mac before anything else:
+   run `setup.sh` again: a computer that is not on the list gets 404, as anyone else does. Traefik sees the
+   computer's VPN address only when the face's host resolves, on the computer, to the server's address in the tunnel
+   and the computer's `AllowedIPs` sends that address through it; otherwise the request comes from its public address
+   and is a stranger's. Check it from the computer before anything else:
 
    ```bash
-   curl -s -o /dev/null -w '%{http_code}\n' -X POST https://app.in.example.com/mcp/mac
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST https://app.in.example.com/mcp/device
    ```
 
-   401 is the network right (no token yet); 404 is a Mac not on the list, or not on the tunnel's route.
+   401 is the network right (no token yet); 404 is a computer not on the list, or not on the tunnel's route.
 2. **A device**, on the server's terminal ([below](#from-the-servers-terminal)):
 
    ```bash
    docker compose -p retinue exec platform retinue-platform collections device add laptop --scope write
    ```
 
-   It prints the token once. A name is given once, revoked or not, so the changes keep naming one device: a new Mac,
-   or a new token, is a new name (`laptop-2`).
-3. **The token into the Mac's keychain**, never into a file:
+   It prints the token once. A name is given once, revoked or not, so the changes keep naming one device: a new
+   computer, or a new token, is a new name (`laptop-2`).
+3. **The token into the system's own store for secrets**, never into a plain file. Each asks for the token, so none
+   is left in the shell's history:
 
-   ```bash
-   security add-generic-password -a "$USER" -s retinue-mac -w   # asks for the token: none in the shell's history
-   ```
+   - macOS, the login keychain:
+
+     ```bash
+     security add-generic-password -a "$USER" -s retinue-device -w
+     ```
+
+   - Windows, DPAPI — encrypted for this user on this computer, by PowerShell:
+
+     ```powershell
+     New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Retinue" | Out-Null
+     Read-Host -AsSecureString "token" | ConvertFrom-SecureString | Set-Content "$env:LOCALAPPDATA\Retinue\token"
+     ```
+
+   - Linux, the Secret Service (GNOME Keyring, KWallet) by `secret-tool`:
+
+     ```bash
+     secret-tool store --label="Retinue device token" service retinue-device
+     ```
 
 4. **The server in Claude Code**, for every project, by Claude Code's own command rather than an edit of
    `~/.claude.json`. `headersHelper` is a command Claude Code runs at each connection, and again once after a 401; it
-   prints the headers as JSON, within 10 s (the token is URL-safe, so it needs no JSON escaping):
+   prints the headers as JSON, within 10 s (the token is URL-safe, so it needs no JSON escaping). On macOS:
 
    ```bash
    claude mcp add-json retinue --scope user '{
      "type": "http",
-     "url": "https://app.in.example.com/mcp/mac",
-     "headersHelper": "printf '"'"'{\"Authorization\": \"Bearer %s\"}'"'"' \"$(security find-generic-password -s retinue-mac -w)\""
+     "url": "https://app.in.example.com/mcp/device",
+     "headersHelper": "printf '"'"'{\"Authorization\": \"Bearer %s\"}'"'"' \"$(security find-generic-password -s retinue-device -w)\""
    }'
    ```
 
+   On Linux the same, with `$(secret-tool lookup service retinue-device)` for the token. On Windows the helper is a
+   script beside the token, `%LOCALAPPDATA%\Retinue\headers.ps1`:
+
+   ```powershell
+   $token = [System.Net.NetworkCredential]::new("", (Get-Content "$env:LOCALAPPDATA\Retinue\token" | ConvertTo-SecureString)).Password
+   @{ Authorization = "Bearer $token" } | ConvertTo-Json -Compress
+   ```
+
+   and `"headersHelper": "powershell -NoProfile -File C:\\Users\\<you>\\AppData\\Local\\Retinue\\headers.ps1"`.
+   PowerShell takes about a second to start, longer when many sessions start at once; a helper in a faster
+   runtime (Python, reading the same DPAPI file through `CryptUnprotectData`) keeps well inside the 10 s.
+
    `claude mcp list` shows it connected; `/mcp` in a session lists its tools. A project's `.mcp.json` would do as
    well, but Claude Code asks before it uses one, and runs its helper only in a folder the owner has trusted.
-5. **A lost Mac** is shut out with one command, asked nothing, at its very next call:
+5. **A lost computer** is shut out with one command, asked nothing, at its very next call:
 
    ```bash
    docker compose -p retinue exec platform retinue-platform collections device revoke laptop
@@ -753,7 +792,7 @@ confirmed. The `device` commands ask nothing: a token is shown once as it is mad
 | `import <collection> <file>` | applies a JSONL file of operations, as one batch |
 | `revert-batch <batch>` | takes a batch back |
 | `export <folder>` | writes everything to an empty folder |
-| `device add <name> --scope read\|write` | a Mac for [`/mcp/mac`](#from-the-mac), and its token, shown once |
+| `device add <name> --scope read\|write` | a computer for [`/mcp/device`](#from-the-owners-computer), and its token, shown once |
 | `device list` | every device: its scope, when it was added, when it last wrote, and whether it is revoked |
 | `device revoke <name>` | its token opens nothing from its next call on |
 

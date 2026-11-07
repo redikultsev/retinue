@@ -3,22 +3,42 @@
 // proposal, a push). A card that waits has a short number of its own. The order holds while he reads: a new card is
 // counted at the top, one answered or gone stays in its place, dimmed, until he lays the list out again. No key
 // answers a card here: one press would reach them all.
+import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { CollectionProposalCard } from "@/components/collection-proposal-card";
-import { EndingCard, FRAME } from "@/components/ending-card";
+import { EndingCard, FRAME, OnComputer } from "@/components/ending-card";
 import { ProposalCard } from "@/components/proposal-card";
 import { PushButton } from "@/components/push-card";
 import { QuestionDecide } from "@/components/question-decide";
 import { Crumb, Reply } from "@/components/reply";
 import { Button } from "@/components/ui/button";
 import { type Feed, type FeedRow, feedSource, waited } from "@/lib/feed";
-import { endingOf, keepNumbers, keptNumbers, type Numbers, releaseHeld, renumber, useHeld, verbOf } from "@/lib/operator";
+import { endingOf, keepNumbers, keptNumbers, type Numbers, type OperatorView, releaseHeld, renumber, useHeld, verbOf } from "@/lib/operator";
 import { useProjectOf } from "@/lib/projects";
 import { projectTitle } from "@/lib/today";
 import type { Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { requests, waitingKeys, waits } from "@/lib/waiting";
+
+/** The operator as cards or as the map of its sessions in their places: its own place and a project's tab alike. */
+export function OperatorSwitch({ view, onView }: { view: OperatorView; onView: (v: OperatorView) => void }) {
+  return (
+    <fieldset aria-label="Show" className="inline-flex h-9 w-fit items-center self-start rounded-md border p-0.5 max-md:h-11">
+      {(["cards", "map"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={view === v}
+          onClick={() => onView(v)}
+          className={cn("h-7 rounded px-3 text-[13px] max-md:h-9 whitespace-nowrap transition-colors", view === v ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
+        >
+          {v === "cards" ? "Cards" : "Map"}
+        </button>
+      ))}
+    </fieldset>
+  );
+}
 
 function Body({ row }: { row: FeedRow }) {
   const refresh = () => void feedSource.refresh();
@@ -40,6 +60,13 @@ function Body({ row }: { row: FeedRow }) {
         <div>
           <PushButton session={row.session} count={row.push ?? 0} repo={row.repos?.length === 1 ? undefined : row.repos?.[0]} />
         </div>
+      </div>
+    );
+  if (row.computer)
+    return (
+      <div className={FRAME}>
+        <p className="max-w-[68ch] break-words">{row.essence || `It waits for you on ${row.computer.device}.`}</p>
+        <OnComputer computer={row.computer} />
       </div>
     );
   return (
@@ -78,7 +105,15 @@ export function OperatorCard({ row, n, spheres, now, off = false }: { row: FeedR
       <Crumb session={row.session}>
         {n !== undefined && <span className="mr-1.5 font-mono font-medium text-foreground tabular-nums">#{n}</span>}
         {row.project ? `${projectTitle(row.project, spheres)} · ` : ""}
-        {row.title} · {verbOf(row)} · {off ? "answered or gone" : waited(row.since, now)}
+        {/* the title is the way into the session's own screen, where the whole conversation goes on */}
+        {row.session && !row.computer ? (
+          <Link to="/s/$id" params={{ id: row.session }} className="text-foreground underline-offset-4 hover:underline">
+            {row.title}
+          </Link>
+        ) : (
+          row.title
+        )}
+        {row.computer ? ` · on ${row.computer.device}` : ""} · {verbOf(row)} · {off ? "answered or gone" : waited(row.since, now)}
       </Crumb>
       <Body row={row} />
     </article>

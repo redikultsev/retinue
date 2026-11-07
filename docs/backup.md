@@ -75,7 +75,7 @@ It can still overwrite what it wrote. That is caught by the monthly `check --rea
 copy in a local repository on your computer.
 
 A key with no delete at all works too: restic backs up and warns that it could not remove its lock. Each night
-then leaves one lock behind; `mac.sh monthly` removes the stale ones before `forget`. To let the server remove
+then leaves one lock behind; `care.sh monthly` removes the stale ones before `forget`. To let the server remove
 its own locks instead, give its key's user this bucket policy, with your bucket and the user's ARN:
 
 ```json
@@ -130,8 +130,10 @@ sudo systemctl start retinue-backup && sudo cat /srv/retinue/status/backup.json
 
 ## Your computer: once a month
 
-Install restic (`brew install restic`), then write `~/.config/retinue/backup.env` (mode 600) with your
-computer's S3 key, its restic password (or `RESTIC_PASSWORD_COMMAND`, e.g. reading the macOS keychain) and a
+Install restic (`brew install restic` on macOS, `winget install restic.restic` on Windows, the
+distribution's package on Linux) — on Windows `care.sh` runs in Git Bash or WSL —, then write `~/.config/retinue/backup.env` (mode 600) with your
+computer's S3 key, its restic password (or `RESTIC_PASSWORD_COMMAND`, e.g. reading the macOS keychain, `secret-tool lookup` on Linux, or a
+DPAPI-protected file on Windows) and a
 folder for the local copy:
 
 ```
@@ -146,7 +148,7 @@ RETINUE_SSH_HOST=<your server's ssh host>   # where a run that went through repo
 ```
 
 ```bash
-bash deploy/backup/mac.sh monthly
+bash deploy/backup/care.sh monthly
 ```
 
 It stops at the first failure, so nothing is deleted after a bad check or restore. First `restic unlock` takes off
@@ -214,6 +216,6 @@ Rehearse it once on a throwaway server before you need it, and again after a maj
 
 Then write to the bot and ask about something from before the restore.
 
-With the platform on, a restore brings back the devices as the snapshot had them: a Mac revoked after it has a
+With the platform on, a restore brings back the devices as the snapshot had them: a computer revoked after it has a
 working token again. Run `retinue-platform collections device list` in the platform's container and revoke every
-device the owner had taken back since ([collections.md](collections.md#setting-up-a-mac)).
+device the owner had taken back since ([collections.md](collections.md#setting-up-the-computer)).

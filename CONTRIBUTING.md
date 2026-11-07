@@ -63,8 +63,9 @@ pnpm -C face typecheck && pnpm -C face lint && pnpm -C face test
   [docs/platform.md](docs/platform.md#probes), the code, and a test that names the number and was seen failing when
   written. A refusal is checked by a call, not by a saved setting.
 - **A test asserts behaviour and data, never wording.** Return codes, refusal flags, parsed config, ids, paths,
-  numbers and order are checked by code; what a message, doc or prompt says is read by a person or judged by a model
-  ([AGENTS.md](AGENTS.md) has the full rule).
+  numbers and order are checked by code; what a message, doc or prompt says is read by a person or judged by a model.
+  No regex against prose, and no test that scans the repository's texts for a word ([AGENTS.md](AGENTS.md) has the
+  full rule).
 - **Tests run in parallel.** CI runs pytest in one process per core (`pytest -n auto`, pytest-xdist), and in no fixed
   order, so a test shares nothing with another: it writes only under its own `tmp_path`, never into the checkout or a
   fixed path; a server it starts binds port 0, or a socket it already holds, never a port picked and bound later; a

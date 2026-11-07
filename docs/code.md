@@ -1,6 +1,6 @@
 # Your repositories in the room
 
-Sessions on the server work in your repositories as on your Mac: each is an ordinary git clone at
+Sessions on the server work in your repositories as on your computer: each is an ordinary git clone at
 `/work/code/<name>` of `lane-private`, where a session runs `git status`, `log`, `diff`, `blame`, makes branches and
 commits, `git pull`s fresh code, runs the tests and installs packages. What leaves the server is yours to decide:
 **«Push · N»** under the session's summary opens a card, and «Send» pushes the session's branch to the
@@ -79,7 +79,8 @@ pass show <entry> | sudo bash /opt/retinue/deploy/code/set-git-token.sh you   # 
 
 The script writes `RETINUE_GIT_TOKEN_YOU=…` into `/srv/retinue/code/tokens.env` (root's, 0600; the one line
 replaced), prints only the name and the length, and the restart of the platform. compose hands the file to the
-platform alone.
+platform alone. The app's «Settings» is this script's form: a token pasted under «Repositories» is piped into it on
+the server, and the restart is a button there ([face.md](face.md#settings)).
 
 **Where the token goes, and where it never does.** The platform reads it from its environment at start and takes it
 out of that environment then (`os.environ`), so no child it starts inherits it. For a git call it writes
@@ -115,7 +116,7 @@ mirror's path: `git pull` and `git fetch` in the room need no credential and rea
 `/etc/gitconfig` (root's) trusts `/lane/mirrors/*`, which belong to the platform's user.
 
 `/new code <name> [task]` starts a session in `/work/code/<name>`, so the repository's `CLAUDE.md` and `AGENTS.md`
-reach it as on the Mac ([instructions.md](instructions.md)). A session started elsewhere (the Base's root) is told by
+reach it as on the owner's computer ([instructions.md](instructions.md)). A session started elsewhere (the Base's root) is told by
 the room's `code.md` to read them before it works in a repository, and to commit on a branch, never `git push`.
 
 ## The button

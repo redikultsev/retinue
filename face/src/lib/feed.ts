@@ -106,6 +106,8 @@ export interface FeedRow {
   collection_proposal?: CollectionProposal;
   /** What the session's turn left him (`ending:<session>` rows): its card by kind. */
   ending?: TurnEnding;
+  /** A session of one of his computers (retinue/computers.py): answered there, by its link. */
+  computer?: { device: string; id: string; link?: string };
   /** «From the assistant»: a person's row's token — what «Done», «Not a task», «Tomorrow» name it by. Absent on a draft
    * and a date. */
   t?: string;

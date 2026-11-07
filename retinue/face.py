@@ -22,8 +22,8 @@ The owner's voice (`/api/speech`): what he dictated, as text for him to edit and
 for word and sent at once by the app. One recording at a time, held in memory only; the transcript is deleted at
 ElevenLabs (`speech.Scribe`) and never written to a log.
 
-The agents on his Mac reach his collections at `/mcp/mac` (`mac.py`), an app of its own on the same address, by a
-device's token instead of the login.
+The agents on his own computer reach his collections at `/mcp/device` (`device.py`; `/mcp/mac`, its old name, too),
+an app of its own on the same address, by a device's token instead of the login.
 
 The owner's actions here are the platform's own (`Platform.new_session`, `side`, `write`, `decide`, `answer`, `stop`):
 a card decided or a question answered in the face obeys exactly the rules of a Telegram press, and the Telegram card
@@ -48,7 +48,7 @@ from urllib.parse import parse_qsl, quote, unquote
 
 from aiohttp import web
 
-from . import changelog, changes, computers, feed, inbox, mac, signals, spaces, tobase, topush
+from . import changelog, changes, computers, device, feed, inbox, settings, signals, spaces, tobase, topush
 from .cliengine import UUID4
 from .collections import FILE_MAX, Full, Refused
 from .sessions import PlatformStore
@@ -283,12 +283,13 @@ class Face:
         platform.on_delta = self.hub.delta
         platform.chat.on_draft = self.hub.chat_draft
         self.spaces = spaces.Spaces(platform)   # the Base read in the app: `/api/spaces…`, behind the same guard
+        self.settings = settings.Settings(platform)  # «Settings»: keys and the lane's model, never read back
         # The owner's voice: through the platform's own proxy; transcripts still to delete in the platform's store.
         self.scribe = Scribe(self.cfg.stt_key, store=self.store, proxy=self.cfg.speech.proxy)
         self.hearing = False                    # one recording at a time
         self.finishing: set[asyncio.Task] = set()  # cancelled ones ElevenLabs already had, ending to be deleted
         self.sweeper: asyncio.Task | None = None
-        self.mac_app: web.Application | None = None  # the Mac's, made with the face's app
+        self.device_apps: tuple[web.Application, ...] = ()  # the agents' on the owner's computer, made with the face's app
 
     def clock(self) -> float:
         return self.platform.clock()
@@ -338,6 +339,8 @@ class Face:
             # A sub-session a session proposed (`subs.py`): «Start» or «Not now».
             web.post("/api/proposals/{id}/{action:start|dismiss}", self.proposal_act),
             *self.spaces.routes(),
+            # «Settings» (`settings.py`): what is set, and a change for root on the host to write.
+            *self.settings.routes(),
             # «Read» (`library.py`): the hub's pages, what was opened and finished.
             web.get("/api/library", self.library), web.post("/api/library/{id}/{action:open|done}", self.library_act),
             # «Waiting for you»: a press on the assistant's row, for the router to apply (`feed.PRESSES`).
@@ -353,9 +356,12 @@ class Face:
             *self.platform.views.routes(),  # a Space's collections, their views and records (`views.py`)
             *self.platform.plan.routes(),  # «Today»'s tasks, day and week (`plan.py`)
             *self.platform.chat.routes()])  # «Talk to Retinue»: the assistant's conversation (`chat.py`)
-        # The agents on the owner's Mac (`mac.py`): their own app, their own check — a device's token, not the cookie.
-        self.mac_app = mac.Mac(self.platform, self.spaces).app()
-        app.add_subapp(mac.PATH, self.mac_app)
+        # The agents on the owner's computer (`device.py`): their own app, their own check — a device's token, not the
+        # cookie. The same at its old address, for the clients set up with it.
+        agents = device.Device(self.platform, self.spaces)
+        self.device_apps = (agents.app(), agents.app())
+        app.add_subapp(device.PATH, self.device_apps[0])
+        app.add_subapp(device.ALIAS, self.device_apps[1])
         app.on_startup.append(self._sweep)
         return app
 
@@ -367,9 +373,9 @@ class Face:
 
     async def _guarded(self, request: web.Request, handler) -> web.StreamResponse:
         """A POST carries `X-Retinue: 1` and no foreign origin; a login is refused while logins are closed; every
-        other call needs a live cookie, which a use extends. `/mcp/mac` is none of these: its app checks a device's
-        token itself, and neither the cookie nor the header opens it (`mac.py`)."""
-        if self.mac_app is not None and self.mac_app in request.match_info.apps:  # the router's own answer: a handler of that app, or its 404
+        other call needs a live cookie, which a use extends. `/mcp/device` is none of these: its app checks a device's
+        token itself, and neither the cookie nor the header opens it (`device.py`)."""
+        if any(a in request.match_info.apps for a in self.device_apps):  # the router's own answer: a handler of that app, or its 404
             return await handler(request)
         now = self.clock()
         if request.method == "POST":

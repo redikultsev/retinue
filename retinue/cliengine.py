@@ -35,22 +35,43 @@ RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # sessions.PlatformStore.add_run; i
 MARK_N = r"\d{1,4}"  # the n of a marker hook's address `<hook_url>/mark/<n>`; the platform routes the same
 SETTINGS_PATH = re.compile(re.escape(SETTINGS_DIR) + "/" + RUN_ID.pattern + r"\.json")
 UUID4 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
-# `--permission-mode auto`: a call no rule and no hook decides goes to the CLI's own classifier, as on the owner's Mac;
+# `--permission-mode auto`: a call no rule and no hook decides goes to the CLI's own classifier, as on the owner's computer;
 # the gate's PreToolUse still comes first (probed with 2.1.304: hook, then rules, then the classifier). A run where auto
 # is unavailable starts in manual without saying so but in its init line, and the gate falls back (docs/platform.md).
 # Every run passes it, a `--resume` too: the CLI does not carry the mode over.
 # `--include-partial-messages`: the text of a message while it is written, as `stream_event` lines the platform passes
 # to the face and never stores. `--forward-subagent-text` (2.1.211+): a foreground subagent's own text and thinking as
 # lines with its `parent_tool_use_id`, which the projection folds into the subagent's item.
-# `--model` and `--effort`: every run is the owner's own setup on his Mac — the latest Opus by its full id (an alias
+# `--model` and `--effort`: every run is the owner's own setup on his computer — the latest Opus by its full id (an alias
 # names another model with another CLI release) with its million-token context, at extra-high effort. Without them a
-# headless CLI takes its own default, a smaller model.
+# headless CLI takes its own default, a smaller model. These are the defaults; a lane's `model` and `effort` in
+# platform.yaml choose others, from closed lists (`MODELS`, `EFFORTS`): a model the CLI runs without auto mode moves a
+# run to manual without a word, and an effort it does not take is lowered without one — each value on a list is
+# probed on the pinned CLI (tests/test_probes.py), and anything else is refused by `check_argv`.
 MODEL, EFFORT = "claude-opus-5-5[1m]", "xhigh"
+MODELS = ("claude-opus-5-5[1m]", "claude-opus-5-5", "claude-sonnet-5-5[1m]", "claude-sonnet-5-5")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 MODEL_ID = MODEL.partition("[")[0]  # what an answer's line says it came from: the init line alone carries the `[1m]`
-PREFIX = ("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-          "--include-hook-events", "--include-partial-messages", "--forward-subagent-text", "--setting-sources", "",
-          "--model", MODEL, "--effort", EFFORT,
-          "--permission-mode", "auto", "--permission-prompt-tool", "stdio", "--settings")
+
+
+def model_id(model: str) -> str:
+    """What an answer's line names for a run given `model`: the id without its context suffix."""
+    return model.partition("[")[0]
+
+
+def prefix(model: str = MODEL, effort: str = EFFORT) -> tuple[str, ...]:
+    """The fixed start of every argv, with the run's model and effort in it; a value off the lists is refused."""
+    if model not in MODELS:
+        raise Refused(f"argv: model {model!r} is not one of {', '.join(MODELS)}")
+    if effort not in EFFORTS:
+        raise Refused(f"argv: effort {effort!r} is not one of {', '.join(EFFORTS)}")
+    return ("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+            "--include-hook-events", "--include-partial-messages", "--forward-subagent-text", "--setting-sources", "",
+            "--model", model, "--effort", effort,
+            "--permission-mode", "auto", "--permission-prompt-tool", "stdio", "--settings")
+
+
+PREFIX = prefix()  # the defaults' prefix
 # `--permission-prompt-tool stdio`, not `--permission-prompts none`: a headless CLI offers AskUserQuestion (and the plan
 # tools, which the platform denies) only when a host can answer it (probed with 2.1.304). Its question is deferred by
 # the gate and answered on resume (`allow` + `updatedInput.answers`); every other ask is denied by the gate's
@@ -158,12 +179,14 @@ def mcp_config(hook_url: str) -> str:
                       separators=(",", ":"))
 
 def argv(settings_path: str, allowed: Sequence[str], disallowed: Sequence[str], resume: str | None, *,
-         instructions: bool = False, skills: bool = False, fork: bool = False, mcp: str | None = None) -> list[str]:
+         instructions: bool = False, skills: bool = False, fork: bool = False, mcp: str | None = None,
+         model: str = MODEL, effort: str = EFFORT) -> list[str]:
     """The whole command line of one run. The prompt never goes here: it is written to stdin (`user_line`).
     `instructions`: the repository's rules, in the run's own `<run>.md` beside its settings; `skills`: the owner's
     skills folder (both `instructions`). `fork`: the first run of a fork — `resume` is the parent's CLI session, which
-    the CLI copies into a new one and leaves as it was (`FORK_SESSION`)."""
-    out = [cli_path(), *PREFIX, settings_path]
+    the CLI copies into a new one and leaves as it was (`FORK_SESSION`). `model`, `effort`: the lane's, from the
+    lists (`prefix`)."""
+    out = [cli_path(), *prefix(model, effort), settings_path]
     if allowed:
         out += ["--allowedTools", *allowed]
     if disallowed:
@@ -193,10 +216,14 @@ def check_argv(args: Sequence[str], hook_url: str = "") -> list[str]:
             continue  # the prefix's own: an ask comes to the lane host, which denies it; twice is an unknown flag
         if (name := token.split("=", 1)[0]) in FORBIDDEN:
             raise Refused(f"argv: forbidden — {FORBIDDEN[name]}")
-    prefix = [cli_path(), *PREFIX]
-    if args[:len(prefix)] != prefix:
+    # The prefix with the model and effort it names, each of which must be on its list (`prefix` refuses the rest).
+    at = 1 + PREFIX.index("--model")  # after the CLI's path: --model <model> --effort <effort>
+    fixed = None
+    if len(args) > at + 3 and args[at] == "--model" and args[at + 2] == "--effort":
+        fixed = [cli_path(), *prefix(args[at + 1], args[at + 3])]
+    if fixed is None or args[:len(fixed)] != fixed:
         raise Refused("argv: not the fixed prefix")
-    rest = args[len(prefix):]
+    rest = args[len(fixed):]
     if not rest or not SETTINGS_PATH.fullmatch(rest[0]):
         raise Refused(f"argv: the settings file is not in {SETTINGS_DIR}/*.json")
     seen: set[str] = set()

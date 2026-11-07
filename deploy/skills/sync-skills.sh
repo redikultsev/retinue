@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# On the Mac: the owner's skills, as his Claude Code there has them, put together into one folder for the server —
+# On the owner's computer: the owner's skills, as his Claude Code there has them, put together into one folder for the server —
 #   - his own, each folder of ~/.claude/skills (a linked one as its files), under its own name;
 #   - each enabled plugin's (settings.json `enabledPlugins`, plugins/installed_plugins.json), under the plugin's name
 #     as a prefix (`acme-skills` → `acme-tdd`): the lanes load the folder as one plugin, so two skills of
@@ -15,9 +15,11 @@
 #   bash deploy/skills/sync-skills.sh <ssh-host>    # and send and install
 #
 # Where things are (defaults in brackets):
-#   CLAUDE_CONFIG_DIR       Claude Code's folder on the Mac [~/.claude]
-#   RETINUE_DESKTOP_SKILLS  the desktop app's skills
-#                           [~/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin]
+#   CLAUDE_CONFIG_DIR       Claude Code's folder on the owner's computer [~/.claude]
+#   RETINUE_DESKTOP_SKILLS  the desktop app's skills [macOS: ~/Library/Application Support/Claude/
+#                           local-agent-mode-sessions/skills-plugin]; on Windows and Linux the app keeps them in a
+#                           folder of its own data (on Windows under %LOCALAPPDATA%): name its
+#                           local-agent-mode-sessions/skills-plugin here, or the desktop app's skills are left out
 #   RETINUE_SKILLS_OUT      the folder to put them in [a new temporary one]; its skills/ is replaced
 #   RETINUE_SKILLS_EXCLUDE  names to leave out, space-separated (`anthropic-computer-use anthropic-morning`)
 #   RETINUE_REMOTE_SKILLS   the folder on the server they are sent to [retinue-skills, in the ssh user's home]

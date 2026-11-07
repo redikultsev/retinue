@@ -73,12 +73,12 @@ Every push, yours and the router's, with the same `kbcheck.py`:
 - only `main`, never deleted, never rewritten (`pull` first);
 - no symlinks or submodules;
 - nothing from `excluded`;
-- no two names that are one file on a Mac (`A.md` and `a.md`, `é` composed and decomposed);
+- no two names that are one file on a computer (`A.md` and `a.md`, `é` composed and decomposed);
 - a record keeps its `id` while it lives: deleting it, or making a new one, is fine; renaming it in place is not;
 - your base's lint passes on the new tree, run in a fresh private folder with Python told to keep the tree off its
   import path;
 - for the router's push (the containers' user, uid 10001) only: the paths of `policy.json` (case and Unicode
-  form do not matter, as on a Mac) and no name starting with a dot anywhere.
+  form do not matter, as on a computer) and no name starting with a dot anywhere.
 
 Who may write what in the hub: `objects/` and `refs/` belong to you and the group of uid 10001 (that is all a
 push writes; gc after a push is off). The hub's folder and `config` are yours and not the group's; `hooks/` is

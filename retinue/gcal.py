@@ -140,7 +140,7 @@ class Gcal:
             return ""
         if error == "invalid_grant":
             await self._tell(state, "dead", "Google no longer takes the key of your calendar «Retinue»: the plan does "
-                             "not reach Google. Sign in again on your Mac: deploy/mail/login.py --kind calwrite.")
+                             "not reach Google. Sign in again on your computer: deploy/mail/login.py --kind calwrite.")
         elif error == "calendar deleted":
             await self._gone(state)
         else:

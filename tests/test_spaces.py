@@ -111,7 +111,7 @@ def git(cwd, *args) -> str:
 
 def make_base(tmp_path, files: dict[str, str | bytes], links: dict[str, str] | None = None):
     """A synthetic Base committed on `main`; the reader gets only its repository."""
-    work = tmp_path / "mac"
+    work = tmp_path / "computer"
     work.mkdir()
     git(work, "init", "-q", "-b", "main")
     for path, content in files.items():

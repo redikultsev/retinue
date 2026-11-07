@@ -817,7 +817,7 @@ def test_the_health_line_tells_how_old_the_backup_is(tmp_path):
 
     assert health(), "no file: the host never ran a backup"
     restore = status.parent / "restore.json"
-    assert "mac.sh" in health(ok=True, finished=now - 600)
+    assert "care.sh" in health(ok=True, finished=now - 600)
     restore.write_text(json.dumps({"checked": now - 40 * 86400}))
     assert "40 d" in health(ok=True, finished=now - 600)
     restore.write_text(json.dumps({"checked": now - 3 * 86400}))

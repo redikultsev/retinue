@@ -2,7 +2,7 @@
 
 Besides the reminders you set, the router writes to you on its own: the morning summary (09:00), the weekly review
 (Sunday 18:00), the evening list of her commits and her changes to your collections (21:00), and what this page covers — the time zone that follows you,
-deadlines from your knowledge base, the week's numbers of your collections, a Mac that has not pushed, and the assistant
+deadlines from your knowledge base, the week's numbers of your collections, a computer that has not pushed, and the assistant
 speaking first now and then. All of it lives in `retinue/proactive.py`; every state is in the router's SQLite.
 
 ## The voice
@@ -156,10 +156,10 @@ files — one line each, the first three Records named and the rest counted, not
 
 Once a week, not every morning: the same list each day would be read by nobody.
 
-## «Mac has not pushed for N days»
+## «The computer has not pushed for N days»
 
 The summary says so when the hub's last commit not made by the router (`memory.author`) is more than 3 days old.
-Merges count: a pull-and-push from the Mac is a push. It is the commit's own time, so a commit made days before its
+Merges count: a pull-and-push from the owner's computer is a push. It is the commit's own time, so a commit made days before its
 push reads as old.
 
 ## The heartbeat and the initiative knob

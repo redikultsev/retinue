@@ -587,7 +587,7 @@ class Outbox:
     def _why(self, draft: dict, error: str) -> str:
         if error == "invalid_grant":
             account = draft["envelope"]["account"]
-            return ("Google does not let it send (usually after a password change). Log in again on the Mac, in the retinue folder:\n"
+            return ("Google does not let it send (usually after a password change). Log in again on the owner's computer, in the retinue folder:\n"
                     f"`uv run deploy/mail/login.py --account {account} --kind send`")
         if error == "window":
             return "the Telegram window closed (more than a day since their message): reply yourself."

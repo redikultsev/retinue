@@ -18,6 +18,8 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 - The left column is the Base's tree: its Spaces on top, every sub-project inside, folded until you open it. No
   state filter and no numbers: what waits is the amber dot; «Archived» is the last row. The Spaces page shows each
   Space by its mark and name.
+- «Pages» says why it is empty: the pages service is not set up, has not sent its list, is late, or has no page
+  published yet — each with the next step.
 - The sessions you run on your own computer show in the list too, under their projects, with whether they are at work
   or waiting for you.
 - «Settings» in the app, behind the gear: your Claude subscription, ElevenLabs, the Telegram bots, the repositories'

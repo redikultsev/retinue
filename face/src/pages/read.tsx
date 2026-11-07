@@ -14,6 +14,7 @@ import {
   type Library,
   type LibraryPage,
   libraryApi,
+  libraryState,
   safeUrl,
   sections,
   useLibrary,
@@ -21,6 +22,28 @@ import {
 import { openInTelegram } from "@/lib/telegram";
 import { toast } from "@/lib/toast";
 import { cn, LIST } from "@/lib/utils";
+
+/** What an empty or late list says: which case it is and the next step (docs/pages.md). A late list with pages
+ * still shows them, under this line. */
+function ListNote({ library, now }: { library: Library; now: number }) {
+  const state = libraryState(library, now);
+  const where = library.origin.replace(/^https:\/\//, "");
+  const line =
+    state === "off"
+      ? "The pages service is not set up: «Pages» lists it once pages_origin is in platform.yaml (docs/pages.md, «Turn it on»)."
+      : state === "never"
+        ? `The pages service at ${where} has not sent its list yet. It sends it when it starts, then every hour.`
+        : state === "late"
+          ? `The pages service at ${where} last sent its list ${when(library.at ?? 0, now)}. It sends one every hour: it may be down.`
+          : state === "empty"
+            ? "No page is published yet. A page a session adds to the Base's pages shows up here (docs/pages.md, «Publishing a page»)."
+            : null;
+  return line ? (
+    <p data-testid="list-note" data-state={state} className="text-sm text-muted-foreground">
+      {line}
+    </p>
+  ) : null;
+}
 
 /** «42 min · updated 27 Oct · opened 14:05». */
 function details(page: LibraryPage, now: number): string {
@@ -140,13 +163,10 @@ export function ReadView({
             <p className="text-sm text-muted-foreground">Loading…</p>
           )
         ) : pages.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {library.at === null
-              ? "The list of pages has not come from the router yet."
-              : "No pages. A page shows up here once it is published (docs/pages.md)."}
-          </p>
+          <ListNote library={library} now={now} />
         ) : (
           <>
+            <ListNote library={library} now={now} />
             {going.length > 0 && (
               <section aria-label="Continue" className="flex flex-col gap-2">
                 <h2 className="text-[13px] font-medium">

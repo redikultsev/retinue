@@ -483,7 +483,13 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return res.end(file.body);
   }
   // «Pages»: synthetic pages on a made-up pages service; `open` and `done` kept in memory like the platform's table.
-  if (path === paths.library && method === "GET") return json(res, 200, { schema: 1, origin: MOCK_PAGES, at: now() - 120, pages: [...library.values()] });
+  // «Pages»' cases (docs/face.md «Pages»): MOCK_PAGES_OFF=1 not set up, MOCK_PAGES_DOWN=1 late, MOCK_PAGES_NONE=1 none published
+  if (path === paths.library && method === "GET") {
+    const env = process.env;
+    if (env.MOCK_PAGES_OFF === "1") return json(res, 200, { schema: 1, origin: "", at: null, pages: [] });
+    if (env.MOCK_PAGES_NONE === "1") return json(res, 200, { schema: 1, origin: MOCK_PAGES, at: now() - 120, pages: [] });
+    return json(res, 200, { schema: 1, origin: MOCK_PAGES, at: now() - (env.MOCK_PAGES_DOWN === "1" ? 5 * 3600 : 120), pages: [...library.values()] });
+  }
   const reading = /^\/api\/library\/([a-z0-9-]+)\/(open|done)$/.exec(path);
   if (reading && method === "POST") {
     const page = library.get(reading[1] ?? "");

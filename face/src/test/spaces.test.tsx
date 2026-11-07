@@ -167,10 +167,15 @@ describe("SpacePage", () => {
     const yours = within(screen.getByRole("list", { name: "Yours" }));
     expect(yours.getAllByRole("listitem").map((li) => li.querySelector("button")?.textContent)).toEqual(["Discuss", "Plan"]);
     expect(yours.getByRole("link", { name: "transit" }).getAttribute("href")).toBe("/spaces/travel/r/knowledge/transit.md");
+    // the sub-project's session counts in its row once the page has learned the sub-project, a render after the read
+    await waitFor(() =>
+      expect(within(screen.getByRole("list", { name: "Sessions" })).getByRole("link", { name: /Lisbon in May/ }).textContent).toContain(
+        "sub-project · 1 session · 1 question",
+      ),
+    );
     const listed = within(screen.getByRole("list", { name: "Sessions" }));
     expect(listed.getByRole("link", { name: /Tickets for June/ })).toBeTruthy();
     expect(listed.getByRole("link", { name: /Lisbon in May/ }).getAttribute("href")).toBe("/spaces/travel/p/lisbon");
-    expect(listed.getByRole("link", { name: /Lisbon in May/ }).textContent).toContain("sub-project · 1 session · 1 question");
     expect(screen.queryByText("Quarterly report")).toBeNull();
     expect(screen.queryByText("A flat in the old town"), "a sub-project's session is on its own page").toBeNull();
     expect(screen.getByText("Deadlines")).toBeTruthy();

@@ -3,6 +3,7 @@
 // «working» or «done», its title and one line: what it needs, or its plan's step with a thin bar. A press on a tile
 // opens its card — the operator's own, with its answer and the microphone — in a pane beside the map, which stays put;
 // on a phone the card is a sheet over it. The arrows go from tile to tile, Enter opens, Esc closes.
+import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Layers, SphereMark } from "@/components/icons";
 import { OperatorCard, useOperatorNumbers } from "@/components/operator";
@@ -128,7 +129,11 @@ function SessionCard({ s, tile }: { s: Session; tile: Tile }) {
   return (
     <article aria-label={s.title || s.track} className="flex flex-col gap-3">
       <Crumb session={s.id}>{WORDS[tile.state]}</Crumb>
-      <h2 className="text-[15px] font-medium text-balance">{s.title || s.track}</h2>
+      <h2 className="text-[15px] font-medium text-balance">
+        <Link to="/s/$id" params={{ id: s.id }} className="underline-offset-4 hover:underline">
+          {s.title || s.track}
+        </Link>
+      </h2>
       {tile.line && <p className="text-sm text-muted-foreground">{tile.line}</p>}
       <Reply session={s.id} placeholder={tile.state === "working" ? "Write to it while it works" : "Reply to go on with it"} />
     </article>

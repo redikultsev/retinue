@@ -3,6 +3,7 @@
 // proposal, a push). A card that waits has a short number of its own. The order holds while he reads: a new card is
 // counted at the top, one answered or gone stays in its place, dimmed, until he lays the list out again. No key
 // answers a card here: one press would reach them all.
+import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef } from "react";
 import { ApprovalCard } from "@/components/approval-card";
 import { CollectionProposalCard } from "@/components/collection-proposal-card";
@@ -104,7 +105,14 @@ export function OperatorCard({ row, n, spheres, now, off = false }: { row: FeedR
       <Crumb session={row.session}>
         {n !== undefined && <span className="mr-1.5 font-mono font-medium text-foreground tabular-nums">#{n}</span>}
         {row.project ? `${projectTitle(row.project, spheres)} · ` : ""}
-        {row.title}
+        {/* the title is the way into the session's own screen, where the whole conversation goes on */}
+        {row.session && !row.computer ? (
+          <Link to="/s/$id" params={{ id: row.session }} className="text-foreground underline-offset-4 hover:underline">
+            {row.title}
+          </Link>
+        ) : (
+          row.title
+        )}
         {row.computer ? ` · on ${row.computer.device}` : ""} · {verbOf(row)} · {off ? "answered or gone" : waited(row.since, now)}
       </Crumb>
       <Body row={row} />

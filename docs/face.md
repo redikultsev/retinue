@@ -468,8 +468,9 @@ J / K or the arrows go down and up the list, E marks her row done — never whil
 `lib/operator.ts`), as cards or as [the map](#the-map) — «Cards · Map», the pick kept on the device, the same switch a
 project's «Operator» tab has. «Today» is the inbox by action alone. Only the sessions' requests,
 one card each in the feed's order — what waits first, a finished turn last — answered from the card without opening
-the session. A card's top line: its number while it waits («#3»), the project, the session, what it wants, how long,
-«Open the session ↗». A session whose turn ended with a word for you (`ending` on its feed row — the shape of the
+the session. A card's top line: its number while it waits («#3»), the project, the session — its title opens the
+session's own screen, the whole conversation —, what it wants, how long, «Open the session ↗». The map's card for a
+session with no request has its title as that way in too. A session whose turn ended with a word for you (`ending` on its feed row — the shape of the
 platform's `turn_ending`) is drawn by it, «You asked: …» — your request in your words — first:
 
 - **ask**: what was found and what the advice rests on; the options as buttons, each with what it changes, the advice

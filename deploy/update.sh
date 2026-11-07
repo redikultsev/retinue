@@ -4,12 +4,14 @@
 #
 #   sudo RETINUE_IMAGE=ghcr.io/acme/retinue bash deploy/update.sh v1.2.0   # RETINUE_IMAGE once; stack.env keeps it
 #
+# Or to a commit of develop, sha-<12 hex>, whose images CI built the same way (deploy/deploy.sh runs this for it).
+#
 # The version running is RETINUE_VERSION in stack.env: compose reads it and hands it to the router and the platform.
 set -euo pipefail
 
 TAG=${1:-}
-if [[ $# != 1 || ! $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "usage: update.sh vX.Y.Z — a release tag" >&2
+if [[ $# != 1 || ! $TAG =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{12})$ ]]; then
+  echo "usage: update.sh vX.Y.Z — a release tag, or sha-<12 hex>, a commit of develop CI built" >&2
   exit 2
 fi
 

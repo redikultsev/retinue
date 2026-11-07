@@ -151,6 +151,32 @@ is not, it puts the snapshot back and starts the version before. The compose fil
 changes `deploy/compose.yml` or `setup.sh`, check out the tag and run `setup.sh` first. Under Dokploy, set the two
 lines in *Environment* and redeploy: no snapshot, no way back.
 
+## Following develop
+
+A server can follow `develop` instead of releases: each push there that CI passes is on it minutes later, with no one
+on the server. CI builds the commit's images once, as a release's (`release.yml`, both architectures), and pushes
+them as `ghcr.io/<owner>/retinue*:sha-<12 hex>`; its last job, `deploy` in `.github/workflows/ci.yml`, logs in over
+ssh with a key that can do one thing, run `deploy/deploy.sh` with the commit's sha. Nothing is built on the server:
+it checks the commit out (its compose file names its images) and switches to them with `update.sh` — the steps of
+«Updating», snapshot and way back included. Not healthy: the data, `stack.env` and the checkout go back to the commit
+before. The last ten snapshots are kept. The registry's packages are public, as the repository is; for a private one,
+log the server in as in «Updating».
+
+To turn it on, once:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C retinue-deploy -f deploy-key          # on your computer
+# on the server, a line of /root/.ssh/authorized_keys:
+command="/usr/bin/bash /opt/retinue/deploy/deploy.sh",restrict ssh-ed25519 AAAA… retinue-deploy
+# in the repository: Settings → Environments → `server` (deployment branches: develop), its secrets
+#   DEPLOY_KEY          the private key, deploy-key
+#   DEPLOY_HOST         the server's address
+#   DEPLOY_KNOWN_HOSTS  ssh-keyscan -t ed25519 <address>
+```
+
+Without the environment's secrets the job says so and stops; a fork never has them. A deploy by hand is the same
+command: `sudo bash deploy/deploy.sh <sha>`.
+
 ## Hosts the proxy lets through
 
 `/srv/retinue/egress/allowed-hosts.txt` starts with one line, `api.anthropic.com`. If a run fails and the proxy

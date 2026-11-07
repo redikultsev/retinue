@@ -37,7 +37,9 @@ SERVICES = ["assistant", "egress", "router"]
 schema = Path(os.environ["RETINUE_VOLUME_ROOT"]) / "retinue_router-data" / "_data" / "schema.txt"
 
 
-def semver(tag):
+def semver(tag):   # a commit of develop, sha-…: after every release, in the order FAKE_SHAS lists them
+    if tag.startswith("sha-"):
+        return (999, 0, os.environ.get("FAKE_SHAS", "").split(",").index(tag))
     return tuple(int(part) for part in tag.lstrip("v").split("."))
 
 
@@ -187,12 +189,16 @@ def workflow_steps(workflow: dict) -> list[dict]:
 def test_the_release_workflow_parses_and_pins_every_action_by_commit():
     workflow = yaml.safe_load(RELEASE.read_text())
     trigger = workflow.get("on", workflow.get(True))  # YAML 1.1 reads a bare `on` as true
-    assert trigger == {"push": {"tags": ["v*.*.*"]}}, "a release is a tag, nothing else"
+    assert trigger["push"] == {"tags": ["v*.*.*"]}, "a release is a tag"
+    assert trigger["workflow_call"]["inputs"] == {"commit": {
+        "description": "the commit of develop to build; its images are tagged sha-<its first 12 hex>",
+        "type": "string", "required": True}}, "or a commit of develop, when CI calls it (tests/test_follow_develop.py)"
     assert workflow["permissions"] == {"contents": "read", "packages": "write"}
     assert all("permissions" not in job for job in workflow["jobs"].values()), "no job widens them"
     for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
         for line in path.read_text().splitlines():
-            if re.match(r"\s*(- )?uses:", line):
+            if re.match(r"\s*(- )?uses:", line) and not re.fullmatch(r"\s*uses: \./\.github/workflows/[\w-]+\.yml", line):
+                # a workflow of this repository's own is its commit already: nothing to pin
                 assert re.fullmatch(r"\s*(- )?uses: [\w.-]+/[\w./-]+@[0-9a-f]{40} # v\d+(\.\d+){0,2}", line), \
                     f"{path.name}: an action pinned by commit, its release in a comment: {line.strip()}"
     text = RELEASE.read_text()

@@ -55,7 +55,7 @@ export function OperatorCount({ className }: { className?: string }) {
   const count = useOperatorCount();
   if (count === 0) return null;
   return (
-    <Badge variant="warning" className={className} aria-label={`${count} waiting`}>
+    <Badge variant="warning" className={className} aria-label={`Operator: ${count} waiting`}>
       {count}
     </Badge>
   );

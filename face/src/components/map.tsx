@@ -171,7 +171,7 @@ export function MapView({
   const pickedTile = open ? tiles.get(open) : undefined;
 
   // working sessions' plans: their snapshot read once, then the stream keeps them
-  const busy = sessions.filter((s) => s.state === "active").map((s) => s.id).slice(0, 8).join(",");
+  const busy = sessions.filter((s) => s.state === "active" && !isComputer(s)).map((s) => s.id).slice(0, 8).join(","); // a computer's is not in the room
   useEffect(() => {
     for (const id of busy.split(",").filter(Boolean)) if (!(id in live.getState().floors) && !live.isWatched(id)) live.watch(id).catch(() => undefined);
   }, [busy]);

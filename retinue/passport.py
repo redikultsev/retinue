@@ -26,7 +26,8 @@ DEPTH = 8                                         # folders of a project's path 
 class Part:
     """One `##` section of a passport. `form`: `paragraph` (prose, one paragraph), `items` (a list, one thought per
     item) or `files` (``- `path` — what it holds, when to read it``). `keys`: an item starts with `Key:`, each key
-    with its (least, most) count. `marked`: every item (a paragraph: the text) carries a source mark."""
+    with its (least, most) count. `marked`: every item (a paragraph: the text) carries a source mark. `aliases`:
+    other headings read as this part."""
     name: str
     required: bool
     form: str
@@ -35,15 +36,16 @@ class Part:
     chars: int = 300                              # a paragraph's or an item's length, in characters
     keys: tuple[tuple[str, int, int], ...] = ()
     marked: bool = False
+    aliases: tuple[str, ...] = ()
 
 
 SCHEMA = {
     "bytes": 5 * 1024,          # the whole passport: a root-to-project chain of six stays under Codex's 32 KiB
     "title": 80,                # characters of the `# title`
-    "head": ("id", "icon", "code"),                 # the head's keys (#21, #22)
+    "head": ("id", "status", "icon", "code", "memory"),   # the head's keys (#21, #22, #49)
     "imports": 3,               # `@path` lines under the title (Claude Code loads them)
     "parts": (
-        Part("Why", True, "paragraph", chars=800, marked=True),
+        Part("Why", True, "paragraph", chars=800, marked=True, aliases=("Зачем",)),   # #50 reads both
         Part("Scope", True, "items", least=1, most=8, keys=(("In", 0, 3), ("Out", 1, 3), ("Size", 0, 1),
                                                            ("Ceiling", 0, 1)), marked=True),
         Part("Files", True, "files", least=1, most=20, chars=240),
@@ -274,8 +276,10 @@ def parse(text: str, exists=None) -> Passport:
         out.problems.append(Problem("count", "imports", say=f"{len(out.imports)} imports, {SCHEMA['imports']} at most"))
     parts = {part.name: part for part in SCHEMA["parts"]}
     order = [part.name for part in SCHEMA["parts"]]
+    alias = {name: part.name for part in SCHEMA["parts"] for name in part.aliases}
     seen: list[str] = []
     for heading, body in sections:
+        heading = alias.get(heading, heading)
         if heading not in parts:
             out.problems.append(Problem("unknown", heading, heading, f"«{heading}» is no part of a passport: "
                                                                      f"{', '.join(order)}"))

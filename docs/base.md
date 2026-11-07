@@ -349,10 +349,10 @@ order, and nothing else:
 
 | Part | | What it holds | Limits |
 | --- | --- | --- | --- |
-| head | optional | `id`, `icon`, `code` between `---` lines (#21) | those keys only |
+| head | optional | `id`, `status`, `icon`, `code`, `memory` between `---` lines (#21, #22, #49) | those keys only |
 | `# <title>` | required | the project's name | 80 characters |
 | `@path` lines | optional | files Claude Code loads with the passport | 3; each path is in the project |
-| `## Why` | required | one paragraph: what the project is for and how we know it worked | 800 characters; a mark |
+| `## Why` (or `## Зачем`, #50) | required | one paragraph: what the project is for and how we know it worked | 800 characters; a mark |
 | `## Scope` | required | `- In: …`, `- Out: … → where it goes instead`, `- Size: …`, ``- Ceiling: `page` `` | In 0–3, Out 1–3, Size 0–1, Ceiling 0–1; each ends with a mark |
 | `## Files` | required | ``- `path` — what it holds; when to read it`` | 1–20; each path is in the project |
 | `## Rules` | optional | one rule an item, imperative | 1–12, 300 characters each |

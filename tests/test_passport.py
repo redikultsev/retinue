@@ -144,8 +144,13 @@ def test_the_limits_hold_a_passport_to_a_screen_or_two():
     assert ("long", "title") in codes(GOOD.replace("# Garden", "# " + "G" * 81))
 
 
+def test_why_may_be_headed_in_russian_as_the_project_skeleton_reads_it():
+    assert codes(GOOD.replace("## Why", "## Зачем")) == set()
+
+
 def test_the_head_holds_only_the_keys_the_schema_names():
     assert codes("---\nid: garden-7f3a\n# a comment\ncode: [example.org/acme/garden]\n---\n" + GOOD) == set()
+    assert codes("---\nid: garden-7f3a\nstatus: archived\nicon: \"🌱\"\nmemory: off\n---\n" + GOOD) == set()
     assert ("head", "head") in codes("---\nid: garden\nowner: x\n---\n" + GOOD)
     assert ("head", "head") in codes("---\nid: garden\n" + GOOD)
 

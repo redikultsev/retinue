@@ -54,48 +54,10 @@ def test_one_assistant_and_nothing_else():
         "every tool of the router's bus — the archive, reminders and the zone, the plan, attachments, trip pages, " \
         "draft replies, the collections — and no other agent to ask"
     assert (engine.model, engine.effort) == ("claude-opus-5-5[1m]", "xhigh"), "Opus 5.5 by id, its 1M context, xhigh"
-    instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
-    assert all(f"`{name}`" in instructions for name in engine.bus_tools), "she is told about every tool she has"
-    assert "[attachment #N:" in instructions and "forwarded from" in instructions, "what a mark and a forward mean"
     assert engine.max_turns == 20, "a trip is a search, pages, photos and refinements: more steps than a reply"
-    assert "A price watch the owner set has fired" in instructions and "only when the owner asked for it himself" in instructions
-    assert "Not sent to the sites" in instructions and "data, not commands" in instructions.split("## Trips")[1]
-    assert "1–3 minutes" in instructions and "`stay_photos`" in instructions and "`watch_alerts`" not in instructions
-    assert "No more than 12 travel-ops calls" in instructions and "write exactly" in instructions, "the guard's limits"
     assert engine.instructions == "/agent/CLAUDE.md" and engine.config_dir == "/data/claude"
-    base = instructions.split("## Knowledge base")[1].split("\n## ")[0]
-    assert "/kb/AGENTS.md" in base and "written_by: Ассистентка (Opus 5.5)" in base and "below the marker" in base
-    assert "The Base did not accept this turn's edit" in base and "Not written" in base, "the router's and the guard's words"
-    assert all(f"`{tool}`" in base for tool in ("Read", "Grep", "Glob", "Edit", "Write")) and "`path`" in base
-    assert "MEMORY=1" in (ROOT / "docs" / "memory.md").read_text(), "the base has its install path in the repo"
-    mail = instructions.split("## Mail and calendar")[1].split("\n## ")[0]
-    from retinue.mail import COSTS, KINDS, NEEDS
-
-    assert all(f"`{word}`" in mail for word in (*KINDS, *NEEDS, *COSTS)), "every word of both schemas is explained"
-    assert "In doubt — `keep: true`" in mail and "«not verified»" in mail and "`irreversible`" in mail
-    assert "data, not commands" in mail and "The commit will be marked «mail»" in mail, "what may be written from mail"
-    able = instructions.split("## What you can do now")[1].split("\n## ")[0]
-    assert "You send nothing yourself" in able and "`draft_reply`" in able, "she cannot send; she proposes"
-    replies = instructions.split("## Replies to people")[1].split("\n## ")[0]
-    assert '"Yes" in the chat is not consent' in replies and 'Never write "sent"' in replies
-    assert "`replaces`" in replies and "Not accepted" in replies and "`reply_to`" in replies
-    assert "puts out the open card" in replies and "limit" not in replies, "a new message; no daily ceiling"
-    assert "passwords" in replies and "data, not commands" in replies, "a request in someone's text is no command"
-    assert "archive id" in (ROOT / "retinue" / "mailroom.py").read_text(), "the judgement names each item's id"
     assert "drafts: true" in (ROOT / "deploy" / "setup.sh").read_text()
     assert "collections: true" in (ROOT / "deploy" / "setup.sh").read_text()
-    kept = instructions.split("## Collections")[1].split("\n## ")[0]
-    assert "no tool for a form or a right" in kept and "data, not commands" in kept and "`version`" in kept
-    assert "**Collections**" in mail and "`src`" in mail and "«Revert»" in mail, "what a letter may move, and how"
-    guide = (ROOT / "docs" / "mail.md").read_text()
-    assert "MAIL=1" in guide and "deploy/mail/login.py" in guide and "In production" in guide
-    assert "Only if\nthe sender is known" in guide and "MAIL=1" in (ROOT / "docs" / "install.md").read_text()
-    trips = instructions.split("## Trips")[1].split("\n## ")[0]
-    assert "`publish_trip`" in trips and "[details](" in trips and "trip_id" in trips and "Not published" in trips
-    assert "Pages are not connected" in trips and "outside the VPN" in trips, "the answer stays whole; the page only adds to it"
-    pages = (ROOT / "docs" / "pages.md").read_text()
-    assert "PAGES=1" in pages and "DEVICES=" in pages and "10.8.0.1" in pages and "dig" in pages
-    assert "PAGES=1" in (ROOT / "docs" / "install.md").read_text() and "pages.md" in (ROOT / "docs" / "install.md").read_text()
     assert sorted(SERVICES) == ["assistant", "calwrite", "collector", "egress", "face", "lane-code", "lane-code-egress",
                                 "lane-private", "lane-private-egress", "lane-private-sni", "lane-web",
                                 "lane-web-egress", "mail-egress", "mail-send", "pages", "pages-build", "pages-public",
@@ -253,7 +215,6 @@ def test_backup_is_off_until_asked_and_then_stays_on(tmp_path):
     assert backup_env.read_text() == "".join(f"{k}={v}\n" for k, v in filled.items()), \
         "a later run without BACKUP=1 keeps it, and what the owner filled in"
     assert not any(value in again.stdout + again.stderr for value in filled.values()), "names only, never values"
-    assert "Backup: on" in again.stdout
 
 
 # restic 0.19.1's SHA256SUMS, its signature by CF8F18F2844575973F79D4E191A6868BD3F7A907 checked (gpg --verify).
@@ -282,7 +243,7 @@ def test_restic_is_fetched_for_the_hosts_architecture_and_checked_against_its_pi
     run = install_restic(tmp_path, machine,
                          curl='echo "$@" >> "$LOG.curl"; while (( $# )); do [[ $1 == -o ]] && : > "$2"; shift; done',
                          sha256sum='cat >> "$LOG.sha"; exit 1')
-    assert run.returncode == 1 and "is not the pinned file" in run.stderr, "a file failing its check is not installed"
+    assert run.returncode == 1, "a file failing its check is not installed"
     assert "/usr/local/bin/restic" not in run.stderr, "refused before `install`, even with errexit off"
     [url] = [arg for arg in (tmp_path / "log.curl").read_text().split() if arg.startswith("https://")]
     assert url == f"https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_{arch}.bz2"
@@ -317,7 +278,8 @@ def test_settings_units_run_root_s_writer_on_a_request_and_may_write_only_retinu
     assert "DirectoryNotEmpty=/srv/retinue/settings/inbox" in path and "Unit=retinue-settings.service" in path
     for watched in ("stack.env", "code/tokens.env", "egress/project-keys.env", "platform/platform.yaml"):
         assert f"PathChanged=/srv/retinue/{watched}" in path, "a change by hand shows in the app as well"
-    assert "status" not in path.split("[Path]")[1], "its own status never runs it again"
+    watched = [line for line in path.splitlines() if line.startswith(("PathChanged=", "DirectoryNotEmpty="))]
+    assert not any("/settings/status" in line for line in watched), "the file it writes back never runs it again"
     service = (ROOT / "deploy" / "settings" / "retinue-settings.service").read_text()
     assert "Type=oneshot" in service
     assert "ExecStart=/usr/bin/python3 /usr/local/lib/retinue/retinue-settings.py" in service
@@ -348,7 +310,6 @@ def test_health_units_look_every_two_minutes_and_may_write_only_the_status_folde
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     assert RouterConfig.load(target / "router.yaml").health_status == "/status/health.json"
     assert "Watch(cfg.health_status, store.db)" in (ROOT / "retinue" / "router.py").read_text()
-    assert "retinue-health" in (ROOT / "docs" / "health.md").read_text()
 
 
 def test_router_reads_the_backup_status_read_only(tmp_path, monkeypatch):
@@ -364,11 +325,7 @@ def test_install_names_every_key_the_owner_pastes():
     import re
 
     asked = re.findall(r"^\[?.*fill (\w+) ", (ROOT / "deploy" / "setup.sh").read_text(), re.M)
-    guides = "".join(page.read_text() for page in (ROOT / "docs").glob("*.md"))
     assert {"CLAUDE_CODE_OAUTH_TOKEN", "TELEGRAM_BOT_TOKEN", "ELEVENLABS_API_KEY"} <= set(asked)
-    assert [name for name in asked if name not in guides] == [], "the guides say where each one comes from"
-    assert "tests/e2e/multimodal.py" in (ROOT / "docs" / "install.md").read_text(), "the probe runs before files"
-    assert "TRAVEL=1" in (ROOT / "docs" / "install.md").read_text() and "profile.yml" in guides, "how travel is on"
 
 
 def test_travel_ops_is_a_neighbour_of_the_assistant_and_the_only_one_with_a_way_out():
@@ -754,7 +711,7 @@ def test_setup_with_pages(tmp_path, monkeypatch):
     assert wrong.returncode == 1 and "PAGES_HOST" in wrong.stderr
     hidden = run(tmp_path / "srv", PAGES="1", PAGES_HOST="pages.in.example.com", DEVICES="10.8.0.2/32",
                  PAGES_PUBLIC_HOSTS="notes.in.example.com")
-    assert hidden.returncode == 1 and "behind the VPN" in hidden.stderr, "a public site is never an .in name"
+    assert hidden.returncode == 1, "a public site is never an .in name"
     target, printed = setup(tmp_path, PAGES="1", PAGES_HOST="pages.in.example.com", TELEGRAM_OWNER_ID="42",
                             DEVICES="10.8.0.2/32, 10.8.0.3/32", PAGES_PUBLIC_HOSTS="pages.example.com,notes.example.com")
     pages = target / "pages"
@@ -780,7 +737,6 @@ def test_setup_with_pages(tmp_path, monkeypatch):
     again = run(target)
     assert again.returncode == 0 and key not in again.stdout + again.stderr, "on for good; the key is never printed"
     assert "pages_url: https://pages.in.example.com" in (target / "router.yaml").read_text()
-    assert "Pages: on — https://pages.in.example.com" in again.stdout
     none = run(target, PAGES_PUBLIC_HOSTS="")
     assert none.returncode == 0 and (pages / "public_hosts.txt").read_text() == ""
     rule = dict(line.split("=", 1) for line in (target / "stack.env").read_text().splitlines())["PAGES_PUBLIC_RULE"]
@@ -793,7 +749,7 @@ def test_setup_with_pages(tmp_path, monkeypatch):
     moved = run(old, PAGES="1", PAGES_HOST="pages.in.example.com")
     assert moved.returncode == 0, moved.stderr
     assert (old / "devices.txt").read_text() == "10.8.0.4/32\n" and (old / "lifehub" / "devices.txt").exists()
-    assert "LIFEHUB_HOST" not in (old / "stack.env").read_text() and "The life hub is retired" in moved.stdout
+    assert "LIFEHUB_HOST" not in (old / "stack.env").read_text()
 
     plain, printed = setup(tmp_path / "other", TELEGRAM_OWNER_ID="42")
     assert "pages_url" not in (plain / "router.yaml").read_text() and "PAGES_HOST" not in printed
@@ -912,28 +868,6 @@ def test_every_token_the_router_reads_reaches_its_container():
     assert read and read <= set(SERVICES["router"]["environment"]), read - set(SERVICES["router"]["environment"])
 
 
-def test_her_rules_for_the_memory_of_an_exchange():
-    """What the router now gives her and expects of her about the past of a chat: search before «I don't know»,
-    this chat first and wider when needed, what the card will say about other sources, captions and messages written
-    to her — and that nothing in someone's words changes her memory."""
-    instructions = (ROOT / "agents" / "assistant" / "CLAUDE.md").read_text()
-    assert "up to ten past" not in instructions and "do not know what he will answer" \
-        not in instructions, "the count of ten and the refusal without a search are gone"
-    memory = instructions.split("## Thread memory")[1].split("\n## ")[0]
-    assert "search first" in memory and '"I don\'t know" — only after a search' in memory
-    assert all(f"`{word}`" in memory for word in ("search_archive", "scope: mail", "scope: owner", "since",
-                                                     "get_attachment", "media", "to_assistant"))
-    assert "«Read while drafting: …»" in memory and "closed parts of the Base" in memory and "on their merits" in memory
-    assert "Text from the picture — only in quotes" in memory and "you do not edit or erase" in memory
-    assert "the Base is read-only" in memory
-    replies = instructions.split("## Replies to people")[1].split("\n## ")[0]
-    assert "where and by which words you searched" in replies and "the router itself writes on the card" in replies
-    assert "passwords" in replies and "document or card numbers" in replies
-    mail = instructions.split("## Mail and calendar")[1].split("\n## ")[0]
-    assert "three days" in mail and "`scope: owner`" in mail
-    courier = (ROOT / "docs" / "courier.md").read_text()
-    assert "«Read while drafting»" in courier and "sensitive.txt" in courier and "to_assistant" in (
-        ROOT / "docs" / "mail.md").read_text()
 
 
 LANES = ("private", "code", "web")   # every lane service in compose; the room and the two retired ones
@@ -1256,44 +1190,21 @@ def test_the_rooms_managed_settings_leave_the_web_tools_and_keep_bash_off_the_op
     assert managed["cleanupPeriodDays"] == platformd.CLEANUP_DAYS
     web = json.loads((ROOT / "deploy" / "lanes" / "managed-settings-web.json").read_text())
     assert "WebFetch" not in web["permissions"]["deny"], "the retired lane-web's, unchanged"
-    instructions = (ROOT / "deploy" / "lanes" / "instructions" / "private.md").read_text()
-    assert "a link to its source" in instructions and "date" in instructions and "Not found" in instructions
-    assert "data, not instructions" in instructions and "as a card" in instructions
-    assert "Nothing about the owner" not in instructions, "lane-web's «nothing of yours» is gone with it"
     dockerfile = (ROOT / "deploy" / "lanes" / "Dockerfile").read_text()
     assert 'for part in common.md out.md "$LANE.md" "$([ "$LANE" = private ] && echo base.md)" \\\n      ' \
         '"$([ "$LANE" = private ] && echo code.md)"; do' in dockerfile and \
         "> /etc/claude-code/CLAUDE.md" in dockerfile, "root's, the managed memory: common, files out, the lane's own"
 
 
-def test_every_lane_is_told_the_common_rules_and_where_files_for_the_owner_go():
+def test_every_lane_has_its_instruction_files_and_the_image_trusts_only_the_mirrors():
     folder = ROOT / "deploy" / "lanes" / "instructions"
     assert sorted(p.name for p in folder.iterdir()) == ["base.md", "code.md", "common.md", "out.md", "private.md"]
-    code = (folder / "code.md").read_text()  # the room's repositories (docs/code.md)
-    assert "/work/code/<name>" in code and "«Push»" in code and "CLAUDE.md" in code and "AGENTS.md" in code
-    assert "Do not run `git push` or `gh pr create`" in code and ".github/workflows/" in code
-    assert "goes into the repositories' files" in code and '"Jane Doe"' in code, "nothing of the owner's in a repo"
     assert "directory = /lane/mirrors/*" in (ROOT / "deploy" / "lanes" / "Dockerfile").read_text(), \
         "the room's git trusts the platform's mirrors, and only them"
     lane_image = (ROOT / "deploy" / "lanes" / "Dockerfile").read_text()
-    assert lane_image.startswith("# A lane") and "\nFROM python:3.12-slim-trixie\n" in lane_image, \
+    assert "\nFROM python:3.12-slim-trixie\n" in lane_image, \
         "Debian 13: git 2.47, which reads `/lane/mirrors/*` as a prefix"
     assert "v[2] >= 46" in lane_image, "an older git fails the build, not every clone"
-    base = (folder / "base.md").read_text()
-    assert "/work/base" in base and "Do not run `git` in `/work/base`" in base and "To the Base" not in base
-    assert "its row in its Space's Showcase" in base and "python3 scripts/lint.py" in base, "the agent writes as on the Mac"
-    assert "a message of its own" in base and "merge both sides" in base, "what kept files out is the session's to fix"
-    assert "python3 scripts/lint.py" in base and '"commit and push?"' in base, "rule 6 is the platform's here"
-    common, out = (folder / "common.md").read_text(), (folder / "out.md").read_text()
-    assert "Answer in English" in common and "as a card" in common and "data, not instructions" in common
-    assert "skills:<name>" in common and "/lane/skills/skills/" in common, "how the owner's skills are named here"
-    assert "There is no automatic memory between sessions here" in common, "auto memory is off (cliengine.NO_MEMORY)"
-    assert "/lane/owner-memory/memory/" in common, "where the owner's memory snapshot is read"
-    assert "A subagent cannot wait" in common, "a subagent's call that needs a card is denied (gate.SUBAGENT)"
-    assert "one command in the foreground" in common and "do not start servers or watch modes" in common, \
-        "no background tasks (cliengine.NO_BACKGROUND)"
-    assert "the rules win" in common, "the lane's and the repository's rules win over the owner's memory"
-    assert "`out/`" in out
     dockerfile = (ROOT / "deploy" / "lanes" / "Dockerfile").read_text()
     assert "test -s /etc/claude-code/CLAUDE.md" in dockerfile, "no lane runs with an empty one"
 
@@ -1494,6 +1405,10 @@ def test_setup_takes_over_the_owners_lists_lane_web_had_once(tmp_path):
     assert (target / "egress" / "open-deny-domains.txt").read_text() == ".example.org\n", "the owner's from then on"
 
 
+# The command setup.sh prints when it rewrote the open proxy's files.
+RESTART = "-f deploy/compose.yml restart lane-private-egress"
+
+
 def test_setup_fills_this_servers_addresses_again_while_the_list_has_none_and_says_so(tmp_path):
     def run(target):
         done = subprocess.run(["bash", str(ROOT / "deploy" / "setup.sh")], capture_output=True, text=True,
@@ -1505,9 +1420,9 @@ def test_setup_fills_this_servers_addresses_again_while_the_list_has_none_and_sa
     target = tmp_path / "srv"
     printed = run(target)
     ips = target / "egress" / "open-deny-ips.txt"
-    assert "no address of this server" in printed and "write your own domains" in printed, "both lists are empty"
-    assert "restart lane-private-egress" in printed, "the files were written: the proxy reads them at its start"
-    assert "files changed" not in run(target), "the same files again: nothing to restart"
+    assert "egress/open-deny-ips.txt" in printed and "egress/open-deny-domains.txt" in printed, "both lists are empty"
+    assert RESTART in printed, "the files were written: the proxy reads them at its start"
+    assert RESTART not in run(target), "the same files again: nothing to restart"
     assert ips.read_text() == (ROOT / "deploy" / "egress" / "open-deny-ips.txt").read_text()
     ips.write_text("# the example's comments, cut short\n")
     run(target)
@@ -1516,9 +1431,9 @@ def test_setup_fills_this_servers_addresses_again_while_the_list_has_none_and_sa
     (target / "egress" / "open-deny-domains.txt").write_text(".example.com\n")
     printed = run(target)
     assert ips.read_text() == "203.0.113.7/32\n", "an entry: the owner's from then on"
-    assert "files changed" not in printed and "no address" not in printed and "your own domains" not in printed
+    assert RESTART not in printed and "open-deny-ips.txt" not in printed and "open-deny-domains.txt" not in printed
     (target / "egress" / "open-deny-domains.txt").write_text(".example.com\n.example.org\n")
-    assert "files changed" not in run(target), "an edit by hand is the owner's to restart for; setup changed nothing"
+    assert RESTART not in run(target), "an edit by hand is the owner's to restart for; setup changed nothing"
     assert not list((target / "egress").glob(".open-deny-ips.*")), "no temporary file left behind"
     setup_sh = (ROOT / "deploy" / "setup.sh").read_text()
     assert 'mv -f "$ips_tmp" "$ROOT/egress/open-deny-ips.txt"' in setup_sh, "written whole or not at all"
@@ -1641,8 +1556,6 @@ def test_face_nginx_serves_every_app_route_and_a_records_path_however_deep_the_r
 
 def test_face_nginx_serves_the_app_and_streams_the_events():
     nginx = (ROOT / "deploy" / "face" / "nginx.conf").read_text()
-    readme = (ROOT / "face" / "README.md").read_text()
-    assert f"Content-Security-Policy: {FACE_CSP}" in readme, "the policy the app was written for"
     csp = nginx.split("map $uri $face_csp {")[1].split("}")[0]
     frame = nginx.split("map $uri $face_frame_options {")[1].split("}")[0]
     assert f'default                     "{FACE_CSP}";' in csp and 'default                     "DENY";' in frame
@@ -1741,7 +1654,6 @@ def test_setup_with_face(tmp_path, monkeypatch):
     assert written["TELEGRAM_BOT_TOKEN"] == token, "kept"
     for value in (token, expected, key):
         assert value not in again.stdout + again.stderr, "never printed"
-    assert "Face: on — https://app.in.example.com" in again.stdout
     stack.write_text(stack.read_text().replace(token, '"999:other"'))
     run(target)
     written = dict(line.split("=", 1) for line in stack.read_text().splitlines() if "=" in line)
@@ -1775,11 +1687,6 @@ def test_setup_with_face(tmp_path, monkeypatch):
     assert "face" not in printed["COMPOSE_PROFILES"].split(",")
 
 
-def test_the_face_docs_say_how_to_turn_it_on_and_check_it():
-    doc = (ROOT / "docs" / "face.md").read_text()
-    for needle in ("FACE=1", "FACE_HOST=app.in.", "app.in.", "10.8.0.1", "Add to Home Screen", "/app",
-                   f"{FACE_IP}", "lane-private", "404", "frame-ancestors"):
-        assert needle in doc, needle
 
 
 def _bytes(size: str) -> int:

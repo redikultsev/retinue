@@ -78,7 +78,7 @@ def test_the_view_says_what_is_set_and_how_the_lanes_run_and_never_a_value(tmp_p
         assert lanes["private"]["model"] == cliengine.MODEL and lanes["code"]["effort"] == cliengine.EFFORT
         assert [m["id"] for m in view["models"]] == list(cliengine.MODELS)
         assert [e["id"] for e in view["efforts"]] == list(cliengine.EFFORTS)
-        assert view["done"]["a" * 32]["why"].startswith("The token was not written")
+        assert view["done"]["a" * 32] == status()["done"]["a" * 32], "the host's answer, as it wrote it"
 
     faced(tmp_path, body)
 
@@ -104,26 +104,26 @@ def test_a_key_is_dropped_once_for_root_and_never_answered_back(tmp_path):
     faced(tmp_path, body)
 
 
-@pytest.mark.parametrize("op, body, why", [
-    ("key", {"name": "RETINUE_BUS_SECRET", "value": "x" * 40}, "Settings does not set this key."),
-    ("key", {"name": "ELEVENLABS_API_KEY", "value": "short"}, settings.BAD_VALUE),
-    ("key", {"name": "ELEVENLABS_API_KEY", "value": VOICE + "\nRETINUE_BUS_SECRET=x"}, settings.BAD_VALUE),
-    ("key", {"name": "TELEGRAM_BOT_TOKEN", "value": "not-a-bot-token-at-all-0123456789"}, settings.BAD_VALUE),
-    ("key", {"name": "CLAUDE_CODE_OAUTH_TOKEN", "clear": True}, "This key cannot be removed: Retinue needs it."),
-    ("git", {"key": "../x", "value": "github_pat_x"}, "a-z, 0-9 and _"),
-    ("git", {"key": "you", "value": "has space"}, settings.BAD_VALUE),
-    ("project_key", {"name": "booking", "value": "x" * 20}, "A-Z, 0-9 and _"),
-    ("lane", {"lane": "nowhere", "model": "claude-opus-5-5"}, "There is no such lane."),
-    ("lane", {"lane": "code", "model": "claude-haiku-5-5"}, "Model is one of claude-opus-5-5[1m]"),
-    ("lane", {"lane": "code", "effort": "ultra"}, "Effort is one of low, medium, high, xhigh, max."),
-    ("lane", {"lane": "code"}, "Nothing to change."),
+@pytest.mark.parametrize("op, body", [
+    ("key", {"name": "RETINUE_BUS_SECRET", "value": "x" * 40}),
+    ("key", {"name": "ELEVENLABS_API_KEY", "value": "short"}),
+    ("key", {"name": "ELEVENLABS_API_KEY", "value": VOICE + "\nRETINUE_BUS_SECRET=x"}),
+    ("key", {"name": "TELEGRAM_BOT_TOKEN", "value": "not-a-bot-token-at-all-0123456789"}),
+    ("key", {"name": "CLAUDE_CODE_OAUTH_TOKEN", "clear": True}),
+    ("git", {"key": "../x", "value": "github_pat_x"}),
+    ("git", {"key": "you", "value": "has space"}),
+    ("project_key", {"name": "booking", "value": "x" * 20}),
+    ("lane", {"lane": "nowhere", "model": "claude-opus-5-5"}),
+    ("lane", {"lane": "code", "model": "claude-haiku-5-5"}),
+    ("lane", {"lane": "code", "effort": "ultra"}),
+    ("lane", {"lane": "code"}),
 ])
-def test_what_settings_does_not_take_is_refused_in_words_and_nothing_is_dropped(tmp_path, op, body, why):
+def test_what_settings_does_not_take_is_refused_and_nothing_is_dropped(tmp_path, op, body):
     async def go(world: FaceWorld):
         inbox, _ = wire(world, status())
         await world.login()
         code, answer, _ = await world.call("POST", f"/api/settings/{op}", body)
-        assert code == 400 and why in answer["error"]
+        assert code == 400 and answer["error"], "refused, with its reason for the app"
         assert list(inbox.iterdir()) == []
 
     faced(tmp_path, go)
@@ -136,7 +136,7 @@ def test_without_the_hosts_service_nothing_is_taken_and_the_view_says_so(tmp_pat
         view = await world.get("/api/settings")
         assert view["ready"] is False and all(k["set"] is False for k in view["keys"])
         code, answer, _ = await world.call("POST", "/api/settings/key", {"name": "ELEVENLABS_API_KEY", "value": VOICE})
-        assert code == 503 and "setup.sh" in answer["error"] and list(inbox.iterdir()) == []
+        assert code == 503 and answer["error"] and list(inbox.iterdir()) == []
         status_file.write_text(json.dumps(status(schema=2)))
         assert (await world.get("/api/settings"))["ready"] is False, "a status of another schema is not read"
 

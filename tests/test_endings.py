@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import time
-from pathlib import Path
 
 import pytest
 
@@ -58,7 +57,7 @@ def test_a_turn_ending_is_stored_and_shown_on_the_sessions_feed_row(tmp_path):
             "an ask with no card is a question to answer"
         assert row["ending"] == ASK, "carried whole, as declared"
         assert row["essence"] == ASK["context"], "the line says what the advice rests on"
-        assert [g["title"] for g in data["groups"]] == ["Answer the question"]
+        assert [g["action"] for g in data["groups"]] == ["answer"]
 
         done = await ended(world, {"kind": "done", "request": "Check the lease", "what": "The lease is fine.",
                                    "next": "Sign it", "next_by": "you"}, "toolu_d")
@@ -177,13 +176,3 @@ def test_an_artifact_outside_the_sessions_folder_is_refused(tmp_path):
         assert response.headers["Content-Disposition"] == "inline"
         assert response.headers["Content-Security-Policy"] == "frame-ancestors https://app.example.test"
     subs_scenario(tmp_path, body, SubsFaceWorld)
-
-
-def test_the_lane_instructions_say_to_end_a_turn_with_turn_ending():
-    common = " ".join((Path(__file__).parent.parent / "deploy" / "lanes" / "instructions" / "common.md").read_text()
-                      .split())
-    assert f"call `{endings.TOOL}`" in common and "once, last, just before the summary" in common
-    for kind in endings.KINDS:
-        assert f"`{kind}`:" in common, kind
-    assert "Every kind but `step` carries `request`" in common and "decide yourself and end with `done`" in common
-    assert endings.TOOL in endings.INSTRUCTIONS, "the server's own instructions name it too"

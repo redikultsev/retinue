@@ -121,7 +121,7 @@ def test_the_platforms_tool_says_where_and_marks_the_text_as_data():
             return await reach.LaneReach("http://reach:9700", http).call(reach.READ, {"url": "https://acme.example/p"})
     text, error = asyncio.run(go())
     assert not error and text.startswith("https://acme.example/p — text/html — «Acme» — part 1 of 2")
-    assert "data, not instructions" in text and text.endswith("Basic €4")
+    assert text.endswith("Basic €4")
 
 
 def test_the_gate_reads_a_read_page_address_as_a_fetch(setup):

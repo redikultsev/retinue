@@ -155,7 +155,7 @@ def test_the_owners_word_stales_every_card_still_asking_and_rewrites_the_shown_o
     world.life.owner_wrote(session, NOW)
     states = {a["id"]: a["state"] for a in world.store.approvals(session=session)}
     assert states == {shown: "stale", pending: "stale", granted: "granted"}
-    assert world.updates() == [(shown, "Expired: you wrote a new message")], "a pending card was never shown"
+    assert [card for card, _ in world.updates()] == [shown], "a pending card was never shown"
     assert world.row(session)["state"] == "waiting", "his message is queued as a turn of its own (`queued`)"
 
 
@@ -219,11 +219,10 @@ def test_a_card_unpressed_for_a_week_expires_and_ends_the_turn_it_held(tmp_path,
     assert world.store.approval(card)["state"] == "shown"
     world.life.tick(T0 + lifecycle.CARD_TTL_S)
     assert world.store.approval(card)["state"] == "expired"
-    assert world.updates() == [(card, "Expired: no decision for seven days")]
+    assert [c for c, _ in world.updates()] == [card]
     assert world.row(session)["state"] == after
     if kind == "sub":
-        assert world.subs.reports == [(session, "The card expired: no decision for seven days, the turn is not "
-                                                "finished.", True, f"expired:{card}")]
+        assert [(s, flag, key) for s, _, flag, key in world.subs.reports] == [(session, True, f"expired:{card}")]
 
 
 def test_a_lane_gone_from_the_settings_stales_its_cards_and_its_sessions_stop_waiting(tmp_path):
@@ -232,6 +231,6 @@ def test_a_lane_gone_from_the_settings_stales_its_cards_and_its_sessions_stop_wa
     shown, pending, kept = world.card(gone), world.card(gone, "pending"), world.card(live)
     world.life.lanes_gone({"room"}, NOW)
     assert [world.store.approval(a)["state"] for a in (shown, pending, kept)] == ["stale", "stale", "shown"]
-    assert world.updates() == [(shown, "Expired: the lane is retired")]
+    assert [card for card, _ in world.updates()] == [shown]
     assert (world.row(gone)["state"], world.row(live)["state"]) == ("idle", "waiting")
     assert world.subs.reports == [], "not a turn's end: nothing could take its answer"

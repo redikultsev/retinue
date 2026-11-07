@@ -87,15 +87,12 @@ function row(title: string) {
 }
 
 describe("Settings", () => {
-  it("says for each row what it is for and whether it is set, and a part turned off says so", () => {
+  it("offers Set or Replace by whether a key is set, and hides a section with nothing in it", () => {
     render(<SettingsBody view={view()} waiting={{}} send={vi.fn()} />);
-    expect(row("Claude subscription").getByRole("status").textContent).toBe("Set");
     expect(row("Claude subscription").getByRole("button", { name: "Replace" })).toBeTruthy();
-    expect(row("ElevenLabs").getByRole("status").textContent).toBe("Not set");
     expect(row("ElevenLabs").getByRole("button", { name: "Set" })).toBeTruthy();
-    expect(row("Telegram Business").getByText(/turned off on this server/)).toBeTruthy();
-    expect(row("example_gitlab").getByText("Fetches and pushes example-group/notes")).toBeTruthy();
-    expect(screen.queryByText("Projects")).toBeNull(); // a section with nothing in it is not shown
+    expect(row("example_gitlab").getByText(/example-group\/notes/)).toBeTruthy(); // its repositories
+    expect(screen.queryByRole("region", { name: "Projects" })).toBeNull(); // a section with nothing in it is not shown
   });
 
   it("sends a typed key once and drops it from the page, whatever comes back", async () => {
@@ -145,17 +142,17 @@ describe("Settings", () => {
     fireEvent.click(row("ElevenLabs").getByRole("button", { name: "Replace" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(send).not.toHaveBeenCalled();
-    expect(screen.getByText(/Remove the ElevenLabs key from the server\?/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep it" })).toBeTruthy(); // asked first
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     await waitFor(() =>
       expect(send).toHaveBeenCalledWith("key", "ELEVENLABS_API_KEY", { name: "ELEVENLABS_API_KEY", clear: true }),
     );
   });
 
-  it("sends a lane's model, and says a change waits for the restart", async () => {
+  it("sends a lane's model, and offers Restart once a change waits on it", async () => {
     const send = vi.fn().mockResolvedValue("d".repeat(32));
     const { rerender } = render(<SettingsBody view={view()} waiting={{}} send={send} />);
-    expect(screen.queryByText("Restart to apply your changes")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Model"), { target: { value: "claude-sonnet-5-5" } });
     await waitFor(() =>
       expect(send).toHaveBeenCalledWith("lane", "lane:private:model", { lane: "private", model: "claude-sonnet-5-5" }),
@@ -164,16 +161,13 @@ describe("Settings", () => {
     if (!lane) throw new Error("no lane");
     const lanes = [{ ...lane, model: "claude-sonnet-5-5" }];
     rerender(<SettingsBody view={view({ lanes, pending: ["platform"] })} waiting={{}} send={send} />);
-    expect(screen.getByText("After the restart")).toBeTruthy();
-    expect(screen.getByText("Restart to apply your changes")).toBeTruthy();
-    expect(screen.getByText(/Restarts the sessions and this app\./)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Restart" }));
     await waitFor(() => expect(send).toHaveBeenCalledWith("restart", "restart", {}));
   });
 
-  it("says nothing can change while the server's service is not installed, and every control waits", () => {
+  it("disables every control while the server's service is not installed", () => {
     render(<SettingsBody view={view({ ready: false })} waiting={{}} send={vi.fn()} />);
-    expect(screen.getByText("Settings cannot change anything on this server yet")).toBeTruthy();
+    expect(screen.getByText(/deploy\/setup\.sh/)).toBeTruthy(); // the command to run
     expect((screen.getByLabelText("Model") as HTMLSelectElement).disabled).toBe(true);
     expect((row("ElevenLabs").getByRole("button", { name: "Set" }) as HTMLButtonElement).disabled).toBe(true);
   });

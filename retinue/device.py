@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from .spaces import Spaces
 
 PATH = "/mcp/device"
-ALIAS = "/mcp/device"          # its old name (#66): the clients set up with it keep working; the docs name PATH only
+ALIAS = "/mcp/mac"             # its old name (#66): the clients set up with it keep working; the docs name PATH only
 BODY_MAX = 4 * 2**20        # 200 operations of records up to 16 KB each, and their JSON; nginx's 4m says the same
 SESSION_HEADER = "Mcp-Session-Id"
 SESSION = re.compile(r"[A-Za-z0-9_-]{1,64}")  # as `collections.ACTOR` takes a device's session

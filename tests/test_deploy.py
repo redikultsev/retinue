@@ -1496,13 +1496,13 @@ def test_face_nginx_passes_mcp_device_and_its_old_name_to_the_platform_with_its_
     a location of its own proxy_set_header would drop them all, Traefik's key emptied included — and no cache header
     of nginx's; any other /mcp/ path is a 404."""
     nginx = (ROOT / "deploy" / "face" / "nginx.conf").read_text()
-    for path in ("/mcp/device", "/mcp/device"):  # the endpoint, and its old name for the clients set up with it
+    for path in ("/mcp/device", "/mcp/mac"):  # the endpoint, and its old name for the clients set up with it
         block = nginx[nginx.index(f"location = {path} {{"):]
         block = block[:block.index("}")]
         assert f"proxy_pass http://{FACE_IP}:{PlatformConfig.face_port};" in block, path
         assert "client_max_body_size 4m;" in block and "proxy_set_header" not in block, path
     assert "proxy_set_header Authorization" not in nginx, "passed as it came"
-    assert re.findall(r"location\s+\S*\s*\S*/mcp\S*", nginx) == ["location = /mcp/device", "location = /mcp/device"]
+    assert re.findall(r"location\s+\S*\s*\S*/mcp\S*", nginx) == ["location = /mcp/device", "location = /mcp/mac"]
     assert '~^/mcp/         "";' in nginx, "the platform's own no-store, not nginx's no-cache beside it"
 
 

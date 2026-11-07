@@ -22,7 +22,7 @@ The owner's voice (`/api/speech`): what he dictated, as text for him to edit and
 for word and sent at once by the app. One recording at a time, held in memory only; the transcript is deleted at
 ElevenLabs (`speech.Scribe`) and never written to a log.
 
-The agents on his own computer reach his collections at `/mcp/device` (`device.py`; `/mcp/device`, its old name, too),
+The agents on his own computer reach his collections at `/mcp/device` (`device.py`; `/mcp/mac`, its old name, too),
 an app of its own on the same address, by a device's token instead of the login.
 
 The owner's actions here are the platform's own (`Platform.new_session`, `side`, `write`, `decide`, `answer`, `stop`):

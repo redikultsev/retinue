@@ -32,7 +32,6 @@ async def collections(world: FaceWorld) -> None:
     await store.define(DEFINE, "deals", "work", DEALS, now)
     await store.define(DEFINE, "touches", "work", TOUCHES, now)
     # deals by the class's old name, as rights kept before #66 have it: it counts as `device`
-    # deals by the class's old name, as rights kept before #66 have it: it counts as `device`
     await store.rights(DEFINE, "deals", {"writers": {"mac": {"add": True, "set": ["company", "product", "stage"],
                                                                   "delete": False}}}, now)
     await store.rights(DEFINE, "touches", {"writers": {"device": {"add": True, "set": "*", "delete": False}},
@@ -429,13 +428,14 @@ def test_a_device_reads_the_project_tree_its_sidebar_is_filed_by(tmp_path):
 
 
 def test_the_old_address_is_the_same_endpoint_for_the_clients_set_up_with_it(tmp_path):
-    """`/mcp/device`, the endpoint's old name (#66): a client set up with it keeps working, and writes under the new
+    """`/mcp/mac`, the endpoint's old name (#66): a client set up with it keeps working, and writes under the new
     name; it opens to a device's token alone, as the new address does."""
     async def body(world: FaceWorld):
         await collections(world)
         store = world.platform.collections
         token = await store.add_device("laptop", "write", world.clock.now)
-        old = Device(world, token, endpoint.ALIAS)
+        old = Device(world, token, "/mcp/mac")  # as written in the clients set up before #66, not taken from the code
+        assert endpoint.PATH != "/mcp/mac"
         await old.start()
         assert await old.tools() == list(colltools.NAMES)
         add = {"collection": "deals", "ops": [{"op": "add", "fields": {"company": "Acme"}}]}

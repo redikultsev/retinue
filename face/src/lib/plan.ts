@@ -360,3 +360,28 @@ export function shorts(plan: Plan, today: string): Map<string, { title: string; 
   }
   return out;
 }
+
+/** The open tasks of a project, or of none (`key` ""). */
+export interface TaskGroup {
+  key: string;
+  depth: number;
+  rows: Task[];
+}
+
+/** Tasks by project (docs/face.md «Tasks»), each group in the order given: the projects with a task in the tree's
+ * order (lib/projects.ts `projectTree`), then a folder the tree does not know A–Z, «No project» last. `where`: the
+ * project a task belongs to, "" none. */
+export function byProject(rows: Task[], where: (task: Task) => string, tree: { key: string; depth: number }[]): TaskGroup[] {
+  const by = new Map<string, Task[]>();
+  for (const t of rows) {
+    const key = where(t);
+    by.set(key, [...(by.get(key) ?? []), t]);
+  }
+  const out: TaskGroup[] = tree.filter((n) => n.key && by.has(n.key)).map((n) => ({ key: n.key, depth: n.depth, rows: by.get(n.key) ?? [] }));
+  const known = new Set(out.map((g) => g.key));
+  for (const key of [...by.keys()].filter((k) => k && !known.has(k)).sort((a, b) => a.localeCompare(b)))
+    out.push({ key, depth: 0, rows: by.get(key) ?? [] });
+  const none = by.get("");
+  if (none) out.push({ key: "", depth: 0, rows: none });
+  return out;
+}

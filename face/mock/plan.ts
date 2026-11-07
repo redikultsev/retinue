@@ -166,10 +166,15 @@ task({ title: "Put the new mockup on the site's front page", goal: "work", proje
 task({ title: "Choose a hotel for the weekend from five options", goal: "home", project: "travel", minutes: 60, due: day(5) }, 4);
 task({ title: "Book the dentist", goal: "health", minutes: 15 }, 5);
 task({ title: "Ask Ivan for the soup recipe", minutes: 15 }, 6);
-const pay = task({ title: "Pay the hosting invoice", goal: "home", project: "home", minutes: 15, ask: "letter:2" }, 7);
+const pay = task({ title: "Pay the hosting invoice", goal: "home", project: "work/acme", minutes: 15, ask: "letter:2" }, 7);
 const guitar = task({ title: "Practise the guitar piece", goal: "study", minutes: 90, due: day(1) }, 8);
 const report = task({ title: "Write the quarterly report, first half", goal: "work", project: "work/acme", minutes: 120, by: iso(wall(2, 18, 0)) }, 9);
 const domain = task({ title: "Renew the domain", goal: "home", minutes: 15, state: "done" }, 10);
+// Acme has more open tasks than a project's group shows folded (six), and a sub-project of a trip has one.
+task({ title: "Send Acme the launch checklist", goal: "work", project: "work/acme", minutes: 30 }, 11);
+task({ title: "Check the new host's backups", goal: "work", project: "work/acme", minutes: 20, due: day(4) }, 12);
+task({ title: "Draft the launch post", goal: "work", project: "work/acme", minutes: 60 }, 13);
+task({ title: "Book the train to Porto", goal: "home", project: "travel/lisbon", minutes: 20, due: day(6) }, 14);
 block(pay, wall(0, 18, 0), 15, { why: "overdue" });
 block(guitar, wall(1, 17, 30), 90, { locked: true });
 const half = block(report, wall(2, 14, 0), 90);

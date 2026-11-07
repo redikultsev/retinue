@@ -77,7 +77,7 @@ A queue the owner works through to its end is a list and a pane (`components/inb
   sends. No line explaining the mechanics («Undo for 10 s») under it.
 - What a row is about opens in the pane itself — a date's Record too — never in a second pane beside it.
 - On a narrow screen the list is the screen and a row opens over it with «All» to come back.
-- **By action · Operator · Map** is a segmented switch at the list's top, as Tasks' «By when · By goal». «By project»
+- **By action · Operator · Map** is a segmented switch at the list's top, as Tasks' «Projects · Days». «By project»
   is gone: one grouping does not live in two places — the projects are the left panel's. Instead every row's
   second line starts with its project
   («Work · …», «Work / Site · …»). Tasks are not in it — they are their own tab. The operator's is one column of cards
@@ -145,8 +145,16 @@ Of the prototypes, «4 · Projects with sessions» was taken: a project is a pla
 
 ## A plan: tasks, a day, a week
 
-- **A row of a task** is the queue's row: the circle that closes it first, the title and its meta line (goal swatch ·
-  how long · by when · from where), its next block in mono at the right, one outlined button («Plan», «Move»).
+- **A row of a task** is the queue's row: the circle that closes it first, the title and its meta line (its project
+  under «Days» · goal swatch · how long · by when · from where), its next block in mono at the right, one outlined
+  button («Plan», «Move») and «⋯» (its project), 44 px each on a touch screen.
+- **Tasks are grouped by what the group is**: «Projects» (the default) or «Days», a segmented switch. A project's
+  group is a section of the page — its name at 13 px medium («Work / Site» for a sub-project, as a row's second line
+  says it), its count in mono, a ghost «＋» at the right that opens an add box at the top of its list —, folded to its
+  first five rows; «Show all N» is a quiet 13 px row at the list's end. The groups follow the left panel's tree, so a
+  project is in the same place on both. «No project» is the last group, the same row look.
+- **A project picker** is the menu's list of the tree: «No project» first and quiet, then the projects, a level
+  indented 12 px, a check at the right of the one the task is in.
 - **A goal's swatch** is a series colour by the goal's place in the form (`bg-chart-N`), a 2 px-rounded square — never
   a meaning of its own; amber stays the owner's move (planned time in the strip and the week's load bars).
 - **A menu over a list** is drawn into the page's top layer at its button (below it, or above when the screen has no

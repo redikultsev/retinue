@@ -173,6 +173,27 @@ test("«Today»'s tasks and schedule — the week's grid — open and fit, and a
   }
 });
 
+test("«Tasks» by project: the groups follow the Base's tree, and a row's menu moves a task to another project", async ({ page }, info) => {
+  await login(page);
+  await page.goto("/today?tab=tasks");
+  const groups = page.locator("section[data-group]");
+  await expect(groups.first()).toBeVisible();
+  // the mock's tree (mock/spaces.ts) in the left panel's order — the spheres' of mock/fixtures.ts, a project's
+  // sub-projects after it —, the tasks of none last
+  const tree = ["travel", "travel/lisbon", "reading", "work", "work/acme", "work/acme/site", ""];
+  const keys = await groups.evaluateAll((all) => all.map((s) => s.getAttribute("data-group") ?? ""));
+  const at = keys.map((k) => tree.indexOf(k));
+  expect(at, "every group is a project of the tree").not.toContain(-1);
+  expect(at, "in the tree's order").toEqual([...at].sort((a, b) => a - b));
+  await fits(page);
+  // the widths share the mock: each moves a task of its own out of «No project»
+  const title = { phone: "Book the dentist", tablet: "Ask Ivan for the soup recipe" }[info.project.name] ?? "Call Example Studio about the kitchen quote";
+  await page.getByRole("button", { name: `Project: ${title}` }).click();
+  await page.locator('[role=menuitemradio][data-project="reading"]').click();
+  await expect(page.locator('section[data-group="reading"] [data-task]').filter({ hasText: title })).toBeVisible();
+  await fits(page);
+});
+
 test("the operator lists the sessions' requests, answers an ask by its option and opens a look's thing in place", async ({ page }) => {
   await login(page);
   await page.goto("/today");

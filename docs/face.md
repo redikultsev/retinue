@@ -517,15 +517,22 @@ once a minute and at once when `tasks` changes; every write is the owner's write
 its «Undo» in the toast, its question when the record moved on —, and a task's title opens its record in the drawer.
 Days and times are the owner's zone's (the platform's, as the Router last told it).
 
-- **Tasks**: «By when» or «By goal»; a box that adds a task by its title; **From people** — a person's ask the digest
+- **Tasks**: «Projects» or «Days»; a box that adds a task by its title (of no project); **From people** — a person's ask the digest
   carries (the feed's row with its token, `lib/asks.ts`: a press takes it off at once, here and in «Tasks N»), or a
   reminder of the next seven days, that no open task names yet: the circle is «Done», «Plan» a day of
   the week (the Router makes its task and lays it, one press), «⋯» «Tomorrow» and «Not a task»; its title opens what it
-  is about — her words, the sender, «Open in Gmail» — in a sheet; **To plan** —
-  the open tasks with no block ahead, the due soonest first; **Planned** — those with one, the soonest first; **Done
-  today**. A row: the circle that closes it (or opens it again), its title, its goal, how long, by when — its «no later than» with
-  the time if it has one, red once passed —, «short 1 h» in red while a plan says that much does not fit before the
-  deadline, where it came from, its next block, and «Plan» («Move» once planned).
+  is about — her words, the sender, «Open in Gmail» — in a sheet. Then the open tasks. **Projects** (the default): a
+  group a project, by the task's `project` (the nearest project of the Base above that folder, `lib/projects.ts`), in
+  the left panel's order — the Spaces as the platform lists them, then the other top projects A–Z, each project's
+  sub-projects after it (`projectTree`) —, a folder the Base does not list after them, **No project** last; in a group
+  what has no day first, then the planned, soonest first; a group shows its first five, «Show all N» the rest; its «＋»
+  adds a task into that project. **Days**: **To plan** — the open tasks with no block ahead, the due soonest first;
+  **Planned** — those with one, the soonest first; each row's meta line starts with its project («Work / Site»). Then
+  **Done today**. A row: the circle that closes it (or opens it again), its title, its goal, how long, by when — its
+  «no later than» with the time if it has one, red once passed —, «short 1 h» in red while a plan says that much does
+  not fit before the deadline, where it came from, its next block, «Plan» («Move» once planned), and «⋯»: its
+  project — «No project», then the tree, a sub-project under its project —, a pick the owner's write of the task's
+  `project` with its «Undo». «By goal» is gone: a goal is on the row's meta line, as its swatch.
 - **«Plan»**: a day of the next seven — the Router puts the task at the first free time of that day's window — or an
   exact time, the owner's own block (`locked`); «Take off the day».
 - **Schedule** is the week as an hourly grid — [FullCalendar](https://fullcalendar.io) 7.1.3 (MIT), its own chunk of

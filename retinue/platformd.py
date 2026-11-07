@@ -876,6 +876,7 @@ class Platform:
         token = secrets.token_urlsafe(32)
         run = self.store.add_run(session["id"], self.gate.token_hash(token), [dataclasses.asdict(m) for m in marks],
                                  now)
+        self.store.set(f"model:{run}", lane.model)  # what this run was given: a restart may change the lane's
         pings.started(self.store, run, queued["seq"], by_owner=queued["prompt"] != CONTINUE)  # a quiet ping or not
         if queued["prompt"] is not None and queued["prompt"] != CONTINUE:  # a new turn: whose doing it is (`subs`)
             self.store.db.execute("UPDATE sessions SET turn_by = ?, owner_joined = 0 WHERE id = ?",
@@ -897,6 +898,9 @@ class Platform:
                 # The repository's rules, the owner's skills and his memory, in the room too (docs/instructions.md); lane-web's
                 # host, retired, still refuses them by its own switch.
                 "instructions": True,
+                # The lane's model and effort (platform.yaml, Settings): checked against the closed lists by the lane
+                # host as well.
+                "model": lane.model, "effort": lane.effort,
                 # The lane's login, sent with each run and stored nowhere — not in the store, not in a log line: the
                 # lane host keeps it in memory and gives it to the CLI through a pipe.
                 "oauth_token": self.cfg.oauth_token,
@@ -1143,7 +1147,7 @@ class Platform:
         if kind == "system" and line.get("subtype") == "init":
             self.store.update_session(session["id"], now, cli_session=str(line.get("session_id") or ""),
                                       cli_version=str(line.get("claude_code_version") or ""))
-            self._model_seen(session, str(line.get("model") or ""), cliengine.MODEL, run)
+            self._model_seen(session, str(line.get("model") or ""), self._run_model(session, run), run)
             self.store.unset(f"sent:{run}")
             if self.store.get(f"memory.gone:{session['id']}") is not None:
                 self.store.unset(f"memory.gone:{session['id']}")
@@ -1156,9 +1160,11 @@ class Platform:
             if self.store.set_run_mode(run, mode):  # once per session: the gate falls back for this run on its own
                 self._summary(session, manual_notice(mode, str(line.get("model") or "")), pings.FAILED, run)
         elif kind == "assistant":
-            self._model_seen(session, transcript.answered_by(line), cliengine.MODEL_ID, run)
+            self._model_seen(session, transcript.answered_by(line),
+                             cliengine.model_id(self._run_model(session, run)), run)
         elif kind == "result":
             self._result(session, run, line, now)
+            self.store.unset(f"model:{run}")
             self.gate.run_ended(run)  # a block the model went past is the owner's notice; the run's asks forgotten
             if transcript.deferred_of(line) is None:  # a deferral's turn goes on at the resume
                 self.gate.turn_over(session["id"])
@@ -1210,12 +1216,18 @@ class Platform:
                 self.store.set(key, why)
                 self._summary(session, said.format(why=why), pings.FAILED, run)
 
+    def _run_model(self, session: dict, run: str) -> str:
+        """The model this run was given (kept at its start), else its lane's now."""
+        lane = self.cfg.lanes.get(session.get("lane") or "")
+        return self.store.get(f"model:{run}") or (lane.model if lane else cliengine.MODEL)
+
     def _model_seen(self, session: dict, seen: str, wanted: str, run: str) -> None:
-        """A session that ran on another model than the one it was started on: one line per model seen, for all
+        """A session that ran on another model than the one its run was given: one line per model seen, for all
         sessions. The CLI gives no reason and goes on."""
         if seen and seen != wanted and self.store.get(f"model.seen:{seen}") is None:
             self.store.set(f"model.seen:{seen}", "1")
-            self._summary(session, f"A session ran on {seen}, not on {cliengine.MODEL}. Its CLI gave no reason.",
+            given = self._run_model(session, run)
+            self._summary(session, f"A session ran on {seen}, not on {given}. Its CLI gave no reason.",
                           pings.FAILED, run)
 
     def _result(self, session: dict, run: str, line: dict, now: float) -> None:

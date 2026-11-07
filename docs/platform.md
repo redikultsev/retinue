@@ -1095,9 +1095,20 @@ takes each from the model and from its subagents alike: not offered, not found b
 `<config>/tasks/<session>/`, no classifier, nothing outside the CLI's own folder. The face shows such a call as a plain tool
 call. The main agent has them only with the real login; a subagent has them without one too.
 
+## A lane's model
+
+A lane's runs take its `model` and `effort` from `platform.yaml` — set in the app's «Settings»
+([face.md](face.md#settings)) or by hand — and only from the closed lists of `cliengine`: `MODELS` (Opus 5.5 and
+Sonnet 5.5, each with or without the million-token context) and `EFFORTS` (`low` to `max`), each probed on the
+pinned CLI in auto (tests/test_probes.py). Left out, the defaults below. A value off a list stops the platform at
+start, the lane host refuses a run that carries one, and `engine` is `claude-code`, the one there is. The platform
+reads the file at its start, so a change applies from each session's next run after the restart; the model a run was
+given is kept with the run, and the line below compares against it, not against the lane's now.
+
 ## Approvals
 
-Every run is `claude -p --model claude-opus-5-5[1m] --effort xhigh --permission-mode auto` (a resume too: the CLI
+Every run is `claude -p --model <the lane's model> --effort <its effort> --permission-mode auto` — by default
+`--model claude-opus-5-5[1m] --effort xhigh` (a resume too: the CLI
 does not carry the mode over), as 99% of your turns on the owner's computer: the latest Opus by its full id, its million-token
 context, extra-high effort (`cliengine.MODEL`, `EFFORT` — without them a headless CLI takes a smaller default model;
 the assistant has the same in `agent.yaml`). For each call the order is the CLI's (probed with 2.1.304): the platform's gate (PreToolUse)
@@ -1266,7 +1277,7 @@ its turns come there in full again.
 **What you would not otherwise know** comes as one line, once per reason and not once per session. A skills folder or a
 memory snapshot the lane refuses: «Skills are not loaded: <why>. Sessions run without them» (the lane host
 says it with the run's `started`, as `left_out`); once it loads again, a new refusal is said again. A session that ran on
-another model than `cliengine.MODEL`: «A session ran on <model>, not on <asked>. Its CLI gave no reason», read from the init
+another model than the one its run was given ([above](#a-lanes-model)): «A session ran on <model>, not on <asked>. Its CLI gave no reason», read from the init
 line and from each answer of the main conversation, so a subagent's own model and the CLI's `<synthetic>` messages do not
 count; once per model. There is no column for it: the lines stay in `raw` for 90 days.
 

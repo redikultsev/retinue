@@ -444,6 +444,10 @@ services:
       # platform-data.
       - /srv/retinue/code/mirrors:/code/mirrors
       - /srv/retinue/egress/projects:/config/projects:ro   # a project's own hosts (docs/platform.md): no lane's
+      # The app's «Settings» (docs/face.md): requests in, for root's retinue-settings.service to write; its status
+      # (never a value) out, read-only. The keys themselves stay where they were, out of this container's reach.
+      - /srv/retinue/settings/inbox:/settings/inbox
+      - /srv/retinue/settings/status:/settings/status:ro
     # retinue-memory (10001): a push writes the hub's objects/ and refs/; the hub's checks see a uid other than the
     # router's and take the push for the owner's — his button. retinue-base (10020): the clone's files, shared with
     # lane-private.

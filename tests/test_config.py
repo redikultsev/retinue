@@ -337,6 +337,11 @@ def test_platform_lanes_tracks_and_their_tokens(tmp_path, monkeypatch):
                                                              + PLATFORM).owner_tz == "Europe/Berlin"
     assert cfg.tracks[0].allow == ["Bash(make test:*)"] and cfg.tracks[0].kind == "code"
     assert lane.web is False, "the web tools stay denied unless a lane says otherwise"
+    assert (lane.engine, lane.model, lane.effort) == ("claude-code", "claude-opus-5-5[1m]", "xhigh"), \
+        "a lane that names no model runs on the default"
+    sonnet = load_platform(tmp_path, monkeypatch, PLATFORM.replace(
+        "work_mount: /lanes/code,", "work_mount: /lanes/code, model: claude-sonnet-5-5, effort: high,"))
+    assert (sonnet.lanes["code"].model, sonnet.lanes["code"].effort) == ("claude-sonnet-5-5", "high")
     assert lane.card == cfg.tracks[0].card == [], "no card rules unless the config names them"
     carded = load_platform(tmp_path, monkeypatch,
                            PLATFORM.replace("deny: []}", "deny: [], card: ['Bash(git commit:*)']}"))
@@ -363,6 +368,12 @@ def test_platform_lanes_tracks_and_their_tokens(tmp_path, monkeypatch):
     (("  code: {", "  lane-code: {"), "lane name 'lane-code'"),
     (("work_mount: /lanes/code,", "work_mount: /lanes/code, max_sessions: 0,"), "lane code: max_sessions"),
     (("work_mount: /lanes/code,", "work_mount: /lanes/code, web: 'yes',"), "lane code: web or retired is not true or false"),
+    (("work_mount: /lanes/code,", "work_mount: /lanes/code, model: opus,"),
+     "lane code: model 'opus' is not one of claude-opus-5-5[1m], "),
+    (("work_mount: /lanes/code,", "work_mount: /lanes/code, effort: ultra,"),
+     "lane code: effort 'ultra' is not one of low, medium, high, xhigh, max"),
+    (("work_mount: /lanes/code,", "work_mount: /lanes/code, engine: codex,"),
+     "lane code: engine 'codex' is not one of claude-code"),
     (("lanes:", "max_sessions: 0\nlanes:"), "platform config: max_sessions"),
     (("lanes:", "owner_tz: Mars/Olympus\nlanes:"), "platform config: owner_tz 'Mars/Olympus'"),
     (("  - {name: retinue", "  - {name: retinue, lane: code, kind: code, cwd: x}\n  - {name: retinue"),

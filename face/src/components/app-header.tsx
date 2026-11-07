@@ -1,6 +1,7 @@
-import { LogOut } from "@/components/icons";
+import { Link } from "@tanstack/react-router";
+import { LogOut, Settings } from "@/components/icons";
 import { ChatToggle, HeaderVoice } from "@/components/talk";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { type Connection, live, useConnection } from "@/lib/live";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,10 @@ export function AppHeader() {
       {/* speak to the cards or to Retinue; the chat with Retinue beside every screen */}
       <HeaderVoice />
       <ChatToggle />
+      {/* «Settings»: keys, tokens and the sessions' model (pages/settings.tsx) */}
+      <Link to="/settings" aria-label="Settings" title="Settings" className={buttonVariants({ size: "icon", variant: "ghost" })}>
+        <Settings />
+      </Link>
       <Button size="icon" variant="ghost" aria-label="Log out" title="Log out" onClick={async () => {
         await api.logout().catch(() => undefined);
         live.stop();

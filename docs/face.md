@@ -230,6 +230,8 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/spaces` | `{head, spaces: [{name, title, questions, tasks, waiting, working}], projects: [{name, title, parent, questions, tasks}]}` — the Base's Spaces as its `main` commit has them; `waiting`/`working` count the sessions of the sphere of that name; `projects`: every project at any depth, the one it is in (`""` the root) — the left panel's ([base.md](base.md#reading-the-base-in-the-app)) |
 | `GET /api/spaces/{space}` | `{head, space: {name, title, passport: {why, in_scope, not_in_scope, scope, files, rules, checks, imports, problems}, rules, marker, sections: [{heading, kind, items: [{text, list}]}], counts, records: {knowledge, profile, journal, artifacts}}}`; 404 for no such Space |
 | `GET /api/spaces/{space}/r/{path}` | `{head, record: {space, path, nature, title, head, bad_head, body}}`; 404 for a path the rules refuse, 413 for a Record over 512 KB; 404 “The Base is not connected.” with no Base, 503 while it cannot be read |
+| `GET /api/settings` | `{schema, ready, at, pending, restarting, restarted, lanes: [{name, engine, engine_label, model, effort, running: {model, effort}}], models: [{id, label}], efforts: [{id, label}], keys: [{name, group, title, what, where, hint, clear, on, set, changed}], git: [{key, repos, set, changed}], project_keys: [{name, project, set, changed}], done: {<id>: {ok, at, why?, services?}}}` — [Settings](#settings): never a value; `ready` false while the host's service is not installed; a lane's `model` is the file's, `running` what it runs with until the restart |
+| `POST /api/settings/key {name, value \| clear}` · `/git {key, value}` · `/project_key {name, value}` · `/lane {lane, model?, effort?}` · `/restart {}` | 202 `{id}`: the request dropped for the host, its answer later in `done`; 400 with the words when it is off the lists, before anything is dropped; 503 while the host's service is not installed |
 | `POST /api/speech?mode=dictate\|en` (body: the recording, `Content-Type` its type) | `{text}`; in `en` also `{message}`, the text as the session gets it, “(by voice, verbatim) …” — [Voice](#voice) |
 | `GET /api/library` | `{schema, hub, at, pages: [{id, title, url, updated, section, section_title, section_icon, minutes, opened, done}]}` — “Pages”, [below](#pages) |
 | `POST /api/library/{id}/open` · `/done {done}` | `{page}`: you opened the page; “Finished” (`done: true`) or taken back (`false`); 404 for a page not in the list |
@@ -1006,6 +1008,50 @@ the platform's rule, checked a second time.
 “Finished”), so the phone and the desktop agree. What the page itself keeps — its ticks, its progress — is the pages
 service's ([pages.md](pages.md#what-a-page-keeps)), not the app's. A page that leaves the list and comes back under the
 same id keeps both. The app reads the list when the screen opens and again whenever it comes back to the front.
+
+## Settings
+
+`/settings`, the gear beside «Log out» in the header: what the stack reads and you set, in one place —
+the lane's model and effort, your Claude subscription, ElevenLabs, the Telegram bot and Telegram Business, the
+repositories' tokens and the projects' keys. Each row says what it is for, whether it is set («Set · 7 Nov», «Set»,
+«Not set»; amber when Retinue needs it) and, opened, where to get it.
+
+**A key is typed once.** «Set» or «Replace» opens a password field the browser neither fills nor keeps; «Save» sends
+it and the field is emptied at once, whatever the answer. Nothing shows it again — not this screen, not the API, not a
+log: the server reports whether a key is set and when Settings changed it, never the key, a part of it or its hash.
+«Remove» is there only for an optional part's key (ElevenLabs, Telegram Business), after a confirm.
+
+**Who writes it.** The platform cannot: the stack's environment, the git tokens and the projects' keys are root's
+files, `platform.yaml` is mounted read-only, and it must never read a secret back. So each change is a request, one
+JSON file of mode 600 the platform drops into `/srv/retinue/settings/inbox` (its own folder, mode 700) and root's
+`retinue-settings.service` takes out at once — started by `retinue-settings.path` — reading it without following a
+link, deleting it before it looks inside, and checking it against its own closed lists
+(`deploy/settings/retinue-settings.py`):
+
+- a key of the stack: its line in `stack.env`, replaced as setup.sh does. A new bot token also makes a new
+  `RETINUE_WEBAPP_KEY` when the app is on, as setup.sh derives it;
+- a repository's token: piped into `deploy/code/set-git-token.sh` itself, so Settings is that script's form and not a
+  second store ([code.md](code.md#tokens));
+- a project's key: `RETINUE_PROJECT_KEY_<NAME>` in `egress/project-keys.env`;
+- a lane's `model` and `effort`: their lines in that lane's block of `platform.yaml`, from `cliengine.MODELS` and
+  `EFFORTS` alone ([platform.md](platform.md#a-lanes-model)). A lane written on one line in the file is yours to edit
+  by hand; Settings says so.
+
+What it did comes back in `/srv/retinue/settings/status/status.json` (the platform's to read alone, mode 600, mounted
+read-only): set or not, when
+Settings changed it, the lanes' values, the services waiting for a restart, how each request ended. The service also
+runs when you edit one of those files by hand, so the screen never says what the file no longer does.
+
+**A restart is your press.** A saved change is written at once and used after its services restart: the bar on top
+says «Restart to apply your changes» and which (Telegram, the assistant, the sessions and this app). «Restart»
+recreates those services and no other (`docker compose up -d --no-deps --force-recreate`); a running turn stops and
+goes on by itself, and the app reconnects. A failed restart says why, and the changes keep waiting. A lane's new model
+applies from each session's next turn after it; a run that was going is held to the model it started on.
+
+**Not installed yet.** A server set up before Settings has no service, and the screen says to run setup.sh once more;
+until then nothing can be changed here. Settings writes the files `setup.sh` reads and the stack started with
+`docker compose -p retinue --env-file /srv/retinue/stack.env`; on Dokploy, whose Environment is its own copy, keys are
+still set there.
 
 ## A session's changes
 

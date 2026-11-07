@@ -460,6 +460,12 @@ if [[ $PLATFORM_ON == 1 ]]; then
   install -d -m 755 "$ROOT/egress/projects"
   [[ -f $ROOT/egress/project-keys.env ]] || (umask 077; : > "$ROOT/egress/project-keys.env")
   chmod 600 "$ROOT/egress/project-keys.env"
+  # The app's «Settings» (docs/face.md «Settings»): the platform drops each request into the inbox, its own and
+  # nobody else's to read; root's retinue-settings.service takes it out and writes it, and its status — never a
+  # value — is read-only to the platform.
+  install -d -m 755 "$ROOT/settings" "$ROOT/settings/status"
+  install -d -m 700 "$ROOT/settings/inbox"
+  [[ $HOST_SETUP == 1 ]] && chown 10007:10007 "$ROOT/settings/inbox"
   # The owner's voice in the app (docs/face.md «Voice»): ElevenLabs' API added to a list written before it — once,
   # remembered by a marker, so a line the owner removes later stays removed. A last line without its newline gets one.
   HOSTS=$ROOT/egress/platform-hosts.txt
@@ -712,6 +718,25 @@ if [[ $HOST_SETUP == 1 ]]; then
   done
   systemctl daemon-reload
   systemctl enable --now retinue-health.timer
+fi
+
+# Settings: the app's requests written by root, on the host — the platform can neither write the stack's
+# environment nor read a key back. Run once now, so the app has its status from the start.
+if [[ $HOST_SETUP == 1 && $PLATFORM_ON == 1 ]]; then
+  install -d -m 755 /usr/local/lib/retinue
+  install -m 755 "$REPO/deploy/settings/retinue-settings.py" /usr/local/lib/retinue/retinue-settings.py
+  for unit in retinue-settings.service retinue-settings.path; do
+    sed -e "s|/srv/retinue|$ROOT|g" -e "s|/opt/retinue|$REPO|g" "$REPO/deploy/settings/$unit" \
+      > "/etc/systemd/system/$unit"
+    chmod 644 "/etc/systemd/system/$unit"
+  done
+  systemctl daemon-reload
+  systemctl enable --now retinue-settings.path
+  systemctl reset-failed retinue-settings.service 2>/dev/null || true
+  if ! systemctl start retinue-settings.service; then
+    journalctl -u retinue-settings.service --no-pager -n 40 >&2 || true  # names and lengths, never a value
+    exit 1
+  fi
 fi
 
 echo

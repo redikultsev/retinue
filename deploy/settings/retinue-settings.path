@@ -1,0 +1,18 @@
+# A request from the app's «Settings» in the inbox, or a change to a file the status reports on (the owner's edit by
+# hand, setup.sh, update.sh): retinue-settings.service runs once more.
+[Unit]
+Description=Retinue settings: a request from the app, or a file it reports on changed
+
+[Path]
+DirectoryNotEmpty=/srv/retinue/settings/inbox
+PathChanged=/srv/retinue/stack.env
+PathChanged=/srv/retinue/code/tokens.env
+PathChanged=/srv/retinue/egress/project-keys.env
+PathChanged=/srv/retinue/platform/platform.yaml
+Unit=retinue-settings.service
+# Whatever setup.sh writes in a row; the service runs once more for each burst, never in a loop: the file it writes
+# back is not one of these.
+TriggerLimitIntervalSec=0
+
+[Install]
+WantedBy=paths.target

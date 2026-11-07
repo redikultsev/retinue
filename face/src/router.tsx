@@ -22,6 +22,7 @@ import { LoginPage } from "@/pages/login";
 import { NewPage } from "@/pages/new";
 import { OperatorPage } from "@/pages/operator";
 import { ReadPage } from "@/pages/read";
+import { SettingsPage } from "@/pages/settings";
 import { type SessionSearch, SessionPage } from "@/pages/session";
 import { SessionsPage } from "@/pages/sessions";
 import { ProjectPage, RecordPage, SpacePage, SpacesPage } from "@/pages/spaces";
@@ -168,6 +169,8 @@ const readRoute = createRoute({
   },
 });
 const weekRoute = createRoute({ getParentRoute: () => shellRoute, path: "/week", component: () => <WeekPage /> });
+// «Settings»: the keys, the tokens and the sessions' model (pages/settings.tsx), from the header's gear.
+const settingsRoute = createRoute({ getParentRoute: () => shellRoute, path: "/settings", component: SettingsPage });
 const spacesRoute = createRoute({ getParentRoute: () => shellRoute, path: "/spaces", component: SpacesPage });
 const spaceRoute = createRoute({
   getParentRoute: () => shellRoute,
@@ -263,7 +266,7 @@ const pushRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   homeRoute,
   loginRoute,
-  shellRoute.addChildren([todayRoute, operatorRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, spacesRoute, spaceRoute, projectRoute, recordRoute, sessionRoute]),
+  shellRoute.addChildren([todayRoute, operatorRoute, sessionsRoute, newRoute, pagesRoute, readRoute, weekRoute, settingsRoute, spacesRoute, spaceRoute, projectRoute, recordRoute, sessionRoute]),
   approvalRoute,
   fileRoute,
   pushRoute,

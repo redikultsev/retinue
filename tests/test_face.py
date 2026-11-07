@@ -131,7 +131,7 @@ def test_a_code_from_app_logs_in_once_and_is_kept_only_as_its_hash(tmp_path, mon
     faced(tmp_path, body)
 
 
-NOTES = "## Unreleased
+NOTES = """## Unreleased
 
 - Soon.
 
@@ -142,7 +142,7 @@ NOTES = "## Unreleased
 ## v0.1.0 — 2026-11-07
 
 - One.
-"
+"""
 
 
 def test_whats_new_shows_after_an_update_until_got_it_and_the_mark_only_moves_forward(tmp_path, monkeypatch):

@@ -63,6 +63,7 @@ KEYS = [
      "hint": "123456789:AA…", "on": "tgbusiness", "clear": True},
 ]
 BY_NAME = {key["name"]: key for key in KEYS}
+OPS = ("key", "git", "project_key", "lane", "restart")
 # What a model is called on screen: its name and its context.
 MODEL_LABELS = {"claude-opus-5-5[1m]": "Opus 5.5 · 1M context", "claude-opus-5-5": "Opus 5.5",
                 "claude-sonnet-5-5[1m]": "Sonnet 5.5 · 1M context", "claude-sonnet-5-5": "Sonnet 5.5"}
@@ -80,7 +81,7 @@ class Settings:
 
     def routes(self) -> list:
         return [web.get("/api/settings", self.get),
-                web.post("/api/settings/{op:key|git|project_key|lane|restart}", self.post)]
+                web.post("/api/settings/{op:" + "|".join(OPS) + "}", self.post)]
 
     # --- what the screen shows -------------------------------------------------------------------------------------
 
@@ -138,7 +139,9 @@ class Settings:
     # --- what the owner changes ------------------------------------------------------------------------------------
 
     async def post(self, request: web.Request) -> web.Response:
-        op = request.match_info["op"]
+        op = next((known for known in OPS if known == request.match_info["op"]), None)  # one of ours, not the URL's
+        if op is None:
+            return _error(404, "Not found.")
         try:
             body = await request.json()
         except ValueError:

@@ -1027,7 +1027,8 @@ link, deleting it before it looks inside, and checking it against its own closed
   `EFFORTS` alone ([platform.md](platform.md#a-lanes-model)). A lane written on one line in the file is yours to edit
   by hand; Settings says so.
 
-What it did comes back in `/srv/retinue/settings/status/status.json` (read-only to the platform): set or not, when
+What it did comes back in `/srv/retinue/settings/status/status.json` (root's, mode 640 to the platform's group, mounted
+read-only): set or not, when
 Settings changed it, the lanes' values, the services waiting for a restart, how each request ended. The service also
 runs when you edit one of those files by hand, so the screen never says what the file no longer does.
 

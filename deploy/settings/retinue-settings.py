@@ -39,6 +39,7 @@ ROOT = Path(os.environ.get("RETINUE_ROOT", "/srv/retinue"))
 REPO = Path(os.environ.get("RETINUE_REPO", "/opt/retinue"))
 DOCKER = os.environ.get("DOCKER", "docker")
 PROJECT = os.environ.get("RETINUE_PROJECT", "retinue")
+PLATFORM_GID = int(os.environ.get("RETINUE_PLATFORM_GID", "10007"))  # compose's `user: "10007:10007"`
 INBOX = ROOT / "settings" / "inbox"
 STATUS = ROOT / "settings" / "status" / "status.json"
 LOCK = ROOT / "settings" / "status" / ".lock"
@@ -255,10 +256,15 @@ def build_status(changed: dict, pending: set[str], done: dict, now: float,
 
 
 def write_status(status: dict) -> None:
+    """root's file, read by the platform's group alone (mode 640): no value is in it, and no one else needs it."""
     STATUS.parent.mkdir(parents=True, exist_ok=True)
     tmp = STATUS.with_name(f".status.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(status, separators=(",", ":"), sort_keys=True))
-    os.chmod(tmp, 0o644)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as out:
+        out.write(json.dumps(status, separators=(",", ":"), sort_keys=True))
+    if os.geteuid() == 0:
+        os.chown(tmp, 0, PLATFORM_GID)
+    os.chmod(tmp, 0o640)
     os.replace(tmp, STATUS)
 
 

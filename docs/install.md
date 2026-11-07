@@ -146,10 +146,20 @@ sudo RETINUE_IMAGE=ghcr.io/<owner>/retinue bash deploy/update.sh v1.2.0   # RETI
 
 It checks the stack is healthy, pulls the tag's images (a tag not published stops here, nothing changed), builds the
 lane's image from the checkout — it carries Claude Code, whose licence lets no one but Anthropic hand it out, so no
-registry has it; a failed build stops here too — stops the stack, snapshots its volumes (but the lanes' working trees), the code services' state folders and `stack.env` into
-`/var/backups/retinue/updates/`, writes the version to `stack.env`, starts the stack — each service migrates its
-database when it opens it — and waits up to five minutes for every service to be healthy (`deploy/health`). When one
-is not, it puts the snapshot back and starts the version before. The compose file is the checkout's: when a release
+registry has it; a failed build stops here too — then works out what the version changes (`deploy/changed.py`).
+
+A service is restarted only when what it would start with differs from what its container started with: its
+definition in `compose.yml` (the version itself left out), its image, by id, or a read-only file the host gives it
+(`setup.sh` writes the same bytes every run, so an unchanged one restarts nothing; folders a service reads as it goes,
+such as `status/` and `skills/`, never restart it). So does every service that shares a volume with a restarted one
+— the platform and the room, whose journal the platform confirms — or depends on one; the rest keep running, and a
+session in the room keeps its turn. A container `update.sh` did not start (the first update with it, or one recreated
+by hand) is restarted once. It prints what keeps running and what restarts, then stops only those, snapshots their
+volumes (but the lanes' working trees), their state folders and `stack.env` into `/var/backups/retinue/updates/`,
+writes the version to `stack.env`, starts them — each service migrates its database when it opens it — prints each
+container's id before and after, and waits up to five minutes for every service to be healthy (`deploy/health`). When
+one is not, it puts the snapshot back and starts what it stopped under the version before. A version that changes
+nothing that runs is only written to `stack.env`. The compose file is the checkout's: when a release
 changes `deploy/compose.yml` or `setup.sh`, run `setup.sh` first; check out the tag before every update, since the
 lane's image is built from the checkout. Under Dokploy, set the two
 lines in *Environment* and redeploy: no snapshot, no way back.
@@ -158,7 +168,9 @@ lines in *Environment* and redeploy: no snapshot, no way back.
 
 A server can follow `develop` instead of releases: each push there that CI passes is on it minutes later, with no one
 on the server. CI builds the commit's images once, as a release's (`release.yml`, both architectures), and pushes
-them as `ghcr.io/<owner>/retinue*:sha-<12 hex>`; its last job, `deploy` in `.github/workflows/ci.yml`, logs in over
+them as `ghcr.io/<owner>/retinue*:sha-<12 hex>` — or, when an image's inputs (the paths its build reads, its
+Dockerfile, its arguments and its base images' digests) are an earlier commit's, tags that earlier image instead:
+the same image, so a commit that changes only the face restarts only the face; its last job, `deploy` in `.github/workflows/ci.yml`, logs in over
 ssh with a key that can do one thing, run `deploy/deploy.sh` with the commit's sha. Only the lane's image is built on
 the server, as in «Updating»: it checks the commit out (its compose file names its images), runs the commit's
 `setup.sh` and switches to the images with `update.sh` — the steps of «Updating», snapshot and way back included.

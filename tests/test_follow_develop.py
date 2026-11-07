@@ -15,7 +15,7 @@ import subprocess
 
 import yaml
 
-from test_update import IMAGE, ROOT, TOKEN, compose, server, stack_env
+from test_update import IMAGE, OWN, PINNED, ROOT, TOKEN, compose, healthy, named, server, stack_env, stopped, versions
 
 DEPLOY = ROOT / "deploy" / "deploy.sh"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
@@ -75,14 +75,14 @@ def test_a_commit_ci_built_is_pulled_and_started_and_the_checkout_follows(tmp_pa
     run, calls, state = deploy(tmp_path, b, [a, b])
     assert run.returncode == 0, run.stdout + run.stderr
     tag = f"sha-{b[:12]}"
-    assert state["running"] == {"version": tag, "healthy": True}
+    assert healthy(state) and versions(state) == {**dict.fromkeys(OWN, tag), **dict.fromkeys(PINNED, "v1.0.0")}
     assert stack_env(srv)["RETINUE_VERSION"] == tag and stack_env(srv)["RETINUE_IMAGE"] == IMAGE
     assert git("rev-parse", "HEAD", cwd=repo) == b, "the checkout is the commit: its compose file names its images"
     assert [call["args"][1] for call in calls if call["args"][0] == "pull"] == [f"{IMAGE}:{tag}", f"{IMAGE}-face:{tag}"]
     builds = [calls[n]["args"][-1] for n in compose(calls, "build")]
     assert builds == ["lane-private"], "only the image no registry has is built on the server"
     assert f"now on {b[:12]}" in run.stdout and (srv / "deploy.log").read_text().count("now on") == 1
-    assert setups(calls) == ["B"] and calls.index({"args": ["setup", "B"]}) < compose(calls, "down")[0], \
+    assert setups(calls) == ["B"] and calls.index({"args": ["setup", "B"]}) < stopped(calls)[0], \
         "the commit's own setup.sh, once, before anything is stopped"
 
 
@@ -92,12 +92,13 @@ def test_a_commit_that_is_not_healthy_goes_back_with_its_data_and_its_checkout(t
     run, calls, state = deploy(tmp_path, b, [a, b], FAKE_BROKEN=f"sha-{b[:12]}")
     assert run.returncode == 1, run.stdout + run.stderr
     assert git("rev-parse", "HEAD", cwd=repo) == a
-    assert state["running"] == {"version": "v1.0.0", "healthy": True}
+    assert healthy(state) and set(versions(state).values()) == {"v1.0.0"}
     data = volumes / "retinue_router-data" / "_data"
     assert (data / "schema.txt").read_text() == "v1.0.0" and (data / "router.sqlite").read_text()
-    assert [calls[n]["version"] for n in compose(calls, "up")][-1] == "v1.0.0", \
-        "started once more with the compose file of the commit before"
-    assert "--force-recreate" in calls[compose(calls, "up")[-1]]["args"], "and with its host files"
+    last = calls[compose(calls, "up")[-1]]
+    assert last["version"] == "v1.0.0", "started once more with the compose file of the commit before"
+    assert {"--force-recreate", "--no-deps"} <= set(last["args"]) and sorted(named(last)) == OWN, \
+        "and with its host files: what update.sh started again, nothing it left running"
     assert setups(calls) == ["B", "A"] and calls.index({"args": ["setup", "A"]}) < compose(calls, "up")[-1]
     assert stack_env(srv)["RETINUE_VERSION"] == "v1.0.0"
 
@@ -110,7 +111,7 @@ def test_a_commit_whose_setup_fails_stops_before_anything_is_stopped(tmp_path):
     assert run.returncode == 1, run.stdout + run.stderr
     assert setups(calls) == ["B", "A"], "the version running puts its own host files back"
     assert [call for call in calls if call["args"][0] != "setup"] == [], "nothing pulled, nothing stopped"
-    assert state["running"] == {"version": "v1.0.0", "healthy": True}
+    assert healthy(state) and set(versions(state).values()) == {"v1.0.0"}
     assert git("rev-parse", "HEAD", cwd=repo) == a and (srv / "stack.env").read_text() == before
 
 
@@ -120,7 +121,7 @@ def test_a_commit_whose_images_are_not_in_the_registry_changes_nothing(tmp_path)
     before = (srv / "stack.env").read_text()
     run, calls, state = deploy(tmp_path, b, [a, b], FAKE_PUBLISHED="")
     assert run.returncode != 0
-    assert not compose(calls, "down"), "nothing stopped"
+    assert not stopped(calls) and not compose(calls, "up"), "nothing stopped, nothing started again"
     assert git("rev-parse", "HEAD", cwd=repo) == a and (srv / "stack.env").read_text() == before
     assert setups(calls) == ["B", "A"]
 

@@ -4,6 +4,10 @@
 # the server that follows develop pulls (ci.yml, deploy; docs/install.md, «Following develop»).
 # Each image is built for linux/amd64 and linux/arm64, each on a runner of its own architecture (no emulation), pushed
 # as vX.Y.Z-amd64 and vX.Y.Z-arm64, and vX.Y.Z names both: a server pulls the one for its own architecture.
+# A commit of develop whose image would be built from the same inputs as an earlier one's (its files, its Dockerfile,
+# its build arguments and the digests of the base images it starts from) gets that earlier image under its tag, not a
+# rebuild: the same image, the same id, so the server keeps running what uses it (deploy/changed.py). A release is
+# always built anew.
 # Actions are pinned by commit, each at least two weeks old when pinned (as ci.yml).
 name: Release
 
@@ -31,15 +35,19 @@ jobs:
         arch: [amd64, arm64]
         image: [retinue, retinue-face, retinue-pages-build]   # not the lane's: it carries Claude Code (compose.yml)
         include:
+          # inputs: every path of the repository the build reads (tests/test_update.py checks them against the COPY lines)
           - image: retinue
             context: .
             dockerfile: Dockerfile
+            inputs: Dockerfile .dockerignore pyproject.toml uv.lock README.md LICENSE CHANGELOG.md retinue
           - image: retinue-face
             context: .
             dockerfile: deploy/face/Dockerfile
+            inputs: deploy/face face
           - image: retinue-pages-build
             context: deploy/pages
             dockerfile: deploy/pages/Dockerfile
+            inputs: deploy/pages
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,6 +63,7 @@ jobs:
           CONTEXT: ${{ matrix.context }}
           DOCKERFILE: ${{ matrix.dockerfile }}
           ARGS: ${{ matrix.args }}
+          INPUTS: ${{ matrix.inputs }}
           ACTOR: ${{ github.actor }}
           TOKEN: ${{ github.token }}
         run: |
@@ -62,12 +71,31 @@ jobs:
           [[ $TAG =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{12})$ ]] || { echo "::error::$TAG is not vX.Y.Z or sha-<hex>"; exit 1; }
           [[ $(docker version --format '{{.Server.Arch}}') == "$ARCH" ]] || { echo "::error::not an $ARCH runner"; exit 1; }
           ref="ghcr.io/${OWNER,,}/$IMAGE:$TAG-$ARCH"   # the registry takes lower case only
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          same=
+          if [[ -n $COMMIT ]]; then
+            # The base images by digest: FROM and COPY --from, but not a stage of this Dockerfile, nor one pinned there.
+            bases=$(awk 'toupper($1) == "FROM" { print $2; if (toupper($3) == "AS") print "stage:" $4 }
+                         toupper($1) == "COPY" { for (i = 2; i <= NF; i++) if ($i ~ /^--from=/) print substr($i, 8) }' "$DOCKERFILE")
+            digests=$(for base in $bases; do
+              if [[ $base == stage:* || $base == *@sha256:* ]] || grep -qxF "stage:$base" <<< "$bases"; then continue; fi
+              echo "$base $(docker buildx imagetools inspect --raw "$base" | sha256sum)"
+            done)
+            # shellcheck disable=SC2086  # the inputs are paths with no spaces, one word each
+            key=$({ git ls-tree -r HEAD -- $INPUTS; echo "$ARGS"; echo "$digests"; } | sha256sum | cut -c1-32)
+            same="ghcr.io/${OWNER,,}/$IMAGE:in-$key-$ARCH"
+            if docker buildx imagetools inspect "$same" > /dev/null 2>&1; then
+              echo "the inputs of an image built before, $same: tagged, not rebuilt"
+              docker buildx imagetools create -t "$ref" "$same"
+              exit 0
+            fi
+          fi
           build_args=()
           for arg in $ARGS; do build_args+=(--build-arg "$arg"); done
           docker build --pull -f "$DOCKERFILE" "${build_args[@]}" \
             --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" -t "$ref" "$CONTEXT"
-          printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           docker push "$ref"
+          if [[ -n $same ]]; then docker tag "$ref" "$same" && docker push "$same"; fi
 
   tags:
     name: Tag — ${{ matrix.image }} (amd64 and arm64)

@@ -217,7 +217,7 @@ describe("SpacePage", () => {
     expect(screen.getByText(/No passport yet/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Write it with a session" }));
     dialog = await screen.findByRole("dialog", { name: "Edit the passport" });
-    expect(within(dialog).getByTestId("discuss-head").textContent).toMatch(/^Let's edit this project's passport: the «## Why» section at the top of travel\/AGENTS\.md/);
+    expect(within(dialog).getByTestId("discuss-head").textContent).toContain("travel/AGENTS.md");
   });
 });
 

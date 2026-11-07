@@ -250,7 +250,7 @@ export function discussText(
       : what.task
         ? quoted("Let's plan a Task from the Showcase: what it takes, the steps, by when.", [`${space}/AGENTS.md`, basePaths(what.task)])
         : what.passport
-          ? `Let's edit this project's passport: the «## Why» section at the top of ${space ? `${space}/` : ""}AGENTS.md — why the project is, a line «In scope: …» and a line «Not in scope: … → where it goes instead». Ask me what is unclear before you write it.`
+          ? `Let's bring this project's passport to its schema: ${space ? `${space}/` : ""}AGENTS.md above the marker, as docs/base.md «A project's passport» sets it — «## Why», «## Scope» with marked In / Out → where / Size lines, «## Files», and «## Rules» or «## Checks» if needed. Write it from the project's files; move what does not fit to them. Ask me only what the files cannot tell.`
           : "";
   return [head, own.trim()].filter(Boolean).join("\n\n");
 }

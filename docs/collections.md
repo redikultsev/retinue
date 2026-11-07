@@ -684,6 +684,18 @@ are its own, not the owner's records.
    ```
 
    401 is the network right (no token yet); 404 is a computer not on the list, or not on the tunnel's route.
+
+   Another VPN on the computer (a work one, say) can take that route away while the tunnel is up: its DNS outranks
+   the tunnel's, the face's host resolves to the public address, and the check gives 404. Send only the VPN's
+   names to the tunnel's DNS (`10.8.0.1`, [face.md](face.md)), and the other VPN keeps the rest:
+
+   - macOS: a file `/etc/resolver/in.example.com` with the line `nameserver 10.8.0.1`.
+   - Windows, in an administrator's PowerShell:
+     `Add-DnsClientNrptRule -Namespace ".in.example.com" -NameServers 10.8.0.1`.
+   - Linux with systemd-resolved: `resolvectl dns wg0 10.8.0.1` and `resolvectl domain wg0 '~in.example.com'`
+     (`wg0` is the tunnel's interface; put both in its `PostUp`, as they last only while it is up).
+
+   The host then resolves to `10.8.0.1` again (`dig +short app.in.example.com`, on Windows `Resolve-DnsName`).
 2. **A device**, on the server's terminal ([below](#from-the-servers-terminal)):
 
    ```bash

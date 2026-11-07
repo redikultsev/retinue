@@ -366,7 +366,7 @@ def test_a_platform_restart_keeps_the_held_bases(kb):
     again = BaseRepo(repo.cfg, repo.lane_view)
     assert run(again.refresh()).updated == ["notes/knowledge/a.md"], "merged against the base it was held with"
     text = (again.tree / "notes/knowledge/a.md").read_text()
-    assert "Сессия.\n=======\nMac.\n" in text and again.take_marked() == ["notes/knowledge/a.md"]
+    assert "Сессия.\n=======\nС компьютера.\n" in text and again.take_marked() == ["notes/knowledge/a.md"]
     journal = again.db.execute("SELECT kind FROM journal ORDER BY id").fetchall()
     assert [row[0] for row in journal][-2:] == ["commit", "refresh"]
 

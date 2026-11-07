@@ -20,8 +20,8 @@ SKIP_DIRS = {".git", "node_modules", "dist", ".venv", "__pycache__", ".pytest_ca
 SUFFIXES = {".py", ".md", ".ts", ".tsx", ".css", ".html", ".sh", ".yml", ".yaml", ".json", ".toml", ".conf",
             ".template", ".txt", ".service", ".timer"}
 SKIP_FILES = {"CHANGELOG.md", "package-lock.json"}
-CAPITAL = re.compile(r"\bMacs?\b")
-WORD = re.compile(r"\bmac\b")
+CAPITAL = re.compile(r"(?:\b|\\[nrt])Macs?\b")  # after an escape too: "\nMac." in a string is a «Mac»
+WORD = re.compile(r"(?:\b|\\[nrt])mac\b")
 
 
 def texts() -> list[Path]:

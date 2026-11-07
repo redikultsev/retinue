@@ -29,7 +29,7 @@ jobs:
     strategy:
       matrix:
         arch: [amd64, arm64]
-        image: [retinue, retinue-face, retinue-pages-build, retinue-lane-private]
+        image: [retinue, retinue-face, retinue-pages-build]   # not the lane's: it carries Claude Code (compose.yml)
         include:
           - image: retinue
             context: .
@@ -40,10 +40,6 @@ jobs:
           - image: retinue-pages-build
             context: deploy/pages
             dockerfile: deploy/pages/Dockerfile
-          - image: retinue-lane-private
-            context: .
-            dockerfile: deploy/lanes/Dockerfile
-            args: LANE=private LANE_UID=10005
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,7 +76,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        image: [retinue, retinue-face, retinue-pages-build, retinue-lane-private]
+        image: [retinue, retinue-face, retinue-pages-build]   # not the lane's: it carries Claude Code (compose.yml)
     steps:
       - name: one tag for both architectures
         env:

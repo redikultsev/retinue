@@ -143,12 +143,14 @@ For a private repository, log the server in once with a token that has `read:pac
 sudo RETINUE_IMAGE=ghcr.io/<owner>/retinue bash deploy/update.sh v1.2.0   # RETINUE_IMAGE the first time only
 ```
 
-It checks the stack is healthy, pulls the tag's images (a tag not published stops here, nothing changed), stops the
-stack, snapshots its volumes (but the lanes' working trees), the code services' state folders and `stack.env` into
+It checks the stack is healthy, pulls the tag's images (a tag not published stops here, nothing changed), builds the
+lane's image from the checkout — it carries Claude Code, whose licence lets no one but Anthropic hand it out, so no
+registry has it; a failed build stops here too — stops the stack, snapshots its volumes (but the lanes' working trees), the code services' state folders and `stack.env` into
 `/var/backups/retinue/updates/`, writes the version to `stack.env`, starts the stack — each service migrates its
 database when it opens it — and waits up to five minutes for every service to be healthy (`deploy/health`). When one
 is not, it puts the snapshot back and starts the version before. The compose file is the checkout's: when a release
-changes `deploy/compose.yml` or `setup.sh`, check out the tag and run `setup.sh` first. Under Dokploy, set the two
+changes `deploy/compose.yml` or `setup.sh`, run `setup.sh` first; check out the tag before every update, since the
+lane's image is built from the checkout. Under Dokploy, set the two
 lines in *Environment* and redeploy: no snapshot, no way back.
 
 ## Following develop
@@ -156,8 +158,8 @@ lines in *Environment* and redeploy: no snapshot, no way back.
 A server can follow `develop` instead of releases: each push there that CI passes is on it minutes later, with no one
 on the server. CI builds the commit's images once, as a release's (`release.yml`, both architectures), and pushes
 them as `ghcr.io/<owner>/retinue*:sha-<12 hex>`; its last job, `deploy` in `.github/workflows/ci.yml`, logs in over
-ssh with a key that can do one thing, run `deploy/deploy.sh` with the commit's sha. Nothing is built on the server:
-it checks the commit out (its compose file names its images) and switches to them with `update.sh` — the steps of
+ssh with a key that can do one thing, run `deploy/deploy.sh` with the commit's sha. Only the lane's image is built on
+the server, as in «Updating»: it checks the commit out (its compose file names its images) and switches to them with `update.sh` — the steps of
 «Updating», snapshot and way back included. Not healthy: the data, `stack.env` and the checkout go back to the commit
 before. The last ten snapshots are kept. The registry's packages are public, as the repository is; for a private one,
 log the server in as in «Updating».

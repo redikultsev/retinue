@@ -1,6 +1,6 @@
-"""Following develop: CI builds the images of a push to develop that passed (release.yml, called from ci.yml) and its
-last job hands the commit to deploy/deploy.sh on the server, which checks it out and switches to its images with
-deploy/update.sh — and back, checkout and data, when they are not healthy.
+"""Following develop: CI builds the images of a push to develop (release.yml, called from ci.yml) while it checks it,
+and once every check passed its last job hands the commit to deploy/deploy.sh on the server, which checks it out
+and switches to its images with deploy/update.sh — and back, checkout and data, when they are not healthy.
 
 The server is tests/test_update.py's: a fake Docker keeping the stack in a file, the real health check. The checkout is
 a real git repository with a real origin, holding this repository's deploy/ folder.
@@ -105,15 +105,15 @@ def test_only_a_full_sha_is_taken_and_the_one_running_is_left_alone(tmp_path):
     assert run.returncode == 0 and not calls and "already on" in run.stdout
 
 
-def test_ci_builds_then_deploys_only_pushes_to_develop_that_passed_every_check():
+def test_ci_deploys_only_pushes_to_develop_that_passed_every_check():
     ci = yaml.safe_load(CI.read_text())
     images, deploy_job = ci["jobs"]["images"], ci["jobs"]["deploy"]
     checks = sorted(name for name in ci["jobs"] if name not in ("images", "deploy"))
-    assert sorted(images["needs"]) == checks, "built after every check"
+    assert "needs" not in images, "built while the checks run"
+    assert sorted(deploy_job["needs"]) == sorted([*checks, "images"]), "deployed after every check and the images"
     assert images["uses"] == "./.github/workflows/release.yml" and images["with"] == {"commit": "${{ github.sha }}"}, \
         "the images are built as a release's are"
     assert images["permissions"] == {"contents": "read", "packages": "write"}, "only this job may write packages"
-    assert deploy_job["needs"] == ["images"]
     develop_push = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
     assert images["if"] == develop_push and deploy_job["if"] == develop_push
     assert deploy_job["environment"] == "server", "the key lives in an environment only develop may use"

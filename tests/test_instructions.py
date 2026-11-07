@@ -58,7 +58,7 @@ def test_a_file_cannot_fake_the_end_of_its_fence_without_the_runs_nonce(work):
     assert one.index("<<<end repo-file guess>>>") < one.rindex(f"<<<end repo-file {nonce}>>>")
 
 
-# `cwd` is sub/. The CLAUDE files as 2.1.304 loads them with its default sources on the Mac (probed), in each folder
+# `cwd` is sub/. The CLAUDE files as 2.1.304 loads them with its default sources on the owner's computer (probed), in each folder
 # of the chain, top first; and every AGENTS.md and .claude/AGENTS.md of the chain after its folder's CLAUDE files —
 # which the CLI itself reads only when the chain has no CLAUDE file. Nothing below the cwd.
 @pytest.mark.parametrize("files, loaded", [

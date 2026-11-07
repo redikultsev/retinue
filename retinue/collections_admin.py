@@ -1,6 +1,6 @@
 """`retinue-platform collections …`: the owner's commands for his collections, run on the server's terminal inside
 the platform's container (docs/collections.md#from-the-servers-terminal). They are the one way a form and the rights
-are set and a Mac's token made or revoked: no route of the platform's reaches them, so neither the Router nor an agent
+are set and a computer's token made or revoked: no route of the platform's reaches them, so neither the Router nor an agent
 can.
 
 Each command opens the file itself, in this process, through the same store as the platform: its writes take the
@@ -50,7 +50,7 @@ def add_parser(commands: argparse._SubParsersAction) -> None:
     revert.add_argument("batch")
     export = actions.add_parser("export", help="write everything to an empty folder")
     export.add_argument("folder", type=Path)
-    device = actions.add_parser("device", help="the owner's Macs that reach the collections at /mcp/mac")
+    device = actions.add_parser("device", help="the owner's computers that reach the collections at /mcp/device")
     steps = device.add_subparsers(dest="step", required=True)
     add = steps.add_parser("add", help="a new device and its token, shown once")
     add.add_argument("name")
@@ -244,12 +244,12 @@ async def _export(store: Collections, args, ask, say, clock) -> int:
 
 
 async def _device(store: Collections, args, ask, say, clock) -> int:
-    """A device's token is shown once, here; a revoke takes effect at the next call, asked nothing: a lost Mac is
+    """A device's token is shown once, here; a revoke takes effect at the next call, asked nothing: a lost computer is
     shut out with one command."""
     if args.step == "add":
         token = await store.add_device(args.name, args.scope, clock())
-        say(f"Device {args.name} ({args.scope}). Its token, shown this once — put it in the Mac's keychain "
-            f"(docs/collections.md#from-the-mac):\n{token}")
+        say(f"Device {args.name} ({args.scope}). Its token, shown this once — put it in the computer's own store for secrets "
+            f"(docs/collections.md#from-the-owners-computer):\n{token}")
     elif args.step == "revoke":
         revoked = await store.revoke_device(args.name, clock())
         say(f"Revoked: {args.name}'s token opens nothing now." if revoked else f"{args.name} was revoked already.")

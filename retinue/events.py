@@ -36,8 +36,8 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from .collections import (NAME, SPACE, Collections, Logging, Refused, Rejected, Writer, check_writer, plain,
-                          writer_class)
+from .collections import (NAME, SPACE, Collections, Logging, Refused, Rejected, Writer, among, check_writer,
+                          plain, writer_class)
 
 if TYPE_CHECKING:
     from .platformd import Platform
@@ -133,9 +133,9 @@ class Events:
     @staticmethod
     def _marks(change: dict) -> tuple[str, ...]:
         """The marks of foreign text behind a change, as its reactions write with them: its writer's own, and a
-        session's or a Mac's, which carry none of their own (`Reader.foreign`)."""
+        session's or a computer's, which carry none of their own (`Reader.foreign`)."""
         cls = writer_class(change["actor"])
-        return tuple(sorted({*change["foreign"], *((cls,) if cls in ("session", "mac") else ())}))
+        return tuple(sorted({*change["foreign"], *((cls,) if cls in ("session", "device") else ())}))
 
     def _log(self, log: Logging, source: str, project: str, name: str, collection: str | None,
              record: str | None, depth: int, foreign: tuple[str, ...]) -> dict | None:
@@ -161,7 +161,7 @@ class Events:
         if event is None:
             raise Rejected(f"{project} declares no event {name!r}")
         cls = writer_class(writer.actor)
-        if cls != "owner" and cls not in event["by"]:
+        if cls != "owner" and not among(cls, event["by"]):
             raise Rejected(f"{project}/{name} is not fired by {cls}: its description names who fires it "
                            f"({', '.join(event['by']) or 'the owner alone'})")
         if record is not None:

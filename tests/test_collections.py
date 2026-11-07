@@ -221,7 +221,7 @@ def add(fields: dict, **extra) -> dict:
 
 
 def test_a_writer_but_the_owner_dates_a_change_within_its_records_life_and_never_ahead(tmp_path):
-    """`as_of` moves the week a change is counted in: a session, the assistant or a Mac (a prompt it read may ask)
+    """`as_of` moves the week a change is counted in: a session, the assistant or a computer (a prompt it read may ask)
     dates neither ahead of today nor a change before its record was made — an add back, the honest way to record
     late. The owner and an import date as they know."""
     made = dt.datetime(2026, 9, 10, 12, tzinfo=dt.UTC).timestamp()
@@ -618,7 +618,7 @@ def test_a_write_under_a_lock_is_refused_within_the_wait(tmp_path, monkeypatch):
 # --- rights, keys, idems ------------------------------------------------------------------------------------------
 
 ASSISTANT = Writer("assistant", "assistant", model="claude-example")
-MAC = Writer("mac:laptop/s1", "mac")
+COMPUTER = Writer("device:laptop/s1", "device")
 MAIL_RULE = Writer("code:mail-done", "mail")
 FOLLOWUPS = {"fields": {
     "deal": {"type": "ref", "to": "deals"},
@@ -648,11 +648,11 @@ def test_a_new_collection_gets_the_narrow_default_rights(tmp_path):
         assert await sql(store, "SELECT rights FROM schemas WHERE collection = 'deals'") == \
             [(collections._json(collections.DEFAULT_RIGHTS),)]
         rid = (await store.apply(SESSION, "deals", [add({"company": "Acme"})], 1))["records"][0]["id"]
-        await store.apply(MAC, "deals", [{"op": "set", "id": rid, "version": 1, "fields": {"stage": "qualified"}}], 2)
+        await store.apply(COMPUTER, "deals", [{"op": "set", "id": rid, "version": 1, "fields": {"stage": "qualified"}}], 2)
         with pytest.raises(Rejected):
             await store.apply(SESSION, "deals", [{"op": "delete", "id": rid, "version": 2}], 3)
         with pytest.raises(Rejected):
-            await store.apply(MAC, "deals", [{"op": "delete", "id": rid, "version": 2}], 3)
+            await store.apply(COMPUTER, "deals", [{"op": "delete", "id": rid, "version": 2}], 3)
         with pytest.raises(Rejected):
             await store.apply(ASSISTANT, "deals", [add({"company": "Acme"})], 3)
         with pytest.raises(Rejected):
@@ -760,7 +760,7 @@ def test_a_revert_needs_the_rights_of_what_it_does(tmp_path):
 def test_rights_are_the_owners_alone_and_checked_strictly(tmp_path):
     async def body():
         store = await with_followups(tmp_path)
-        for writer in (SESSION, ASSISTANT, MAC, MAIL_RULE, Writer("define:2", "define"),
+        for writer in (SESSION, ASSISTANT, COMPUTER, MAIL_RULE, Writer("define:2", "define"),
                        Writer("import:" + "0" * 26, "import")):
             with pytest.raises(Rejected):
                 await store.rights(writer, "followups", {"writers": {"assistant": {"add": True, "set": "*",
@@ -948,15 +948,15 @@ def test_the_same_idem_answers_the_first_call_and_changes_nothing(tmp_path):
         assert (await store.history("deals", rid))[-1]["idem"] == "lane-1/tool-7"
         with pytest.raises(Rejected):
             await store.apply(SESSION, "deals", [add({"company": "Initech"})], 3, idem="lane-1/tool-7")
-        for writer in (Writer("session:other", "session"), MAC):
+        for writer in (Writer("session:other", "session"), COMPUTER):
             other = await store.apply(writer, "deals", ops, 4, idem="lane-1/tool-7")
             assert other["change_ids"] != first["change_ids"], "another session's idems are its own, as a class's"
         assert await sql(store, "SELECT count(*) FROM records") == [(6,)]
         with pytest.raises(Rejected):
-            await store.apply(MAC, "deals", ops, 5, idem="")
+            await store.apply(COMPUTER, "deals", ops, 5, idem="")
         with pytest.raises(Rejected):
-            await store.apply(MAC, "deals", [add({"product": "Widgets"})], 5, idem="mac-2")
-        done = await store.apply(MAC, "deals", [add({"company": "Acme"})], 6, idem="mac-2")
+            await store.apply(COMPUTER, "deals", [add({"product": "Widgets"})], 5, idem="device-2")
+        done = await store.apply(COMPUTER, "deals", [add({"company": "Acme"})], 6, idem="device-2")
         assert done["change_ids"][0], "a refused call leaves no idem behind"
         await store.close()
 

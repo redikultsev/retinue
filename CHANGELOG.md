@@ -9,12 +9,15 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
 
 ## Unreleased
 
+- «Settings» lists your computers that reach your collections: what each may do, when it was last seen, and
+  «Revoke» to shut one out at once.
 - «Settings» → «Repositories» → «Add repository»: a GitHub or GitLab address and its account's token, written on
   the server for you, `code:` section and all. No more editing platform.yaml over ssh to connect a repository.
 - A server that follows develop sets up each version on its own, `setup.sh` included: nothing is left to run by hand
   after an update, and a version whose set-up fails is not started.
 - «Operator» is a place of its own, beside «Today»: the sessions' questions and results as cards, or on the map. The
-  sessions on your own computer are there too, with what they asked or brought back; you answer them on the computer.
+  sessions on your own computer are there too, with what they asked or brought back, and you answer them right on
+  their cards, from any device: the answer reaches the session when that computer next checks in.
 - Every project's passport has the same short parts — why, scope, files, rules, checks — written for the agent that
   opens the project, and the Base refuses a change that breaks one.
 - The left column is the Base's tree: its Spaces on top, every sub-project inside, folded until you open it. No

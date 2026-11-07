@@ -26,6 +26,8 @@ export const paths = {
   archived: "/api/archived",
   /** The sessions the owner's computers run, as each last reported them (retinue/computers.py). */
   computers: "/api/computers",
+  /** The owner's answer to one of a computer's sessions, handed to that computer on its next report. */
+  computerAnswer: (device: string, id: string) => `/api/computers/${seg(device)}/sessions/${seg(id)}/answer`,
   session: (id: string) => `/api/sessions/${seg(id)}`,
   /** A session's own route: `input`, `pin`, `archive`, `diff`, `push`, … */
   sessionDo: (id: string, what: string) => `/api/sessions/${seg(id)}/${what}`,
@@ -61,6 +63,8 @@ export const paths = {
   /** «Settings» (retinue/settings.py): what is set (GET), a change for the host to write (POST). */
   settings: "/api/settings",
   settingsDo: (op: "key" | "git" | "project_key" | "lane" | "repo" | "restart") => `/api/settings/${op}`,
+  /** A computer of /mcp/device taken back at once (POST {name}). */
+  settingsRevoke: "/api/settings/device/revoke",
 } as const;
 
 /** One of her files on a row of the chat: kept for the app (`id`), or only named, with why. */

@@ -4,8 +4,8 @@ tools a session gets (`colltools`), as an MCP server on the face's own address, 
 devices' WireGuard addresses only) and nginx.
 
 **Who** is a device's token alone: `Authorization: Bearer <token>`, compared by its SHA-256 with the `devices` the
-owner keeps from the server's terminal (`retinue-platform collections device …`); a revoked one opens nothing at its
-next call. The face's cookie and its `X-Retinue` header play no part here — the face's guard lets this app's requests
+owner makes on the server's terminal (`retinue-platform collections device …`); a revoked one — there or in the app's
+«Settings» — opens nothing at its next call. Each request with a token that opens is the device's «last seen». The face's cookie and its `X-Retinue` header play no part here — the face's guard lets this app's requests
 through to its own check (`Face._guarded`) — and a token opens nothing of the face's `/api/*`.
 
 **What** is the token's scope: `read` lists and serves `collection_describe` and `collection_query`; `write` the four.
@@ -93,6 +93,7 @@ class Device:
             return web.json_response({"error": UNAUTHORIZED}, status=401,
                                      headers={"WWW-Authenticate": 'Bearer realm="retinue"'})
         request[DEVICE] = device
+        self.platform.computers.saw(device["name"], self.platform.clock())
         return await handler(request)
 
     async def no_stream(self, request: web.Request) -> web.Response:
@@ -152,9 +153,11 @@ class Device:
                 taken, left_out = self.platform.computers.report(device["name"], params, self.platform.clock())
             except computers.Refused as exc:
                 return error(str(exc))
+            answers = self.platform.computers.answers(device["name"])  # the owner's, until it names them delivered
             return 200, {"jsonrpc": "2.0", "id": body["id"],
                          "result": {"taken": taken, "again_s": computers.BEAT_S,
-                                    **({"left_out": left_out} if left_out else {})}}
+                                    **({"left_out": left_out} if left_out else {}),
+                                    **({"answers": answers} if answers else {})}}
         if self.spaces is None:
             return error(NO_BASE, -32000)
         try:

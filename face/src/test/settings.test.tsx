@@ -76,12 +76,17 @@ function view(over: Partial<SettingsView> = {}): SettingsView {
     project_keys: [],
     author_needed: false,
     done: {},
+    devices: [
+      { name: "old-laptop", scope: "write", created: 1_790_000_000, seen: 1_790_100_000, revoked: 1_790_200_000 },
+      { name: "laptop", scope: "write", created: 1_795_000_000, seen: 1_799_999_000, revoked: null },
+      { name: "office-pc", scope: "read", created: 1_796_000_000, seen: null, revoked: null },
+    ],
     ...over,
   };
 }
 
 function row(title: string) {
-  const name = screen.getByText(title, { selector: "span" });
+  const name = screen.getByText(title, { selector: "span.font-medium" });
   const li = name.closest("li");
   if (!li) throw new Error(`no row ${title}`);
   return within(li);
@@ -221,6 +226,42 @@ describe("Settings", () => {
     rerender(<SettingsBody view={view({ lanes, pending: ["platform"] })} waiting={{}} send={send} />);
     fireEvent.click(screen.getByRole("button", { name: "Restart" }));
     await waitFor(() => expect(send).toHaveBeenCalledWith("restart", "restart", {}));
+  });
+
+  it("lists the devices, those in use first, and offers Revoke only for one that still reaches the collections", () => {
+    render(<SettingsBody view={view()} waiting={{}} send={vi.fn()} revoke={vi.fn()} />);
+    const devices = within(screen.getByRole("region", { name: "Devices" }));
+    const names = devices.getAllByTestId("device-row").map((li) => within(li).getAllByText(/./)[0]?.textContent);
+    expect(names).toEqual(["laptop", "office-pc", "old-laptop"]);
+    expect(row("laptop").getByRole("button", { name: "Revoke" })).toBeTruthy();
+    expect(row("old-laptop").queryByRole("button", { name: "Revoke" })).toBeNull(); // taken back already
+    expect(devices.getByText(/collections device add/)).toBeTruthy(); // how one is added
+  });
+
+  it("takes a device back only on the second press, and keeps it on «Keep it»", async () => {
+    const revoke = vi.fn().mockResolvedValue(undefined);
+    render(<SettingsBody view={view()} waiting={{}} send={vi.fn()} revoke={revoke} />);
+    fireEvent.click(row("laptop").getByRole("button", { name: "Revoke" }));
+    expect(revoke).not.toHaveBeenCalled();
+    fireEvent.click(row("laptop").getByRole("button", { name: "Keep it" }));
+    expect(row("laptop").queryByRole("button", { name: "Yes, revoke" })).toBeNull();
+    fireEvent.click(row("laptop").getByRole("button", { name: "Revoke" }));
+    fireEvent.click(row("laptop").getByRole("button", { name: "Yes, revoke" }));
+    await waitFor(() => expect(revoke).toHaveBeenCalledWith("laptop"));
+    expect(revoke).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a refused revoke's words on the row", async () => {
+    const revoke = vi.fn().mockRejectedValue(new Error("There is no device 'laptop'."));
+    render(<SettingsBody view={view()} waiting={{}} send={vi.fn()} revoke={revoke} />);
+    fireEvent.click(row("laptop").getByRole("button", { name: "Revoke" }));
+    fireEvent.click(row("laptop").getByRole("button", { name: "Yes, revoke" }));
+    await waitFor(() => expect(row("laptop").getByText("There is no device 'laptop'.")).toBeTruthy());
+  });
+
+  it("shows no Devices section when the platform could not read them", () => {
+    render(<SettingsBody view={view({ devices: null })} waiting={{}} send={vi.fn()} revoke={vi.fn()} />);
+    expect(screen.queryByRole("region", { name: "Devices" })).toBeNull();
   });
 
   it("disables every control while the server's service is not installed", () => {

@@ -3,14 +3,15 @@
 // changes, what an approval will do and where, the thing to look at opened in place, the owner's own step with its
 // command to copy, what a finished turn came to and what is next. Every answer goes to the session as the owner's next
 // message, and the card says it in place («You: …») instead of its buttons. A session on one of the owner's computers
-// (`computer` on the row) is answered there: the card shows the same words, its options without buttons, and the way to
-// the session on that computer.
+// (`computer` on the row) is answered here too: the answer waits on the platform until that computer takes it on its
+// next report (`answered` on the row meanwhile), and the card says so — or, when the computer could not put it in,
+// what it said and why (`undelivered`), and asks again.
 import { useState } from "react";
 import { FileRow, type Kind } from "@/components/files";
 import { ArrowUpRight } from "@/components/icons";
-import { Reply } from "@/components/reply";
+import { type Deliver, deliverTo, Reply } from "@/components/reply";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { ApiError, api } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import type { EndingArtifact, FeedRow, TurnEnding } from "@/lib/feed";
 import { thingName, thingsOf, WHY_OWNER } from "@/lib/operator";
 import { toast } from "@/lib/toast";
@@ -45,15 +46,15 @@ export function ThingView({ thing, opened }: { thing: EndingArtifact; opened: bo
 }
 
 /** The owner's words to the session as its next message; the card says them once sent. */
-function useSend(session: string | null, onSent: (words: string) => void) {
+function useSend(deliver: Deliver | null, onSent: (words: string) => void) {
   const [busy, setBusy] = useState(false);
   return {
     busy,
     send: async (words: string) => {
-      if (!session || busy) return;
+      if (!deliver || busy) return;
       setBusy(true);
       try {
-        await api.input(session, words);
+        await deliver(words);
         onSent(words);
       } catch (e) {
         toast(e instanceof ApiError ? e.message : "That didn't work.", "error");
@@ -101,6 +102,24 @@ export function mainOf(e: TurnEnding): string {
   return e.what || "";
 }
 
+/** Why one of his computers did not put his answer into its session (retinue/computers.py `WHYS`). */
+const NOT_IN: Record<string, string> = {
+  moved_on: "the session moved on",
+  unknown_session: "the computer no longer has that session",
+  too_long: "it was too long for the session",
+  failed: "the computer could not put it in",
+};
+
+/** His answer a computer did not put in: what he said and why, above the way to answer again. */
+export function Undelivered({ row }: { row: FeedRow }) {
+  if (!row.undelivered) return null;
+  return (
+    <p className={META}>
+      Not delivered: «{row.undelivered.text}» — {NOT_IN[row.undelivered.why] ?? "the computer did not take it"}.
+    </p>
+  );
+}
+
 /** «Answer on the computer ↗»: the session's own link on the computer it runs on, or where it is when there is none. */
 export function OnComputer({ computer, verb = "Answer" }: { computer: NonNullable<FeedRow["computer"]>; verb?: "Answer" | "Open" }) {
   if (!computer.link) return <p className={META}>{verb} it on {computer.device}: the session runs there.</p>;
@@ -115,10 +134,10 @@ export function OnComputer({ computer, verb = "Answer" }: { computer: NonNullabl
 }
 
 export function EndingCard({ row, e }: { row: FeedRow; e: TurnEnding }) {
-  const [said, setSaid] = useState<string | null>(null);
-  // a computer's session: read here, answered on the computer
-  const here = !row.computer;
-  const { busy, send } = useSend(row.session, setSaid);
+  const [said, setSaid] = useState<string | null>(row.answered ?? null);
+  const deliver = deliverTo(row);
+  const here = deliver !== null;
+  const { busy, send } = useSend(deliver, setSaid);
   const things = thingsOf(e);
   const main = mainOf(e) || (e.kind === "look" ? "" : row.essence);
   const options = e.kind === "ask" ? (e.options ?? []) : [];
@@ -172,9 +191,13 @@ export function EndingCard({ row, e }: { row: FeedRow; e: TurnEnding }) {
         </p>
       )}
       {said !== null ? (
-        <p className="rounded-md bg-muted px-3 py-2 text-sm">You: «{said}»</p>
+        <div className="flex flex-col gap-1">
+          <p className="rounded-md bg-muted px-3 py-2 text-sm">You: «{said}»</p>
+          {row.computer && <p className={META}>It reaches the session when {row.computer.device} next checks in.</p>}
+        </div>
       ) : (
         <>
+          <Undelivered row={row} />
           {options.length > 0 && (
             <fieldset aria-label="Options" className="flex min-w-0 flex-col gap-1.5">
               {options.map((o, i) => (
@@ -224,9 +247,13 @@ export function EndingCard({ row, e }: { row: FeedRow; e: TurnEnding }) {
               </Button>
             </div>
           )}
-          {row.computer && <OnComputer computer={row.computer} />}
-          {row.session && (
-            <Reply session={row.session} placeholder={e.kind === "step" && e.expect ? `Send back: ${e.expect}` : REPLY[e.kind]} onSent={setSaid} />
+          {deliver && (
+            <Reply
+              session={row.session ?? `${row.computer?.device}/${row.computer?.id}`}
+              deliver={deliver}
+              placeholder={e.kind === "step" && e.expect ? `Send back: ${e.expect}` : REPLY[e.kind]}
+              onSent={setSaid}
+            />
           )}
         </>
       )}

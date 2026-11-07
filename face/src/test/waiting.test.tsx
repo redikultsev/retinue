@@ -85,6 +85,12 @@ describe("what waits", () => {
     expect(tileOf(session("done"), [done], { done: { n: 5 } })).toMatchObject({ state: "done", n: undefined });
   });
 
+  it("test_a_computers_session_he_answered_waits_on_the_computer_not_on_him", () => {
+    const computer = { device: "laptop", id: "local_q" };
+    const asked = row("ending:laptop/local_q", { action: "answer", source: "computer", session: null, computer, ending: { kind: "ask", context: "Which?" } });
+    expect([asked, { ...asked, answered: "A" }].map(waits)).toEqual([true, false]);
+  });
+
   it("lists on «Today» all but a person's ask, which is Tasks' — and counts so", () => {
     const feed = feedOf([row("r"), look, ask, hers("draft:1", { source: "draft" })]);
     expect(todayRows(feed).map((r) => r.key)).toEqual(["r", "look", "draft:1"]);

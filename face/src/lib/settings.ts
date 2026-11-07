@@ -33,6 +33,14 @@ export type Lane = {
   running: { model: string; effort: string };
 };
 export type Choice = { id: string; label: string };
+/** A computer of /mcp/device: what it may do, when it was last seen (seconds), whether it was taken back. */
+export type Device = {
+  name: string;
+  scope: "read" | "write";
+  created: number;
+  seen: number | null;
+  revoked: number | null;
+};
 export type Done = { ok: boolean; at: number; why?: string; services?: string[] };
 export type SettingsView = {
   schema: number;
@@ -52,12 +60,15 @@ export type SettingsView = {
   /** The first repository makes the `code:` section, and its commits need an author: none in platform.yaml yet. */
   author_needed: boolean;
   done: Record<string, Done>;
+  /** null: the platform could not read them just now. */
+  devices: Device[] | null;
 };
 export type SettingsOp = "key" | "git" | "project_key" | "lane" | "repo" | "restart";
 
 export const settingsApi = {
   get: () => request<SettingsView>(paths.settings),
   send: (op: SettingsOp, body: Record<string, unknown>) => request<{ id: string }>(paths.settingsDo(op), body),
+  revoke: (name: string) => request<{ revoked: boolean }>(paths.settingsRevoke, { name }),
 };
 
 /** What a service is called on screen. */
@@ -118,7 +129,16 @@ export function useSettings() {
     return id;
   }, []);
 
-  return { view, error, waiting, busy, load, send };
+  /** A device taken back by the platform itself, at once: the view is read again after it. */
+  const revoke = useCallback(
+    async (name: string) => {
+      await settingsApi.revoke(name);
+      await load();
+    },
+    [load],
+  );
+
+  return { view, error, waiting, busy, load, send, revoke };
 }
 
 /** A request's state for the row that sent it: still with the host, answered, or none sent. */

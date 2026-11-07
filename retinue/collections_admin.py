@@ -1,7 +1,8 @@
 """`retinue-platform collections …`: the owner's commands for his collections, run on the server's terminal inside
 the platform's container (docs/collections.md#from-the-servers-terminal). They are the one way a form and the rights
-are set and a computer's token made or revoked: no route of the platform's reaches them, so neither the Router nor an agent
-can.
+are set and a computer's token made: no route of the platform's reaches them, so neither the Router nor an agent
+can. Taking a computer back is here and in the app's «Settings» too, behind the owner's login (`settings.py`): it only
+takes access away.
 
 Each command opens the file itself, in this process, through the same store as the platform: its writes take the
 file's lock like any other (`BEGIN IMMEDIATE`, refused past 2 s), and the platform's thread takes in what they wrote at

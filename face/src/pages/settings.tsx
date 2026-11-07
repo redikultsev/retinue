@@ -2,7 +2,8 @@
 // effort, the keys, the channels' tokens, the repositories' and the projects' keys — in one place, each row saying
 // what it is for and whether it is set. A key is typed once: it goes to the server and is never shown again, not
 // here, not to the platform (retinue/settings.py). A change that waits for a restart says so at the top, and the
-// owner's «Restart» does it. A repository is added here too: its address, and its account's token when it has none.
+// owner's «Restart» does it. The computers that reach the collections are listed too, and one is taken back here.
+// A repository is added here too: its address, and its account's token when it has none.
 import { useEffect, useState } from "react";
 import { PageHeader, PAGE_X } from "@/components/page-header";
 import { Check } from "@/components/icons";
@@ -11,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { when } from "@/lib/format";
 import {
+  type Device,
   type Lane,
   requestState,
   SERVICE_LABELS,
@@ -22,6 +24,7 @@ import { toast } from "@/lib/toast";
 import { cn, LIST } from "@/lib/utils";
 
 type Send = (op: SettingsOp, about: string, body: Record<string, unknown>) => Promise<string>;
+type Revoke = (name: string) => Promise<void>;
 type Waiting = Record<string, unknown>;
 
 const SELECT =
@@ -38,7 +41,7 @@ function stateWords(set: boolean, changed: number | null): string {
   return changed ? `Set · ${when(changed)}` : "Set";
 }
 
-function Section({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
+function Section({ title, note, children }: { title: string; note?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2" aria-label={title}>
       <h2 className="px-1 text-[13px] font-medium text-muted-foreground">{title}</h2>
@@ -337,6 +340,112 @@ function AddRepoRow({ view, ready, waiting, send }: { view: SettingsView; ready:
   );
 }
 
+/** What a device's scope lets it do, in his words. */
+const MAY_DO: Record<Device["scope"], string> = {
+  read: "Reads your collections",
+  write: "Reads and changes your collections, as each one's rights allow",
+};
+
+/**
+ * One computer: its name, what it may do, when it was last seen, and «Revoke», asked first. Taken back, it stays
+ * in the list, greyed, with the day: its name is never given again.
+ */
+function DeviceRow({ device, revoke }: { device: Device; revoke?: Revoke }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [why, setWhy] = useState<string | null>(null);
+  const gone = device.revoked !== null;
+  const status = gone
+    ? `Revoked · ${when(device.revoked ?? 0)}`
+    : device.seen
+      ? `Seen · ${when(device.seen)}`
+      : "Not seen yet";
+  return (
+    <li data-testid="device-row" className={cn("flex flex-col gap-3 px-3 py-2.5", gone && "opacity-60")}>
+      <div className="flex items-start gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 truncate text-[15px] font-medium md:text-[13px]">{device.name}</span>
+            <span role="status" className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              {status}
+            </span>
+          </div>
+          <span className="text-xs text-muted-foreground">{MAY_DO[device.scope]}</span>
+        </div>
+        {!gone && revoke && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="min-w-20"
+            aria-expanded={asking}
+            disabled={asking || busy}
+            onClick={() => {
+              setWhy(null);
+              setAsking(true);
+            }}
+          >
+            Revoke
+          </Button>
+        )}
+      </div>
+      {asking && revoke && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px]">
+            Take {device.name} back? Its token stops working at its next call; a new one needs a new name.
+          </span>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await revoke(device.name);
+                setAsking(false);
+              } catch (e) {
+                setWhy(errorText(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Yes, revoke
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setAsking(false)}>
+            Keep it
+          </Button>
+        </div>
+      )}
+      {why && <p className="text-xs text-destructive">{why}</p>}
+    </li>
+  );
+}
+
+function DevicesSection({ devices, revoke }: { devices: Device[]; revoke?: Revoke }) {
+  // the ones that still reach the collections first, each group as made
+  const shown = [...devices.filter((d) => d.revoked === null), ...devices.filter((d) => d.revoked !== null)];
+  return (
+    <Section
+      title="Devices"
+      note={
+        <>
+          A computer is added on the server's terminal, where its token is shown once:
+          <code className="mt-1 block rounded-md bg-muted px-2 py-1.5 font-mono break-words">
+            <span className="whitespace-nowrap">retinue-platform</span> collections device add &lt;name&gt;{" "}
+            <span className="whitespace-nowrap">--scope read|write</span>
+          </code>
+        </>
+      }
+    >
+      {shown.length ? (
+        shown.map((d) => <DeviceRow key={d.name} device={d} revoke={revoke} />)
+      ) : (
+        <li className="px-3 py-2.5 text-xs text-muted-foreground">No computer reaches your collections yet.</li>
+      )}
+    </Section>
+  );
+}
+
 /** A row of the lane's: a label, and its control or value at the right. */
 function FieldRow({ label, children, note }: { label: string; children: React.ReactNode; note?: string }) {
   return (
@@ -486,7 +595,17 @@ function RestartBar({ view, waiting, send }: { view: SettingsView; waiting: Wait
   );
 }
 
-export function SettingsBody({ view, waiting, send }: { view: SettingsView; waiting: Waiting; send: Send }) {
+export function SettingsBody({
+  view,
+  waiting,
+  send,
+  revoke,
+}: {
+  view: SettingsView;
+  waiting: Waiting;
+  send: Send;
+  revoke?: Revoke;
+}) {
   const ready = view.ready;
   const keysOf = (group: "keys" | "channels") =>
     view.keys
@@ -538,6 +657,7 @@ export function SettingsBody({ view, waiting, send }: { view: SettingsView; wait
       ))}
       <Section title="Keys">{keysOf("keys")}</Section>
       <Section title="Channels">{keysOf("channels")}</Section>
+      {view.devices && <DevicesSection devices={view.devices} revoke={revoke} />}
       <Section
         title="Repositories"
         note="A GitHub token is fine-grained: only these repositories, Contents and Pull requests read and write."
@@ -586,7 +706,7 @@ export function SettingsBody({ view, waiting, send }: { view: SettingsView; wait
 }
 
 export function SettingsPage() {
-  const { view, error, waiting, load, send } = useSettings();
+  const { view, error, waiting, load, send, revoke } = useSettings();
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       <PageHeader title="Settings" />
@@ -597,7 +717,7 @@ export function SettingsPage() {
         )}
       >
         {view ? (
-          <SettingsBody view={view} waiting={waiting} send={send} />
+          <SettingsBody view={view} waiting={waiting} send={send} revoke={revoke} />
         ) : error ? (
           <div className="flex flex-col items-start gap-2">
             <p className="text-sm text-destructive">{error}</p>

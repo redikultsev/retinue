@@ -723,7 +723,7 @@ done
 [[ $MEMORY_ON == 1 ]] && echo "Memory: on — hub $HUB; rules $MEMORY_DIR/policy.json and checkout.txt (see docs/memory.md)"
 if [[ $MAIL_ON == 1 ]]; then
   echo "Mail: on — keys: $(find "$MAIL_DIR/keys" -name '*.json' 2>/dev/null | wc -l | tr -d ' ') files in $MAIL_DIR/keys" \
-       "(put there by deploy/mail/login.py on your Mac; see docs/mail.md)"
+       "(put there by deploy/mail/login.py on your computer; see docs/mail.md)"
 fi
 if [[ $PAGES_ON == 1 ]]; then
   echo "Pages: on — https://$PAGES_HOST for $(paste -sd' ' "$DEVICES_FILE"); public sites:" \
@@ -739,11 +739,11 @@ fi
   "the chats you choose, only «reply on your behalf» (docs/courier.md)"
 if [[ $SEND_ON == 1 ]]; then
   echo "Send: on — keys: $(find "$SEND_DIR/keys" -name '*.send.json' 2>/dev/null | wc -l | tr -d ' ') in $SEND_DIR/keys" \
-       "(deploy/mail/login.py --kind send on your Mac; docs/courier.md)"
+       "(deploy/mail/login.py --kind send on your computer; docs/courier.md)"
 fi
 if [[ $CALWRITE_ON == 1 ]]; then
   echo "Calendar writer: on — keys: $(find "$CALWRITE_DIR/keys" -name '*.calwrite.json' 2>/dev/null | wc -l | tr -d ' ')" \
-       "in $CALWRITE_DIR/keys (deploy/mail/login.py --kind calwrite on your Mac; docs/calendar.md)"
+       "in $CALWRITE_DIR/keys (deploy/mail/login.py --kind calwrite on your computer; docs/calendar.md)"
 fi
 [[ $PLATFORM_ON == 1 ]] && echo "Platform: on — lanes and tracks in $PLATFORM_DIR/platform.yaml; before the first" \
   "session run the container probe (docs/platform.md)"

@@ -34,8 +34,11 @@ jobs:
       # The runner has Docker, so the tests that need it run here too (the code path across two users, the open
       # proxy, the face's nginx config). The probes stay skipped here and run in the job below; the ones that need the
       # owner's token run on the server.
+      # In one process per core (pytest-xdist): the tests share nothing another process could see — each writes only
+      # under its own tmp_path, binds port 0, names its containers and networks with a random suffix, and changes the
+      # environment through monkeypatch or a subprocess's own env (CONTRIBUTING.md, «Tests run in parallel»).
       - name: pytest
-        run: uv run --frozen --with pytest pytest -q
+        run: uv run --frozen --with pytest --with pytest-xdist==3.8.0 pytest -q -n auto --durations=15
       - name: ruff
         run: uv run --with ruff ruff check .
 
@@ -97,13 +100,14 @@ jobs:
       - run: pnpm -C face exec playwright install --with-deps chromium
       - run: pnpm -C face e2e
 
-  # A push to develop that passed every check above: its images are built once, here, as a release's are (release.yml,
-  # tagged sha-<12 hex>), and the server that follows develop pulls and starts them (docs/install.md, «Following
-  # develop»): ssh with a key that can run only deploy/deploy.sh, handed the commit. The key is in the environment
-  # `server`, which only develop may use; without its secrets the job says so and stops (a fork).
+  # A push to develop: its images are built once, here, as a release's are (release.yml, tagged sha-<12 hex>), while
+  # the checks above run — the build needs none of them. Only once it passed every check does the server that follows
+  # develop pull and start them (docs/install.md, «Following develop»): ssh with a key that can run only
+  # deploy/deploy.sh, handed the commit. A commit that fails a check still has its images in the registry, and nothing
+  # runs them. The key is in the environment `server`, which only develop may use; without its secrets the job says so
+  # and stops (a fork).
   images:
     name: Images of this commit
-    needs: [python, probes, face, face-e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     permissions:
       contents: read
@@ -114,7 +118,7 @@ jobs:
 
   deploy:
     name: Deploy develop to the server
-    needs: [images]
+    needs: [python, probes, face, face-e2e, images]   # every check and the images; one red, and it never starts
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-24.04
     environment: server

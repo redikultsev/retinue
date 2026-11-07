@@ -41,6 +41,29 @@ export function thingsOf(e: TurnEnding | null | undefined): EndingArtifact[] {
 
 export const thingName = (t: EndingArtifact) => t.title || (t.path ?? t.url ?? "").split(/[\\/]/).pop() || "file";
 
+// --- cards or the map --------------------------------------------------------------------------------------------
+
+/** How the operator shows its requests: as cards, or as the map of the sessions in their places. */
+export type OperatorView = "cards" | "map";
+export const OPERATOR_VIEW_KEY = "retinue-operator-view";
+
+/** The way picked last on this device — the operator's place and a project's tab alike —; cards the first time. */
+export function keptOperatorView(): OperatorView {
+  try {
+    return localStorage.getItem(OPERATOR_VIEW_KEY) === "map" ? "map" : "cards";
+  } catch {
+    return "cards";
+  }
+}
+
+export function keepOperatorView(view: OperatorView): void {
+  try {
+    localStorage.setItem(OPERATOR_VIEW_KEY, view);
+  } catch {
+    // storage unavailable: the pick holds while the page is open
+  }
+}
+
 // --- numbers -----------------------------------------------------------------------------------------------------
 
 /** A number freed by a card that left stays its own this long: «three» does not turn into another session while he

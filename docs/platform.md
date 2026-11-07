@@ -2,7 +2,7 @@
 
 Besides the assistant, Retinue can run Claude Code sessions on your server — an unmodified `claude -p` of a pinned
 version, each in a **lane** container of its own — driven from the same Telegram chat. The sessions run in Claude
-Code's `auto` mode, as on your Mac: a call your rules do not decide is decided by the CLI's own classifier, and what
+Code's `auto` mode, as on your computer: a call your rules do not decide is decided by the CLI's own classifier, and what
 it blocks — or what a card rule names — comes to you as a card; what would leave the system (a push, a pull
 request, a release, a publish, a connection to another machine, a letter) is never granted at all: it comes as a
 courier card, and you run it yourself. The assistant is untouched: plain text in the chat still goes to her, and her archive never sees a
@@ -299,7 +299,7 @@ forked, and a session that never ran has nothing to fork.
 ## Sub-sessions
 
 A session you started hands separable work to sessions of its own — as your main session of a sphere does in Claude
-Code on the Mac («Travel» runs «stay», «a trip to the sea») — and is told when each one's turn ends
+Code on the owner's computer («Travel» runs «stay», «a trip to the sea») — and is told when each one's turn ends
 (`retinue/subs.py`). The lanes' instructions teach it when to (`deploy/lanes/instructions/common.md`).
 
 **The mechanism: an MCP server the platform serves to the run**, at `http://platform:9500/hook/mcp` — beside the hooks,
@@ -383,7 +383,7 @@ a turn at most.
   you, and every call of the child passes the gate as any sub-session's. One proposed in a turn a report started says
   so on its card, as that turn's own start would: the report may have read someone else's text.
 
-**Limits** (`subs.py`) — loose on purpose, near Claude Code's own on your Mac:
+**Limits** (`subs.py`) — loose on purpose, near Claude Code's own on your computer:
 
 | | |
 |---|---|
@@ -750,10 +750,10 @@ transcript goes into a session as «(by voice, verbatim) <transcript>» (a voice
 
 `lane-private` is **the room**: one lane where a session sees your Base (`/work/base`), your repositories
 (`/work/code/<name>`, [code.md](code.md)) and the open web, and runs subagents ([Subagents](#subagents)) — as Claude
-Code on your Mac does. Your memory from the Mac comes with it, read-only
-([instructions.md](instructions.md#your-memory-a-read-only-snapshot-of-the-macs)).
+Code on your computer does. Your memory from the owner's computer comes with it, read-only
+([instructions.md](instructions.md#your-memory-a-read-only-snapshot-of-your-computers)).
 Every new session starts there: `/new <text>`, `/new research <question>`, a sphere's `/<sphere> <text>` and the
-app's «＋» open it in the root of the Base, whose `CLAUDE.md` → `AGENTS.md` load as on the Mac
+app's «＋» open it in the root of the Base, whose `CLAUDE.md` → `AGENTS.md` load as on the owner's computer
 ([instructions.md](instructions.md)); `/new code <repo>` opens it in that repository. It holds 12 sessions at once —
 you and up to 10 sub-sessions ([Sub-sessions](#sub-sessions)) — (`max_sessions: 12`, the lane host's
 `RETINUE_LANE_MAX: 12`, 11 GiB, 4096 processes: a burst, idle otherwise, on a host shared with other services);
@@ -850,7 +850,7 @@ classifier's.
 
 - Its own `/work` volume, its CLI's home and transcripts (`/lane/config`), its journal (`/lane/state`) and your
   skills, read-only (`/lane/skills`); in the room your memory snapshot, read-only (`/lane/owner-memory`,
-  [instructions.md](instructions.md#your-memory-a-read-only-snapshot-of-the-macs)), and, with `base:` configured, the
+  [instructions.md](instructions.md#your-memory-a-read-only-snapshot-of-your-computers)), and, with `base:` configured, the
   clone of your Base at `/work/base` — files only, kept fresh and committed by the platform ([base.md](base.md)). Nothing of the router's, the
   assistant's or another lane's.
 - Its instructions: the lane's own (the managed `CLAUDE.md`: in the room, `common.md`, `out.md`, `private.md` — the
@@ -1098,7 +1098,7 @@ call. The main agent has them only with the real login; a subagent has them with
 ## Approvals
 
 Every run is `claude -p --model claude-opus-5-5[1m] --effort xhigh --permission-mode auto` (a resume too: the CLI
-does not carry the mode over), as 99% of your turns on the Mac: the latest Opus by its full id, its million-token
+does not carry the mode over), as 99% of your turns on the owner's computer: the latest Opus by its full id, its million-token
 context, extra-high effort (`cliengine.MODEL`, `EFFORT` — without them a headless CLI takes a smaller default model;
 the assistant has the same in `agent.yaml`). For each call the order is the CLI's (probed with 2.1.304): the platform's gate (PreToolUse)
 first, then the rules, then auto's **classifier**:
@@ -1166,8 +1166,8 @@ keeps only the last one; the others are dropped and the model has to ask again.
 
 ### Subagents
 
-A session runs subagents (the `Agent` tool) as on your Mac — to search, read and work in parallel. Probed with
-2.1.304 in our `-p` stream-json auto setup, against the fake API and with a few real runs on the Mac's login:
+A session runs subagents (the `Agent` tool) as on your computer — to search, read and work in parallel. Probed with
+2.1.304 in our `-p` stream-json auto setup, against the fake API and with a few real runs on a developer's own login:
 
 - **They run, and their calls pass the gate.** Every call a subagent makes fires the same hooks as the main agent's —
   PreToolUse, its marks, PermissionDenied, PostToolUse — with the same fields plus the subagent's `agent_id` and
@@ -1202,7 +1202,7 @@ real runs.
 
 ## Questions
 
-A session asks you as on the Mac: AskUserQuestion, one to four questions, each with two to four options, some
+A session asks you as on the owner's computer: AskUserQuestion, one to four questions, each with two to four options, some
 multi-select. A headless CLI offers that tool only when a host can answer it, so every run is
 `--permission-prompt-tool stdio` — not `--permission-prompts none`, which takes it away (probed with 2.1.304). The
 asks that come with it stay closed: the gate's PermissionRequest hook denies every one, as before; one no hook
@@ -1425,7 +1425,7 @@ Five pin [a turn's end and its loops](#a-turns-end-and-its-loops): a Stop the ho
 the reason, and the next Stop carries `stop_hook_active`; a turn that ends by deferring a call fires no Stop; a command
 that fails fires PostToolUseFailure with its exit code and no PostToolUse; that hook's `additionalContext` reaches the
 model; and `continue: false` on PreToolUse ends the turn without running the call or asking the model again. A
-developer's Mac runs the pinned Linux CLI in a container:
+developer's macOS or Windows computer runs the pinned Linux CLI in a container:
 
 ```bash
 docker run --rm -v "$PWD":/src:ro ghcr.io/astral-sh/uv:0.6.12-python3.12-bookworm-slim bash -c 'cp -r /src /w && cd /w \

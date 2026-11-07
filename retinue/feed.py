@@ -18,6 +18,11 @@ A session whose turn ended with a turn ending (`endings`) and no card shown is p
 ask under «Answer the question», approve under «Decide», step under «Your step», look and done under «Read» (while
 unread, as any turn there) — and its row carries the ending whole (`ending`).
 
+The owner's computers' own sessions (`computers.py`) are rows too, while their computer reports: one whose turn ended
+with an ending, by its kind as above (look and done under «Read» while the computer lists it); one that waits on him
+with none, under «Reply». Such a row has no session of the room (`session` null) and carries `computer` — the device,
+the session's id there and its `claude://` link —: he answers it on that computer.
+
 The digest is the one thing kept. The router knows what waits in her world — a letter or a chat she judged to ask
 something of him, a draft waiting for «Send», a deadline of the base — and pushes it here (`POST /owner/waiting`)
 whole each time it changes and at least hourly; the platform never calls the router. It is minimal by contract:
@@ -509,7 +514,7 @@ class Feed:
                                                            f"{'' if n == 1 else 's'} proposed")
             if (session := sessions.get(proposal["session"] or "")) is not None:
                 row = self._row(key, "decide", "collection_proposal", session, proposal["created"], essence)
-            elif proposal["session"] is None:  # the assistant's, a Mac's or a rule's: no session to name it by
+            elif proposal["session"] is None:  # the assistant's, a computer's or a rule's: no session to name it by
                 row = {"key": key, "action": "decide", "source": "collection_proposal", "session": None,
                        "track": None, **self._sphere(None), "project": None, "title": _proposer(proposal["actor"]),
                        "since": proposal["created"], "essence": essence, "ref": proposal["id"]}
@@ -539,6 +544,11 @@ class Feed:
             elif session.get("unread") is True and (at or session["at"]) >= now - RECENT_S:
                 out["read"].append(self._row(f"read:{session['id']}", "read", "session", session,
                                              at or session["at"], _essence(data.get("text"))))
+        machines = getattr(self, "computers", None)  # set by the platform: the owner's computers' own sessions
+        for machine in machines.listing(now) if machines is not None else ():
+            if not machine["off"]:
+                for row in self._computer_rows(machine["device"], machine["sessions"]):
+                    out[row["action"]].append(row)
         for action in ("answer", "decide", "step", "reply"):
             out[action].sort(key=lambda r: r["since"])
         out["read"].sort(key=lambda r: -r["since"])
@@ -556,6 +566,23 @@ class Feed:
         return {"key": key, "action": action, "source": source, "session": session["id"], "track": session["track"],
                 **self._sphere(session.get("sphere")), "project": getattr(self, "_projects", {}).get(session["id"]),
                 "title": session["title"], "since": since, "essence": essence, "ref": session["id"]}
+
+    def _computer_rows(self, device: str, sessions: list[dict]):
+        """A computer's sessions as rows (`computers.py`): one that ended its turn with a word for him, by its ending;
+        one that waits on him with none, «Reply». Not answerable here: the row says which computer and its link back."""
+        for s in sessions:
+            if s["state"] == "working":
+                continue
+            ending = s.get("ending")
+            if ending is None and s["state"] != "waiting":
+                continue
+            action = ENDING_ACTIONS[ending["kind"]] if ending else "reply"
+            yield {"key": f"{'ending' if ending else 'reply'}:{device}/{s['id']}", "action": action,
+                   "source": "computer", "session": None, "track": None, **self._sphere(None),
+                   "project": s["project"] or None, "title": s["title"], "since": s["at"],
+                   "essence": _ending_essence(ending) if ending else "", "ref": s["id"],
+                   "computer": {"device": device, "id": s["id"], **({"link": s["link"]} if s.get("link") else {})},
+                   **({"ending": ending} if ending else {})}
 
     def session_project(self, lane: str, track: str, cwd: str | None) -> str | None:
         """A session's project: its folder in the Base (`project_of`) — the folder it was made with, its track's for
@@ -607,10 +634,10 @@ class Feed:
 
 
 def _proposer(actor: str) -> str:
-    """Who proposed a write with no session behind it, as a row's title: the assistant, a Mac by its device's name,
+    """Who proposed a write with no session behind it, as a row's title: the assistant, a computer by its device's name,
     or a rule by its name."""
     if actor == "assistant":
         return "Assistant"
-    if actor.startswith("mac:"):
-        return f"Mac {actor.removeprefix('mac:').split('/')[0]}"
+    if actor.startswith(("device:", "mac:")):  # mac: the old name of device: (#66)
+        return f"Computer {actor.split(':', 1)[1].split('/')[0]}"
     return f"Rule {actor.removeprefix('code:')}"

@@ -21,25 +21,25 @@ OWNER = "Иван <owner@example.com>"
 
 @pytest.fixture
 def kb(tmp_path, base):
-    """The hub, the lane's /work with an empty clone folder, the platform's repository, the owner's Mac."""
+    """The hub, the lane's /work with an empty clone folder, the platform's repository, the owner's computer."""
     hub = install_hub(tmp_path, base)
     work = tmp_path / "work"
     (work / "base").mkdir(parents=True)
     cfg = BaseConfig(author=OWNER, hub=str(hub), mount=str(work / "base"), git_dir=str(tmp_path / "platform" / "base.git"))
     repo = BaseRepo(cfg, lane_view=str(work / "base"))
     asyncio.run(repo.refresh())
-    mac = tmp_path / "mac"
-    git(tmp_path, "clone", "-q", str(hub), str(mac))
-    return repo, hub, mac
+    computer = tmp_path / "computer"
+    git(tmp_path, "clone", "-q", str(hub), str(computer))
+    return repo, hub, computer
 
 
 def run(coro):
     return asyncio.run(coro)
 
 
-def mac_push(mac, edits, message="с Mac"):
-    change(mac, edits, message)
-    git(mac, "push", "-q", "origin", "main")
+def computer_push(computer, edits, message="с компьютера"):
+    change(computer, edits, message)
+    git(computer, "push", "-q", "origin", "main")
 
 
 def showcase(*lines: str) -> str:
@@ -62,66 +62,66 @@ def test_the_first_refresh_clones_the_hub_and_git_never_enters_the_tree(kb):
 
 
 def test_a_clean_file_takes_the_hubs_and_the_cheap_look_changes_nothing(kb):
-    repo, hub, mac = kb
+    repo, hub, computer = kb
     assert run(repo.refresh()).updated == [], "the hub did not move: nothing fetched, nothing written"
-    mac_push(mac, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Факт с Mac."),
+    computer_push(computer, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Факт с компьютера."),
                    "notes/journal/2026-10-01-x.md": None})
     done = run(repo.refresh())
     assert sorted(done.updated) == ["notes/journal/2026-10-01-x.md", "notes/knowledge/a.md"] and done.held == []
-    assert "Факт с Mac." in (repo.tree / "notes/knowledge/a.md").read_text()
+    assert "Факт с компьютера." in (repo.tree / "notes/knowledge/a.md").read_text()
     assert not (repo.tree / "notes/journal").exists(), "a folder the hub emptied goes, as git would do"
     assert done.head == git(hub, "rev-parse", "main") and repo.changed() == []
 
 
 def test_a_dirty_file_is_merged_with_the_hubs_change(kb):
-    repo, _, mac = kb
+    repo, _, computer = kb
     (repo.tree / "notes/AGENTS.md").write_text(showcase("- строка сессии"))
-    text = (mac / "notes/AGENTS.md").read_text().replace("- правило\n", "- правило\n- правило с Mac\n")
-    mac_push(mac, {"notes/AGENTS.md": text})
+    text = (computer / "notes/AGENTS.md").read_text().replace("- правило\n", "- правило\n- правило с компьютера\n")
+    computer_push(computer, {"notes/AGENTS.md": text})
     done = run(repo.refresh())
     merged = (repo.tree / "notes/AGENTS.md").read_text()
     assert done.updated == ["notes/AGENTS.md"] and done.held == []
-    assert "- правило с Mac" in merged and "- строка сессии" in merged
+    assert "- правило с компьютера" in merged and "- строка сессии" in merged
     assert repo.changed() == [Change("notes/AGENTS.md", "M")], "the session's line is still its own, uncommitted"
 
 
 def test_a_conflicting_file_holds_both_versions_and_no_commit_takes_it_until_merged(kb):
-    repo, hub, mac = kb
+    repo, hub, computer = kb
     (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт сессии."))
-    mac_push(mac, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Факт с Mac."),
-                   "MAP.md": (mac / "MAP.md").read_text() + "- строка с Mac\n"})
+    computer_push(computer, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Факт с компьютера."),
+                   "MAP.md": (computer / "MAP.md").read_text() + "- строка с компьютера\n"})
     done = run(repo.refresh())
     assert sorted(done.updated) == ["MAP.md", "notes/knowledge/a.md"] and done.held == []
     text = (repo.tree / "notes/knowledge/a.md").read_text()
-    assert "<<<<<<< this session\nФакт сессии.\n=======\nФакт с Mac.\n>>>>>>> the hub\n" in text, "both, as git pull"
-    assert "строка с Mac" in (repo.tree / "MAP.md").read_text()
+    assert "<<<<<<< this session\nФакт сессии.\n=======\nФакт с компьютера.\n>>>>>>> the hub\n" in text, "both, as git pull"
+    assert "строка с компьютера" in (repo.tree / "MAP.md").read_text()
     assert repo.take_marked() == ["notes/knowledge/a.md"] and repo.take_marked() == [], "told once"
     done = run(repo.commit(["notes/knowledge/a.md"], "notes: факт", ""))
     assert done.sha is None and done.refused == [f"notes/knowledge/a.md: {base_module.MARKED}"]
     # The session merges: the file is on top of the hub's now, so its merge goes and nothing of the hub's is undone.
-    (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт с Mac. Факт сессии."))
+    (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт с компьютера. Факт сессии."))
     done = run(repo.commit(["notes/knowledge/a.md"], "notes: факт", ""))
     assert done.sha and done.conflicts == [] and done.refused == []
-    assert "Факт с Mac. Факт сессии." in git(hub, "show", f"{done.sha}:notes/knowledge/a.md")
+    assert "Факт с компьютера. Факт сессии." in git(hub, "show", f"{done.sha}:notes/knowledge/a.md")
 
 
 def test_a_file_put_back_to_the_hubs_is_clean_again(kb):
-    repo, _, mac = kb
+    repo, _, computer = kb
     (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт сессии."))
-    mac_push(mac, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Факт с Mac.")})
+    computer_push(computer, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Факт с компьютера.")})
     run(repo.refresh())
-    (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт с Mac."))
+    (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Факт с компьютера."))
     assert repo.changed() == [] and run(repo.refresh()).held == []
 
 
 def test_a_binary_file_both_sides_changed_is_held_never_marked(kb):
-    repo, _, mac = kb
-    (mac / "notes/x.bin").write_bytes(b"\0base")
-    mac_push(mac, {})
+    repo, _, computer = kb
+    (computer / "notes/x.bin").write_bytes(b"\0base")
+    computer_push(computer, {})
     run(repo.refresh())
     (repo.tree / "notes/x.bin").write_bytes(b"\0session")
-    (mac / "notes/x.bin").write_bytes(b"\0mac")
-    mac_push(mac, {})
+    (computer / "notes/x.bin").write_bytes(b"\0mac")
+    computer_push(computer, {})
     assert run(repo.refresh()).held == ["notes/x.bin"] and (repo.tree / "notes/x.bin").read_bytes() == b"\0session"
     assert repo.take_marked() == []
 
@@ -136,7 +136,7 @@ def test_the_hub_ahead_by_the_routers_push_comes_in_like_the_macs(kb, tmp_path):
 
 
 def test_a_link_on_the_way_is_never_written_through(kb, tmp_path):
-    repo, _, mac = kb
+    repo, _, computer = kb
     outside = tmp_path / "outside"
     outside.mkdir()
     knowledge = repo.tree / "notes/knowledge"
@@ -144,7 +144,7 @@ def test_a_link_on_the_way_is_never_written_through(kb, tmp_path):
         child.unlink()
     knowledge.rmdir()
     knowledge.symlink_to(outside, target_is_directory=True)
-    mac_push(mac, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="через ссылку"), "MAP.md": (mac / "MAP.md").read_text() + "- x\n"})
+    computer_push(computer, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="через ссылку"), "MAP.md": (computer / "MAP.md").read_text() + "- x\n"})
     done = run(repo.refresh())
     assert list(outside.iterdir()) == [], "nothing written where the link points"
     assert "notes/knowledge/a.md" in done.held and "MAP.md" in done.updated
@@ -197,27 +197,27 @@ def test_discard_puts_the_chosen_files_back_as_head_has_them_and_only_as_the_car
 
 
 def test_a_hub_change_since_the_clone_is_merged_in_and_brought_to_the_tree(kb):
-    repo, hub, mac = kb
+    repo, hub, computer = kb
     (repo.tree / "notes/AGENTS.md").write_text(showcase("- строка сессии"))
-    mac_push(mac, {"notes/AGENTS.md": (mac / "notes/AGENTS.md").read_text().replace("- правило\n", "- правило\n- с Mac\n"),
-                   "MAP.md": (mac / "MAP.md").read_text() + "- с Mac\n"})
+    computer_push(computer, {"notes/AGENTS.md": (computer / "notes/AGENTS.md").read_text().replace("- правило\n", "- правило\n- с компьютера\n"),
+                   "MAP.md": (computer / "MAP.md").read_text() + "- с компьютера\n"})
     done = run(repo.commit(["notes/AGENTS.md"], "notes: строка", ""))
     assert done.sha and done.files == [Change("notes/AGENTS.md", "M")]
     committed = git(hub, "show", "main:notes/AGENTS.md")
-    assert "- с Mac" in committed and "- строка сессии" in committed and git(hub, "log", "-1", "--format=%s",
-                                                                              "main^") == "с Mac"
-    assert (repo.tree / "notes/AGENTS.md").read_text() == committed + "\n" and "- с Mac" in (repo.tree / "MAP.md").read_text()
+    assert "- с компьютера" in committed and "- строка сессии" in committed and git(hub, "log", "-1", "--format=%s",
+                                                                              "main^") == "с компьютера"
+    assert (repo.tree / "notes/AGENTS.md").read_text() == committed + "\n" and "- с компьютера" in (repo.tree / "MAP.md").read_text()
     assert repo.changed() == [], "the clone follows the pushed commit"
 
 
 def test_the_hub_moving_during_the_push_is_retried_on_top(kb, monkeypatch):
-    repo, hub, mac = kb
+    repo, hub, computer = kb
     (repo.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="x", body="Б."))
     real, pushes = repo._run, []
 
     def racing(*args, **kw):
         if args[:1] == ("push",) and not pushes:
-            mac_push(mac, {"notes/knowledge/m.md": RECORD.format(id="m", who="Владелец", body="М.")}, "гонка")
+            computer_push(computer, {"notes/knowledge/m.md": RECORD.format(id="m", who="Владелец", body="М.")}, "гонка")
         if args[:1] == ("push",):
             pushes.append(args)
         return real(*args, **kw)
@@ -230,15 +230,15 @@ def test_the_hub_moving_during_the_push_is_retried_on_top(kb, monkeypatch):
 
 
 def test_a_conflict_is_refused_for_that_path_and_the_rest_goes(kb):
-    repo, hub, mac = kb
+    repo, hub, computer = kb
     (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Сессия."))
     (repo.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="x", body="Б."))
-    mac_push(mac, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Mac.")})
+    computer_push(computer, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="С компьютера.")})
     done = run(repo.commit(["notes/knowledge/a.md", "notes/knowledge/b.md"], "notes: два", ""))
     assert done.conflicts == ["notes/knowledge/a.md"] and done.files == [Change("notes/knowledge/b.md", "A")]
     assert "Сессия." in (repo.tree / "notes/knowledge/a.md").read_text(), "the conflicted file stays as it was"
     assert repo.changed() == [Change("notes/knowledge/a.md", "M")]
-    assert "Mac." in git(hub, "show", "main:notes/knowledge/a.md")
+    assert "С компьютера." in git(hub, "show", "main:notes/knowledge/a.md")
 
 
 def test_what_is_not_the_bases_is_left_out_and_never_committed(kb):
@@ -349,18 +349,18 @@ def test_a_clone_folder_the_lane_moved_away_is_refused(kb, tmp_path):
 
 
 def test_a_platform_restart_keeps_the_held_bases(kb):
-    repo, _, mac = kb
+    repo, _, computer = kb
     busy = [True]
     repo.busy = lambda: busy[0]
     (repo.tree / "notes/knowledge/a.md").write_text(RECORD.format(id="a", who="Владелец", body="Сессия."))
     (repo.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="x", body="Б."))
-    mac_push(mac, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="Mac.")})
+    computer_push(computer, {"notes/knowledge/a.md": RECORD.format(id="a", who="Владелец", body="С компьютера.")})
     assert run(repo.commit(["notes/knowledge/b.md"], "notes: б", "")).sha, "beside a run: a.md is held, not written"
     assert list(repo._held()) == ["notes/knowledge/a.md"]
     again = BaseRepo(repo.cfg, repo.lane_view)
     assert run(again.refresh()).updated == ["notes/knowledge/a.md"], "merged against the base it was held with"
     text = (again.tree / "notes/knowledge/a.md").read_text()
-    assert "Сессия.\n=======\nMac.\n" in text and again.take_marked() == ["notes/knowledge/a.md"]
+    assert "Сессия.\n=======\nС компьютера.\n" in text and again.take_marked() == ["notes/knowledge/a.md"]
     journal = again.db.execute("SELECT kind FROM journal ORDER BY id").fetchall()
     assert [row[0] for row in journal][-2:] == ["commit", "refresh"]
 
@@ -442,8 +442,8 @@ def test_a_file_changed_after_the_card_is_refused_and_the_rest_goes(kb):
 
 
 def test_a_file_never_becomes_a_folder_nor_a_folder_a_file(kb):
-    repo, hub, mac = kb
-    mac_push(mac, {"justfile": "check:\n\t@python3 scripts/lint.py\n"})
+    repo, hub, computer = kb
+    computer_push(computer, {"justfile": "check:\n\t@python3 scripts/lint.py\n"})
     run(repo.refresh())
     for name in ("justfile", "MAP.md"):
         (repo.tree / name).unlink()
@@ -475,21 +475,21 @@ def test_a_commit_that_would_touch_an_unchosen_path_is_not_built(kb, monkeypatch
 
 
 def test_while_a_run_can_write_the_tree_nothing_but_a_commits_own_paths_is_written(kb):
-    repo, hub, mac = kb
+    repo, hub, computer = kb
     busy = [True]
     repo.busy = lambda: busy[0]
-    mac_push(mac, {"MAP.md": (mac / "MAP.md").read_text() + "- с Mac\n"})
-    assert run(repo.refresh()).updated == [] and "с Mac" not in (repo.tree / "MAP.md").read_text(), \
+    computer_push(computer, {"MAP.md": (computer / "MAP.md").read_text() + "- с компьютера\n"})
+    assert run(repo.refresh()).updated == [] and "с компьютера" not in (repo.tree / "MAP.md").read_text(), \
         "a refresh beside a run does nothing at all"
     (repo.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="x", body="Б."))
     done = run(repo.commit(["notes/knowledge/b.md"], "notes: б", ""))
     assert done.sha == git(hub, "rev-parse", "main") and repo._head == done.sha
-    assert "с Mac" not in (repo.tree / "MAP.md").read_text(), "the hub's other change waits for an idle refresh"
+    assert "с компьютера" not in (repo.tree / "MAP.md").read_text(), "the hub's other change waits for an idle refresh"
     assert repo.changed() == [], "a file only waiting for the hub's version is nobody's change"
     assert [r.split(": ")[0] for r in run(repo.commit(["MAP.md"], "x", "")).left_out] == ["MAP.md"], \
         "never undoes the hub's"
     busy[0] = False
-    assert run(repo.refresh()).updated == ["MAP.md"] and "с Mac" in (repo.tree / "MAP.md").read_text()
+    assert run(repo.refresh()).updated == ["MAP.md"] and "с компьютера" in (repo.tree / "MAP.md").read_text()
     assert repo._held() == {} and repo.changed() == []
 
 
@@ -595,15 +595,15 @@ def test_undo_puts_back_what_the_commit_changed_in_a_new_commit(kb):
 
 
 def test_undo_never_touches_a_file_changed_since(kb):
-    repo, hub, mac = kb
+    repo, hub, computer = kb
     (repo.tree / "notes/knowledge/b.md").write_text(RECORD.format(id="b", who="Claude Code (Opus 5.5)", body="Б."))
     (repo.tree / "notes/knowledge/c.md").write_text(RECORD.format(id="c", who="Claude Code (Opus 5.5)", body="В."))
     done = run(repo.commit(["notes/knowledge/b.md", "notes/knowledge/c.md"], "notes: b, c", "", role="assistant"))
-    git(mac, "pull", "-q")
-    mac_push(mac, {"notes/knowledge/b.md": RECORD.format(id="b", who="Владелец", body="Б с Mac.")})
+    git(computer, "pull", "-q")
+    computer_push(computer, {"notes/knowledge/b.md": RECORD.format(id="b", who="Владелец", body="Б с компьютера.")})
     run(repo.refresh())
     (repo.tree / "notes/knowledge/c.md").write_text(RECORD.format(id="c", who="Claude Code (Opus 5.5)", body="В2."))
     undone = run(repo.revert(done.sha, ["notes/knowledge/b.md", "notes/knowledge/c.md"], "notes: b, c"))
     assert undone.sha is None
     assert sorted(r.split(": ")[0] for r in undone.refused) == ["notes/knowledge/b.md", "notes/knowledge/c.md"]
-    assert "Б с Mac." in (repo.tree / "notes/knowledge/b.md").read_text()
+    assert "Б с компьютера." in (repo.tree / "notes/knowledge/b.md").read_text()

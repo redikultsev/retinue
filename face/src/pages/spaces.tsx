@@ -11,6 +11,8 @@ import { useEffect, useMemo, useState } from "react";
 import { BaseMarkdown } from "@/components/base-markdown";
 import { FileRow } from "@/components/files";
 import { MapView } from "@/components/map";
+import { OperatorSwitch } from "@/components/operator";
+import { keepOperatorView, keptOperatorView, type OperatorView } from "@/lib/operator";
 import { Operator } from "@/components/operator";
 import { RELATION_WORDS, RelationIcon, upOf } from "@/components/relation";
 import { Agenda } from "@/components/views/agenda";
@@ -649,44 +651,6 @@ function RecordsList({ space, below, view }: { space: string; below: string; vie
         </ul>
       )}
     </Section>
-  );
-}
-
-type OperatorView = "cards" | "map";
-const OPERATOR_VIEW_KEY = "retinue-project-operator";
-
-function keptOperatorView(): OperatorView {
-  try {
-    return localStorage.getItem(OPERATOR_VIEW_KEY) === "map" ? "map" : "cards";
-  } catch {
-    return "cards";
-  }
-}
-
-function keepOperatorView(view: OperatorView): void {
-  try {
-    localStorage.setItem(OPERATOR_VIEW_KEY, view);
-  } catch {
-    // storage unavailable: the pick holds while the page is open
-  }
-}
-
-/** A project's «Operator» as cards or as the map of its sessions in their places — the switch «Today» has. */
-function OperatorSwitch({ view, onView }: { view: OperatorView; onView: (v: OperatorView) => void }) {
-  return (
-    <fieldset aria-label="Show" className="inline-flex h-9 w-fit items-center self-start rounded-md border p-0.5 max-md:h-11">
-      {(["cards", "map"] as const).map((v) => (
-        <button
-          key={v}
-          type="button"
-          aria-pressed={view === v}
-          onClick={() => onView(v)}
-          className={cn("h-7 rounded px-3 text-[13px] max-md:h-9 whitespace-nowrap transition-colors", view === v ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
-        >
-          {v === "cards" ? "Cards" : "Map"}
-        </button>
-      ))}
-    </fieldset>
   );
 }
 

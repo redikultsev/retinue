@@ -1,7 +1,7 @@
 # The face's middlewares. setup.sh renders this file to /etc/dokploy/traefik/dynamic/face.yml (root, 600): it carries
 # the key nginx checks. Only the owner's devices (their WireGuard addresses, one each: the life hub's list when the
-# hub is on) get through; everyone else gets 404, as if there were no site — over plain HTTP too. A Mac whose agents
-# use /mcp/mac is one of them: a WireGuard peer, its address in DEVICES (docs/collections.md «From the Mac»).
+# hub is on) get through; everyone else gets 404, as if there were no site — over plain HTTP too. A computer whose agents
+# use /mcp/device is one of them: a WireGuard peer, its address in DEVICES (docs/collections.md «From the owner's computer»).
 http:
   middlewares:
     face-owner:

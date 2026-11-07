@@ -2,12 +2,14 @@
 // cards and in the inbox's pane alike: «You asked: …» first, then what it needs — an ask's options with what each
 // changes, what an approval will do and where, the thing to look at opened in place, the owner's own step with its
 // command to copy, what a finished turn came to and what is next. Every answer goes to the session as the owner's next
-// message, and the card says it in place («You: …») instead of its buttons.
+// message, and the card says it in place («You: …») instead of its buttons. A session on one of the owner's computers
+// (`computer` on the row) is answered there: the card shows the same words, its options without buttons, and the way to
+// the session on that computer.
 import { useState } from "react";
 import { FileRow, type Kind } from "@/components/files";
 import { ArrowUpRight } from "@/components/icons";
 import { Reply } from "@/components/reply";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import type { EndingArtifact, FeedRow, TurnEnding } from "@/lib/feed";
 import { thingName, thingsOf, WHY_OWNER } from "@/lib/operator";
@@ -99,8 +101,23 @@ export function mainOf(e: TurnEnding): string {
   return e.what || "";
 }
 
+/** «Answer on the computer ↗»: the session's own link on the computer it runs on, or where it is when there is none. */
+export function OnComputer({ computer, verb = "Answer" }: { computer: NonNullable<FeedRow["computer"]>; verb?: "Answer" | "Open" }) {
+  if (!computer.link) return <p className={META}>{verb} it on {computer.device}: the session runs there.</p>;
+  return (
+    <div>
+      <a href={computer.link} className={buttonVariants({ variant: "outline" })}>
+        {verb} on {computer.device}
+        <ArrowUpRight />
+      </a>
+    </div>
+  );
+}
+
 export function EndingCard({ row, e }: { row: FeedRow; e: TurnEnding }) {
   const [said, setSaid] = useState<string | null>(null);
+  // a computer's session: read here, answered on the computer
+  const here = !row.computer;
   const { busy, send } = useSend(row.session, setSaid);
   const things = thingsOf(e);
   const main = mainOf(e) || (e.kind === "look" ? "" : row.essence);
@@ -164,10 +181,11 @@ export function EndingCard({ row, e }: { row: FeedRow; e: TurnEnding }) {
                 <button
                   key={o.label}
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !here}
                   onClick={() => answer(o.label)}
                   className={cn(
-                    "flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors hover:bg-accent disabled:opacity-50 max-md:min-h-11",
+                    "flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors disabled:opacity-50 max-md:min-h-11",
+                    here ? "hover:bg-accent" : "disabled:opacity-100",
                     i === 0 && options.length > 1 && "border-primary/60",
                   )}
                 >
@@ -180,7 +198,7 @@ export function EndingCard({ row, e }: { row: FeedRow; e: TurnEnding }) {
               ))}
             </fieldset>
           )}
-          {e.kind === "ask" && !options.length && e.guesses?.length ? (
+          {here && e.kind === "ask" && !options.length && e.guesses?.length ? (
             <div className="flex flex-wrap gap-1.5">
               {e.guesses.map((g) => (
                 <Button key={g} variant="outline" size="sm" disabled={busy} onClick={() => answer(g)}>
@@ -189,7 +207,7 @@ export function EndingCard({ row, e }: { row: FeedRow; e: TurnEnding }) {
               ))}
             </div>
           ) : null}
-          {e.kind === "approve" && (
+          {here && e.kind === "approve" && (
             <div className="flex flex-wrap gap-2">
               <Button disabled={busy} onClick={() => answer("Allowed — go ahead.")}>
                 Allow
@@ -199,13 +217,14 @@ export function EndingCard({ row, e }: { row: FeedRow; e: TurnEnding }) {
               </Button>
             </div>
           )}
-          {(e.kind === "look" || e.kind === "step") && (
+          {here && (e.kind === "look" || e.kind === "step") && (
             <div>
               <Button disabled={busy} onClick={() => answer(e.kind === "look" ? "Looks right." : "Done.")}>
                 {e.kind === "look" ? "Looks right" : "Done"}
               </Button>
             </div>
           )}
+          {row.computer && <OnComputer computer={row.computer} />}
           {row.session && (
             <Reply session={row.session} placeholder={e.kind === "step" && e.expect ? `Send back: ${e.expect}` : REPLY[e.kind]} onSent={setSaid} />
           )}

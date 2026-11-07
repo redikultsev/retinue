@@ -5,7 +5,7 @@ A run's settings put a marker hook before the general one for every always rule,
 (`approvals.marks_for`); the CLI fires a marker only when its own matcher says the call falls under that rule. The
 general PreToolUse waits a moment for the call's marks: a never mark is denied and handed to the owner as a courier
 card, a card mark is deferred to the owner, an always rule's mark leaves the decision to the CLI's rule, and a call
-nothing marked gets no decision — auto mode's classifier decides it, as on the owner's Mac. A call the classifier
+nothing marked gets no decision — auto mode's classifier decides it, as on the owner's computer. A call the classifier
 blocks fires PermissionDenied: the gate tells the CLI the model may retry, and the same call made again is deferred
 to the owner with the classifier's reason on the card.
 
@@ -482,7 +482,7 @@ class Gate:
         if call.marks:
             return {}  # an always rule matched: the CLI's own rule decides
         if _auto(run, body):
-            return {}  # nothing names it: auto mode's classifier decides, as on the owner's Mac
+            return {}  # nothing names it: auto mode's classifier decides, as on the owner's computer
         if digest is None:
             return _decision("deny", UNBINDABLE)
         return self._to_owner(run, call_id, body, file_hash, digest)

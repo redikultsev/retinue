@@ -1,6 +1,6 @@
 ## The owner's code — in `/work/code/<name>`
 
-His repositories are in `/work/code/<name>`, each an ordinary git clone, as on his Mac. Work in them as there:
+His repositories are in `/work/code/<name>`, each an ordinary git clone, as on his computer. Work in them as there:
 branches, commits, `git status`, `git log`, `git diff`, tests, installing packages.
 
 - Before working in `/work/code/<name>`, read its `CLAUDE.md` and `AGENTS.md`, and the nested ones in the folders you

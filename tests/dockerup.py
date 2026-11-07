@@ -1,6 +1,6 @@
 """Whether Docker answers, for the tests that need it to skip without it.
 
-A daemon that does not answer — Docker Desktop stuck on a Mac — counts as none: `docker info` waits for it without
+A daemon that does not answer — Docker Desktop stuck on a computer — counts as none: `docker info` waits for it without
 end, and the whole run with it, before a single test starts.
 """
 

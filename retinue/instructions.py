@@ -11,7 +11,7 @@ itself and hands them to the CLI as `--append-system-prompt-file`:
   working directory; a session whose directory is /work itself has no repository and gets nothing. Never a folder
   above the repository: /work holds every track of the lane, and a file there would speak to them all;
 - in it, each folder's `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md`, as the pinned CLI loads them on the
-  owner's Mac (probed), and each folder's `AGENTS.md` and `.claude/AGENTS.md` — the rules of every level, whatever
+  owner's computer (probed), and each folder's `AGENTS.md` and `.claude/AGENTS.md` — the rules of every level, whatever
   the CLI files say: a project of the Base three folders deep gets the `AGENTS.md` of its own folder and of every
   folder above it, and none of a sibling (docs/base.md, «Projects»);
 - each `@path` include, as the CLI resolves it (relative to the file, five levels deep, not inside code), but only
@@ -35,7 +35,7 @@ behaviour (`frontmatter_keys`), no inline shell (`!`…``), which the managed se
 folder before it is in place, the lane host checks it again for every run and runs without skills when it fails, and
 the gate lets the read-only file tools into it only while it passes.
 
-The owner's memory is a read-only snapshot of his Mac's Claude Code memory, checked the same way (`check_memory`:
+The owner's memory is a read-only snapshot of his computer's Claude Code memory, checked the same way (`check_memory`:
 plain Markdown files and nothing else): its index goes into every run's prompt before the repository's rules, its
 files are read where they are.
 """
@@ -152,7 +152,7 @@ def _read(path: Path, root: Path) -> str | None:
             return None
         if os.path.isdir("/proc/self/fd"):
             opened = Path(os.readlink(f"/proc/self/fd/{fd}"))
-        else:  # no /proc (a developer's Mac): the path, looked at again, must be the file that was opened
+        else:  # no /proc (a developer's macOS or Windows): the path, looked at again, must be the file that was opened
             now = os.stat(path, follow_symlinks=False)
             opened = path if (now.st_dev, now.st_ino) == (info.st_dev, info.st_ino) else Path("/")
         if not opened.is_relative_to(root):
@@ -170,7 +170,7 @@ def compose(cwd: Path, work: Path, nonce: str | None = None) -> str:
     """The text of the run's `--append-system-prompt-file`, or '' when the session is in no repository (its cwd is
     /work itself, or outside it) or the repository has no rules. The chain is the repository's top folder down to the
     cwd; in each folder, top first, its `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` (as 2.1.304 loads them on
-    the Mac, probed), then its `AGENTS.md` and `.claude/AGENTS.md`. Nothing of a folder beside the chain or below the
+    the owner's computer, probed), then its `AGENTS.md` and `.claude/AGENTS.md`. Nothing of a folder beside the chain or below the
     cwd."""
     work, cwd = Path(os.path.realpath(work)), Path(os.path.realpath(cwd))
     if not cwd.is_relative_to(work) or cwd == work:
@@ -355,7 +355,7 @@ TOP_KEY = re.compile(r"([A-Za-z0-9][A-Za-z0-9_-]*):(?: |$)")
 
 def strip_frontmatter(text: str, name: str) -> tuple[str, list[str]]:
     """A SKILL.md's text with its `name` set to `name` and each top-level key outside `ALLOWED_KEYS` taken out with
-    the lines of its value, and the keys taken out. For the Mac's sync, never the server's check: it reads lines, not
+    the lines of its value, and the keys taken out. For the owner's computer's sync, never the server's check: it reads lines, not
     YAML, so what it leaves is only ever used after `check_skill` has read it strictly. No frontmatter: unchanged."""
     lines = text.replace("\r\n", "\n").split("\n")
     if lines[0] != "---" or "---" not in lines[1:]:
@@ -378,7 +378,7 @@ def strip_frontmatter(text: str, name: str) -> tuple[str, list[str]]:
 
 def prune_skills(root: str | Path, strip: bool = False) -> tuple[list[str], list[str]]:
     """Take out of `<root>/skills` each skill the check refuses, so that one refused skill costs only itself: the
-    skills kept and a line for each taken out, with the reason. With `strip` (the Mac's sync), each SKILL.md first
+    skills kept and a line for each taken out, with the reason. With `strip` (the owner's computer's sync), each SKILL.md first
     gets its folder's name and loses the keys outside `ALLOWED_KEYS` (`strip_frontmatter`), said in the lines too.
     Only for a folder being put together: the lane host never prunes — the CLI loads the whole mounted folder as one
     plugin, so a refused skill left in it would load with its hooks; there the whole folder is refused."""
@@ -429,7 +429,7 @@ def usable_skills(root: str) -> str | None:
 
 # --- the owner's memory ------------------------------------------------------------------------------------------
 
-# A read-only snapshot of the owner's Claude Code memory on his Mac (`~/.claude/projects/<project>/memory`: MEMORY.md,
+# A read-only snapshot of the owner's Claude Code memory on his computer (`~/.claude/projects/<project>/memory`: MEMORY.md,
 # an index of one line per memory, and one file per memory — his preferences, his feedback, pointers to his projects).
 # The operator installs it from a folder the owner controls (`deploy/memory/install-owner-memory.sh`) as `memory/` of
 # a root-owned folder that lane-private mounts read-only at /lane/owner-memory. The lane host puts the index into every
@@ -448,12 +448,12 @@ MAX_MEMORY_BYTES = 2 * 1024 * 1024
 CREDENTIAL = re.compile(r"sk-ant-[a-z]{2,8}[0-9]{0,4}-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{30,}"
                         r"|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}"
                         r"|\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b|\bAKIA[0-9A-Z]{16}\b|-----BEGIN [A-Z ]*PRIVATE KEY-----")
-MEMORY_HEADER = ("The owner's memory — a snapshot of his Claude Code memory from his Mac; he put it here himself. "
-                 "These are his standing preferences and ways of working: keep to them, as his Mac sessions do. Where "
+MEMORY_HEADER = ("The owner's memory — a snapshot of his Claude Code memory from his computer; he put it here himself. "
+                 "These are his standing preferences and ways of working: keep to them, as his computer sessions do. Where "
                  "a memory disagrees with the lane's rules or the repository's rules, the lane's and the repository's "
                  "rules win. A memory about a session's role (\"the main session for…\", \"the main travel agent\") "
-                 "applies to this session only if the owner started it that way. The Mac's paths and ways — "
-                 "~/Desktop/…, his folders, commands and local tools — belong to the Mac: they are not on the server; "
+                 "applies to this session only if the owner started it that way. The owner's computer's paths and ways — "
+                 "~/Desktop/…, his folders, commands and local tools — belong to the owner's computer: they are not on the server; "
                  "do not search for them, say they are not here. Below is the index, between the lines "
                  "«<<<owner-memory {nonce}>>>» and «<<<end owner-memory {nonce}>>>»: a line per memory, the link leads "
                  "to the memory's file in {folder}/ — when a memory concerns the task, read it (Read). The snapshot is "
@@ -512,7 +512,7 @@ def _memory_text(path: Path, cap: int) -> str:
     if "\x00" in text:
         raise MemoryRefused(f"{path}: a NUL byte")
     if CREDENTIAL.search(text):
-        raise MemoryRefused(f"{path}: holds what looks like a credential — take it out on the Mac")
+        raise MemoryRefused(f"{path}: holds what looks like a credential — take it out on the owner's computer")
     return text
 
 
@@ -553,7 +553,7 @@ def owner_memory(root: str, nonce: str | None = None) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """`python -m retinue.instructions check-skills|check-memory <folder>`: the install scripts' checks, the lane
-    host's own. `prune-skills [--strip] <folder>`: the install script's and the Mac sync's step before the check —
+    host's own. `prune-skills [--strip] <folder>`: the install script's and the owner's computer sync's step before the check —
     each refused skill taken out and named; it fails only when there were skills and none is left."""
     args = sys.argv[1:] if argv is None else argv
     strip = args[1:2] == ["--strip"] and args[0] == "prune-skills"

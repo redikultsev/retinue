@@ -127,9 +127,13 @@ What it decides ([face.md](face.md#a-project)):
 
 Of the prototypes, «4 · Projects with sessions» was taken: a project is a place.
 
-- **A project's row** is a session row's height (30 px, 44 on touch): its mark, its name at 13 px medium, the amber
-  count of what waits in it in mono at its right — its «Operator» count, the same number on its page and its parent's —, the fold chevron after it; the row opens the project. A sub-project
-  is indented 14 px a level, its sessions with it. «Other» is a quiet 12 px heading, not a place.
+- **The column is a tree, as a file manager's navigation pane** (#18): the Base's Spaces on top, a sub-project
+  inside its project, folded until opened. No state filter and no numbers in it: a number is «Operator»'s, a state
+  is a dot. «Archived» is the last row, muted, with its chevron.
+- **A project's row** is a session row's height (30 px, 44 on touch): its mark, its name — a Space's at 13 px medium,
+  a sub-project's at 13 px regular —, the fold chevron at its right; folded with something under it that waits, the
+  amber dot before the chevron. The row opens the project. A sub-project is indented 14 px a level, its sessions
+  with it. «Other» is a quiet 12 px heading, not a place.
 - **A computer's session** is a session row with nothing to press but its link: the same dot and title, then on the
   right “waiting” (amber, when it waits on him), a 12 px laptop mark and its time in 11 px muted mono — the mark says
   where it runs without a word per row. Off, its title goes muted and the time says “off”: grey is “not now”, never

@@ -13,6 +13,9 @@ its version and date — `## v0.2.0 — 2026-11-20` — and opens a new, empty �
   sessions on your own computer are there too, with what they asked or brought back; you answer them on the computer.
 - Every project's passport has the same short parts — why, scope, files, rules, checks — written for the agent that
   opens the project, and the Base refuses a change that breaks one.
+- The left column is the Base's tree: its Spaces on top, every sub-project inside, folded until you open it. No
+  state filter and no numbers: what waits is the amber dot; «Archived» is the last row. The Spaces page shows each
+  Space by its mark and name.
 - The sessions you run on your own computer show in the list too, under their projects, with whether they are at work
   or waiting for you.
 - «Settings» in the app, behind the gear: your Claude subscription, ElevenLabs, the Telegram bots, the repositories'

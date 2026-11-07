@@ -49,13 +49,16 @@ if plan.get("grandchild"):  # a child of its own that keeps its stdout open afte
     open(os.path.join(here, "grandchild.pid"), "w").write(str(child.pid))
 settings = args[args.index("--settings") + 1]
 run = os.path.basename(settings)[:-len(".json")]
-with open(os.path.join(here, f"call-{{run}}.json"), "w") as f:
+# Written aside and renamed into place: the test reads the record as soon as it is there, so it is there whole.
+call = os.path.join(here, f"call-{{run}}.json")
+with open(call + ".part", "w") as f:
     fd = int(os.environ["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"])
     json.dump({{"argv": args, "env": dict(os.environ), "cwd": os.getcwd(), "settings": json.load(open(settings)),
                "token": os.read(fd, 4096).decode(), "token_then": os.read(fd, 4096).decode(),
                "mode": os.stat(settings).st_mode & 0o777,
                "notes": open(args[args.index("--append-system-prompt-file") + 1]).read()
                if "--append-system-prompt-file" in args else None}}, f)
+os.replace(call + ".part", call)
 def out(line):
     sys.stdout.write(line + "\\n")
     sys.stdout.flush()

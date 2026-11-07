@@ -6,12 +6,12 @@ can add to the home screen) and the same page opened from a card in Telegram as 
 through WireGuard, from your own devices.
 
 ```
-phone ── WireGuard ── Traefik (allow list: your devices; TLS; adds the key) ── face (nginx: the app; /api/*, /mcp/mac on)
+phone ── WireGuard ── Traefik (allow list: your devices; TLS; adds the key) ── face (nginx: the app; /api/*, /mcp/device on)
                                                     └── face-platform (internal) ── platform 172.16.96.10:9600
 ```
 
-The **face API** is `/api/*` — and `/mcp/mac`, the collections for the agents on your Mac, by a device's token instead
-of the login ([collections.md](collections.md#from-the-mac)) — on the platform's second port (9600), on its own address on its own network
+The **face API** is `/api/*` — and `/mcp/device`, the collections for the agents on your computer, by a device's token instead
+of the login ([collections.md](collections.md#from-the-owners-computer)) — on the platform's second port (9600), on its own address on its own network
 `face-platform`, where only the face's nginx is besides the platform. The router, the lanes' hooks and the lanes stay
 on 9500 and never see that network. nginx in front adds nothing secret: who may do what is decided by the face API
 alone.
@@ -228,8 +228,10 @@ with its login — at once on logout, and at the next ping once its 30 days are 
 | `GET /api/push/{id}` · `/diff` | `{card}` for the page `/p/<id>`; `{diff, truncated}`: merge-base → the card's tip, at most 1 MB |
 | `POST /api/push/{id}/target {target}` · `/title {title}` · `/send` · `/cancel` | `{toast, card}`: the remote branch, the PR's title, “Push”, “Cancel” — by the rules of a Telegram press |
 | `GET /api/spaces` | `{head, spaces: [{name, title, questions, tasks, waiting, working}], projects: [{name, title, parent, questions, tasks}]}` — the Base's Spaces as its `main` commit has them; `waiting`/`working` count the sessions of the sphere of that name; `projects`: every project at any depth, the one it is in (`""` the root) — the left panel's ([base.md](base.md#reading-the-base-in-the-app)) |
-| `GET /api/spaces/{space}` | `{head, space: {name, title, passport: {why, in_scope, not_in_scope} \| null, rules, marker, sections: [{heading, kind, items: [{text, list}]}], counts, records: {knowledge, profile, journal, artifacts}}}`; 404 for no such Space |
+| `GET /api/spaces/{space}` | `{head, space: {name, title, passport: {why, in_scope, not_in_scope, scope, files, rules, checks, imports, problems}, rules, marker, sections: [{heading, kind, items: [{text, list}]}], counts, records: {knowledge, profile, journal, artifacts}}}`; 404 for no such Space |
 | `GET /api/spaces/{space}/r/{path}` | `{head, record: {space, path, nature, title, head, bad_head, body}}`; 404 for a path the rules refuse, 413 for a Record over 512 KB; 404 “The Base is not connected.” with no Base, 503 while it cannot be read |
+| `GET /api/settings` | `{schema, ready, at, pending, restarting, restarted, lanes: [{name, engine, engine_label, model, effort, running: {model, effort}}], models: [{id, label}], efforts: [{id, label}], keys: [{name, group, title, what, where, hint, clear, on, set, changed}], git: [{key, repos, set, changed}], project_keys: [{name, project, set, changed}], done: {<id>: {ok, at, why?, services?}}}` — [Settings](#settings): never a value; `ready` false while the host's service is not installed; a lane's `model` is the file's, `running` what it runs with until the restart |
+| `POST /api/settings/key {name, value \| clear}` · `/git {key, value}` · `/project_key {name, value}` · `/lane {lane, model?, effort?}` · `/restart {}` | 202 `{id}`: the request dropped for the host, its answer later in `done`; 400 with the words when it is off the lists, before anything is dropped; 503 while the host's service is not installed |
 | `POST /api/speech?mode=dictate\|en` (body: the recording, `Content-Type` its type) | `{text}`; in `en` also `{message}`, the text as the session gets it, “(by voice, verbatim) …” — [Voice](#voice) |
 | `GET /api/library` | `{schema, hub, at, pages: [{id, title, url, updated, section, section_title, section_icon, minutes, opened, done}]}` — “Pages”, [below](#pages) |
 | `POST /api/library/{id}/open` · `/done {done}` | `{page}`: you opened the page; “Finished” (`done: true`) or taken back (`false`); 404 for a page not in the list |
@@ -285,8 +287,10 @@ Voice is **input only**: you speak, the answers stay text (reading is faster tha
 
 ## The shell
 
-On a phone the app is five tabs at the bottom — **Today · Sessions · ＋ · Spaces · Pages** — and on a wide
-screen (≥ 1024 px) three columns, as in Claude's desktop app (`face/src/components/shell.tsx`).
+On a phone the app is five tabs at the bottom — **Today · Operator · ＋ · Projects · Pages** — and on a wide
+screen (≥ 1024 px) three columns, as in Claude's desktop app (`face/src/components/shell.tsx`). «Projects» is the tree
+of projects with their sessions (`/sessions`); a Space opens from its row. On a wide screen the left column has
+«Today», «Operator» (with the amber count of the requests that wait), «Pages», «Spaces» and «Numbers» on top.
 
 The lines between the columns are dragged to resize them: the left column from 200 to 440 px (dragged past its
 minimum it folds away, and dragged out it comes back), the right panel from 260 px to 60 % of the window, the middle
@@ -296,7 +300,8 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
 | Route | What |
 |---|---|
 | `/` | goes to `/today`, its hash along (a Mini App's signed data rides in it) |
-| `/today` | “Today”, the home screen ([below](#today)) |
+| `/today` | “Today”, the home screen ([below](#today)); an old `?mode=operator` or `?mode=map` goes to `/operator` |
+| `/operator` | “Operator”, the sessions' requests as cards, or the map with `?view=map` ([below](#the-operator)) |
 | `/new` | «＋»: a new task ([below](#a-new-task)); a tab on a phone, “New task” in the left column on a wide screen |
 | `/sessions` | the projects and their sessions ([below](#in-the-app)); on a wide screen the left column has them, the middle says so |
 | `/spaces`, `/spaces/<space>`, `/spaces/<space>/p/<path>`, `/spaces/<space>/r/<path inside the Space>` | the Spaces of the Base, a project's page ([below](#a-project)), a Record ([base.md](base.md)) |
@@ -316,7 +321,7 @@ never under 360 px. Each column's width is remembered in the browser (`localStor
   middle, the right panel.
 - **«＋»** is `/new`, a page in its own place, not a sheet over another ([below](#a-new-task)).
 - **On a wide screen**, the left column (272 px by default): on top, fixed, the places — “New task” (`/new`), “Today”
-  with the count, “Pages”, “Spaces”, “Numbers” — then “Projects”: its filters and the projects as places, each with
+  with the count, “Pages”, “Spaces”, “Numbers” — then “Projects”: the projects as places, the Base's tree, each with
   its sessions under it ([below](#projects-and-their-sessions)), the one part of it that scrolls. Its header, as the
   phone's, has the microphone and «Talk to Retinue» ([below](#talk-to-retinue)). Starting a session in a sphere is the composer's sphere picker, the Spaces are their page: the column holds
   only where you go and what runs (Apple's HIG: two levels at most; NN/g: the rest one step away). The middle: the page. The right is one panel with tabs: a
@@ -401,8 +406,8 @@ the people's rows, which are Tasks'), «Tasks N» (the open ones and the people'
 (the week as an hourly grid, [below](#tasks-and-schedule)) — and the hub's status at the right: what is fine is one
 green dot (its words in the tooltip), what is off is said («limit 89 %»). The address says the tab: `/today`,
 `?tab=tasks`, `?tab=schedule`; an old link to the day, the week or the grid's first name (`?tab=day`, `?tab=week`,
-`?tab=plan`) lands on «Schedule»; `?mode=operator` or `?mode=map` opens «Today» that way, and an old `?mode=project`
-«By action». On a phone the title gives its room to the tabs, and the week's numbers are an icon.
+`?tab=plan`) lands on «Schedule»; an old `?mode=operator` or `?mode=map` lands on «Operator», a place of its own, and
+an old `?mode=project` on «Today». On a phone the title gives its room to the tabs, and the week's numbers are an icon.
 
 «Today» is an inbox (`components/inbox.tsx`): the list at the left — 360 px, 400 from 1280 — and the row opened whole at the
 right — side by side only where «Today» itself has 820 px (`useRoomFor`): beside the open chat it has less, and the
@@ -461,10 +466,13 @@ J / K or the arrows go down and up the list, E marks her row done — never whil
 
 ### The operator
 
-«Operator» on «Today» (`components/operator.tsx`, `ending-card.tsx`, `lib/operator.ts`): only the sessions' requests,
+«Operator», a place of its own (`/operator`, `pages/operator.tsx`, `components/operator.tsx`, `ending-card.tsx`,
+`lib/operator.ts`), as cards or as [the map](#the-map) — «Cards · Map», the pick kept on the device, the same switch a
+project's «Operator» tab has. «Today» is the inbox by action alone. Only the sessions' requests,
 one card each in the feed's order — what waits first, a finished turn last — answered from the card without opening
-the session. A card's top line: its number while it waits («#3»), the project, the session, what it wants, how long,
-«Open the session ↗». A session whose turn ended with a word for you (`ending` on its feed row — the shape of the
+the session. A card's top line: its number while it waits («#3»), the project, the session — its title opens the
+session's own screen, the whole conversation —, what it wants, how long, «Open the session ↗». The map's card for a
+session with no request has its title as that way in too. A session whose turn ended with a word for you (`ending` on its feed row — the shape of the
 platform's `turn_ending`) is drawn by it, «You asked: …» — your request in your words — first:
 
 - **ask**: what was found and what the advice rests on; the options as buttons, each with what it changes, the advice
@@ -476,7 +484,11 @@ platform's `turn_ending`) is drawn by it, «You asked: …» — your request in
 - **done**: what came out and what is next, and whose move.
 
 Every answer — a button, a box's words — goes to the session as your next message, and the card says it in place
-(«You: …»). A row with a card of its own (a question, an approval, a proposal, a push) shows that card. A card waits
+(«You: …»). A session of one of your computers ([from the computers](#from-the-computers)) is a card too, drawn by its
+ending the same way, «on laptop» on its top line: it runs on that computer and is answered there — its options show
+what each changes, without buttons, and «Answer on laptop ↗» opens the session there by its `claude://` link; one that
+waits with no ending says so. With nothing to show, the page says what it looked at: no session waits, or how many
+sessions your computer lists, or that it has not reported for a while. A row with a card of its own (a question, an approval, a proposal, a push) shows that card. A card waits
 unless its turn is only to read — a finished one (`done`, or a turn to read with no word for you); a thing to look at
 waits, though the feed lists it under “Read” — and that one rule (`lib/waiting.ts` `waits`) gives the numbers, the
 amber mark on «Today», a tile's «waits for you» and every count of a project. A waiting card
@@ -489,7 +501,7 @@ The same cards, filtered to a project and its sub-projects and keeping «Today»
 
 ### The map
 
-«Map» on «Today», and «Cards · Map» on a project's «Operator» (`components/map.tsx`, `lib/map.ts`): every live session
+«Map» on «Operator», and «Cards · Map» on a project's «Operator» (`components/map.tsx`, `lib/map.ts`): every live session
 as a tile in a place it keeps for its whole life, so the eye finds it where it was and its progress is easy to follow.
 Flat on purpose: stable places are what spatial memory uses (Robertson et al., Data Mountain, 1998), a third
 dimension does not help (Cockburn & McKenzie, 2002).
@@ -670,8 +682,8 @@ into its requests; N what waits, amber).
 
 - **Overview**: the **passport** card — why the project is, at 16 px; then a table of two columns: «In scope», «Not in
   scope» (where those things go instead) and «Rules», their first lines joined, «All rules» folding the rest; «Edit
-  with a session» starts a session in the project's folder whose first message asks to edit the passport (the
-  `## Why` section of its `AGENTS.md`, [base.md](base.md#reading-the-base-in-the-app)); without one the card says so and
+  with a session» starts a session in the project's folder whose first message asks to edit the passport (its
+  `AGENTS.md` above the marker, by its schema: [base.md](base.md#a-projects-passport)); without one the card says so and
   the button writes one. Then **Yours** — its Open questions, each with «Discuss», and its Tasks, each with «Plan» (a
   session to plan it), one list —; a Space's collections' first views (the work: strips, queues, the days ahead, the
   numbers) and its proposals; **Sessions** — its own sessions (a state dot: amber waiting, blue at work; the relation's
@@ -718,29 +730,32 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
   every row's: `/wait` in Telegram, which has no «Tasks», counts the asks too.
 - <a id="projects-and-their-sessions"></a>**The list is the projects and their sessions** (of the prototypes,
   «4 · Projects with sessions»): each project is a place — its row, its mark and its name, opens its page
-  ([below](#a-project)) and carries the amber count of what waits for you in it and its sub-projects (its sessions'
-  requests that wait, as its «Operator» tab counts them; before the feed is in, its sessions that wait) —, a sub-project indented inside its project, the project's own sessions under its row, then
-  its sub-projects. A session belongs to the nearest project of the Base folder it runs in (its row's `project`), else
-  to its sphere ([platform.md](platform.md#spheres)); one of neither is under «Other», last. A session that hangs under
-  another stays under it, in that one's project. The projects come in the order of `platform.yaml`'s spheres, then
-  the others A–Z; with no filter every top project is listed, sessions or not; with one, only those with a session
-  that passes it. The projects at any depth are `/api/spaces`' `projects`, read once a visit. A project's chevron folds
-  its sessions and sub-projects («N» on it when folded). In a project its main session comes first (a star), then the others, newest first; a fork hangs under
+  ([below](#a-project)) —, the Base's tree as a file manager's: its Spaces on top, every project inside its project
+  at any depth, sessions or not, the project's own sessions under its row, then its sub-projects. A Space opens by
+  itself; a sub-project is folded until you open it. The column has no state filter and no numbers: what waits for you
+  is the amber dot — on the session's row, and on a folded row it is inside —, and the count is «Operator»'s
+  ([below](#the-operator)). A session belongs to the nearest project of the Base folder it runs in (its row's
+  `project`), else to its sphere ([platform.md](platform.md#spheres)) when that sphere is a Base folder; one of neither
+  is under «Other», last. A session that hangs under another stays under it, in that one's project. The Spaces come in
+  the Spaces page's order (`platform.yaml`'s spheres, then the others A–Z), a project's sub-projects A–Z. The projects
+  at any depth are `/api/spaces`' `projects`, read once a visit; with no Base the spheres stand for the Spaces. A
+  project's chevron folds its sessions and sub-projects. In a project its main session comes first (a star), then the
+  pinned, then the others, newest first; a fork hangs under
   the session it came from (“fork: …”, a fork of a fork one step further, three at most), a side question under the
   session it asks about (`parent`, a read-only run), a sub-session (`sub_of`) under the session that started it — so
   a sphere reads as in Claude Code's sidebar: sphere → its main session → its sub-sessions. Each session is one
   30 px line (44 px on a touch screen): a state dot (waiting, working), its title cut to the line, and on the right
-  small marks — “waiting”, ↑N commits not pushed (a PR icon once a push opened one), the Base files N, a queued clock, the
-  unread dot; pin, peek, menu and “Open beside” show on hover with a mouse and stay on a touch screen (the pin there only once
+  small marks — “waiting”, ↑ commits not pushed (a PR icon once a push opened one), the Base files not filed, a
+  queued clock, the unread dot, each mark's number in its tooltip; pin, peek, menu and “Open beside” show on hover with a mouse and stay on a touch screen (the pin there only once
   pinned; “Pin” is in the menu; “Archive” at its foot takes the session out of every list at once, no question — the toast “Archived.” has “Undo”
-  for ten seconds, which brings it back, and the page too if it was open). The last of the list's filters, an archive
-  box, shows **“Archived”** for this visit: each archived session with its sphere and when it was archived, its title
+  for ten seconds, which brings it back, and the page too if it was open). The list's last row, **“Archived”**, opens under
+  it: each archived session with its sphere and when it was archived, its title
   opening it, and “Restore”, which puts it back in every list (the main mark is set again in its menu). A sphere's heading (small, muted) folds
-  the sphere; «⑂ N ⌄» on a row with rows under it folds them (the tooltip adds the open sub-sessions, `children`); the
-  device remembers both. A fold never hides what waits on you — a folded row and a folded heading say “N waiting” — nor
-  the session on screen (its project and parent stay open), and under “Waiting” nothing is folded. A row is “side question: …”
-  when the platform marks it `side`, or — a platform before `side` — whenever it has a `parent`. Under the list's heading “Projects”, “All · Waiting · Working · Done · 📌”, a small segmented control, filter the sessions by state (the choice is remembered on
-  the device); a waiting session shows its cards under its row on a phone. The «＋» of a sphere (on hover) starts a
+  the sphere; «⌄» on a row with rows under it folds them (the tooltip says when sub-sessions are open, `children`); the
+  device remembers both. A fold never hides what waits on you — a folded row and a folded project carry the amber dot
+  — nor the session on screen (its project and parent stay open). A row is “side question: …”
+  when the platform marks it `side`, or — a platform before `side` — whenever it has a `parent`. A waiting session
+  shows its cards under its row on a phone. The «＋» of a sphere (on hover) starts a
   session in it: a box for what to do and nothing to choose — the sphere is the one pressed, the track is the sphere's
   own, and how to work is the session's to decide (⌘/Ctrl+Enter starts it); a sphere with no session yet is started from the composer's sphere picker. A **dot** marks a session that said
   something since you last looked — a summary or a new card; opening it on a visible screen, writing into it (here or
@@ -755,10 +770,9 @@ The app's header (the left column's top on a wide screen, the phone's on its tab
   the folder it runs in. It goes under the nearest project of the Base folder its computer gave, else under «Other» —
   never a project made up from its folder's top. It opens nothing here: on the computer itself, its link opens the
   session there (`claude://…`, the one link a device may give). It has no pin, peek or menu, no cards in «Today» and
-  no part in a project's amber count: its question stays on the computer, which alone can answer it. The filters
-  take it as a room session's (“Waiting”, “Working”, “Done”). A computer that has not reported for 2 minutes is
-  off: its rows stay where they are, greyed, “off” on the right and «laptop off · seen 14:05» in the tooltip, and
-  leave “Waiting” and “Working”.
+  its question stays on the computer, which alone can answer it. Its dot is a room session's. A computer that has
+  not reported for 2 minutes is off: its rows stay where they are, greyed, “off” on the right and «laptop off · seen
+  14:05» in the tooltip, neither waiting nor working.
 - **A session's menu** («⋯», on its row and in its header): its sphere, “Make main in the sphere” / “No longer
   main”, and **“Fork…”** with a box for the fork's first message. A fork is a new session that starts from a
   copy of this one's conversation and goes its own way, on the same track, lane and sphere and with the track's full
@@ -973,6 +987,11 @@ each, the latest changed first), with a search over titles and sections. On top,
 and have not marked “Finished”, the last opened first. A row says the reading time, the day the page changed, and when
 you opened it — or “finished”, or “changed since you finished it” when it changed on a later day than you finished it.
 
+**When it lists nothing, it says why** (`lib/library.ts` `libraryState`): the pages service is not set up (no
+`pages_origin`), it has never sent its list, its list is late (none for two hours, twice its hourly push: it may be
+down — the pages it last sent stay listed under that line), or it sent a list with no page. Each line names the next
+step. The mock shows each: `MOCK_PAGES_OFF=1`, `MOCK_PAGES_DOWN=1`, `MOCK_PAGES_NONE=1`.
+
 **Where the list comes from.** The router owns the pages and pushes the list to the platform (`POST /owner/library`,
 the router's token, as the assistant's digest): `{pages: [{id, title, url, updated, section?, minutes?}]}`, replacing
 the one there whole, looked at every 30 s, pushed when it changed and at least hourly (the mirror's `library`, [platform.md](platform.md#the-routers-mirror)). No
@@ -996,6 +1015,51 @@ the platform's rule, checked a second time.
 “Finished”), so the phone and the desktop agree. What the page itself keeps — its ticks, its progress — is the pages
 service's ([pages.md](pages.md#what-a-page-keeps)), not the app's. A page that leaves the list and comes back under the
 same id keeps both. The app reads the list when the screen opens and again whenever it comes back to the front.
+
+## Settings
+
+`/settings`, the gear beside «Log out» in the header: what the stack reads and you set, in one place —
+the lane's model and effort, your Claude subscription, ElevenLabs, the Telegram bot and Telegram Business, the
+repositories' tokens and the projects' keys. Each row says what it is for, whether it is set («Set · 7 Nov», «Set»,
+«Not set»; amber when Retinue needs it) and, opened, where to get it.
+
+**A key is typed once.** «Set» or «Replace» opens a password field the browser neither fills nor keeps; «Save» sends
+it and the field is emptied at once, whatever the answer. Nothing shows it again — not this screen, not the API, not a
+log: the server reports whether a key is set and when Settings changed it, never the key, a part of it or its hash.
+«Remove» is there only for an optional part's key (ElevenLabs, Telegram Business), after a confirm.
+
+**Who writes it.** The platform cannot: the stack's environment, the git tokens and the projects' keys are root's
+files, `platform.yaml` is mounted read-only, and it must never read a secret back. So each change is a request, one
+JSON file of mode 600 the platform drops into `/srv/retinue/settings/inbox` (its own folder, mode 700) and root's
+`retinue-settings.service` takes out at once — started by `retinue-settings.path` — reading it without following a
+link, deleting it before it looks inside, and checking it against its own closed lists
+(`deploy/settings/retinue-settings.py`):
+
+- a key of the stack: its line in `stack.env`, replaced as setup.sh does. A new bot token also makes a new
+  `RETINUE_WEBAPP_KEY` when the app is on, as setup.sh derives it;
+- a repository's token: piped into `deploy/code/set-git-token.sh` itself, so Settings is that script's form and not a
+  second store ([code.md](code.md#tokens));
+- a project's key: `RETINUE_PROJECT_KEY_<NAME>` in `egress/project-keys.env`;
+- a lane's `model` and `effort`: their lines in that lane's block of `platform.yaml`, from `cliengine.MODELS` and
+  `EFFORTS` alone ([platform.md](platform.md#a-lanes-model)). A lane written on one line in the file is yours to edit
+  by hand; Settings says so.
+
+What it did comes back in `/srv/retinue/settings/status/status.json` (the platform's to read alone, mode 600, mounted
+read-only): set or not, when
+Settings changed it, the lanes' values, the services waiting for a restart, how each request ended. The service also
+runs when you edit one of those files by hand, so the screen never says what the file no longer does.
+
+**A restart is your press.** A saved change is written at once and used after its services restart: the bar on top
+says «Restart to apply your changes» and which (Telegram, the assistant, the sessions and this app). «Restart»
+recreates those services and no other (`docker compose up -d --no-deps --force-recreate`); a running turn stops and
+goes on by itself, and the app reconnects. A failed restart says why, and the changes keep waiting. A lane's new model
+applies from each session's next turn after it; a run that was going is held to the model it started on.
+
+**Not installed yet.** A server set up before Settings has no service, and the screen says to run setup.sh once more;
+until then nothing can be changed here. A server that follows develop runs it with each version
+([install.md](install.md#following-develop)). Settings writes the files `setup.sh` reads and the stack started with
+`docker compose -p retinue --env-file /srv/retinue/stack.env`; on Dokploy, whose Environment is its own copy, keys are
+still set there.
 
 ## A session's changes
 

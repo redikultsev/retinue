@@ -1,9 +1,11 @@
-"""Following develop: CI builds the images of a push to develop that passed (release.yml, called from ci.yml) and its
-last job hands the commit to deploy/deploy.sh on the server, which checks it out and switches to its images with
-deploy/update.sh — and back, checkout and data, when they are not healthy.
+"""Following develop: CI builds the images of a push to develop (release.yml, called from ci.yml) while it checks it,
+and once every check passed its last job hands the commit to deploy/deploy.sh on the server, which checks it out,
+runs its setup.sh and switches to its images with deploy/update.sh — and back, checkout, host and data, when they are
+not healthy.
 
 The server is tests/test_update.py's: a fake Docker keeping the stack in a file, the real health check. The checkout is
-a real git repository with a real origin, holding this repository's deploy/ folder.
+a real git repository with a real origin, holding this repository's deploy/ folder; each commit's setup.sh is a
+stand-in that writes its commit's name into Docker's log, so the order of the two shows.
 """
 
 import json
@@ -23,6 +25,16 @@ def git(*args, cwd):
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
 
 
+SETUP = """#!/usr/bin/env bash
+printf '{{"args": ["setup", "%s"]}}\\n' {name} >> "$FAKE_LOG"
+[[ ,${{FAKE_SETUP_FAILS:-}}, != *,{name},* ]] || {{ echo "setup.sh: failed" >&2; exit 1; }}
+"""
+
+
+def setups(calls):
+    return [call["args"][1] for call in calls if call["args"][0] == "setup"]
+
+
 def checkout(tmp_path):
     """The server's checkout on commit A of develop; develop's origin has A and B after it."""
     origin, repo = tmp_path / "origin", tmp_path / "repo"
@@ -31,6 +43,7 @@ def checkout(tmp_path):
     commits = []
     for name in ("A", "B"):
         (origin / "change.txt").write_text(name)
+        (origin / "deploy" / "setup.sh").write_text(SETUP.format(name=name))
         git("add", ".", cwd=origin)
         git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", name, cwd=origin)
         commits.append(git("rev-parse", "HEAD", cwd=origin))
@@ -69,6 +82,8 @@ def test_a_commit_ci_built_is_pulled_and_started_and_the_checkout_follows(tmp_pa
     builds = [calls[n]["args"][-1] for n in compose(calls, "build")]
     assert builds == ["lane-private"], "only the image no registry has is built on the server"
     assert f"now on {b[:12]}" in run.stdout and (srv / "deploy.log").read_text().count("now on") == 1
+    assert setups(calls) == ["B"] and calls.index({"args": ["setup", "B"]}) < compose(calls, "down")[0], \
+        "the commit's own setup.sh, once, before anything is stopped"
 
 
 def test_a_commit_that_is_not_healthy_goes_back_with_its_data_and_its_checkout(tmp_path):
@@ -82,7 +97,21 @@ def test_a_commit_that_is_not_healthy_goes_back_with_its_data_and_its_checkout(t
     assert (data / "schema.txt").read_text() == "v1.0.0" and (data / "router.sqlite").read_text()
     assert [calls[n]["version"] for n in compose(calls, "up")][-1] == "v1.0.0", \
         "started once more with the compose file of the commit before"
+    assert "--force-recreate" in calls[compose(calls, "up")[-1]]["args"], "and with its host files"
+    assert setups(calls) == ["B", "A"] and calls.index({"args": ["setup", "A"]}) < compose(calls, "up")[-1]
     assert stack_env(srv)["RETINUE_VERSION"] == "v1.0.0"
+
+
+def test_a_commit_whose_setup_fails_stops_before_anything_is_stopped(tmp_path):
+    srv, volumes = server(tmp_path)
+    repo, (a, b) = checkout(tmp_path)
+    before = (srv / "stack.env").read_text()
+    run, calls, state = deploy(tmp_path, b, [a, b], FAKE_SETUP_FAILS="B")
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert setups(calls) == ["B", "A"], "the version running puts its own host files back"
+    assert [call for call in calls if call["args"][0] != "setup"] == [], "nothing pulled, nothing stopped"
+    assert state["running"] == {"version": "v1.0.0", "healthy": True}
+    assert git("rev-parse", "HEAD", cwd=repo) == a and (srv / "stack.env").read_text() == before
 
 
 def test_a_commit_whose_images_are_not_in_the_registry_changes_nothing(tmp_path):
@@ -93,6 +122,7 @@ def test_a_commit_whose_images_are_not_in_the_registry_changes_nothing(tmp_path)
     assert run.returncode != 0
     assert not compose(calls, "down"), "nothing stopped"
     assert git("rev-parse", "HEAD", cwd=repo) == a and (srv / "stack.env").read_text() == before
+    assert setups(calls) == ["B", "A"]
 
 
 def test_only_a_full_sha_is_taken_and_the_one_running_is_left_alone(tmp_path):
@@ -105,15 +135,15 @@ def test_only_a_full_sha_is_taken_and_the_one_running_is_left_alone(tmp_path):
     assert run.returncode == 0 and not calls and "already on" in run.stdout
 
 
-def test_ci_builds_then_deploys_only_pushes_to_develop_that_passed_every_check():
+def test_ci_deploys_only_pushes_to_develop_that_passed_every_check():
     ci = yaml.safe_load(CI.read_text())
     images, deploy_job = ci["jobs"]["images"], ci["jobs"]["deploy"]
     checks = sorted(name for name in ci["jobs"] if name not in ("images", "deploy"))
-    assert sorted(images["needs"]) == checks, "built after every check"
+    assert "needs" not in images, "built while the checks run"
+    assert sorted(deploy_job["needs"]) == sorted([*checks, "images"]), "deployed after every check and the images"
     assert images["uses"] == "./.github/workflows/release.yml" and images["with"] == {"commit": "${{ github.sha }}"}, \
         "the images are built as a release's are"
     assert images["permissions"] == {"contents": "read", "packages": "write"}, "only this job may write packages"
-    assert deploy_job["needs"] == ["images"]
     develop_push = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
     assert images["if"] == develop_push and deploy_job["if"] == develop_push
     assert deploy_job["environment"] == "server", "the key lives in an environment only develop may use"

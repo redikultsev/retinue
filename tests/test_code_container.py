@@ -1,7 +1,7 @@
 """The code path as it runs on the server, in a Linux container with the lanes' git: the platform (uid 10007) owns the
 mirrors and its outbox, the room (uid 10005) owns `/work`; the mirrors are one folder mounted twice — read-write at
 `/code/mirrors`, read-only at `/lane/mirrors` — and `/etc/gitconfig` trusts `/lane/mirrors/*` as the lane image's
-does, on the lanes' base image. What a Mac cannot show: the room's objects copied across the two users, git's
+does, on the lanes' base image. What a computer cannot show: the room's objects copied across the two users, git's
 ownership checks between them, the lane's git new enough for `/lane/mirrors/*`, and the room's `git pull` from a mirror it does not own. Skipped without
 Docker."""
 

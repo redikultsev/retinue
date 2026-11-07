@@ -1,11 +1,13 @@
 // The app's frame around its tabs and sessions.
 //
-// - A phone: the page, and under it the tab bar «Today · Sessions · ＋ · Spaces · Pages». «＋» is `/new`, an
+// - A phone: the page, and under it the tab bar «Today · Operator · ＋ · Projects · Pages». «Projects» is the tree of
+//   projects with their sessions (`/sessions`); a Space opens from its row. «＋» is `/new`, an
 //   empty new task with the composer at the bottom (pages/new.tsx), as a new chat in Claude's apps. The bar is there on
 //   the tabs' own screens (a session's screen has its own input box and a way back), sits above the home indicator
 //   (the safe area) and steps aside while the keyboard is up.
 // - A wide screen (≥ 1024 px), three columns as in Claude's desktop app: on the left (272 px) «New task», what
-//   waits («Today» with its count), «Pages», the Spaces, «Numbers» and the projects with their sessions; in the middle
+//   waits («Today» with its count), «Operator» (the sessions' requests, with the count of those that wait), «Pages», the
+//   Spaces, «Numbers» and the projects with their sessions; in the middle
 //   the page — `/new` too; on the right one panel with tabs: a session's «Details» (closed until asked for, components/session-summary.tsx) and, when one is
 //   open, a Record, a session's diff or a file (`?pane=`, lib/pane.ts). The pane's tab is the URL's; «Details» closes it.
 //   The columns are resized by dragging the lines between them (the left one folds away when dragged past its
@@ -16,7 +18,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Group, type Layout, type LayoutChangedMeta, Panel, Separator } from "react-resizable-panels";
 import { AppHeader } from "@/components/app-header";
 import { FileRow } from "@/components/files";
-import { AppWindow, Chart, Close, Grid, Home, List, Plus } from "@/components/icons";
+import { AppWindow, Chart, Close, Grid, Home, Inbox, List, Plus } from "@/components/icons";
 import { SessionList } from "@/components/session-list";
 import { SessionSummary } from "@/components/session-summary";
 import { WhatsNew } from "@/components/whats-new";
@@ -30,21 +32,34 @@ import { type Pane, usePane } from "@/lib/pane";
 import { setSummaryOpen, useSummaryOpen } from "@/lib/summary";
 import type { OutFile } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { useOperatorCount } from "@/pages/operator";
 import { TodayCount } from "@/pages/today";
 import { RecordPage } from "@/pages/spaces";
 
 const Changes = lazy(() => import("@/components/changes").then((m) => ({ default: m.Changes })));
 
 /** The screens the tab bar stands under on a phone. */
-export const TABBED = /^\/(today|sessions|new|pages|read|spaces|week)(\/|$)/;
+export const TABBED = /^\/(today|operator|sessions|new|pages|read|spaces|week|settings)(\/|$)/;
 
 const TABS = [
   { to: "/today", label: "Today", Icon: Home },
-  { to: "/sessions", label: "Sessions", Icon: List },
+  { to: "/operator", label: "Operator", Icon: Inbox },
   null, // «＋»
-  { to: "/spaces", label: "Spaces", Icon: Grid },
+  { to: "/sessions", label: "Projects", Icon: List },
   { to: "/pages", label: "Pages", Icon: AppWindow },
 ] as const;
+
+/** «Operator N»: the sessions' requests that wait for the owner, amber as his move; none, nothing. */
+export function OperatorCount({ className }: { className?: string }) {
+  const count = useOperatorCount();
+  if (count === 0) return null;
+  return (
+    <Badge variant="warning" className={className} aria-label={`Operator: ${count} waiting`}>
+      {count}
+    </Badge>
+  );
+}
 
 export function TabBar({ pathname }: { pathname: string }) {
   return (
@@ -80,6 +95,7 @@ export function TabBar({ pathname }: { pathname: string }) {
             <tab.Icon className="size-5" />
             <span className="max-w-full truncate">{tab.label}</span>
             {tab.to === "/today" && <TodayCount className="absolute top-1 left-1/2 ml-2 h-4 min-w-4 rounded-full px-1 text-[11px]" />}
+            {tab.to === "/operator" && <OperatorCount className="absolute top-1 left-1/2 ml-2 h-4 min-w-4 rounded-full px-1 text-[11px]" />}
           </Link>
         ),
       )}
@@ -108,6 +124,11 @@ export function Sidebar({ pathname, current, beside }: { pathname: string; curre
           <Home className="size-4" />
           <span className="flex-1">Today</span>
           <TodayCount />
+        </Link>
+        <Link to="/operator" className={navClass(pathname.startsWith("/operator"))}>
+          <Inbox className="size-4" />
+          <span className="flex-1">Operator</span>
+          <OperatorCount />
         </Link>
         <Link to="/pages" className={navClass(pathname.startsWith("/pages"))}>
           <AppWindow className="size-4" />

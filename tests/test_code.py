@@ -6,6 +6,7 @@ fsmonitor that try to run, alternates, links and a `.git` file that try to bring
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import subprocess
@@ -428,6 +429,37 @@ def test_workflows_are_named_and_a_big_tree_is_bounded(tmp_path, remote, monkeyp
     monkeypatch.setattr(code, "MAX_ROOM_ENTRIES", 3)
     with pytest.raises(Refused):
         c.look("r", "refs/retinue/cards/w")
+
+
+def test_a_file_or_folder_git_removes_while_the_room_is_checked_is_gone_not_an_error(tmp_path, remote, monkeypatch):
+    """git's own maintenance takes `objects/maintenance.lock` and drops it, and a push its quarantine folder, while
+    the room is checked."""
+    c = repos(tmp_path, remote.url)
+    c.fetch("r")
+    clone = room(tmp_path, c)
+    git("checkout", "-qb", "g", cwd=clone)
+    sha = committed(clone, "a.txt", "a\n", "A")
+    objects = clone / ".git" / "objects"
+    (objects / "maintenance.lock").write_text("")
+    quarantine = objects / "tmp_objdir-incoming-1"
+    quarantine.mkdir()
+    real = os.scandir
+
+    def listed_then_removed(path):
+        if not isinstance(path, int):
+            return real(path)
+        with real(path) as found:
+            entries = list(found)
+        for entry in entries:
+            if entry.name == "maintenance.lock":
+                os.unlink(entry.name, dir_fd=path)
+            elif entry.name == quarantine.name:
+                os.rmdir(entry.name, dir_fd=path)
+        return contextlib.nullcontext(entries)
+
+    monkeypatch.setattr(code.os, "scandir", listed_then_removed)
+    assert c.look("r", "refs/retinue/cards/g").sha == sha
+    assert not (objects / "maintenance.lock").exists() and not quarantine.exists(), "both went after the listing"
 
 
 # --- the pull request ---------------------------------------------------------------------------------------------

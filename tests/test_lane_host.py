@@ -49,13 +49,16 @@ if plan.get("grandchild"):  # a child of its own that keeps its stdout open afte
     open(os.path.join(here, "grandchild.pid"), "w").write(str(child.pid))
 settings = args[args.index("--settings") + 1]
 run = os.path.basename(settings)[:-len(".json")]
-with open(os.path.join(here, f"call-{{run}}.json"), "w") as f:
+# Written aside and renamed into place: the test reads the record as soon as it is there, so it is there whole.
+call = os.path.join(here, f"call-{{run}}.json")
+with open(call + ".part", "w") as f:
     fd = int(os.environ["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"])
     json.dump({{"argv": args, "env": dict(os.environ), "cwd": os.getcwd(), "settings": json.load(open(settings)),
                "token": os.read(fd, 4096).decode(), "token_then": os.read(fd, 4096).decode(),
                "mode": os.stat(settings).st_mode & 0o777,
                "notes": open(args[args.index("--append-system-prompt-file") + 1]).read()
                if "--append-system-prompt-file" in args else None}}, f)
+os.replace(call + ".part", call)
 def out(line):
     sys.stdout.write(line + "\\n")
     sys.stdout.flush()
@@ -162,7 +165,10 @@ def served(lane: Lane, scenario, host: lane_host.LaneHost | None = None):
             return await scenario(host, client, post, items, until, event)
         finally:
             for live in list(host.live.values()):
-                live.proc.kill()
+                try:
+                    live.proc.kill()
+                except ProcessLookupError:  # exited, and not let go by the host yet
+                    pass
             await asyncio.gather(*host.tasks, return_exceptions=True)
             await client.close()
 
@@ -195,6 +201,19 @@ def test_a_run_gets_exactly_the_argv_env_and_settings_built_for_it_and_its_promp
     assert [i["data"].get("event") or i["data"]["type"] for i in journal] == ["started", "system", "result", "exited"]
     assert {(i["session"], i["run"]) for i in journal} == {("0a1b2c3d", "r1")}
     assert journal[-1]["data"]["code"] == 0 and journal[1]["line"] == INIT
+
+
+def test_a_run_gets_the_lanes_model_and_effort_the_platform_names(lane):
+    body = run_body(model="claude-sonnet-5-5", effort="high")
+
+    async def scenario(host, client, post, items, until, event):
+        assert await post("/run", body) == (200, {"status": "started"})
+        await event("exited")
+
+    served(lane, scenario)
+    settings = f"{lane.cfg.run_dir}/r1.json"
+    assert lane.call("r1")["argv"] == cliengine.argv(settings, body["allowed"], body["disallowed"], None,
+                                                     model="claude-sonnet-5-5", effort="high")[1:]
 
 
 def test_a_forks_first_run_resumes_its_parent_with_fork_session_and_a_fork_without_a_parent_or_text_is_refused(lane):
@@ -552,6 +571,9 @@ def test_a_host_that_comes_up_again_journals_the_runs_left_running_as_restarted(
     ({"prompt": None}, "a new session without a prompt"),
     ({"prompt": None, "cli_session": ""}, "a new session without a prompt"),
     ({"hook_token": ""}, "hook_token: missing"),
+    ({"model": "opus"}, "argv: model 'opus' is not one of claude-opus-5-5[1m]"),
+    ({"effort": "ultra"}, "argv: effort 'ultra' is not one of low,"),
+    ({"model": ["claude-opus-5-5"]}, "model/effort: not names"),
 ])
 def test_a_run_off_its_shape_is_refused_journaled_and_nothing_is_spawned(lane, over, why):
     (lane.work / "repo" / "out").symlink_to(lane.dir)  # a directory, but outside /work

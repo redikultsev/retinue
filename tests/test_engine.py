@@ -619,7 +619,7 @@ def test_every_guard_decision_on_the_base_is_on_record(kb, tmp_path):
 
 
 def test_the_guard_refuses_hidden_names_and_case_tricks(kb, monkeypatch):
-    """`claude.md` is CLAUDE.md on the owner's Mac; `.git/` inside the base is storage git never sees and never
+    """`claude.md` is CLAUDE.md on the owner's computer; `.git/` inside the base is storage git never sees and never
     cleans; `.claude/` is settings. None of them is hers, in any case or form."""
     from retinue import kbcheck
     from retinue.engine import memory_guard

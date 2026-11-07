@@ -487,9 +487,15 @@ class LaneHost:
         subs = body.get("subs", False)  # the platform's sub-sessions server, at this lane's own hook address
         if type(subs) is not bool:
             raise Refused("subs: not true/false")
+        # The lane's model and effort (platform.yaml): the defaults when the platform names none; a value off the
+        # closed lists is refused by `cliengine.prefix`, with the list.
+        model, effort = body.get("model", cliengine.MODEL), body.get("effort", cliengine.EFFORT)
+        if not isinstance(model, str) or not isinstance(effort, str):
+            raise Refused("model/effort: not names")
         return cliengine.check_argv(cliengine.argv(str(settings), allowed, disallowed, resume, instructions=notes,
                                                     skills=skills, fork=fork,
-                                                    mcp=self.cfg.hook_url if subs else None), self.cfg.hook_url)
+                                                    mcp=self.cfg.hook_url if subs else None,
+                                                    model=model, effort=effort), self.cfg.hook_url)
 
     async def run(self, request: web.Request) -> web.Response:
         body = await _body(request)

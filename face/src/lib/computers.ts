@@ -20,6 +20,8 @@ export interface ComputerSession {
   at: number;
   /** `claude://…`: the session on that computer. */
   link?: string;
+  /** Its place on the operator's map in its project, kept while its computer lists it. */
+  slot?: number;
 }
 
 export interface Computer {
@@ -38,11 +40,28 @@ export interface ComputerRow extends Session {
 
 export const isComputer = (s: Session): s is ComputerRow => "computer" in s && !!(s as ComputerRow).computer;
 
+/** The list's id of a computer's session: never one of the room's. */
+export const computerId = (device: string, id: string) => `computer:${device}:${id}`;
+
+/** The session a feed row belongs to, as the list and the map name it: the room's id, or a computer's. */
+export const rowSession = (row: { session: string | null; computer?: { device: string; id: string } }): string | null =>
+  row.session ?? (row.computer ? computerId(row.computer.device, row.computer.id) : null);
+
 const EVERY_MS = 15_000;
 let computers: Computer[] = [];
 const subs = new Set<() => void>();
 let timer: ReturnType<typeof setInterval> | null = null;
 let users = 0;
+
+/** What an empty screen adds of the computers (#91), so it says whether empty is right: how many sessions a computer
+ * that reports lists, or that it has not reported for a while; "" with no computer at all. */
+export function computersLine(list: Pick<Computer, "off" | "sessions">[]): string {
+  if (!list.length) return "";
+  const on = list.filter((c) => !c.off);
+  if (!on.length) return "Your computer has not reported for a while: it may be asleep.";
+  const listed = on.reduce((n, c) => n + c.sessions.length, 0);
+  return `Your computer lists ${listed} session${listed === 1 ? "" : "s"}, none waiting on you.`;
+}
 
 /** For tests and the mock: the computers as given. */
 export function setComputers(list: Computer[]): void {
@@ -88,7 +107,7 @@ export function useComputers(): Computer[] {
 export function computerRows(list: Computer[]): ComputerRow[] {
   return list.flatMap((c) =>
     c.sessions.map((s) => ({
-      id: `computer:${c.device}:${s.id}`,
+      id: computerId(c.device, s.id),
       track: c.device,
       lane: "",
       kind: "computer",
@@ -99,6 +118,7 @@ export function computerRows(list: Computer[]): ComputerRow[] {
       waiting: 0,
       sphere: null,
       project: s.project,
+      ...(s.slot !== undefined ? { slot: s.slot } : {}),
       computer: { device: c.device, off: c.off, seen: c.at, folder: s.folder, ...(s.link ? { link: s.link } : {}) },
     })),
   );

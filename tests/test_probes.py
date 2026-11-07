@@ -89,12 +89,14 @@ class Lane:
 
     def run(self, prompt: str | None, *, resume: str | None = None, allowed=(), disallowed=(), marks=(),
             hook_url: str | None = None, notes: str = "", skills: bool = False, env: dict | None = None,
-            fork: bool = False, mcp: bool = False) -> Run:
+            fork: bool = False, mcp: bool = False, model: str = cliengine.MODEL,
+            effort: str = cliengine.EFFORT) -> Run:
         self.settings.write_text(json.dumps(cliengine.settings(hook_url or self.api.hook_url, 30, marks)))
         if notes:
             Path(cliengine.instructions_path(str(self.settings))).write_text(notes)
         argv = cliengine.argv(str(self.settings), list(allowed), list(disallowed), resume, instructions=bool(notes),
-                              skills=skills, fork=fork, mcp=(hook_url or self.api.hook_url) if mcp else None)
+                              skills=skills, fork=fork, mcp=(hook_url or self.api.hook_url) if mcp else None,
+                              model=model, effort=effort)
         done = subprocess.run(argv, cwd=self.cwd, env=env or self.env(), capture_output=True, timeout=TIMEOUT_S,
                               input=cliengine.user_line(prompt) if prompt is not None else b"")
         lines = [json.loads(line) for line in done.stdout.decode().splitlines() if line.startswith("{")]
@@ -258,6 +260,36 @@ def test_d8_the_init_line_names_the_session_the_model_and_the_mode_and_an_answer
     api.answer_model = "claude-sonnet-5-5"
     swapped = lane.run("go")
     assert swapped.init["model"] == cliengine.MODEL and answered(swapped) == {"claude-sonnet-5-5"}
+
+
+def effort_of(request: object) -> list:
+    """Every value under a key `effort` in what the CLI sent the API, wherever it put it — but in `tools`, whose
+    schemas have parameters of that name (the Agent tool's `effort`)."""
+    if isinstance(request, dict):
+        return [v for k, v in request.items() if k == "effort"] + \
+            [e for k, v in request.items() if k != "tools" for e in effort_of(v)]
+    if isinstance(request, list):
+        return [e for v in request for e in effort_of(v)]
+    return []
+
+
+@pytest.mark.parametrize("model", cliengine.MODELS)
+def test_every_model_settings_offers_runs_in_auto_and_is_the_one_asked_of_the_api(lane, api, model):
+    """«Settings» offers `cliengine.MODELS` alone: each one, on the pinned CLI, starts in auto with that model."""
+    api.tools, api.mode = [bash("true")], "allow"
+    run = lane.run("go", model=model)
+    assert run.rc == 0, run.stderr
+    assert run.init["model"] == model and run.init["permissionMode"] == "auto"
+    assert api.requests[0]["model"] == cliengine.model_id(model)
+
+
+@pytest.mark.parametrize("effort", cliengine.EFFORTS)
+def test_every_effort_settings_offers_reaches_the_api_as_it_was_set(lane, api, effort):
+    api.tools, api.mode = [bash("true")], "allow"
+    run = lane.run("go", effort=effort)
+    assert run.rc == 0, run.stderr
+    sent = effort_of(api.requests[0])
+    assert sent and set(sent) == {effort}, ("not lowered, not dropped", sent)
 
 
 def test_a_deferred_call_runs_exactly_once_on_resume_and_never_again(lane, api):
@@ -622,7 +654,7 @@ def test_a_deferral_inside_a_subagent_is_lost_so_the_gate_denies_there_and_the_s
 @pytest.mark.parametrize("sources, loaded", [("", False), ("project", True)])
 def test_a_nested_claude_md_is_not_loaded_when_a_file_below_is_read_under_no_setting_sources(lane, api, sources,
                                                                                            loaded):
-    """On the Mac a CLAUDE.md of a subfolder joins the context when the model reads a file there; under
+    """On the owner's computer a CLAUDE.md of a subfolder joins the context when the model reads a file there; under
     `--setting-sources ""` it never does — a session in the Base's root that works in /work/code/<repo> reads that
     repository's rules only because its instructions tell it to. With `project` both load: a folder's CLAUDE.md, and
     the AGENTS.md of a folder that has none."""

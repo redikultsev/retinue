@@ -4,7 +4,7 @@ him: what a writer's rights leave to his press, made into a card he applies or d
 **The tools** — `collection_describe`, `collection_query`, `collection_apply`, `collection_propose` — are one set,
 whoever the writer: a session the owner started gets them on the platform's own server (`subs`, beside the
 sub-sessions'), served only for a call the gate saw (`gate.passed`), as `session:<id>` via `session`; an agent on
-his Mac at `/mcp/mac` (`mac`), by its device's token, as `mac:<device>/<session>` via `mac`. The writer's
+his computer at `/mcp/device` (`device`), by its device's token, as `device:<device>/<session>` via `device`. The writer's
 class and the collection's rights decide what each call may do; the store checks them (`collections.Collections`),
 never this module. What a query reads comes back framed as data: a record holds what someone wrote — a customer's
 mail, a page a session read — and is never a task. `apply` is idempotent by its call: the tool call's own id is its
@@ -14,7 +14,7 @@ nothing more.
 **A proposal** is one kind: a batch of `apply`'s operations on one collection, with the writer's words, tried as the
 owner's write when it is made — so a card that could never apply is refused at once, and the card shows what each
 operation would change — and applied by his «Apply» as his own write (`owner` via `screen`) with the marks of the
-foreign text its writer had read (`session` for a session's, `mac` for a Mac's), under the proposal's own idem: a second press writes
+foreign text its writer had read (`session` for a session's, `device` for a computer's), under the proposal's own idem: a second press writes
 nothing more. A record that moved on since is refused as any stale write is, and the card
 stays for him to dismiss. A writer's `apply` that its rights leave to the owner — a delete they give `"propose"`, a
 value `set_by` keeps for others (`sent`) — becomes a proposal by itself (`Rejected.kind == "propose"`); anything else
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 DESCRIBE, QUERY, APPLY, PROPOSE = "collection_describe", "collection_query", "collection_apply", "collection_propose"
 NAMES = (DESCRIBE, QUERY, APPLY, PROPOSE)
-PROPOSALS_MAX = 10          # a writer's proposals waiting for the owner — a Mac's, its device's in all its sessions
+PROPOSALS_MAX = 10          # a writer's proposals waiting for the owner — a computer's, its device's in all its sessions
 PROPOSAL_S = 7 * 86400      # a proposal waits this long for his press, then it is gone
 TAKEN = {"applying": "Being applied now.", "applied": "Applied already.", "dismissed": "You dismissed it.",
          "expired": "This proposal is over a week old.", "open": "This proposal is over a week old."}
@@ -122,7 +122,7 @@ NO_LANE = ("Only a session the owner started reads and writes his collections: n
            "a subagent. Say in your summary what should be recorded.")
 FROM_MACHINE_CARD = ("A write to your collections asked for by a turn a sub-session's report or a follow-up started, "
                      "not you: the report may have read someone else's text. Allow it if you want it written")
-REVOKED = "The Mac that proposed it was revoked: it is not applied. Dismiss it, and make the change yourself."
+REVOKED = "The owner's computer that proposed it was revoked: it is not applied. Dismiss it, and make the change yourself."
 NO_APP = "The owner has no app here to apply a proposal in — say in your summary what you would change instead."
 INSTRUCTIONS = (f"Collections: the owner's records in tables ({DESCRIBE} lists them). Read with {QUERY}, write with "
                 f"{APPLY} — what your rights leave to him becomes a proposal by itself — or put a write to him with "
@@ -138,10 +138,10 @@ def session_writer(session: dict) -> Writer:
 
 
 def _proposer(actor: str) -> str:
-    """Whose proposals are one writer's, for their limit and their repeats, as a LIKE pattern: a Mac's are its device's
+    """Whose proposals are one writer's, for their limit and their repeats, as a LIKE pattern: a computer's are its device's
     in every session — a session is the client's to start —, the rest their actor's own."""
     escaped = actor.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return escaped.split("/")[0] + "/%" if writer_class(actor) == "mac" else escaped
+    return escaped.split("/")[0] + "/%" if writer_class(actor) == "device" else escaped
 
 
 def _dump(value: Any) -> str:
@@ -310,9 +310,9 @@ class CollTools:
         space, shown = await self.collections.read(lambda reader: _shown(reader, collection, trial))
         proposal = secrets.token_hex(6)
         # What the writer had read goes with its proposal: «Apply» writes the owner's change with these marks, so a
-        # record a letter, a session's page or a Mac's session filled stays marked as such once he applies it.
+        # record a letter, a session's page or a computer's session filled stays marked as such once he applies it.
         cls = writer_class(writer.actor)
-        foreign = ",".join(sorted({*writer.foreign, *((cls,) if cls in ("session", "mac") else ())})) or None
+        foreign = ",".join(sorted({*writer.foreign, *((cls,) if cls in ("session", "device") else ())})) or None
         db.execute('INSERT INTO collection_proposals (id, call, session, actor, collection, space, ops, shown, why, '
                    '"foreign", needs, digest, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                    (proposal, call, session["id"] if session else None, writer.actor, collection, space, _dump(ops),
@@ -350,7 +350,7 @@ class CollTools:
             return "Already so: the project is described so now.", False
         proposal = secrets.token_hex(6)
         cls = writer_class(writer.actor)
-        foreign = ",".join(sorted({*writer.foreign, *((cls,) if cls in ("session", "mac") else ())})) or None
+        foreign = ",".join(sorted({*writer.foreign, *((cls,) if cls in ("session", "device") else ())})) or None
         db.execute('INSERT INTO collection_proposals (id, call, session, actor, collection, space, ops, shown, why, '
                    '"foreign", needs, digest, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                    (proposal, call, session["id"] if session else None, writer.actor, PROJECT, name,
@@ -430,9 +430,9 @@ class CollTools:
         db.commit()
         collection, ops, foreign, actor = db.execute('SELECT collection, ops, "foreign", actor FROM '
                                                      'collection_proposals WHERE id = ?', (proposal,)).fetchone()
-        if writer_class(actor) == "mac":  # a Mac taken back — lost, stolen — has its cards left to read, not to apply
+        if writer_class(actor) == "device":  # a computer taken back — lost, stolen — has its cards left to read, not to apply
             try:
-                gone, error = await self.collections.revoked(actor[4:].split("/")[0]), None
+                gone, error = await self.collections.revoked(actor.split(":", 1)[1].split("/")[0]), None
             except Refused as exc:
                 gone, error = True, (503, {"error": str(exc)})
             if gone:
@@ -592,7 +592,7 @@ class CollTools:
             return web.json_response({"error": str(exc)}, status=400)
 
     async def owner_present(self, request: web.Request) -> web.Response:
-        """Whether the owner changed any record between `since` and `until` — on a screen of his, or from a Mac: a sign
+        """Whether the owner changed any record between `since` and `until` — on a screen of his, or from a computer: a sign
         he was there, for the day plan's count of what passed (`planner`). `{present}`; nothing else is said."""
         body = await _body(request)
         since, until = body.get("since"), body.get("until")

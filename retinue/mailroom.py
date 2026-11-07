@@ -165,7 +165,7 @@ class Mailroom:
             since = clock.stamp(source["failing_since"], self.core.tz) if source.get("failing_since") else "now"
             await self.core.tell_owner(
                 f"{what} {source['account']}: Google no longer lets the collector in (invalid_grant) — usually after a "
-                f"password change. Not collected since {since}. Sign in again on the Mac, in the retinue folder:\n"
+                f"password change. Not collected since {since}. Sign in again on the owner's computer, in the retinue folder:\n"
                 f"`{LOGIN.format(account=source['account'], kind=kind)}`")
         return added
 

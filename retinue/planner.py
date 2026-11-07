@@ -860,7 +860,7 @@ class Planner:
 
     async def _present(self, start: float, end: float) -> bool | None:
         """Whether the owner was seen between `start` and `end`: a sign of his here, or a record he changed on his
-        screen or from a Mac. None when the platform could not say."""
+        screen or from a computer. None when the platform could not say."""
         if any(start <= float(x) < end for x in self._load(SIGNS_KEY, []) if type(x) in (int, float)):
             return True
         try:

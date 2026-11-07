@@ -237,10 +237,16 @@ class _Room:
                                 entries += 1
                                 if entries > MAX_ROOM_ENTRIES:
                                     raise Refused(f".git has over {MAX_ROOM_ENTRIES} entries — not read so")
-                                info = entry.stat(follow_symlinks=False)
+                                # git's own maintenance removes files while it runs (`maintenance.lock`, an
+                                # emptied fan-out folder): one gone since the listing holds nothing, so it is skipped.
+                                try:
+                                    info = entry.stat(follow_symlinks=False)
+                                except FileNotFoundError:
+                                    continue
                                 if stat.S_ISDIR(info.st_mode) and depth < 8:
-                                    stack.append((self._sub(fd, entry.name, f"{where}/{entry.name}"),
-                                                  f"{where}/{entry.name}", depth + 1))
+                                    sub = self._sub(fd, entry.name, f"{where}/{entry.name}", gone=True)
+                                    if sub is not None:
+                                        stack.append((sub, f"{where}/{entry.name}", depth + 1))
                                 elif stat.S_ISREG(info.st_mode):
                                     size += info.st_size
                                 else:
@@ -256,10 +262,15 @@ class _Room:
             raise Refused(f"the repository's objects are over {MAX_ROOM_BYTES >> 30} GB")
 
     @staticmethod
-    def _sub(parent: int, name: str, where: str) -> int:
-        """A folder inside `.git`, never through a link (a swap after the listing is caught here too)."""
+    def _sub(parent: int, name: str, where: str, gone: bool = False) -> int | None:
+        """A folder inside `.git`, never through a link (a swap after the listing is caught here too); with `gone`,
+        None for one removed since the listing."""
         try:
             return os.open(name, _DIR, dir_fd=parent)
+        except FileNotFoundError:
+            if gone:
+                return None
+            raise Refused(f".git/{where[:80]}: a link or not a folder — not read so") from None
         except OSError:
             raise Refused(f".git/{where[:80]}: a link or not a folder — not read so") from None
 

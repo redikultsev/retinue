@@ -3,12 +3,15 @@
 // «working» or «done», its title and one line: what it needs, or its plan's step with a thin bar. A press on a tile
 // opens its card — the operator's own, with its answer and the microphone — in a pane beside the map, which stays put;
 // on a phone the card is a sheet over it. The arrows go from tile to tile, Enter opens, Esc closes.
+import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Layers, SphereMark } from "@/components/icons";
 import { OperatorCard, useOperatorNumbers } from "@/components/operator";
 import { RelationIcon, upOf } from "@/components/relation";
+import { OnComputer } from "@/components/ending-card";
 import { Crumb, Reply } from "@/components/reply";
 import { Dialog } from "@/components/ui/dialog";
+import { computerRows, computersLine, isComputer, useComputers } from "@/lib/computers";
 import type { Feed } from "@/lib/feed";
 import { live, useLiveState } from "@/lib/live";
 import { type Area, mapAreas, onMap, type Tile, tileOf } from "@/lib/map";
@@ -113,10 +116,24 @@ function AreaView({
 
 /** A session with no request on the feed: what it is doing, a way to it and a box to write into it. */
 function SessionCard({ s, tile }: { s: Session; tile: Tile }) {
+  if (isComputer(s))
+    return (
+      <article aria-label={s.title || "Untitled"} className="flex flex-col gap-3">
+        <Crumb>
+          {WORDS[tile.state]} · on {s.computer.device}
+        </Crumb>
+        <h2 className="text-[15px] font-medium text-balance">{s.title || "Untitled"}</h2>
+        <OnComputer computer={{ device: s.computer.device, id: s.id, ...(s.computer.link ? { link: s.computer.link } : {}) }} verb="Open" />
+      </article>
+    );
   return (
     <article aria-label={s.title || s.track} className="flex flex-col gap-3">
       <Crumb session={s.id}>{WORDS[tile.state]}</Crumb>
-      <h2 className="text-[15px] font-medium text-balance">{s.title || s.track}</h2>
+      <h2 className="text-[15px] font-medium text-balance">
+        <Link to="/s/$id" params={{ id: s.id }} className="underline-offset-4 hover:underline">
+          {s.title || s.track}
+        </Link>
+      </h2>
       {tile.line && <p className="text-sm text-muted-foreground">{tile.line}</p>}
       <Reply session={s.id} placeholder={tile.state === "working" ? "Write to it while it works" : "Reply to go on with it"} />
     </article>
@@ -146,18 +163,20 @@ export function MapView({
   const [open, setOpen] = useState<string | null>(null);
   const grid = useRef<HTMLElement>(null);
   const of = useProjectOf(spheres);
+  const machines = useComputers();
+  // the room's sessions and the computers' (an off computer's are not on the map: nothing there is live)
   const sessions = useMemo(() => {
-    const all = onMap(listed(state.sessions), now);
+    const all = [...onMap(listed(state.sessions), now), ...computerRows(machines.filter((m) => !m.off))];
     return project ? all.filter((s) => within(of(s), project)) : all;
-  }, [state.sessions, now, project, of]);
+  }, [state.sessions, machines, now, project, of]);
   const areas = useMemo(() => mapAreas(sessions, spheres, nodes ?? [], of), [sessions, spheres, nodes, of]);
   const rows = useMemo(() => requests(feed), [feed]);
   const tiles = useMemo(() => new Map(sessions.map((s) => [s.id, tileOf(s, rows, numbers)])), [sessions, rows, numbers]);
-  const picked = open ? state.sessions[open] : undefined;
+  const picked = open ? sessions.find((s) => s.id === open) : undefined;
   const pickedTile = open ? tiles.get(open) : undefined;
 
   // working sessions' plans: their snapshot read once, then the stream keeps them
-  const busy = sessions.filter((s) => s.state === "active").map((s) => s.id).slice(0, 8).join(",");
+  const busy = sessions.filter((s) => s.state === "active" && !isComputer(s)).map((s) => s.id).slice(0, 8).join(","); // a computer's is not in the room
   useEffect(() => {
     for (const id of busy.split(",").filter(Boolean)) if (!(id in live.getState().floors) && !live.isWatched(id)) live.watch(id).catch(() => undefined);
   }, [busy]);
@@ -195,7 +214,9 @@ export function MapView({
         <div className="flex min-w-0 flex-col gap-4">
           {head}
           {sessions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No session is on the map now.</p>
+            <p data-testid="empty-why" className="text-sm text-muted-foreground">
+              {[project ? "No session of this project is on the map now." : "No session is on the map now: none runs in the room.", computersLine(machines)].filter(Boolean).join(" ")}
+            </p>
           ) : (
             <section ref={grid} className="grid grid-cols-[repeat(auto-fill,minmax(18.75rem,1fr))] items-start gap-4" aria-label="The map">
               {areas.map((a) => (

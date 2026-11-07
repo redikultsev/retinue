@@ -38,6 +38,7 @@ from urllib.parse import quote, unquote
 import yaml
 from aiohttp import web
 
+from . import passport as passports
 from .base import BRANCH_REF, clean_path
 
 if TYPE_CHECKING:
@@ -45,12 +46,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("retinue.spaces")
 
-SHOWCASE = "AGENTS.md"
-MARKER = "<!-- Витрина:"
+SHOWCASE = passports.SHOWCASE
+MARKER = passports.MARKER
 NATURES = ("knowledge", "profile", "journal", "artifacts")
-SPACE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+SPACE_NAME = passports.FOLDER
 MAX_SEGMENTS = 3                # nature/subfolder/file.md: at most two folders below the project
-PROJECT_DEPTH = 8               # folders of a project's path below the Base's root
+PROJECT_DEPTH = passports.DEPTH  # folders of a project's path below the Base's root
 PATH_MAX = 512
 RECORD_MAX = 512 * 2**10        # a Record bigger than this is listed, never sent
 SHOWCASE_MAX = 256 * 2**10
@@ -72,10 +73,6 @@ LIST_ITEM = re.compile(r"^(?:[-*+]|\d{1,3}[.)])\s+")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 FENCE = re.compile(r"^\s{0,3}(```|~~~)")
 NONE_YET = re.compile(r"^пока\b[^.\n]*\bнет\b", re.IGNORECASE)   # «Пока открытых нет.»: a placeholder, not a line
-WHY = re.compile(r"why|зачем", re.IGNORECASE)                     # the passport's heading (`passport`)
-# «In scope: …», «- **Not in scope:** … → …», «Не входит: …»: the passport's scope lines.
-SCOPE = re.compile(r"^\s*(?:[-*+]\s+)?\**\s*(not in scope|in scope|не входит|входит)\s*\**\s*:\s*\**\s*(.*)$",
-                   re.IGNORECASE)
 # [text](target "title"), not an image; the text may hold one level of brackets.
 LINK = re.compile(r"(?<!!)\[((?:[^\[\]\n]|\[[^\[\]\n]*\])*)\]\(\s*(<[^>\n]*>|[^)\s]+)(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)")
 SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
@@ -343,40 +340,35 @@ def section_kind(heading: str) -> str:
     return "other"
 
 
-def passport(lines: list[str]) -> tuple[dict | None, list[str]]:
-    """A project's passport — why it is, what is in its scope and what is not — from the `## Why` section of the lines
-    above the marker («## Зачем» too, with «Входит:» and «Не входит:»), and those lines without that section: the
-    rest are its rules. `why` is the section's prose; a line «In scope: …» or «Not in scope: … → …», a list item or
-    in bold too, is its scope. No such section: None, and the lines as they were."""
-    start = next((i for i, line in enumerate(lines) if (m := HEADING.match(line)) and len(m.group(1)) == 2
-                  and WHY.fullmatch(m.group(2))), None)
-    if start is None:
-        return None, lines
-    end = next((i for i in range(start + 1, len(lines)) if (m := HEADING.match(lines[i])) and len(m.group(1)) <= 2),
-               len(lines))
-    why: list[str] = []
-    scope = {"in_scope": "", "not_in_scope": ""}
-    for line in lines[start + 1:end]:
-        if m := SCOPE.match(line):
-            key = "not_in_scope" if m.group(1).lower() in ("not in scope", "не входит") else "in_scope"
-            scope[key] = " ".join(filter(None, (scope[key], m.group(2).strip())))
-        else:
-            why.append(line)
-    return {"why": "\n".join(why).strip(), **scope}, lines[:start] + lines[end:]
+def passport_view(told: passports.Passport, resolve=lambda t: t) -> dict:
+    """A parsed passport as the app reads it: its parts with their links resolved, its `problems` against the schema
+    (`passport.SCHEMA`), and `in_scope` and `not_in_scope` joined from its «Scope» lines."""
+    scope = [{**line, "text": resolve(line["text"]), "where": resolve(line["where"])} for line in told.scope]
+    return {"why": resolve(told.why),
+            "in_scope": "; ".join(line["text"] for line in scope if line["key"] == "in"),
+            "not_in_scope": "; ".join(f"{line['text']} → {line['where']}" if line["where"] else line["text"]
+                                      for line in scope if line["key"] == "out"),
+            "scope": scope,
+            "files": [{**f, "about": resolve(f["about"])} for f in told.files],
+            "rules": [resolve(rule) for rule in told.rules],
+            "checks": [resolve(check) for check in told.checks],
+            "imports": list(told.imports),
+            "problems": [problem.as_dict() for problem in told.problems]}
 
 
-def showcase(text: str, resolve=lambda t: t) -> dict:
-    """A Showcase (a Space's AGENTS.md): its title (the first heading), its passport (`passport`) and the rules above
-    the marker, and below it the lines by heading. `kind` names the sections the app knows: questions, tasks, records;
-    the rest are `other`. «Пока … нет» in a list of questions or tasks is a placeholder and is left out. No marker: all
-    of it is rules."""
+def showcase(text: str, resolve=lambda t: t, exists=None) -> dict:
+    """A Showcase (a project's AGENTS.md): its title (the first heading), its passport — everything above the marker,
+    read by the schema (`passport.parse`; `exists` looks a path up in the project) — and below the marker the lines
+    by heading. `rules` is the passport's «Rules» as a list, then whatever above the marker the schema does not name,
+    so nothing written there goes unseen. `kind` names the sections the app knows: questions, tasks, records; the rest
+    are `other`. «Пока … нет» in a list of questions or tasks is a placeholder and is left out. No marker: all of it
+    is the passport."""
     lines = text.splitlines()
     title = next((m.group(2) for line in lines if (m := HEADING.match(line)) and m.group(1) == "#"), "")
     at = next((i for i, line in enumerate(lines) if line.lstrip().startswith(MARKER)), None)
-    told, above = passport(lines if at is None else lines[:at])
+    told = passports.parse("\n".join(lines if at is None else lines[:at]), exists)
     below = [] if at is None else lines[at + 1:]
-    first = next((i for i, line in enumerate(above) if (m := HEADING.match(line)) and m.group(1) == "#"), None)
-    rules = "\n".join(line for i, line in enumerate(above) if i != first).strip()
+    rules = "\n".join([*(f"- {rule}" for rule in told.rules), *told.other]).strip()
     sections: list[dict] = []
     heading, chunk, fence = "", [], None
 
@@ -400,7 +392,7 @@ def showcase(text: str, resolve=lambda t: t) -> dict:
             fence = None if fence == opened.group(1) else fence or opened.group(1)
         chunk.append(line)
     flush()
-    shown = {key: resolve(value) for key, value in told.items()} if told else None
+    shown = passport_view(told, resolve)
     return {"title": title, "passport": shown, "rules": resolve(rules), "marker": at is not None, "sections": sections}
 
 
@@ -431,12 +423,19 @@ class _Commit:
     links: frozenset[str]                           # paths git keeps as something else (a link, a submodule)
     projects: frozenset[str]                        # every project's folder, '' for the root when it is one
     spaces: list[str]                               # the top-level projects
+    folders: frozenset[str] = frozenset()           # every folder that holds a file of the commit
     views: dict[str, dict] = field(default_factory=dict)
     records: OrderedDict = field(default_factory=OrderedDict)
 
 
 def _join(project: str, rel: str) -> str:
     return f"{project}/{rel}" if project else rel
+
+
+def _parents(path: str) -> list[str]:
+    """`a/b/c.md` → `a/b`, `a`."""
+    parts = path.split("/")[:-1]
+    return ["/".join(parts[:n]) for n in range(len(parts), 0, -1)]
 
 
 class BaseTree:
@@ -481,7 +480,9 @@ class BaseTree:
                 links.add(path)
         projects = frozenset(folder for path in files if posixpath.basename(path) == SHOWCASE
                              and project_path(folder := posixpath.dirname(path)) is not None)
-        made = _Commit(head, files, frozenset(links), projects, sorted(p for p in projects if p and "/" not in p))
+        folders = {parent for path in files for parent in _parents(path)}
+        made = _Commit(head, files, frozenset(links), projects, sorted(p for p in projects if p and "/" not in p),
+                       frozenset(folders))
         with self._lock:
             self._commit = made
         return made
@@ -655,7 +656,11 @@ class BaseTree:
         _, sha, size = made.files[_join(project, SHOWCASE)]
         raw = read if read is not None and size <= SHOWCASE_MAX else \
             self.blobs([sha]).get(sha, b"") if size <= SHOWCASE_MAX else self._start(sha, SHOWCASE_MAX)
-        parsed = showcase(raw.decode("utf-8", "replace"), self._resolver(made, project))
+        def exists(rel: str) -> bool:
+            path = _join(project, rel.rstrip("/"))
+            return path in made.files or path in made.folders
+
+        parsed = showcase(raw.decode("utf-8", "replace"), self._resolver(made, project), exists)
         shown = {"name": project, **parsed, "counts": counts(parsed["sections"]), "big": size > SHOWCASE_MAX}
         with self._lock:
             made.views[key] = shown

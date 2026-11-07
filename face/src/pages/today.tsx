@@ -1,15 +1,13 @@
 // `/today`, the home screen, in three tabs under a header of one line (the day, the tabs, the hub's status — of which
 // only what is off shows in words): «Today» — what waits for the owner and what goes on, as an inbox
 // (`components/inbox.tsx`: the list at the left, the row opened whole at the right) by action, each row naming its
-// project, or as the operator's cards (`components/operator.tsx`) — the pick kept on the device; «Tasks»; and
+// project — the operator, its cards and its map, is a place of its own (pages/operator.tsx); «Tasks»; and
 // «Schedule» — the week as an hourly grid, a day on a phone. Everything comes from what the app already reads: the
 // session rows, the stream, the feed, the plan.
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-header";
 import { Inbox } from "@/components/inbox";
-import { MapView } from "@/components/map";
-import { Operator } from "@/components/operator";
 import { type PlanTab, PlanTabs } from "@/components/plan/plan-tabs";
 import { Chart } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +17,7 @@ import { live, useLiveState } from "@/lib/live";
 import { useWide } from "@/lib/media";
 import { type Plan, usePlan } from "@/lib/plan";
 import { listed } from "@/lib/store";
-import { finished, running, type TodayMode, todayWord, useSince, useTodayMode } from "@/lib/today";
+import { finished, running, todayWord, useSince } from "@/lib/today";
 import type { Session, Sphere } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { todayCount, useTodayCount } from "@/lib/waiting";
@@ -87,27 +85,6 @@ function Tabs({ tab, onTab, counts }: { tab: TodayTab; onTab: (t: TodayTab) => v
   );
 }
 
-const MODES: [TodayMode, string][] = [["action", "By action"], ["operator", "Operator"], ["map", "Map"]];
-
-/** How «Waiting» is shown: by action, the sessions' requests alone, or the map of the sessions in their places. */
-export function ModeSwitch({ mode, onMode }: { mode: TodayMode; onMode: (m: TodayMode) => void }) {
-  return (
-    <fieldset aria-label="Show" className="inline-flex h-9 w-fit items-center self-start rounded-md border p-0.5 max-md:h-11">
-      {MODES.map(([value, label]) => (
-        <button
-          key={value}
-          type="button"
-          aria-pressed={mode === value}
-          onClick={() => onMode(value)}
-          className={cn("h-7 rounded px-3 text-[13px] max-md:h-9 whitespace-nowrap transition-colors", mode === value ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
-        >
-          {label}
-        </button>
-      ))}
-    </fieldset>
-  );
-}
-
 export function TodayView({
   feed,
   sessions,
@@ -117,10 +94,7 @@ export function TodayView({
   tab = "waiting",
   onTab,
   plan = null,
-  mode: asked,
 }: {
-  /** A link's own way of showing «Waiting» (`?mode=`), kept as the device's. */
-  mode?: TodayMode;
   feed: Feed | null;
   sessions: Session[];
   spheres: Sphere[];
@@ -144,17 +118,8 @@ export function TodayView({
   const p = plan?.plan ?? null;
   // «Tasks N»: the open ones and the people's asks no task names yet
   const open = (p?.tasks.rows.filter((t) => t.fields.state === "open").length ?? 0) + useAsks(feed, p).length;
-  const [mode, setMode] = useTodayMode(asked);
-  const head = <ModeSwitch mode={mode} onMode={setMode} />;
   // what waits and what goes on; the tasks are a tab of their own
-  const queue =
-    mode === "operator" ? (
-      <Operator feed={feed} spheres={spheres} now={now} head={head} />
-    ) : mode === "map" ? (
-      <MapView feed={feed} spheres={spheres} now={now} head={head} />
-    ) : (
-      <Inbox feed={feed} running={busy} done={done} spheres={spheres} now={now} head={head} />
-    );
+  const queue = <Inbox feed={feed} running={busy} done={done} spheres={spheres} now={now} />;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4 md:px-6">
@@ -191,9 +156,7 @@ export function TodayView({
 export function TodayPage({
   tab = "waiting",
   onTab,
-  mode,
 }: {
-  mode?: TodayMode;
   tab?: TodayTab;
   onTab?: (t: TodayTab) => void;
 }) {
@@ -208,7 +171,7 @@ export function TodayPage({
     <div className="flex h-full min-h-0 flex-col">
       {!wide && <AppHeader />}
       <main className="flex min-h-0 flex-1 flex-col">
-        <TodayView feed={feed} sessions={list} spheres={live.meta?.spheres ?? []} since={since} now={now} tab={tab} onTab={onTab} plan={plan} mode={mode} />
+        <TodayView feed={feed} sessions={list} spheres={live.meta?.spheres ?? []} since={since} now={now} tab={tab} onTab={onTab} plan={plan} />
       </main>
     </div>
   );

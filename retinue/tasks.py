@@ -18,7 +18,7 @@ conversation, a session — and three things only the Router can do, because onl
   titles, which go to the screen alone.
 
 A task's `project` (its path in the Base, `work/acme`) is set and moved by the owner, the assistant, a session or the
-Mac — never by the Router: its rule's rights do not open the field.
+owner's computer — never by the Router: its rule's rights do not open the field.
 
 The Router reads and writes the collection through the platform's `/owner/collections/*` as `code:waiting` via
 `code`: the rule's rights are the owner's to give (`collections rights tasks …`), and without them nothing here

@@ -93,7 +93,7 @@ afterEach(() => {
 });
 
 describe("SpacesPage", () => {
-  it("shows the Spaces in the spheres' order with their icons and badges from the live sessions", async () => {
+  it("shows the Spaces in the spheres' order, each by its mark and name, without counts", async () => {
     live.dispatch({
       type: "list",
       snapshot: { schema: 1, cursor: 1, sessions: [
@@ -113,8 +113,8 @@ describe("SpacesPage", () => {
     const router = mount(<SpacesPage read={read} />);
     const links = await screen.findAllByRole("link");
     expect(links.map((a) => a.textContent)).toEqual([
-      "Travel1 waiting2 working1 question",
-      "Work3 questions",
+      "Travel",
+      "Work",
       "Home",
     ]);
     fireEvent.click(links[0]!);
@@ -152,7 +152,7 @@ describe("SpacePage", () => {
     // the header is one line: its name, what it is, its tabs — «Overview» first and open
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Travel");
     expect(screen.getByText("project · 1 sub-project")).toBeTruthy();
-    // «Operator N»: what waits in it — before the feed is in, its sessions that wait, as its row on the left says
+    // «Operator N»: what waits in it — before the feed is in, its sessions that wait
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Records3", "Operator1"]);
     expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("1 waiting")).toBeTruthy();
@@ -217,7 +217,7 @@ describe("SpacePage", () => {
     expect(screen.getByText(/No passport yet/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Write it with a session" }));
     dialog = await screen.findByRole("dialog", { name: "Edit the passport" });
-    expect(within(dialog).getByTestId("discuss-head").textContent).toMatch(/^Let's edit this project's passport: the «## Why» section at the top of travel\/AGENTS\.md/);
+    expect(within(dialog).getByTestId("discuss-head").textContent).toContain("travel/AGENTS.md");
   });
 });
 

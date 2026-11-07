@@ -21,7 +21,7 @@ edits; every window's state is a row (`base_runs`), so a restart picks up where 
 
 **The commit after a turn.** When a run of a session ends and no run on the lane is open (every window marked), the
 platform commits by itself everything the session changed — added, edited, deleted, shared with another session —
-and the files no session claims, pushed to the hub as the owner's own, as the owner's agents on the Mac commit
+and the files no session claims, pushed to the hub as the owner's own, as the owner's agents on the owner's computer commit
 (`base.commit`, his rules; what the platform never commits — the Base's scripts, hidden paths — stays out). It is a
 card (`base_cards`): never shown while it commits, said in **one line** under the session's latest ping and on its
 card in the app — «Written to the Base: <files> · <sha>», with «Undo» beside it: a new commit on top that puts those
@@ -654,7 +654,7 @@ class ToBase:
         if card["state"] != "committed":
             return GONE
         if self.platform.clock() > card["created"] + TTL_S:
-            return "Too old to undo here — undo it from the Mac."
+            return "Too old to undo here — undo it from the owner's computer."
         return None
 
     async def undo(self, card: dict) -> tuple[str, dict | None]:

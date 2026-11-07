@@ -23,6 +23,15 @@ import tempfile
 import unicodedata
 from dataclasses import dataclass, field
 
+try:
+    from . import passport
+except ImportError:            # the hub's hook: passport.py is installed beside it (deploy/setup.sh)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import passport
+    except ImportError:        # an install from before passport.py: no passport is checked
+        passport = None
+
 ASSISTANT, OWNER = "assistant", "owner"
 ZERO = "0" * 40
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git's empty tree: the parent of a first commit
@@ -74,7 +83,7 @@ REJECTED = ("push rejected", "push не принят")
 
 
 def norm(path: str) -> str:
-    """A name as the owner's Mac sees it: its file system ignores case and Unicode normalisation."""
+    """A name as macOS and Windows see it: their file systems ignore case, and macOS's Unicode normalisation too."""
     return unicodedata.normalize("NFC", path).casefold()
 
 
@@ -85,7 +94,7 @@ def hidden(path: str) -> bool:
 
 def match(path: str, pattern: str) -> bool:
     """A glob over `/`-separated paths: `*` and `?` stay inside one folder, `**` is any number of folders. Case and
-    Unicode normalisation do not count, as on the owner's Mac."""
+    Unicode normalisation do not count, as on macOS (case alone on Windows)."""
     path, pattern = norm(path), norm(pattern)
     segments, regex = pattern.split("/"), ""
     for i, segment in enumerate(segments):
@@ -205,7 +214,8 @@ def check(git: list[str], old: str, new: str, policy: Policy, role: str) -> Verd
     repository (`["git", "--git-dir", …]`).
     Records may be changed and deleted, the journal's included; what changed is named for the evening list."""
     verdict = Verdict()
-    for status, old_path, new_path, mode in changes(git, old, new):
+    changed = changes(git, old, new)
+    for status, old_path, new_path, mode in changed:
         verdict.files.append((status, new_path))
         if any_match(new_path, policy.excluded) and status != "D":
             verdict.refusals.append(f"{new_path}: this never goes in the Base — the path is excluded by the policy")
@@ -235,13 +245,61 @@ def check(git: list[str], old: str, new: str, policy: Policy, role: str) -> Verd
                                     f"{header(after)[0].get(policy.keep) or 'none'}; {policy.keep} is the Record's "
                                     "name, links point to it: it does not change while the Record exists")
     verdict.refusals += collisions(git, new, {path for status, path in verdict.files if status != "D"})
+    verdict.refusals += passports(git, old, new, changed)
     if not verdict.refusals:
         verdict.refusals += lint(git, new, policy)
     return verdict
 
 
+def _tree(git: list[str], rev: str) -> set[str]:
+    """The files of `rev` and every folder that holds one."""
+    if rev == ZERO:
+        return set()
+    files = {n for n in _git(git, "ls-tree", "-r", "-z", "--name-only", rev, text=False).decode("utf-8", "replace")
+             .split("\0") if n}
+    return files | {"/".join(p.split("/")[:n]) for p in files for n in range(1, p.count("/") + 1)}
+
+
+def _passport(git: list[str], rev: str, project: str, tree: set[str]) -> list | None:
+    """A project's passport problems at `rev`; None when it has no `AGENTS.md` there."""
+    showcase = f"{project}/{passport.SHOWCASE}" if project else passport.SHOWCASE
+    if showcase not in tree:
+        return None
+    exists = lambda rel: (f"{project}/{rel}" if project else rel).rstrip("/") in tree  # noqa: E731
+    return passport.parse(passport.above(_show(git, rev, showcase)), exists).problems
+
+
+def passports(git: list[str], old: str, new: str, changed: list[tuple[str, str, str, str]]) -> list[str]:
+    """A change that breaks a project's passport that passed before: its `AGENTS.md` edited, or a file it points to
+    removed or moved. A passport new in this change, or one that already failed, is not refused here — a new
+    project's skeleton is filled by its first session —; the check (`passport.py`) still lists it. docs/base.md,
+    «A project's passport»."""
+    if passport is None:
+        return []
+    touched: set[str] = set()
+    for status, old_path, new_path, _ in changed:
+        for path in (old_path, new_path):
+            if path.rsplit("/", 1)[-1] == passport.SHOWCASE:
+                touched.add(path.rpartition("/")[0])
+        if status in "DR":                       # a project above a removed path may point to it
+            parts = old_path.split("/")[:-1]
+            touched.update("/".join(parts[:n]) for n in range(len(parts) + 1))
+    touched = {f for f in touched if all(passport.FOLDER.fullmatch(p) for p in (f.split("/") if f else []))
+               and f.count("/") < passport.DEPTH}
+    if not touched:
+        return []
+    before, after = _tree(git, old), _tree(git, new)
+    out = []
+    for project in sorted(touched):
+        was, now = _passport(git, old, project, before), _passport(git, new, project, after)
+        if was == [] and now:
+            out.append(f"{project or '.'}/{passport.SHOWCASE}: the passport breaks its schema — "
+                       + "; ".join(p.say for p in now[:MAX_REASONS]))
+    return out
+
+
 def collisions(git: list[str], rev: str, changed: set[str]) -> list[str]:
-    """Two names in the tree that are one file or folder on the owner's Mac (`A.md` and `a.md`, `é` composed and
+    """Two names in the tree that are one file or folder on macOS or Windows (`A.md` and `a.md`, `é` composed and
     decomposed): one of them would silently take the other's place there. Only those the change brings in."""
     names = [n for n in _git(git, "ls-tree", "-r", "-z", "--name-only", rev, text=False).decode("utf-8", "replace")
              .split("\0") if n]
@@ -258,7 +316,7 @@ def collisions(git: list[str], rev: str, changed: set[str]) -> list[str]:
         for name in sorted(group):
             if any(path == name or path.startswith(name + "/") for path in changed):
                 other = sorted(group - {name})[0]
-                out.append(f"{name}: on a Mac it is the same as {other} — the names differ only in case or Unicode "
+                out.append(f"{name}: on macOS or Windows it is the same as {other} — the names differ only in case or Unicode "
                            "normalization")
     return out
 

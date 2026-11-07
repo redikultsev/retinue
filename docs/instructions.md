@@ -1,7 +1,7 @@
 # What a session knows: the lane's instructions, the repository's rules, your skills, your memory
 
-A session on the server should work by the same rules as one on your Mac: your repository's `CLAUDE.md` (and the
-`AGENTS.md` it includes), your personal skills, what your Mac's Claude Code remembers about you, and a few rules of
+A session on the server should work by the same rules as one on your computer: your repository's `CLAUDE.md` (and the
+`AGENTS.md` it includes), your personal skills, what your computer's Claude Code remembers about you, and a few rules of
 the lane itself. The lanes run the CLI with
 `--setting-sources ""` — a repository brings no settings, hooks or permission rules — so none of this comes by
 itself. Each part comes another way, and nothing of it can bring a hook, a setting or a grant.
@@ -35,7 +35,7 @@ settings: no session can rewrite it. A change takes an image rebuild.
 
 For every run — a resume too — the lane host (`retinue/instructions.py`, `compose`) reads the chain of folders from
 the top of the session's repository (its first folder under `/work`) down to its working directory: in each folder,
-top first, its `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md`, as the pinned CLI loads them on your Mac
+top first, its `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md`, as the pinned CLI loads them on your computer
 (probed with 2.1.304), then its `AGENTS.md` and `.claude/AGENTS.md` — always, where the CLI reads them only when no
 folder of the chain has a CLAUDE file: a project of the Base keeps its rules there, and a session in a project three
 folders deep gets every level's ([base.md](base.md#reading-the-base-in-the-app)), none of a sibling's. Then
@@ -64,7 +64,7 @@ What it does not read, and why:
   counted — a repository cannot fill `/lane/run`). An include that cannot even be looked at (a NUL, a name too long)
   is left out like the others. Each file is opened without following a final link and checked from its descriptor
   (`/proc/self/fd`) to be still inside, so a link swapped in after the look is not followed either. A repository with `README.md -> /proc/self/environ` and `@README.md` puts nothing of the lane's into a prompt.
-- **Not the files below the working directory**, which the Mac loads when the session reads a file there — and the CLI
+- **Not the files below the working directory**, which the owner's computer loads when the session reads a file there — and the CLI
   does not either under `--setting-sources ""` (probed). A session in `kb` reads a domain's `AGENTS.md` (its
   Showcase) itself, as the base's rules ask; one that works in another repository below its cwd reads that
   repository's rules because its instructions say to.
@@ -77,7 +77,7 @@ managed `allowManagedHooksOnly`, which would stop those, stops the platform's ow
 `PreToolUse` reaches the gate at all), while `apiKeyHelper` still runs; `allowManagedPermissionRulesOnly` drops the
 run's `--allowedTools`. Neither can be turned on (`tests/test_deploy.py` keeps them out).
 
-The rules are text in the prompt, like on your Mac: a session that writes a repository's `CLAUDE.md` changes what the
+The rules are text in the prompt, like on your computer: a session that writes a repository's `CLAUDE.md` changes what the
 next run of every session in that repository reads. It is the repository's own file, in your checkout.
 
 ## Your skills
@@ -121,7 +121,7 @@ would load with its hooks — there the whole folder is refused:
 
 ### Installing them
 
-The source is yours: the skills your Claude Code on the Mac has. `deploy/skills/sync-skills.sh` puts them together in
+The source is yours: the skills your Claude Code on the owner's computer has. `deploy/skills/sync-skills.sh` puts them together in
 one folder — each folder of `~/.claude/skills` under its own name (a linked one as its files), each enabled plugin's
 skills (`enabledPlugins` in `settings.json`, the install paths in `plugins/installed_plugins.json`, the skills its
 `plugin.json` lists and those in its `skills/`) and the desktop app's enabled `anthropic-skills` (its newest
@@ -151,7 +151,7 @@ installed one as it was; so is a folder with no skill folder in it at all (the s
 are named as such). The next run of a session sees the new set — no restart. `--empty` removes them all.
 `setup.sh` creates the empty `/srv/retinue/skills` once.
 
-A skill written for the Mac may name Mac paths (`~/Desktop/…`, your own folders): on the server those are not there, and
+A skill written for the owner's computer may name its paths (`~/Desktop/…`, your own folders): on the server those are not there, and
 the session says so rather than guessing.
 
 ## Auto memory: off
@@ -162,13 +162,14 @@ cannot write and the gate keeps file tools out of: the model would be told to ke
 session of a directory would read what earlier sessions wrote there — a channel between sessions nobody reviews. So it
 is off (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, required by `cliengine.check_env`; probed: the prompt then has no memory
 section and the init line no `memory_paths`). What should outlive a session goes into its repository, by the
-repository's rules — in your knowledge base that is a Record — and the lane's instructions say so. Your Mac's own
+repository's rules — in your knowledge base that is a Record — and the lane's instructions say so. Your computer's own
 memory comes as a read-only snapshot (below), which no session writes.
 
-## Your memory: a read-only snapshot of the Mac's
+## Your memory: a read-only snapshot of your computer's
 
-What you taught your Mac sessions — your preferences, your corrections, where a project stands — lives in the Mac's
-Claude Code memory of your knowledge base, `~/.claude/projects/-Users-you-projects-kb/memory/`:
+What you taught your sessions on your computer — your preferences, your corrections, where a project stands —
+lives in its Claude Code memory of your knowledge base, `~/.claude/projects/-Users-you-projects-kb/memory/`
+(on Windows `%USERPROFILE%\.claude\projects\C--Users-you-projects-kb\memory\`):
 `MEMORY.md`, an index of one line per memory, and one Markdown file per memory. The room gets a snapshot of it,
 installed like the skills and never written by a session — what you taught, without a channel the server's sessions
 write to each other.
@@ -179,10 +180,10 @@ write to each other.
   `platform.yaml`) for the gate. No other lane mounts it.
 - **The index in every run.** The lane host reads `MEMORY.md` for every run the platform asks rules for (the retired
   lane-web's host never does) and puts it first in the run's `<run>.md`, before the repository's rules, so a session in no repository
-  gets it too. Under a heading that says what it is: your standing preferences, to keep as your Mac sessions do —
+  gets it too. Under a heading that says what it is: your standing preferences, to keep as your computer sessions do —
   but where a memory disagrees with the lane's rules or the repository's, those win; a memory about a session's role
   («the main session for…», «the main travel agent») holds only when you started this session that way; paths and
-  workflows in it are your Mac's — `~/Desktop/…`, your folders, commands and local tools are not on the server, and
+  workflows in it are your computer's — `~/Desktop/…`, your folders, commands and local tools are not on the server, and
   the session says so rather than searching. Each line links to a file in `/lane/owner-memory/memory/`, which the session
   reads when the line applies; the snapshot is read-only, and what must outlive a session goes by the repository's
   rules. The lane's instructions say the same. The index stands between
@@ -198,13 +199,14 @@ write to each other.
   Telegram token, an AWS key id, a private key) — the refusal names the file, never the match.
   A memory's frontmatter is text: nothing in this folder is loaded as a plugin.
 
-Not the Mac's whole memory: the auto memory of other projects (`~/.claude/projects/<other>/memory`) and your global
-`~/.claude/CLAUDE.md` stay on the Mac. A memory written for the Mac names Mac paths and the Mac's own tools: on
+Not the whole memory of the owner's computer: the auto memory of other projects (`~/.claude/projects/<other>/memory`)
+and your global `~/.claude/CLAUDE.md` stay there. A memory written for the computer names its paths and its own
+tools: on
 the server those are not there, and the index's heading says so once for all.
 
 ### Refreshing it
 
-From the Mac, whenever your memory has changed (only `*.md` goes, as a tar over ssh: the server has no rsync; a link
+From the owner's computer, whenever your memory has changed (only `*.md` goes, as a tar over ssh: the server has no rsync; a link
 goes as a link, and the script skips it):
 
 ```bash
@@ -229,7 +231,7 @@ that works below its cwd in another repository reads that repository's rules bec
 owner's memory index reaches the model the same way, its files only when read; auto memory is off by the
 variable; the skills folder loads as a plugin from a read-only folder and a skill is invoked; a plugin's hooks and a
 skill's frontmatter hooks run — in each of the five YAML forms above too — so such a folder is never passed. The
-order and precedence of `CLAUDE.md` and `AGENTS.md` was probed on the Mac with the default sources and is pinned in
+order and precedence of `CLAUDE.md` and `AGENTS.md` was probed on the owner's computer with the default sources and is pinned in
 `tests/test_instructions.py`. Probed once in a Linux container (not in the suite: the managed folder cannot be redirected on macOS): the managed `CLAUDE.md` is read under
 `--setting-sources ""`; `--setting-sources project` runs a repository's command hooks and `apiKeyHelper`;
 `allowManagedHooksOnly` drops the `--settings` hooks; `allowManagedPermissionRulesOnly` drops `--allowedTools`;

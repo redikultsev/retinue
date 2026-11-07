@@ -70,7 +70,7 @@ def test_the_router_names_only_a_writer_of_the_closed_list(tmp_path):
         deal = await collections(world)
         stage = {"collection": "deals", "ops": [{"op": "set", "id": deal["id"], "version": 1,
                                                   "fields": {"stage": "won"}}]}
-        for actor in ("owner", "session:abc", "mac:laptop/s1", "code:ats", "import:01M6A8DK53Y2GKTYR515CPZWAY"):
+        for actor in ("owner", "session:abc", "device:laptop/s1", "mac:laptop/s2", "code:ats", "import:01M6A8DK53Y2GKTYR515CPZWAY"):
             said = await world.owner("collections/apply", body(actor, **stage))
             assert not said["ok"], actor
         said = await world.owner("collections/apply", {**body(**stage), "via": "screen"})

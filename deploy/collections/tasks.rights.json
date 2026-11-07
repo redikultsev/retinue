@@ -28,7 +28,7 @@
       ],
       "delete": false
     },
-    "mac": {
+    "device": {
       "add": true,
       "set": [
         "title",

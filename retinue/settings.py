@@ -51,7 +51,6 @@ GIT_VALUE = re.compile(r"[^\s=]{1,512}")
 PROJECT_NAME = re.compile(r"[A-Z0-9_]{1,40}")
 PROJECT_VALUE = re.compile(VALUE + "{8,4096}")
 AUTHOR = re.compile(r"[^<>\n]+ <[^<>@\s]+@[^<>\s]+>")  # retinue/config.py's check of `code: author`
-AUTHOR_NAME, AUTHOR_EMAIL = re.compile(r"[^<>\n]+"), re.compile(r"[^<>@\s]+@[^<>\s]+>")  # its halves: author_ok
 BAD_VALUE = "This does not look like the right key: check you copied all of it, with nothing around it."
 
 # The stack's keys, in the order the screen shows them. `group`: its section; `on`: the compose profile its part runs
@@ -339,11 +338,17 @@ def repo_of(url: str) -> tuple[str, str, str]:
 
 
 def author_ok(author: str) -> bool:
-    """`AUTHOR`, checked in two linear halves: split at its one « <» (the name holds no «<»), so no pattern backtracks
-    over a long value. Capped like a line of the file."""
+    """`AUTHOR` without a pattern over the owner's text: split at its one « <» (the name holds no «<») and at the
+    email's first «@», each part checked character by character. Capped like a line of the file."""
+    if len(author) > 256:
+        return False
     name, sep, email = author.rpartition(" <")
-    return (bool(sep) and len(author) <= 256 and AUTHOR_NAME.fullmatch(name) is not None
-            and AUTHOR_EMAIL.fullmatch(email) is not None)
+    local, at, domain = email[:-1].partition("@") if email.endswith(">") else ("", "", "")
+
+    def clean(text: str, banned: str) -> bool:
+        return bool(text) and not any(c in banned for c in text)
+    return (bool(sep and at) and clean(name, "<>\n") and clean(local, "<>@") and clean(domain, "<>")
+            and not any(c.isspace() for c in local + domain))
 
 
 def same_repo(a: str, b: str) -> bool:

@@ -89,7 +89,6 @@ REPO_URL = re.compile(r"https://(github\.com|gitlab\.com)/((?:[A-Za-z0-9_.-]+/)+
 REPO_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
 TRACK = re.compile(r"[a-z][a-z0-9-]{1,30}")
 AUTHOR = re.compile(r"[^<>\n]+ <[^<>@\s]+@[^<>\s]+>")
-AUTHOR_NAME, AUTHOR_EMAIL = re.compile(r"[^<>\n]+"), re.compile(r"[^<>@\s]+@[^<>\s]+>")  # its halves: author_ok
 GIT_VALUE = r"[^\s=]{1,512}"
 CODE_PROXY = "http://platform-egress:3128"     # docs/code.md: the platform's one way out to GitHub and GitLab
 
@@ -188,11 +187,17 @@ def repo_of(url: object) -> tuple[str, str, str]:
 
 
 def author_ok(author: str) -> bool:
-    """`AUTHOR`, checked in two linear halves: split at its one « <» (the name holds no «<»), so no pattern backtracks
-    over a long value. Capped like a line of the file."""
+    """`AUTHOR` without a pattern over the owner's text: split at its one « <» (the name holds no «<») and at the
+    email's first «@», each part checked character by character. Capped like a line of the file."""
+    if len(author) > 256:
+        return False
     name, sep, email = author.rpartition(" <")
-    return (bool(sep) and len(author) <= 256 and AUTHOR_NAME.fullmatch(name) is not None
-            and AUTHOR_EMAIL.fullmatch(email) is not None)
+    local, at, domain = email[:-1].partition("@") if email.endswith(">") else ("", "", "")
+
+    def clean(text: str, banned: str) -> bool:
+        return bool(text) and not any(c in banned for c in text)
+    return (bool(sep and at) and clean(name, "<>\n") and clean(local, "<>@") and clean(domain, "<>")
+            and not any(c.isspace() for c in local + domain))
 
 
 def same_repo(a: str, b: str) -> bool:

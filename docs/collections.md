@@ -691,6 +691,21 @@ are its own, not the owner's records.
    ```
 
    401 is the network right (no token yet); 404 is a computer not on the list, or not on the tunnel's route.
+
+   Another VPN on the computer (a work one, say) can take that route away while the tunnel is up: its DNS outranks
+   the tunnel's, the face's host resolves to the public address, and the check gives 404. A company's computer is
+   not yours to re-route, and a system rule that sends a domain to a foreign DNS server looks like DNS hijacking
+   to its security team. Change nothing on the system. Point the clients at the tunnel's address instead, and keep
+   the name for TLS (SNI and the certificate) and for `Host`:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' --resolve app.in.example.com:443:10.8.0.1 -X POST https://app.in.example.com/mcp/device
+   ```
+
+   401 here and 404 without `--resolve` means this case. Claude Code's `http` entry follows the system's DNS. A
+   small stdio bridge that connects to the address this way does not, and becomes the `retinue` server instead.
+   Off the tunnel the address does not answer: the bridge says so and does not fall back to the public address,
+   which answers 404 anyway. A browser follows the system's DNS too and cannot be pointed this way.
 2. **A device**, on the server's terminal ([below](#from-the-servers-terminal)):
 
    ```bash

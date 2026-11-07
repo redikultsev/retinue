@@ -1,4 +1,4 @@
-"""Following develop: .github/workflows/deploy.yml hands a commit CI passed to deploy/deploy.sh on the server, which
+"""Following develop: CI's last job hands a push to develop that passed to deploy/deploy.sh on the server, which
 builds it, starts it with `docker compose up --wait`, and goes back to the commit before, with its data, when it is
 not healthy.
 
@@ -17,7 +17,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy" / "deploy.sh"
-WORKFLOW = ROOT / ".github" / "workflows" / "deploy.yml"
+CI = ROOT / ".github" / "workflows" / "ci.yml"
 TOKEN = "subscription-token-never-printed"
 
 FAKE_DOCKER = r'''#!{python}
@@ -165,16 +165,15 @@ def test_only_a_full_sha_is_taken_and_the_one_running_is_left_alone(tmp_path):
     assert run.returncode == 0 and not calls and "already on" in run.stdout
 
 
-def test_the_workflow_deploys_only_pushes_to_develop_that_passed_ci():
-    workflow = yaml.safe_load(WORKFLOW.read_text())
-    trigger = workflow.get("on", workflow.get(True))  # YAML 1.1 reads a bare `on` as true
-    assert trigger == {"workflow_run": {"workflows": ["CI"], "types": ["completed"], "branches": ["develop"]}}
-    ci = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
-    assert ci["name"] == "CI", "the workflow it follows, by name"
-    assert workflow["permissions"] == {}
-    job, = workflow["jobs"].values()
-    assert job["if"] == "github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'"
-    assert job["environment"] == "server", "the key lives in an environment, not in the repository's secrets"
+def test_ci_deploys_only_pushes_to_develop_that_passed_every_check():
+    ci = yaml.safe_load(CI.read_text())
+    job = ci["jobs"]["deploy"]
+    assert sorted(job["needs"]) == sorted(name for name in ci["jobs"] if name != "deploy"), "after every check"
+    assert job["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
+    assert job["environment"] == "server", "the key lives in an environment only develop may use"
+    assert ci["concurrency"]["cancel-in-progress"] == "${{ github.ref != 'refs/heads/develop' }}", \
+        "a deploy is never cancelled halfway by the next push"
+    assert ci["permissions"] == {"contents": "read"}
     for step in job["steps"]:
         assert "${{" not in step.get("run", ""), "values reach the script through env, never pasted in"
         assert "uses" not in step, "no third-party action holds the key"

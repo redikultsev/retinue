@@ -14,7 +14,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # develop's runs end in a deploy, which is never cut off halfway: they queue instead.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
 
 jobs:
   python:
@@ -96,3 +97,29 @@ jobs:
       - run: pnpm -C face exec playwright install --with-deps chromium
       - run: pnpm -C face e2e
 
+  # A push to develop that passed every check above is deployed to the server that follows develop (docs/install.md,
+  # «Following develop»): ssh with a key that can run only deploy/deploy.sh, handed the commit. The key is in the
+  # environment `server`, which only develop may use; without its secrets the job says so and stops (a fork).
+  deploy:
+    name: Deploy develop to the server
+    needs: [python, probes, face, face-e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    environment: server
+    timeout-minutes: 45
+    steps:
+      - name: Deploy this commit
+        env:
+          KEY: ${{ secrets.DEPLOY_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$HOST" ] || [ -z "$KNOWN_HOSTS" ]; then
+            echo "no server to deploy to: the environment 'server' has no DEPLOY_KEY, DEPLOY_HOST, DEPLOY_KNOWN_HOSTS"
+            exit 0
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -o BatchMode=yes -o ServerAliveInterval=30 "root@$HOST" "$SHA"

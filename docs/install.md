@@ -154,7 +154,7 @@ lines in *Environment* and redeploy: no snapshot, no way back.
 ## Following develop
 
 A server can follow `develop` instead of releases: each push there that CI passes is on it minutes later, with no one
-on the server (`.github/workflows/deploy.yml`). Actions logs in over ssh with a key that can do one thing, run
+on the server (CI's last job, `deploy` in `.github/workflows/ci.yml`). Actions logs in over ssh with a key that can do one thing, run
 `deploy/deploy.sh` with the commit's sha. It checks the commit out, builds it while the stack runs, stops the stack,
 copies its data (as `update.sh` does, into `/var/backups/retinue/deploys/`, the last five kept), starts it with
 `docker compose up --wait` and, when a service is not healthy within five minutes, puts the data back and starts the
@@ -172,7 +172,7 @@ command="/usr/bin/bash /opt/retinue/deploy/deploy.sh",restrict ssh-ed25519 AAAAâ
 #   DEPLOY_KNOWN_HOSTS  ssh-keyscan -t ed25519 <address>
 ```
 
-Without the environment's secrets the workflow says so and stops; a fork never has them. A deploy by hand is the same
+Without the environment's secrets the job says so and stops; a fork never has them. A deploy by hand is the same
 command: `sudo bash deploy/deploy.sh <sha>`.
 
 ## Hosts the proxy lets through

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Deploy one commit of develop on the server that follows it (docs/install.md, «Following develop»).
-# GitHub Actions runs it over ssh after CI passed (.github/workflows/deploy.yml), with a key whose authorized_keys line
+# CI's last job runs it over ssh after every check passed (.github/workflows/ci.yml, deploy), with a key whose
+# authorized_keys line
 # allows nothing else: the commit's sha arrives as SSH_ORIGINAL_COMMAND. By hand, as root: deploy.sh <sha>.
+# A dropped connection does not stop it halfway: hangups are ignored and its output also goes to deploy.log.
 #
 # The commit is built while the stack runs; the stack is stopped, its data copied, the commit started with
 # `docker compose up --wait` (compose waits for every healthcheck). Not healthy: the data is put back and the commit
@@ -44,6 +46,8 @@ main() {
   [[ $sha =~ ^[0-9a-f]{40}$ ]] || { echo "usage: deploy.sh <a commit's full sha>" >&2; exit 2; }
   exec 9>"$ROOT/deploy.lock"
   flock 9
+  trap '' HUP
+  exec > >(tee -p -a "$ROOT/deploy.log") 2>&1   # -p: tee goes on into the log when the ssh side is gone
   was=$(git -C "$REPO" rev-parse HEAD)
   [[ $was != "$sha" ]] || { say "already on ${sha:0:12}"; exit 0; }
 

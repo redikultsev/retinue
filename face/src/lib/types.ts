@@ -31,6 +31,17 @@ export interface Meta {
   spheres?: Sphere[];
   /** The owner's voice works here: the platform has the key and a way out. Absent from a platform before it. */
   speech?: boolean;
+  /** The release running (`vX.Y.Z`), `local` when built from a checkout. Absent from a platform before it. */
+  version?: string;
+  /** The releases' notes the owner has not seen yet, the newest first (retinue/changelog.py). */
+  whats_new?: Release[];
+}
+
+/** One release's lines in CHANGELOG.md, in plain words for the owner. */
+export interface Release {
+  version: string;
+  date: string;
+  notes: string[];
 }
 
 export interface Session {

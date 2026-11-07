@@ -23,6 +23,19 @@ CodeQL scans the Python, the app's TypeScript and the workflows on every push an
 the Security tab, and one rated high or critical that a pull request adds keeps it out of `main`. A finding that is
 not real is dismissed there with the reason, never silenced in the code.
 
+## Releases
+
+A pull request that changes what the owner sees adds one line in plain words under «Unreleased» in
+[CHANGELOG.md](CHANGELOG.md) — the template's «For the owner». A release, from `main`:
+
+1. Through `develop`, rename «Unreleased» to the version and date (`## v0.2.0 — 2026-11-20`) and open a new, empty
+   «Unreleased» above it.
+2. Once that is in `main`, tag its commit `v0.2.0` and push the tag: the release workflow builds the images and
+   publishes them ([.github/workflows/release.yml](.github/workflows/release.yml)).
+3. A server takes it with `deploy/update.sh v0.2.0` (docs/install.md, «Updating»): it checks, backs up, switches,
+   and goes back by itself when the new version does not come up. The app then shows the release's lines once, under
+   «What's new».
+
 ## Before a pull request
 
 GitHub runs these checks on every pull request and every push to main or develop

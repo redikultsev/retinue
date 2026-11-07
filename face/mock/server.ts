@@ -359,7 +359,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
   if (!authed(req)) return json(res, 401, { error: "Log in first." });
 
-  if (path === paths.meta) return json(res, 200, { schema: 1, owner_ok: true, tracks: fx.tracks, general: "notes", spheres: fx.spheres, face_origin: "http://127.0.0.1:5173", speech: true });
+  if (path === paths.whatsNewSeen && method === "POST") {
+    fx.whatsNew.length = 0;
+    return json(res, 200, { ok: true });
+  }
+  if (path === paths.meta) return json(res, 200, { schema: 1, owner_ok: true, tracks: fx.tracks, general: "notes", spheres: fx.spheres, face_origin: "http://127.0.0.1:5173", speech: true, version: "v0.2.0", whats_new: fx.whatsNew });
 
   if (path === paths.chat && method === "GET") return json(res, 200, chat.snapshot());
   if (path === paths.chat && method === "POST") {

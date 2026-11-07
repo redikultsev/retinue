@@ -7,6 +7,8 @@ RUN useradd --create-home --uid 10001 retinue
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY retinue ./retinue
+# «What's new» after an update (retinue/changelog.py): the notes travel inside the package.
+COPY CHANGELOG.md ./retinue/CHANGELOG.md
 # Exactly the versions in uv.lock. The Claude Agent SDK wheel carries its own `claude` CLI, so the SDK pin in
 # pyproject.toml fixes the CLI version too; nothing here installs or updates a CLI separately.
 ENV UV_PYTHON_DOWNLOADS=never

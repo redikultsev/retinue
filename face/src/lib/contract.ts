@@ -12,6 +12,7 @@ const seg = (s: string) => encodeURIComponent(s);
 /** Every path of the face API the app calls. A segment given as `at` is one encoded already (lib/spaces.ts `segs`). */
 export const paths = {
   meta: "/api/meta",
+  whatsNewSeen: "/api/whats-new/seen",
   stats: "/api/stats",
   speech: (mode: string) => `/api/speech?mode=${mode}`,
   events: (since: number) => `/api/events?since=${since}`,

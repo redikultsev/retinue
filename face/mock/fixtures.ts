@@ -2,9 +2,15 @@
 // card, a courier card, a long input, and a realistic `git diff HEAD`. Shapes follow docs/face.md «API» and
 // retinue/transcript.py, retinue/approvals.py `card`, retinue/courier.py `CardView`.
 import type { TurnEnding } from "../src/lib/contract.ts";
-import type { About, BaseCard, Approval, CardView, Input, Item, ItemData, OutFile, Proposal, PushCard, Session, Sphere, Summary, Track } from "../src/lib/types.ts";
+import type { About, BaseCard, Approval, CardView, Input, Item, ItemData, OutFile, Proposal, PushCard, Release, Session, Sphere, Summary, Track } from "../src/lib/types.ts";
 
 export const T0 = Math.floor(Date.now() / 1000);
+
+/** «What's new» after an update from v0.1.0: two releases' notes; «Got it» empties it (server.ts). */
+export const whatsNew: Release[] = [
+  { version: "v0.2.0", date: "2026-11-20", notes: ["Reminders can repeat every week.", "Voice messages are read back faster."] },
+  { version: "v0.1.1", date: "2026-11-12", notes: ["A long reply no longer cuts off in Telegram."] },
+];
 
 export const tracks: Track[] = [
   { name: "retinue", lane: "code", kind: "code" },

@@ -48,7 +48,7 @@ from urllib.parse import parse_qsl, quote, unquote
 
 from aiohttp import web
 
-from . import changes, feed, inbox, mac, signals, spaces, tobase, topush
+from . import changelog, changes, feed, inbox, mac, signals, spaces, tobase, topush
 from .cliengine import UUID4
 from .collections import FILE_MAX, Full, Refused
 from .sessions import PlatformStore
@@ -311,6 +311,7 @@ class Face:
             web.post("/api/auth/code", self.auth_code), web.post("/api/auth/telegram", self.auth_telegram),
             web.post("/api/auth/logout", self.logout),
             web.get("/api/meta", self.meta), web.get("/api/sessions", self.sessions),
+            web.post("/api/whats-new/seen", self.whats_new_seen),
             web.get("/api/archived", self.archived),
             web.post("/api/sessions", self.new), web.get("/api/sessions/{id}", self.session),
             web.post("/api/sessions/{id}/input", self.input), web.post("/api/sessions/{id}/stop", self.stop),
@@ -427,7 +428,20 @@ class Face:
                                   "tracks": [{"name": t.name, "lane": t.lane, "kind": t.kind}
                                              for t in self.cfg.tracks],
                                   "general": general_track(self.cfg),
-                                  "spheres": self.platform.spheres.listed(), "speech": self._speech_off() is None})
+                                  "spheres": self.platform.spheres.listed(), "speech": self._speech_off() is None,
+                                  "version": (version := changelog.running()),
+                                  "whats_new": changelog.unseen(version, self.store.get(changelog.SEEN),
+                                                                changelog.read())})
+
+    async def whats_new_seen(self, request: web.Request) -> web.Response:
+        """«Got it» under «What's new»: the owner saw the notes up to `version`, the release they were shown for. It
+        only moves forward — a tab left open on an older release cannot bring back what a newer one showed."""
+        version = (await _body(request)).get("version")
+        if not isinstance(version, str) or changelog.RELEASE.fullmatch(version) is None:
+            return _error(400, "version: vX.Y.Z")
+        if changelog.later(version, self.store.get(changelog.SEEN)):
+            self.store.set(changelog.SEEN, version)
+        return web.json_response({"ok": True})
 
     async def sessions(self, request: web.Request) -> web.Response:
         return web.json_response({"schema": SCHEMA, "cursor": self.store.cursor(),

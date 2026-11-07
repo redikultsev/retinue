@@ -96,7 +96,9 @@ def input_id() -> str:
 
 # --- logins ---------------------------------------------------------------------------------------------------------
 
-def test_a_code_from_app_logs_in_once_and_is_kept_only_as_its_hash(tmp_path):
+def test_a_code_from_app_logs_in_once_and_is_kept_only_as_its_hash(tmp_path, monkeypatch):
+    monkeypatch.delenv("RETINUE_VERSION", raising=False)
+
     async def body(world: FaceWorld):
         assert (await world.call("GET", "/api/meta"))[0] == 401, "nothing without a login"
         login = await world.owner("login", {})
@@ -123,8 +125,46 @@ def test_a_code_from_app_logs_in_once_and_is_kept_only_as_its_hash(tmp_path):
                         "tracks": [{"name": "retinue", "lane": "code", "kind": "code"},
                                    {"name": "notes", "lane": "private", "kind": "private"}], "general": "notes",
                         "spheres": [],
-                        "speech": False}
+                        "speech": False, "version": "local", "whats_new": []}
         assert (await world.call("GET", "/api/meta", cookie="forged"))[0] == 401
+
+    faced(tmp_path, body)
+
+
+NOTES = "## Unreleased
+
+- Soon.
+
+## v0.2.0 — 2026-11-20
+
+- Two.
+
+## v0.1.0 — 2026-11-07
+
+- One.
+"
+
+
+def test_whats_new_shows_after_an_update_until_got_it_and_the_mark_only_moves_forward(tmp_path, monkeypatch):
+    from retinue import changelog
+    monkeypatch.setattr(changelog, "read", lambda: NOTES)
+
+    async def body(world: FaceWorld):
+        await world.login()
+        monkeypatch.setenv("RETINUE_VERSION", "v0.1.0")
+        meta = await world.get("/api/meta")
+        assert meta["version"] == "v0.1.0"
+        assert meta["whats_new"] == [{"version": "v0.1.0", "date": "2026-11-07", "notes": ["One."]}]
+        assert (await world.call("POST", "/api/whats-new/seen", {"version": "v0.1.0"}))[:2] == (200, {"ok": True})
+        assert (await world.get("/api/meta"))["whats_new"] == [], "seen once, not again"
+
+        monkeypatch.setenv("RETINUE_VERSION", "v0.2.0")  # the update
+        assert [r["version"] for r in (await world.get("/api/meta"))["whats_new"]] == ["v0.2.0"]
+        await world.call("POST", "/api/whats-new/seen", {"version": "v0.2.0"})
+        await world.call("POST", "/api/whats-new/seen", {"version": "v0.1.0"})  # an old tab's «Got it»
+        assert world.store.get(changelog.SEEN) == "v0.2.0"
+        assert (await world.call("POST", "/api/whats-new/seen", {"version": "latest"}))[0] == 400
+        assert (await world.call("POST", "/api/whats-new/seen", {"version": "v0.3.0"}, cookie="forged"))[0] == 401
 
     faced(tmp_path, body)
 

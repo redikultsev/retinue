@@ -19,6 +19,7 @@ import { FileRow } from "@/components/files";
 import { AppWindow, Chart, Close, Grid, Home, List, Plus } from "@/components/icons";
 import { SessionList } from "@/components/session-list";
 import { SessionSummary } from "@/components/session-summary";
+import { WhatsNew } from "@/components/whats-new";
 import { ChatPane, ChatSheet } from "@/components/talk";
 import { useChatOpen } from "@/lib/talk";
 import { Button } from "@/components/ui/button";
@@ -330,6 +331,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
   if (wide) {
     const rightId = pane ? "pane" : summarized && summaryOpen ? "summary" : null;
     return (
+      <>
+      <WhatsNew />
       <Columns
         sidebar={<Sidebar pathname={location.pathname} current={current} beside={beside} />}
         // The middle scrolls by itself: a page that scrolls its own column and one that just grows both fit.
@@ -338,6 +341,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         rightId={rightId}
         chat={chatOpen ? <ChatPane /> : undefined}
       />
+      </>
     );
   }
   const tabbed = TABBED.test(location.pathname);
@@ -346,6 +350,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       {tabbed && !keyboard && <TabBar pathname={location.pathname} />}
       <ChatSheet />
+      <WhatsNew />
     </div>
   );
 }

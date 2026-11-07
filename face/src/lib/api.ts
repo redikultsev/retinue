@@ -101,6 +101,8 @@ async function call<T>(path: string, init: RequestInit): Promise<T> {
 
 export const api = {
   meta: () => request<Meta>(paths.meta),
+  /** «Got it» under «What's new»: the notes up to `version` were seen. */
+  whatsNewSeen: (version: string) => request<{ ok: boolean }>(paths.whatsNewSeen, { version }),
   /** The last eight seven-day spans of the platform's tally, the newest first («Numbers»). */
   stats: () => request<{ now: number; weeks: Tally[] }>(paths.stats),
   sessions: () => request<SessionsSnapshot>(paths.sessions),

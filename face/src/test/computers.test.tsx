@@ -51,6 +51,7 @@ afterEach(() => {
   live.meta = null;
   forgetProjects();
   setComputers([]);
+  localStorage.clear(); // a fold opened in one test stays on the device
 });
 
 describe("a computer's own sessions in the list", () => {

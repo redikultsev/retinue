@@ -117,7 +117,7 @@ describe("SessionList by project", () => {
     // a sub-project is folded until opened; what waits in it is its amber dot
     expect(sessionLinks(inner)).toHaveLength(0);
     expect(within(inner).getByRole("img", { name: "Something waits for you in it" })).toBeTruthy();
-    expect(within(screen.getByRole("heading", { name: "Porto" }).closest("section") as HTMLElement).queryByRole("button", { name: /Expand/ })).toBeNull();
+    expect(within(screen.getByRole("heading", { name: /Porto/ }).closest("section") as HTMLElement).queryByRole("button", { name: /Expand/ })).toBeNull();
     fireEvent.click(within(inner).getByRole("button", { name: "Expand: Lisbon in May" }));
     expect(sessionLinks(inner).map((a) => a.textContent)).toEqual([expect.stringContaining("a flat")]);
     expect(within(inner).queryByRole("img", { name: "Something waits for you in it" })).toBeNull();
